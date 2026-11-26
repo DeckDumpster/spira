@@ -115,6 +115,14 @@ impl RoundBus {
             .as_ref()
     }
 
+    /// For a round that ended with no event of its own: publishes its ending, when this host
+    /// still keeps an event for it as open.
+    pub fn close(&self, run: &Path, repo: &str, batch: &str, kind: &str, event: Value, open: &dyn Fn(&str) -> Result<Vec<String>, String>) {
+        if kept_path(run, batch).exists() {
+            self.announce(run, repo, batch, kind, event, open);
+        }
+    }
+
     /// Publishes `event` as round `batch`'s current one. `open` lists a repo's open rounds. A
     /// failed publish is logged by the publisher and changes nothing here.
     pub fn announce(&self, run: &Path, repo: &str, batch: &str, kind: &str, event: Value, open: &dyn Fn(&str) -> Result<Vec<String>, String>) {

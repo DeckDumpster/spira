@@ -11506,3 +11506,52 @@ fn stage_test_on_a_tree_with_no_suite_judges_an_integration_red_red_naming_integ
     assert_eq!(kv_of(&t, "round-staged")["phase"], "red");
     assert!(t.out().contains("unit-tests-cause=integration-tests: exit status 101"), "{}", t.out());
 }
+
+/// What a broker that kept nothing is handed again, up to and including `last`.
+#[cfg(feature = "integration")]
+fn republished(broker: &mut testkit::broker::Broker, last: &str) -> Vec<String> {
+    broker.restart();
+    let mut sub = testkit::broker::Subscriber::to(broker.socket(), &["round/#"]);
+    let mut topics = Vec::new();
+    while topics.last().is_none_or(|t| t != last) {
+        topics.push(next_round(&mut sub).0);
+    }
+    topics
+}
+
+#[cfg(feature = "integration")]
+#[test_id(tnnwd84)]
+#[test]
+fn a_round_emptied_by_an_eject_is_published_closed_and_logs_no_new_line() {
+    let broker = testkit::broker::Broker::up();
+    let mut sub = testkit::broker::Subscriber::to(broker.socket(), &["round/#"]);
+    let mut t = round_world();
+    t.rounds = bus_on(broker.socket());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-a", "--reason", "harness"]), 0, "{}", t.err());
+
+    let kinds: Vec<String> = (0..3).map(|_| next_round(&mut sub).1["kind"].as_str().unwrap().to_string()).collect();
+    assert_eq!(kinds, ["open", "eject", "abandon"]);
+    assert!(!marker(&t, &batch, "event").exists(), "nothing of a closed round is left to republish");
+    assert!(!t.landing_log().contains("ROUND-ABANDON"), "{}", t.landing_log());
+}
+
+#[cfg(feature = "integration")]
+#[test_id(t6p7juq)]
+#[test]
+fn a_round_the_store_ended_with_no_event_is_not_republished_after_the_next_event() {
+    let mut broker = testkit::broker::Broker::up();
+    let mut t = round_world();
+    t.rounds = bus_on(broker.socket());
+    let store = t.lc.store.get_or_init(crate::batches::mem::MemDoor::default);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let ended = batch_of(&t);
+    store.step("spira", &ended, "ABANDONED", None);
+    store.put_round("spira", "spira-next", "OPEN", &[("sp-c", "tc")], 10);
+
+    t.with_world(|w| crate::ops::round_event(w, &t.s().run, "red", "spira", "spira-next", "batcher", &[]));
+
+    assert_eq!(republished(&mut broker, "round/spira/spira-next"), ["round/spira/spira-next"]);
+}

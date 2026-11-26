@@ -59,17 +59,17 @@ impl Stopped {
         let sig = words.next()?.parse().ok()?;
         let (pid, cmd) = words.next()?.strip_prefix("by=")?.split_once(':')?;
         let cgroup = words.next()?.strip_prefix("cgroup=")?;
+        if words.next().is_some() {
+            return None;
+        }
         Some(Stopped { sig, by_pid: pid.parse().ok(), cmd: cmd.into(), cgroup: cgroup.into() })
     }
 
-    /// The stop the last `VERDICT ` line of `output` to carry one names. Only a line testenv
-    /// opens counts, so what a test prints under it names nobody.
+    /// The stop testenv's verdict names: the field ending the last line `output` opens with
+    /// `VERDICT `. An earlier line, or one printed indented under a test, names nobody.
     pub fn in_verdict(output: &str) -> Option<Stopped> {
-        output
-            .lines()
-            .rev()
-            .filter(|l| l.starts_with("VERDICT "))
-            .find_map(|l| Stopped::parse_verdict(&l[l.find(VERDICT_PREFIX)?..]))
+        let verdict = output.lines().rev().find(|l| l.starts_with("VERDICT "))?;
+        Stopped::parse_verdict(&verdict[verdict.rfind(VERDICT_PREFIX)?..])
     }
 }
 
@@ -97,5 +97,9 @@ mod tests {
         assert_eq!(Stopped::in_verdict(&format!("{real}\n{forged}\ngate: x\n")), Some(sender()));
         assert_eq!(Stopped::in_verdict(&forged), None);
         assert_eq!(Stopped::in_verdict(&sender().verdict_field()), None);
+        let earlier = format!("{real}\nVERDICT RED ran=1 red=1 first=unit-tests.sh: exit 101");
+        assert_eq!(Stopped::in_verdict(&earlier), None, "testenv's last verdict names nobody");
+        let quoted = format!("VERDICT RED ran=1 red=1 first={} and more", sender().verdict_field());
+        assert_eq!(Stopped::in_verdict(&quoted), None, "testenv ends its line with the field");
     }
 }

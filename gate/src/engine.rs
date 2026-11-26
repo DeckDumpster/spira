@@ -117,6 +117,8 @@ struct State {
     reruns: Vec<String>,
     /// The tests the branch trial saw red, as the finish publishes them.
     red_tests: Vec<crate::publish::RedTest>,
+    /// A command the trial ran calls testenv, so a `VERDICT` line in its output is testenv's.
+    ran_testenv: bool,
     /// The branch trial's whole output, kept as a file when the verdict is not a PASS.
     gate_out: String,
     changed: Vec<String>,
@@ -1064,6 +1066,7 @@ impl<'w, W: World> Trial<'w, W> {
         let fkey = self.fences_key(&want_tree, &limits.deny);
         let mut mark_err: Option<String> = None;
         let tiers_file = self.s.tiers_file.clone();
+        self.s.ran_testenv = build_phase.is_some() || !re.required.is_empty() || compose::gate_string(&comp, &cmd).0.contains("testenv");
         let (rc, out, ph, tiers) = {
             let (run_dir, machine, op_marks) = (Path::new(&self.s.run), &mut self.s.machine, &mut self.s.op_marks);
             let mut mark = |to: GateState, why: &str| {
@@ -2367,7 +2370,7 @@ impl<'w, W: World> Trial<'w, W> {
             }
             crate::telemetry::append(w, &self.s.run, &ts, &run);
             // The branch's own run names its sender ahead of a later base run's.
-            let killed_by = Stopped::in_verdict(&self.s.gate_out).or_else(|| Stopped::in_verdict(&vd.msg));
+            let killed_by = self.s.ran_testenv.then(|| Stopped::in_verdict(&self.s.gate_out).or_else(|| Stopped::in_verdict(&vd.msg))).flatten();
             w.publish(&crate::publish::messages(&run, killed_by.as_ref(), &self.s.branch_tree, &self.s.red_tests, w.stamp()));
             w.push_metrics(&run);
             self.emit_ops(&run);

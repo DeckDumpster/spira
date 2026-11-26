@@ -434,9 +434,18 @@ pub fn round_event(
     let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(now);
     spira_otel::rounds::emit(run, "queue", kind, repo, batch, by, fields, at);
     let event = crate::round_bus::payload(kind, by, now, fields);
-    w.rounds.announce(run, repo, batch, kind, event, &|repo| {
-        Ok(w.lc.open_batches(repo)?.into_iter().map(|b| b.id).collect())
-    });
+    w.rounds.announce(run, repo, batch, kind, event, &|repo| open_ids(w, repo));
+}
+
+fn open_ids(w: &World, repo: &str) -> Result<Vec<String>, String> {
+    Ok(w.lc.open_batches(repo)?.into_iter().map(|b| b.id).collect())
+}
+
+/// The retained `round/` topic's ending for a round that closes with no [`round_event`]. It
+/// writes no landing.log line.
+pub fn round_closed(w: &World, run: &Path, kind: &str, repo: &str, batch: &str, by: &str, reason: &str) {
+    let event = crate::round_bus::payload(kind, by, w.clock.now(), &[("reason", reason.to_string())]);
+    w.rounds.close(run, repo, batch, kind, event, &|repo| open_ids(w, repo));
 }
 
 /// A bead title for a PR body line, cut to 120 characters (queue.sh's python).

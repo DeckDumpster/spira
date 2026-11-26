@@ -107,6 +107,8 @@ pub(super) fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
             End::Abandoned("swept"),
             &format!("ended: {state} on the lifecycle; record swept"),
         );
+        let kind = if state == "LANDED" { "land" } else { "abandon" };
+        super::round_closed(w, &c.s.run, kind, &c.r.name, batch, "queue", &format!("swept: {state} on the lifecycle"));
     });
     promote(c, &live);
 }

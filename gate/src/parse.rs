@@ -75,10 +75,6 @@ pub fn failed_tests(out: &str) -> Vec<String> {
 /// or the one cargo's rerun line after a libtest failure names; `None` when neither says.
 pub fn failed_test_packages(out: &str) -> Vec<(String, Option<String>)> {
     let lines: Vec<&str> = out.lines().map(str::trim).collect();
-    let rerun_package = |l: &&str| {
-        let args = l.strip_prefix("error: test failed, to rerun pass `-p ")?;
-        args.split([' ', '`']).next().map(str::to_string)
-    };
     failed_tests(out)
         .into_iter()
         .map(|test| {
@@ -88,7 +84,8 @@ pub fn failed_test_packages(out: &str) -> Vec<(String, Option<String>)> {
             });
             let libtest = || {
                 let at = lines.iter().position(|l| l.strip_prefix("test ").and_then(|r| r.strip_suffix(" ... FAILED")) == Some(test.as_str()))?;
-                lines[at..].iter().find_map(rerun_package)
+                let rerun = cargo_reruns(&lines[at..].join("\n")).into_iter().next()?;
+                rerun.strip_prefix("-p ")?.split(' ').next().map(str::to_string)
             };
             let package = nextest.or_else(libtest);
             (test, package)

@@ -831,6 +831,14 @@ closes the question the gate could not answer.
 * **Copying is Rust (`install_tools`), not more shell in the tools string.** The proof and the
   install are logic; the tools string stays `cargo build … && [ -x … ]`.
 
+## What a trial publishes
+
+After its `gate-run` row, a trial publishes `gate/<repo>/<bead>` and `test/<id>/red` for each
+test its branch run showed red (`src/publish.rs`; fields in `spira/topics.toml`). `killed_by`
+is read from the `stopped=` field ending testenv's last `VERDICT` line, and only by a trial
+that ran testenv; that field names the sender's program and unit, not its whole command or
+cgroup path. A failed publish is logged and changes no verdict.
+
 ## Boundaries (ports)
 
 `World` in `src/ports.rs`: git reads and the merge, the touched set (`diff_raw`), the mode

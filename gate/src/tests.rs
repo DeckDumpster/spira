@@ -6894,7 +6894,10 @@ fn a_trial_whose_testenv_run_was_stopped_publishes_who_sent_the_signal() {
     let broker = testkit::broker::Broker::up();
     let mut sub = testkit::broker::Subscriber::to(broker.socket(), &["gate/#"]);
     let out = format!("VERDICT RED ran=1 red=1 first=unit-tests.sh: exit 143 {}", stopped.verdict_field());
-    let f = flip_fake_with(&out, Ok(vec![]));
+    let f = Fake::new();
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
+    f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = "bash spira/fence.sh && testenv run".into();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, out));
     *f.broker.borrow_mut() = Some(broker.socket().to_path_buf());
     f.run();
 
@@ -6923,4 +6926,19 @@ fn a_trial_with_the_broker_stopped_ends_as_it_does_with_none() {
     assert_eq!(stopped.tsd.borrow().len(), 1);
     let row = |f: &Fake| f.tsd.borrow()[0].clone();
     assert_eq!(row(&stopped), row(&without), "the gate-run row");
+}
+
+#[cfg(feature = "integration")]
+#[test_id(tcldycw)]
+#[test]
+fn a_trial_that_ran_no_testenv_takes_no_sender_from_what_its_tests_print() {
+    let broker = testkit::broker::Broker::up();
+    let mut sub = testkit::broker::Subscriber::to(broker.socket(), &["gate/#"]);
+    let printed = crate::stopped::Stopped { sig: 9, by_pid: Some(1), cmd: "kill".into(), cgroup: "x".into() };
+    let f = flip_fake_with(&format!("VERDICT RED ran=1 red=1 {}", printed.verdict_field()), Ok(vec![]));
+    *f.broker.borrow_mut() = Some(broker.socket().to_path_buf());
+
+    f.run();
+
+    assert_eq!(delivered(&mut sub, 1)["gate/spira/sp-a"]["killed_by"], serde_json::Value::Null);
 }

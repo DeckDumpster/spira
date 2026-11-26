@@ -15,7 +15,7 @@ use super::round_rerun;
 use super::stage;
 use super::{
     actor, batch_abandoned, converge_orphans, czar_ok, idents, lc_abandon, lc_cas,
-    lc_eject_member, lock_held_by_caller, read_text, repo_path, require_lc, resolve, round_event,
+    lc_eject_member, lock_held_by_caller, read_text, repo_path, require_lc, resolve, round_closed, round_event,
     statute_gate, take_lock, Ctx, World, FAIL, OK, USAGE,
 };
 use crate::batches::BatchRecord;
@@ -1355,6 +1355,8 @@ fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
             End::Abandoned("swept"),
             &format!("ended: {} on the lifecycle; record swept", b.state),
         );
+        let kind = if b.state == "LANDED" { "land" } else { "abandon" };
+        round_closed(w, &c.s.run, kind, &c.r.name, &b.id, HOUSEKEEPING, &format!("swept: {} on the lifecycle", b.state));
     }
     let Some(repo) = &c.r.path else {
         return;
@@ -5159,6 +5161,7 @@ fn eject(
             End::Abandoned("emptied"),
             &format!("{id} ejected, no member remains"),
         );
+        round_closed(w, &c.s.run, "abandon", &c.r.name, batch, by, &format!("round emptied: {id} ejected"));
         stage::discard_behind(
             w,
             by,
