@@ -21,7 +21,7 @@ fn idle() -> Snapshot {
 
 /// A gh:run gate escalated, blocking a bead.
 fn busy() -> Snapshot {
-    Snapshot { gate_check_out: "ESCALATE g1 run 102 failed\n".into(), gate_blocked: [("g1".to_string(), Some("sp-x".to_string()))].into(), ..idle() }
+    Snapshot { gate_check_out: "ESCALATE g1 run 102 failed\n".into(), gate_blocked: [("g1".to_string(), Some("sp-x".to_string()))].into() }
 }
 
 fn effects(acts: &[Act]) -> Vec<&str> {

@@ -322,7 +322,6 @@ SPIRA_HOME spira-lint/src/rules/config_literal_fallback.rs
 SPIRA_HOME spira-lint/src/rules/script_callers.rs
 SPIRA_HOME spira-otel/src/fixture.rs
 SPIRA_HOME spira-runtime/src/tasks/a/batcher_local.rs
-SPIRA_HOME spira-runtime/src/tasks/a/gate_check.rs
 SPIRA_HOME spira-runtime/src/tasks/a/gate_worker.rs
 SPIRA_HOME spira-runtime/src/tasks/a/sentinel_pass.rs
 SPIRA_HOME spira-runtime/src/tasks/d/acceptance.rs
