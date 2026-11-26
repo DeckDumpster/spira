@@ -62,13 +62,6 @@ Programs it runs: `sh` and `cat`, both on deps-lint's system allowlist.
 `temp_dir()` in test code anywhere outside testkit (see spira-lint/DESIGN.md). Test code
 that wants scratch space takes a `TempDir`; there is no second helper to forget to clean.
 
-`testkit::disown_from_root(path)`:
-
-- A round runs the suites as root, so every fixture it makes is root-owned, and code that
-  refuses a root-owned path refuses the fixture. Called on such a path, this hands it to a
-  non-root uid when root created it, and does nothing for any other user, so the test
-  judges the same thing in both.
-
 ## Non-goals
 
 - No layout inside the directory. Each crate keeps its own scratch layout under it.

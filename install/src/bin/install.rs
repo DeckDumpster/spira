@@ -1947,9 +1947,8 @@ fn standalone_system_user(instance: &str, dry: bool) -> ExitCode {
 
 /// The one root step proc-starts needs: its system unit, run as the owner of the harness home,
 /// holding CAP_BPF and CAP_PERFMON and nothing else. Creates no user.
-fn proc_starts_phase(host: &install::values::HostValues, user: &str, dest_dir: &Path, run: RunCmd) -> Result<(), String> {
-    use std::os::unix::fs::MetadataExt;
-    let uid = std::fs::metadata(&host.home).map_err(|e| format!("cannot stat {}: {e}", host.home))?.uid();
+fn proc_starts_phase(host: &install::values::HostValues, user: &str, owner: bootstrap::Owner, dest_dir: &Path, run: RunCmd) -> Result<(), String> {
+    let uid = owner(Path::new(&host.home))?;
     refuse_root_owner(uid, &host.home)?;
     let host = install::values::HostValues { unit_user: user.to_string(), ..host.clone() };
     let unit = "spira-proc-starts.service";
@@ -1992,7 +1991,7 @@ fn standalone_proc_starts(instance: Option<&str>, dry: bool) -> ExitCode {
         }
     };
     let dest = Path::new(system_paths::ETC_SYSTEMD_SYSTEM);
-    match standalone_proc_starts_with(instance, &argv0, &env, &bootstrap::getent_passwd, &declare, is_root(), dest, &run_ok, dry) {
+    match standalone_proc_starts_with(instance, &argv0, &env, &bootstrap::stat_owner, &bootstrap::getent_passwd, &declare, is_root(), dest, &run_ok, dry) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("install: {e}");
@@ -2015,6 +2014,7 @@ fn standalone_proc_starts_with(
     instance: Option<&str>,
     argv0: &Path,
     env: &std::collections::BTreeMap<String, String>,
+    owner: bootstrap::Owner,
     passwd: bootstrap::Passwd,
     declare: &dyn Fn(&std::collections::BTreeMap<String, String>),
     is_root: bool,
@@ -2022,7 +2022,7 @@ fn standalone_proc_starts_with(
     run: RunCmd,
     dry: bool,
 ) -> Result<(), String> {
-    let (env, user) = bootstrap::proc_starts_env(argv0, env, passwd)?;
+    let (env, user) = bootstrap::proc_starts_env(argv0, env, owner, passwd)?;
     declare(&env);
     let host = proc_starts_host(instance, &env).map_err(|e| {
         let release = &env[spira_config::RELEASE_ENV];
@@ -2038,7 +2038,7 @@ fn standalone_proc_starts_with(
     if !is_root {
         return Err(format!("--proc-starts requires root and runs only the proc-starts phase: sudo {} --proc-starts", argv0.display()));
     }
-    proc_starts_phase(&host, &user, dest_dir, run).map_err(|e| format!("{PROC_STARTS_PHASE_FAILED}{e}"))
+    proc_starts_phase(&host, &user, owner, dest_dir, run).map_err(|e| format!("{PROC_STARTS_PHASE_FAILED}{e}"))
 }
 
 fn proc_starts_host(instance: Option<&str>, env: &std::collections::BTreeMap<String, String>) -> Result<install::values::HostValues, String> {
@@ -2581,7 +2581,7 @@ mod proc_starts_phase_tests {
         let td = testkit::TempDir::new("proc-starts-phase");
         let host = install::values::HostValues { home: td.path().join("absent").display().to_string(), ..Default::default() };
         let none = |_: &str, _: &[&str]| Ok(());
-        assert!(proc_starts_phase(&host, "operator", td.path(), &none).unwrap_err().contains("cannot stat"));
+        assert!(proc_starts_phase(&host, "operator", &bootstrap::stat_owner, td.path(), &none).unwrap_err().contains("cannot stat"));
     }
 
     #[test_id(ttsyx67)]
@@ -2605,7 +2605,6 @@ mod proc_starts_phase_tests {
     fn plain_sudo(case: Case) -> (testkit::TempDir, Vec<String>, String, Result<(), String>) {
         let td = testkit::TempDir::new("proc-starts-sudo");
         let release = spira_config::process::fixture_release(td.path(), true);
-        testkit::disown_from_root(&release.join("spira"));
         std::fs::create_dir_all(release.join("systemd")).unwrap();
         let template = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/spira-proc-starts.service");
         std::fs::copy(template, release.join("systemd/spira-proc-starts.service")).unwrap();
@@ -2637,7 +2636,8 @@ mod proc_starts_phase_tests {
         };
         let declared = std::cell::RefCell::new(None);
         let declare = |derived: &std::collections::BTreeMap<String, String>| *declared.borrow_mut() = Some(derived.clone());
-        let got = standalone_proc_starts_with(None, &release.join("bin/spira-install"), &env, &passwd, &declare, !case.not_root, &dest, &run, case.dry);
+        let owner = |_: &Path| Ok(1000);
+        let got = standalone_proc_starts_with(None, &release.join("bin/spira-install"), &env, &owner, &passwd, &declare, !case.not_root, &dest, &run, case.dry);
         let declared = declared.into_inner().expect("the derived environment is declared to the config loader");
         assert_eq!(declared["SPIRA_HOME"], release.join("spira").display().to_string());
         assert_eq!(declared[spira_config::process::TOML_ENV], toml.display().to_string());

@@ -172,6 +172,16 @@ pub fn refuse_root_owner(uid: u32, home: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The uid that owns a path. A seam because a round's test sandbox maps uid 0 alone, so no
+/// fixture there can be anything but root-owned.
+pub type Owner<'a> = &'a dyn Fn(&Path) -> Result<u32, String>;
+
+/// [`Owner`] from the filesystem.
+pub fn stat_owner(path: &Path) -> Result<u32, String> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).map(|m| m.uid()).map_err(|e| format!("cannot stat {}: {e}", path.display()))
+}
+
 /// A uid's `(user name, home directory)`.
 pub type Passwd<'a> = &'a dyn Fn(u32) -> Result<(String, PathBuf), String>;
 
@@ -189,8 +199,7 @@ pub fn getent_passwd(uid: u32) -> Result<(String, PathBuf), String> {
 /// The environment `spira-install --proc-starts` runs under, and the user its unit runs as,
 /// derived from the path it was invoked by: plain `sudo` hands it nothing else. Each value has
 /// this one source; an inherited one is only checked against it.
-pub fn proc_starts_env(argv0: &Path, env: &BTreeMap<String, String>, passwd: Passwd) -> Result<(BTreeMap<String, String>, String), String> {
-    use std::os::unix::fs::MetadataExt;
+pub fn proc_starts_env(argv0: &Path, env: &BTreeMap<String, String>, owner: Owner, passwd: Passwd) -> Result<(BTreeMap<String, String>, String), String> {
     let release = argv0
         .parent()
         .filter(|bin| bin.file_name().is_some_and(|n| n == "bin"))
@@ -200,7 +209,7 @@ pub fn proc_starts_env(argv0: &Path, env: &BTreeMap<String, String>, passwd: Pas
     let again = format!("sudo {}/bin/spira-install --proc-starts", release.display());
 
     let home = release.join("spira");
-    let uid = std::fs::metadata(&home).map_err(|e| format!("cannot stat {}: {e}; run it from a readable release: {again}", home.display()))?.uid();
+    let uid = owner(&home).map_err(|e| format!("{e}; run it from a readable release: {again}"))?;
     refuse_root_owner(uid, &home.display().to_string()).map_err(|e| format!("{e}; run it from a release the operator owns: sudo <release>/bin/spira-install --proc-starts"))?;
     let (user, user_home) = passwd(uid).map_err(|e| format!("cannot name the owner of {}: {e}; give uid {uid} a passwd entry, then run: {again}", home.display()))?;
 
@@ -698,7 +707,6 @@ mod proc_starts_env_tests {
         for d in ["spira/conf.d", "systemd", "bin"] {
             std::fs::create_dir_all(release.join(d)).unwrap();
         }
-        testkit::disown_from_root(&release.join("spira"));
         std::fs::write(release.join("systemd/spira-proc-starts.service"), "[Service]\n").unwrap();
         let units = td.path().join("home/.config/systemd/user");
         std::fs::create_dir_all(&units).unwrap();
@@ -709,9 +717,23 @@ mod proc_starts_env_tests {
     }
 
     fn derive(r: &Rig, argv0: &Path, env: &[(&str, &str)]) -> Result<(BTreeMap<String, String>, String), String> {
+        derive_owned_by(1000, r, argv0, env)
+    }
+
+    fn derive_owned_by(uid: u32, r: &Rig, argv0: &Path, env: &[(&str, &str)]) -> Result<(BTreeMap<String, String>, String), String> {
         let env = env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         let home = r.td.path().join("home");
-        proc_starts_env(argv0, &env, &move |_| Ok(("operator".to_string(), home.clone())))
+        let harness = r.release.join("spira");
+        let owner = move |p: &Path| if p == harness { Ok(uid) } else { Err(format!("asked who owns {}", p.display())) };
+        proc_starts_env(argv0, &env, &owner, &move |_| Ok(("operator".to_string(), home.clone())))
+    }
+
+    #[test_id(tnmuczz)]
+    #[test]
+    fn a_release_whose_harness_root_owns_is_refused_with_the_way_past_it() {
+        let r = rig(&[("prod", "cfg/a.toml")]);
+        let e = derive_owned_by(0, &r, &r.release.join("bin/spira-install"), &[]).unwrap_err();
+        assert!(e.contains("owned by root") && e.contains(&r.release.join("spira").display().to_string()) && e.contains("sudo <release>/bin/spira-install --proc-starts"), "{e}");
     }
 
     #[test_id(tkm5zmi)]
