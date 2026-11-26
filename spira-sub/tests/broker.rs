@@ -123,12 +123,8 @@ impl Raw {
         let (client, connection) = Client::new(options, 32);
         client.subscribe(filter, QoS::AtLeastOnce).unwrap();
         let mut raw = Raw { _client: client, connection };
-        loop {
-            match raw.event() {
-                Event::Incoming(Packet::SubAck(_)) => return raw,
-                _ => {}
-            }
-        }
+        while !matches!(raw.event(), Event::Incoming(Packet::SubAck(_))) {}
+        raw
     }
 
     fn event(&mut self) -> Event {
