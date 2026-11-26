@@ -315,6 +315,16 @@ fn the_nextest_config_is_the_unit_deadline_defaults() {
     assert_eq!(fs::read_to_string(workspace().join(".config/nextest.toml")).unwrap(), want);
 }
 
+#[test_id(ths23zl)]
+#[test]
+fn the_rounds_config_carries_the_unit_deadline_defaults() {
+    let spira = spira_config::load(&workspace().join("spira/testlib/complete.toml")).unwrap().spira.unwrap();
+    for key in ["SPIRA_UNIT_TEST_DEADLINE_SECS", "SPIRA_UNIT_TEST_DEADLINE_PERIODS"] {
+        let declared = spira.get_u32(key).unwrap().map(u64::from);
+        assert_eq!(declared, Some(conf_default(key)), "complete.toml's {key} differs from the conf.d default");
+    }
+}
+
 #[test_id(tewojri)]
 #[test]
 fn the_integration_and_sim_targets_keep_a_two_minute_deadline_in_the_nextest_config() {
