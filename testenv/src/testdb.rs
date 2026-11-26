@@ -45,9 +45,8 @@ pub fn resolve_exe(name: &str, path_var: &str) -> Option<PathBuf> {
 
 /// The `bd` a fixture's callers should run, as an absolute path **without** resolving links:
 /// the first `name` on `path_var` (a name with `/` is made absolute). Not canonicalised, so
-/// inside a metered suite it stays the meter's link and the calls stay metered. conf.sh keys
-/// its `bd migrate schema` cache on `stat "$SPIRA_BD"`; a bare `bd` never stats, so every
-/// conf.sh source re-ran the check (DESIGN-testdb.md §2.4, sp-34ru2).
+/// inside a metered suite it stays the meter's link and the calls stay metered
+/// (DESIGN-testdb.md §2.4).
 pub fn locate_exe(name: &str, path_var: &str) -> Option<PathBuf> {
     if name.contains('/') {
         let p = Path::new(name);

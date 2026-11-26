@@ -104,7 +104,7 @@ Dimensions (from taxonomy): correctness (C), fail-closed (F), observability (O),
 
 | ID | Requirement | Dims | Tier / where |
 |---|---|---|---|
-| UC-test-infrastructure-08 | The image tag is a content hash of the build closure (Containerfile, doctor.sh program list, bd pin). It is path-independent and unchanged by unrelated files. | C,I | T1 / cert |
+| UC-test-infrastructure-08 | The image tag is a content hash of the build closure (Containerfile, doctor.sh program list). It is path-independent and unchanged by unrelated files. | C,I | T1 / cert |
 | UC-test-infrastructure-09 | Image acquisition pulls the closure tag from the registry when one is configured. It builds on a miss (not an error) and builds with no registry configured. Publish pushes exactly the closure tag and never `:latest`. Callers get one `localhost/` ref regardless of source. | R,K | T1 (podman argv stub) / cert |
 | UC-test-infrastructure-10 | `testenv.sh up` gives a container with systemd as PID 1, a reachable user systemd, the checkout at `/workspace` and cargo cache volumes. `down` is idempotent. | K | T3c / image |
 | UC-test-infrastructure-11 | Batch argument contract: an unknown `--mode` or a missing branch exits 2. `--mode=x` is accepted and the default is parallel. `--suites a,b` and `--suites -` run exactly the named suites (`producer=explicit`). An unknown name exits non-zero and names it. Empty stdin means "nothing to run" and exits 0. With no `--suites`, `producer=diff`, or `all` on fallback. | C,F | T1 (pre-container, needs `--print-selection` seam) / cert |

@@ -110,7 +110,7 @@ reached the bash.
 | `SPIRA_GATE_BUDGET` | the selector's prediction of suite time (testenv `--deadline`); with the fixed phases it fits the deadline | 140 |
 | `SPIRA_GATE_LOCK_WAIT` | wait for an admission slot and for the tree lock | `4 × SPIRA_GATE_TIMEOUT` |
 | `SPIRA_CERTIFY_PAR` | admission pool size; unset or non-numeric derives `min(nproc/4, MemAvailable/400MiB)`, at least 1, re-read every second | derived |
-| `SPIRA_GATE_BEAD` | ejected-suites lookup (the re-entry check), the key, `lc_certify` | — |
+| `SPIRA_GATE_BEAD` | ejected-suites lookup (the re-entry check), the key, `lc_certify`; passed through to the gate command (the lint step's `--gate-bead`) | — |
 | `SPIRA_GATE_CALLER` | `by=` in the cache entry | the branch |
 | `LANDSTATE` (lib.sh) | `<bead>.ejected`, else an `EJECTED` landstate row | `$SPIRA_RUN/landstate` |
 | `SPIRA_GATE_BUDGET`, `SPIRA_GATE_ALL`, `SPIRA_BATCH_MAXPAR`, `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS` (sp-govet), `HOME` | passed through to the gate command | as bash |
@@ -126,7 +126,7 @@ not the release), never the PATH the gate inherited, so a bare tool name is the 
 first and the box's own tools after the system directories. Either `SPIRA_RELEASE` unset or
 a tail entry inside a release or a checkout is `NO_VERDICT reason=release-unset` before
 anything runs, and `SPIRA_RELEASE` is passed through. `HOME`, `TERM=dumb`, `SPIRA_GATE_REPO`, `SPIRA_GATE_REPO_NAME`,
-`SPIRA_GATE_BRANCH`, `SPIRA_GATE_BASE`, `SPIRA_GATE_SELECT_HEAD=<branch>`, `SPIRA_GATE_FILES`,
+`SPIRA_GATE_BRANCH`, `SPIRA_GATE_BASE`, `SPIRA_GATE_BEAD` (empty if the caller set none), `SPIRA_GATE_SELECT_HEAD=<branch>`, `SPIRA_GATE_FILES`,
 `SPIRA_GATE_STEPS` (an empty file per trial; the gate command appends `<step name>\t<unix epoch secs>` as each step starts, and the engine reads the longest step into gate.log's `slowest_step=<name>:<secs>` and the TSD row — the last step lasts until the gate phase ends; a command that writes nothing gives no field; a verdict other than PASS also keeps the phase's whole output as `tsd/gate-out-<ts>.log`, named by `out=<path>`, newest 50 kept),
 `SPIRA_GATE_EJECTED_SUITES`, `SPIRA_GATE_ALL` (default 0),
 `SPIRA_BATCH_MAXPAR`,
@@ -251,7 +251,7 @@ repo map → repository → yield/meter armed → landing ref → changed files 
 **merge** → `bash -n` → beads data → foreign harness → **the definition** (the tree's
 `gate.steps`; else, for a `queue.local` repository whose `.spira/testenv.toml` has a `ci_entry`
 and no harness Containerfile, that declaration's default tiers; else the column; "The tree
-owns its gate") → empty gate string (PASS `syntax-only`, column only; NO_VERDICT `certifies-nothing` when the repository declares tiers in `.spira/testenv.toml` — declare `ci_entry` on a `queue.local` repository or add `gate.steps`) → preflight (`bash <path>` words
+owns its gate") → empty gate string (PASS `syntax-only`, column only; NO_VERDICT `certifies-nothing` when the repository declares tiers in `.spira/testenv.toml` — declare `ci_entry` on a `queue.local` repository or add `gate.steps`; under queue.forge the landing pass records it on the row and the item enters its batch provisionally) → preflight (`bash <path>` words
 exist on the base for a column, on the revision under test for a tree definition) → key →
 cache → admission →
 sweep → tree lock → checkout the gate revision (proved by `rev-parse HEAD`) → **composition**
@@ -500,11 +500,17 @@ Each failing test is judged on the rerun output: **flip** (a `PASS [` / `... ok`
 
 * A flip with a test id (`ports::flip_test_id`) gets what the round gives one
   (`flip.rs`, shared with `batcher-cut`): a fix bead filed `--for batcher`, then a seven-day
-  `test-registry` row naming that bead, actor `gate`. If every failing test flipped the verdict is
+  `test-registry` row naming that bead, actor `gate`. If every failing test flipped, none held back, the verdict is
   PASS and says `gate: flipped — <test> red, then green on a rerun of the same tree; disabled
   until <date>, fix bead <id>` per test. A refused filing or row is NO_VERDICT `flip-unrecorded`:
   a flip is never passed without its record. A flip with no id cannot hold a row and stays the
   branch's red.
+* One gate records at most 3 flips (`MAX_GATE_FLIPS`, law-a-detector-files-a-bounded-batch), the
+  first in first-run order. Every flipped test after the third row gets no bead and no row, the
+  message adds `gate: held back by the flip cap (3): <tests>`, and the item goes back as FAIL:
+  that many flips is the box, not the tests. Held tests are the one exception to
+  law-a-flipping-test-is-disabled-by-a-registry-row. The FAIL and the line are the unattributed
+  `branch-red` path's: the cross-bead PASS and the base-fences-red FAIL keep their own messages.
 * Any red-twice or unproven test sends the item back as FAIL `branch-red`, the message adding
   `gate: red twice on the same tree <T>: <tests>` and/or `gate: not rerun: <tests>`. Rows for
   flips among them are still written. A red the cross-bead detector (`shared_unit_red`) matches
@@ -512,9 +518,9 @@ Each failing test is judged on the rerun output: **flip** (a `PASS [` / `... ok`
 * A fences or suites composition, a red beside a red fence or a failed build, never reruns.
 * `flip.rs` calls `bead.sh` and `test-registry` through the bounded runner (60 s each) for both the gate and the round.
 
-Records: gate.log ends ` reruns=<test>:<red|timeout>/<green|red|timeout|unrun>,…`; the
+Records: gate.log ends ` reruns=<test>:<red|timeout>/<green|red|timeout|unrun|held>,…`; the
 `gate-run` row carries the same text as `reruns`; `spira_gate_test_reruns{repo,result}` counts one
-per rerun test (`result` is `flip|red-twice|unproven`; no test or bead label). `unit_run_secs`
+per rerun test (`result` is `flip|red-twice|unproven|held`; no test or bead label). `unit_run_secs`
 stays the first run's wall; the Grafana panel "Gate test reruns by result (1d)" plots the counter.
 
 ### What it records (for item 7)
@@ -1081,12 +1087,11 @@ filter hold to).
   exact tree already pass," not "is the base independently red on this suite").
 * **`harness` and `image` are recorded and checked on every read** (`basecache::fresh`),
   because the base tree not moving does not mean nothing that could change a suite's answer
-  has: a new gate binary, or a rebuilt testenv container from the *same* tree content (an
-  external pin — `testenv`'s own `bd_pin`, DESIGN.md of `testenv` — is not itself in the tree).
+  has: a new gate binary, or a rebuilt testenv container from the *same* tree content.
   An entry recorded under either differing is a miss, never trusted with the right suite name
   attached to the wrong answer.
 * **The testenv image tag** is `testenv container tag` (`testenv/src/container.rs`'s
-  `Driver::image_tag`, a pure hash of `testenv/Containerfile` + `deps.toml` + the `bd_pin`),
+  `Driver::image_tag`, a pure hash of `testenv/Containerfile` + `deps.toml`),
   invoked once per base trial that has at least one non-absent red suite to ask about — never
   on a PASS, never on a red whose suites are all absent — via the same `World::run_gate` port
   already used for the targeted rerun, bare `testenv` on PATH (no tree-built binary; the

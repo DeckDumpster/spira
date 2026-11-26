@@ -314,6 +314,12 @@ phase=gate; `land_mark GATING tip`; run the gate. Then by outcome:
 
 - **FAIL/BASE_FAIL/NO_VERDICT** → log `certification gate <OUTCOME> …`, `land_mark GATED tip
   <OUTCOME>:<reason>`.
+  - NO_VERDICT `reason=certifies-nothing` → no incident, no hold, back off the tip for
+    `noverdict_class_window`. `queue`: first `certify <id> <tip> nothing` (a row at another tip is
+    resubmitted and offered it again, only while the branch is still at the gated tip); a refusal
+    backs off only `gate_backoff`. `$SPIRA_RUN/certifies-nothing/<branch>` records the tip such a
+    back-off rests on the row's mark for: a row found without the mark (a closed batch's requeue)
+    lifts the back-off and is gated again. `queue.local` records nothing.
   - BASE_FAIL: "held — the base fails its own gate (suite S)"; a base-fix branch green on its
     suite, or (S=`-`, a fence red with no suite named) green on every suite
     (`basefail_fix_decision`) → re-read status, closed → `CERTIFIED` + submitted

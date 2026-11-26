@@ -32,8 +32,7 @@ fn run_main() -> ExitCode {
     };
 
     // THE SHARED INIT GUARD (skew.sh's own `trap ... EXIT` around sourcing lib.sh, which
-    // itself sources conf.sh): a conf.sh that cannot even source — e.g. `bd migrate schema`
-    // failing on a locked database — must be "could not check" (exit 3), never read as a
+    // itself sources conf.sh): a conf.sh that cannot even source must be "could not check" (exit 3), never read as a
     // real verdict from whichever subcommand happens to run next on empty data. Checked
     // once, before dispatch, exactly where skew.sh's own trap fired: before its `case`.
     if let Some(rc) = skew::init_verdict(skew::real::config_resolves()) {

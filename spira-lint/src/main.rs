@@ -1,4 +1,4 @@
-//! spira-lint [--root <dir>] [--only <rule>] [--base <rev>] [--findings <file>] [--deny-list <file>]
+//! spira-lint [--root <dir>] [--only <rule>] [--base <rev>] [--findings <file>] [--deny-list <file>] [--gate-bead <id>]
 //! spira-lint --only inventory --scan <file>
 //!
 //! Exit: 0 clean, 1 any finding, 2 usage, 3 a rule refused to report clean,
@@ -15,6 +15,9 @@
 //!
 //! `--deny-list <file>` is the registry `test-id-row-orphan` reads (the gate passes its `SPIRA_TEST_DENY_LIST`); an empty
 //! or missing value exits 2. Without the flag the rule reads nothing and reports `none configured`.
+//!
+//! `--gate-bead <id>` is the item the gate is judging (it passes its `SPIRA_GATE_BEAD`); `test-id-row-orphan` lets that
+//! item delete its own disabled test. An empty value names no item (a gate run by hand); a missing value exits 2.
 //!
 //! `--base` defaults to `SPIRA_GATE_BASE` (the gate sets it). On a clean run the positive
 //! controls go to stderr: one `fence: <rule> checked <n> <unit>` per rule that reports one,
@@ -34,7 +37,7 @@ use std::process::ExitCode;
 
 use spira_lint::{all_rules, run, Tree};
 
-const USAGE: &str = "usage: spira-lint [--root <dir>] [--only <rule>] [--base <rev> | --diff <rev>] [--emit-allow] [--findings <file>] [--deny-list <file>]\n       spira-lint --only inventory --scan <file>";
+const USAGE: &str = "usage: spira-lint [--root <dir>] [--only <rule>] [--base <rev> | --diff <rev>] [--emit-allow] [--findings <file>] [--deny-list <file>] [--gate-bead <id>]\n       spira-lint --only inventory --scan <file>";
 
 fn default_root() -> Option<PathBuf> {
     let out = spira_config::bounded::bounded("git")
@@ -69,6 +72,7 @@ struct Args {
     emit_allow: bool,
     findings_file: Option<PathBuf>,
     deny_list: Option<String>,
+    gate_bead: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -104,6 +108,10 @@ fn parse_args(
                     return Err("spira-lint: --deny-list names no file — the caller handed no deny list (SPIRA_TEST_DENY_LIST); refusing to check test-id-row-orphan against none".into())
                 }
             },
+            "--gate-bead" => match args.next() {
+                Some(v) => out.gate_bead = Some(v).filter(|v| !v.is_empty()),
+                None => return Err(format!("spira-lint: --gate-bead takes an item id, or an empty value for none\n{USAGE}")),
+            },
             "-h" | "--help" => return Ok(Parsed::Help),
             _ => return Err(format!("spira-lint: unknown argument {a}\n{USAGE}")),
         }
@@ -135,6 +143,7 @@ fn real_main() -> ExitCode {
         emit_allow,
         findings_file,
         deny_list,
+        gate_bead,
     } = parsed;
     if let Some(file) = scan {
         if only.as_deref() != Some("inventory") {
@@ -184,7 +193,10 @@ fn real_main() -> ExitCode {
         return ExitCode::from(3);
     };
     let tree = match Tree::from_git(&root) {
-        Ok(t) => t.with_base(base).with_deny_list(deny_list),
+        Ok(t) => t
+            .with_base(base)
+            .with_deny_list(deny_list)
+            .with_gate_bead(gate_bead),
         Err(e) => {
             eprintln!("spira-lint: {e}");
             return ExitCode::from(4);
@@ -355,5 +367,19 @@ mod tests {
             panic!()
         };
         assert_eq!(a.deny_list.as_deref(), Some("x/deny"));
+    }
+
+    #[test_id(tsd5s6w)]
+    #[test]
+    fn the_gated_item_is_carried_and_an_empty_value_names_none() {
+        for (value, want) in [("sp-x", Some("sp-x")), ("", None)] {
+            let Ok(Parsed::Run(a)) = parse_args(argv(&["--gate-bead", value]), None) else {
+                panic!("{value:?}")
+            };
+            assert_eq!(a.gate_bead.as_deref(), want);
+        }
+        let e = parse_args(argv(&["--gate-bead"]), None).unwrap_err();
+        assert!(e.contains("--gate-bead"), "{e}");
+        assert!(USAGE.contains("--gate-bead <id>"), "{USAGE}");
     }
 }

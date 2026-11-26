@@ -169,15 +169,10 @@ the bd meter (bdmeter.rs), whose canonical path is `bd-meter`; `Tools::resolve` 
 is the one testenv built during setup (not a second 4 s build under the template lock, keyed
 on the meter's mtime).
 
-**The bd path is absolute.** conf.sh caches its `bd migrate schema` check in
-`$SPIRA_RUN/bd-schema-stamp`, keyed on `stat "$SPIRA_BD"`. `testdb_up` exported a bare
-`SPIRA_BD=bd` (server) or `bd-embedded` (shared baseline), which never stats, so **every**
-conf.sh source by a script the code under test spawns (landing-pass → `skew.sh refresh`,
-`systemd/unit-ensure.sh`, `watchd manifest|units`, …) re-ran the check: 123 of
-test-certify's 231 bd calls were `migrate schema`. `up` now prints `TESTDB_BD`, the absolute
-path of B as found on the caller's PATH **without** resolving links (inside a metered suite
-it is the meter's link, so calls stay metered), and `testdb.sh` exports it as `SPIRA_BD`
-(call-site: it reads the value, as it reads `TESTDB_DIR`).
+**The bd path is absolute.** `up` prints `TESTDB_BD`, the absolute path of B as found on the
+caller's PATH **without** resolving links (inside a metered suite it is the meter's link, so
+calls stay metered), and `testdb.sh` exports it as `SPIRA_BD` (call-site: it reads the value,
+as it reads `TESTDB_DIR`).
 
 **The server path finds testenv however a suite repoints.** `testdb.sh` resolves the binary
 with `spira_bin testenv`, which a suite that points `SPIRA_REPO`/`SPIRA_HOME` at a fixture

@@ -1328,24 +1328,9 @@ mod tests {
         }
     }
 
-    #[test_id(tcvjlz5)]
-    #[test]
-    fn every_table_a_write_statement_changes_is_one_the_writer_is_granted() {
-        let all: std::collections::BTreeSet<String> = ["issues", "labels", "comments", "events", "dependencies", "child_counters", "config", "leases", "local_metadata", "wisps"].iter().map(|t| t.to_string()).collect();
-        let granted = crate::admin_writer::written(&all).unwrap();
-        let mut seen = 0;
-        let mut check = |what: &str, sql: &str| {
-            let head = sql.split_whitespace().next().unwrap_or("").to_ascii_uppercase();
-            let writes = matches!(head.as_str(), "INSERT" | "REPLACE" | "UPDATE" | "DELETE");
-            match tables_written(sql) {
-                Some((_, t)) => {
-                    seen += 1;
-                    let table = t.rsplit('.').next().unwrap();
-                    assert!(granted.contains(&table), "{what} writes {t}, which admin-provision-writer does not grant: {sql}");
-                }
-                None => assert!(!writes, "{what}: tables_written cannot read the table of: {sql}"),
-            }
-        };
+    /// Every statement the door's writes generate, each with the write that sends it.
+    fn door_statements() -> Vec<(String, String)> {
+        let mut all = Vec::new();
         for (argv, body) in [
             (&["create", "T", "--type", "task", "--labels", "repo:spira", "--silent"][..], None),
             (&["create", "--parent", "sp-e", "--silent", "--title", "T"], None),
@@ -1367,12 +1352,96 @@ mod tests {
             (&["gate", "resolve", "sp-a"], None),
         ] {
             let m = Mutation::of(&v(argv), body).unwrap();
-            for sql in m.script("`beads`") {
-                check(&verb_of(&m.argv), &sql);
+            if let Some(c) = m.create() {
+                let child = c.parent.clone().map(|p| (p, 1));
+                all.extend(create_script("`beads`", &Env::default(), c, "sp-n", &["l".to_string()], child.as_ref(), &["sp-n".to_string()]).into_iter().map(|q| ("create".to_string(), q)));
+            }
+            all.extend(m.script("`beads`").into_iter().map(|q| (verb_of(&m.argv), q)));
+        }
+        all.extend(verbs::tests::standalone_statements("`beads`").into_iter().map(|q| ("a standalone verb".to_string(), q)));
+        all
+    }
+
+    /// `text` cut at each `sep` that sits outside quotes and parentheses.
+    fn top_level(text: &str, sep: char) -> Vec<&str> {
+        let (mut depth, mut quoted, mut from) = (0i32, false, 0);
+        let mut parts = Vec::new();
+        for (i, c) in text.char_indices() {
+            match c {
+                '\'' => quoted = !quoted,
+                '(' if !quoted => depth += 1,
+                ')' if !quoted => depth -= 1,
+                c if c == sep && !quoted && depth == 0 => {
+                    parts.push(&text[from..i]);
+                    from = i + 1;
+                }
+                _ => {}
             }
         }
-        for sql in verbs::tests::standalone_statements("`beads`") {
-            check("a standalone verb", &sql);
+        parts.push(&text[from..]);
+        parts
+    }
+
+    /// The table a statement writes and the columns it assigns.
+    fn assigned(sql: &str) -> Option<(String, Vec<String>)> {
+        let (_, table) = tables_written(sql)?;
+        let table = table.rsplit('.').next()?.to_string();
+        let column = |c: &str| c.trim().trim_start_matches("i.").trim_matches('`').to_string();
+        let columns = if sql.starts_with("INSERT") || sql.starts_with("REPLACE") {
+            sql.split_once('(')?.1.split_once(')')?.0.split(',').map(column).collect()
+        } else if sql.starts_with("UPDATE") {
+            let set = sql.split_once(" SET ")?.1;
+            let mut assignments = Vec::new();
+            for part in top_level(set, ',') {
+                let part = part.split(" WHERE ").next()?;
+                assignments.push(column(part.split_once('=')?.0));
+            }
+            assignments
+        } else {
+            Vec::new()
+        };
+        Some((table, columns))
+    }
+
+    #[test_id(tx2rnv4)]
+    #[test]
+    fn every_column_a_write_statement_assigns_is_one_the_store_check_asks_for() {
+        let have = std::collections::BTreeSet::new();
+        let mut listed: std::collections::BTreeSet<String> = crate::admin_writer::missing_columns(&have).into_iter().collect();
+        listed.extend(["leases.issue_id", "local_metadata.key", "local_metadata.value"].map(str::to_string));
+        assert!(!listed.contains("issues.planted"));
+        assert_eq!(assigned("UPDATE `d`.issues SET planted = CONCAT('a, b = c', x), title = 'y' WHERE id = 'z'"), Some(("issues".to_string(), vec!["planted".to_string(), "title".to_string()])));
+        let mut seen = 0;
+        for (what, sql) in door_statements() {
+            let Some((table, columns)) = assigned(&sql) else { continue };
+            for c in columns {
+                seen += 1;
+                assert!(listed.contains(&format!("{table}.{c}")), "{what} writes {table}.{c}, which `admin-store check` does not ask for: {sql}");
+            }
+        }
+        assert!(seen > 100, "the check read {seen} columns");
+    }
+
+    #[test_id(tcvjlz5)]
+    #[test]
+    fn every_table_a_write_statement_changes_is_one_the_writer_is_granted() {
+        let all: std::collections::BTreeSet<String> = ["issues", "labels", "comments", "events", "dependencies", "child_counters", "config", "leases", "local_metadata", "wisps"].iter().map(|t| t.to_string()).collect();
+        let granted = crate::admin_writer::written(&all).unwrap();
+        let mut seen = 0;
+        let mut check = |what: &str, sql: &str| {
+            let head = sql.split_whitespace().next().unwrap_or("").to_ascii_uppercase();
+            let writes = matches!(head.as_str(), "INSERT" | "REPLACE" | "UPDATE" | "DELETE");
+            match tables_written(sql) {
+                Some((_, t)) => {
+                    seen += 1;
+                    let table = t.rsplit('.').next().unwrap();
+                    assert!(granted.contains(&table), "{what} writes {t}, which admin-provision-writer does not grant: {sql}");
+                }
+                None => assert!(!writes, "{what}: tables_written cannot read the table of: {sql}"),
+            }
+        };
+        for (what, sql) in door_statements() {
+            check(&what, &sql);
         }
         assert!(seen > 20, "the check read {seen} statements");
         assert_eq!(tables_written("INSERT IGNORE INTO `d`.dependencies (a) VALUES (1)"), Some(("INSERT", "d.dependencies".to_string())));

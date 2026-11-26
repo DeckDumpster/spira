@@ -13,7 +13,7 @@ Every harness process resolves each setting with the precedence environment > sp
 | Group | UCs | Tier | Suites |
 |---|---|---|---|
 | A. Configuration resolution | 01–08 | T1 (14 is T0) | test-conf, test-configure, test-cockpit-runtime-path, spira-config/tests/fresh_clone.rs (06), test-bin-manifest, test-watchd-unit-name |
-| B. Store binding and schema guard | 09–11 | T1 | test-bd-resolve, test-bd-lock-retry, test-bd-schema-stamp |
+| B. Store binding and schema guard | 09 | T1 | release/tests/pre_activate_store.rs, spira-config/tests/deploy_script.rs |
 | C. Repo-map, labels, partitions, containment | 12–18 | T0–T1 | test-repo-map, test-runes-repo-labels, test-builder-qa-proposed, test-czar-partition, test-containment, test-id-prefix |
 | D. Schema declaration and application | 19–22 | T1–T3 | test-schema, test-schema-apply |
 | E. Store provisioning and push | 23–26 | T1–T2 | test-install-dolt-port-wait |
@@ -25,7 +25,7 @@ This page lands the catalogue and the `# tier:` / `# covers:` tags on the surviv
 
 - **Doctor rows (27–32, 34): superseded.** The bash `test-doctor-*.sh` suites are gone; doctor is a Rust crate whose tests are `doctor/src/tests.rs`. Those UCs are marked uncovered (not deleted) until a suite declares them.
 - **Config parsing (02, repo-map readers, rune readers):** moved to `spira-config`; its tests are Rust. UC-02 stays an explicit gap (a malformed or inline-commented `spira.conf` row).
-- **S1 done (UC-09/11):** `spira_config::env_bootstrap::schema_verdict` is the pure classifier behind `conf.sh`'s `check-bd`; its T1 table is `schema_verdict_table` in `spira-config/src/env_bootstrap.rs`.
+- **UC-09:** the store's layout is judged by `spira-lc admin-store check`, tested against a real server in `spira-lc/tests/content_writes.rs`.
 - **Not done here, still open:** the merges of bd-resolve/bd-lock-retry into test-conf and of repo-label/lanes into one repo-map suite, the retired bd-contract suite (UC-25), the S5 containment injection and S6 source-time cost work, and the gaps G3–G12. They change production code or retire suites that other branches touch (`spira/conf.sh`, `spira/lib.sh` are in flight on other beads), so they are filed as follow-ups rather than done blind.
 - **Missing suites** named by the old plan (test-roster-warn, test-schema-migration-guard, test-literal-lint, test-install-bd-init-cwd) no longer exist; UCs 17, 22 and 23 are marked uncovered.
 

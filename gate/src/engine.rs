@@ -174,6 +174,11 @@ struct State {
     ran: String,
 }
 
+/// The most flips one gate records: past it the box is the problem, not the tests
+/// (law-a-detector-files-a-bounded-batch). The round's own bound is `MAX_FLIP_TESTS` in
+/// `batcher/src/drive.rs`.
+const MAX_GATE_FLIPS: usize = 3;
+
 /// The one discriminating rerun of a red unit test phase (DESIGN.md "The rerun of a red test"):
 /// the failing tests run once more on the same tree under the same nextest config. A test
 /// green on the rerun is a flip: fix bead filed, registry row written, verdict stands without
@@ -225,7 +230,17 @@ fn rerun_red_tests<W: World>(w: &W, at: RerunScope, name: &str, cmd: &str) -> Re
     }
     let mut notes = String::new();
     let bead = if at.bead.is_empty() { "an unnamed branch".to_string() } else { at.bead.to_string() };
+    let mut held = Vec::new();
     for t in std::mem::take(&mut flipped) {
+        if flipped.len() == MAX_GATE_FLIPS {
+            let first = parse::red_kind(at.out, &t);
+            let green = format!("{t}:{first}/green");
+            for e in at.reruns.iter_mut().filter(|e| **e == green) {
+                *e = format!("{t}:{first}/held");
+            }
+            held.push(t);
+            continue;
+        }
         let Some(id) = crate::ports::flip_test_id(&t) else {
             unrecorded.push(t);
             continue;
@@ -247,7 +262,7 @@ fn rerun_red_tests<W: World>(w: &W, at: RerunScope, name: &str, cmd: &str) -> Re
         notes.push('\n');
         flipped.push(t);
     }
-    if twice.is_empty() && unproven.is_empty() && unrecorded.is_empty() {
+    if twice.is_empty() && unproven.is_empty() && unrecorded.is_empty() && held.is_empty() {
         return Err(v(PASS, "pass", format!("gate: {name}'s own gate failed: {cmd}\n{}\n{notes}", at.out)));
     }
     let spaced = |l: &[String]| l.join(" ");
@@ -261,6 +276,12 @@ fn rerun_red_tests<W: World>(w: &W, at: RerunScope, name: &str, cmd: &str) -> Re
     }
     if !unrecorded.is_empty() {
         tail.push_str(&format!("gate: flipped but carries no test id, so no registry row can hold it: {}\n", spaced(&unrecorded)));
+    }
+    if !held.is_empty() {
+        let line = format!("gate: held back by the flip cap ({MAX_GATE_FLIPS}): {} — more flips than the cap in one gate is the box, not the tests; no row, no bead", spaced(&held));
+        w.eprint(&line);
+        tail.push_str(&line);
+        tail.push('\n');
     }
     Ok(format!("\n{}", tail.trim_end()))
 }
@@ -941,6 +962,7 @@ impl<'w, W: World> Trial<'w, W> {
                 e("SPIRA_GATE_REPO_NAME", &name),
                 e("SPIRA_GATE_BRANCH", branch),
                 e("SPIRA_GATE_BASE", &base_rev),
+                e("SPIRA_GATE_BEAD", &self.s.bead),
                 e("SPIRA_GATE_SELECT_HEAD", &br),
                 e(
                     "SPIRA_GATE_FILES",
@@ -1036,7 +1058,7 @@ impl<'w, W: World> Trial<'w, W> {
             let rem = deadline.saturating_sub(spent).max(1);
             key::digits(&timeout).map_or(rem, |t| t.min(rem)).to_string()
         };
-        let fkey = self.fences_key(&want_tree);
+        let fkey = self.fences_key(&want_tree, &limits.deny);
         let mut mark_err: Option<String> = None;
         let tiers_file = self.s.tiers_file.clone();
         let (rc, out, ph, tiers) = {
@@ -1377,7 +1399,7 @@ impl<'w, W: World> Trial<'w, W> {
             } else {
                 base_cmd
             };
-            let base_fkey = self.fences_key(&base_tree);
+            let base_fkey = self.fences_key(&base_tree, &limits.deny);
             let (r, o, ph) = run_composed(
                 w,
                 &tree,
@@ -1870,9 +1892,11 @@ impl<'w, W: World> Trial<'w, W> {
             .and_then(|j| compose::parse_metadata(&j))
     }
 
-    fn fences_key(&self, tree: &str) -> Option<crate::fencecache::Key> {
+    fn fences_key(&self, tree: &str, deny: &spira_config::unit_tier::DenyList) -> Option<crate::fencecache::Key> {
+        let owns_a_row = deny.test_rows().iter().any(|(_, _, owner)| *owner == self.s.bead);
+        let exempt = if owns_a_row { self.s.bead.clone() } else { String::new() };
         crate::fencecache::path(&self.s.verdict_dir, &self.s.repo_name, tree)
-            .map(|path| crate::fencecache::Key { path, harness: self.s.harness_h.clone() })
+            .map(|path| crate::fencecache::Key { path, harness: self.s.harness_h.clone(), exempt })
     }
 
     /// `gate_at`: through the port, which proves HEAD == want.
@@ -2892,7 +2916,7 @@ pub fn run_composed<W: World>(
     let mut fences_rc = 0;
     let proved = fences
         .filter(|_| comp.suites_off())
-        .and_then(|k| w.read(&k.path).and_then(|e| crate::fencecache::fresh(&e, &k.harness, &cmd)));
+        .and_then(|k| w.read(&k.path).and_then(|e| crate::fencecache::fresh(&e, &k.harness, &k.exempt, &cmd)));
     let declared = build_phase.is_some();
     let share_key: String = tree
         .file_name()
@@ -2937,7 +2961,7 @@ pub fn run_composed<W: World>(
                 if fence::silent(&fence::expected(cmd), &out).is_empty() {
                     if let (Some(dir), Some(name)) = (k.path.parent(), k.path.file_name().and_then(|n| n.to_str())) {
                         w.mkdir_p(dir);
-                        w.write_atomic(dir, name, &crate::fencecache::render(&k.harness, cmd, &out));
+                        w.write_atomic(dir, name, &crate::fencecache::render(&k.harness, &k.exempt, cmd, &out));
                     }
                 }
             }

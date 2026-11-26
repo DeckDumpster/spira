@@ -312,6 +312,22 @@ pub const FROM_SUBMITTED: &str = "delivered-from-submitted";
 pub fn provisional(state: BeadState, reason: Option<&str>) -> bool {
     state == BeadState::InDelivery && reason == Some(FROM_SUBMITTED)
 }
+/// Recorded in `reason` on a SUBMITTED row whose gate ran nothing for the tests its repository
+/// declares: a batch may take it provisionally, and its PR's CI is its check.
+pub const CERTIFIES_NOTHING_MARK: &str = "gate-certifies-nothing";
+
+/// A SUBMITTED row the gate could certify nothing about, at its current tip.
+pub fn certifies_nothing(state: BeadState, reason: Option<&str>) -> bool {
+    state == BeadState::Submitted && reason == Some(CERTIFIES_NOTHING_MARK)
+}
+
+/// The mark is about one tip: a move that changes the tip, or a verdict that supersedes it, drops it.
+fn retire_certifies_nothing(row: &mut LifecycleRow) {
+    if row.reason.as_deref() == Some(CERTIFIES_NOTHING_MARK) {
+        row.reason = None;
+    }
+}
+
 /// Prefix of the reason an IN_DELIVERY row carries once a red gate verdict at its tip arrived.
 pub const GATE_RED_MARK: &str = "gate-red: ";
 
@@ -343,6 +359,9 @@ pub enum BeadEventKind {
     /// line); absent on a red whose producer saw neither.
     GateRed { tip: String, reason: GateRedReason, #[serde(default, skip_serializing_if = "Option::is_none")] step: Option<String>, #[serde(default, skip_serializing_if = "Option::is_none")] message: Option<String> },
     GateInfra { tip: String },
+    /// The gate at `tip` certifies nothing: no verdict on the tree, recorded as
+    /// [`CERTIFIES_NOTHING_MARK`]. The state does not move.
+    GateNothing { tip: String },
     Deliver,
     Delivered { merge_sha: String, proof: String },
     Returned { reason: ReturnedReason },
@@ -831,6 +850,9 @@ fn apply_transition(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow>
             }
             let mut new = row.clone();
             new.state = BeadState::Submitted;
+            if new.tip.as_deref() != Some(tip.as_str()) {
+                retire_certifies_nothing(&mut new);
+            }
             new.tip = Some(tip.clone());
             new.stack = stack.clone();
             new.stack_depth = *stack_depth;
@@ -927,6 +949,7 @@ fn apply_transition(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow>
         | BeadEventKind::GatePass { .. }
         | BeadEventKind::GateRed { .. }
         | BeadEventKind::GateInfra { .. }
+        | BeadEventKind::GateNothing { .. }
         | BeadEventKind::Deliver
         | BeadEventKind::Delivered { .. }
         | BeadEventKind::Returned { .. }
@@ -1066,7 +1089,7 @@ fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifec
                 Outcome::applied(new)
             }
             Release | HolderDead | Submit { .. } | GatePass { .. } | GateRed { .. }
-            | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
+            | GateInfra { .. } | GateNothing { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Takeover { .. } | TakeoverEnd { .. } => illegal(row, kind),
         },
 
@@ -1141,7 +1164,7 @@ fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifec
                 Outcome::applied(new)
             }
             Delivered { merge_sha, proof: _ } => landed_under_holder(row, merge_sha),
-            Claim { .. } | GatePass { .. } | GateRed { .. } | GateInfra { .. } | Deliver
+            Claim { .. } | GatePass { .. } | GateRed { .. } | GateInfra { .. } | GateNothing { .. } | Deliver
             | Returned { .. } | Requeued { .. }
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Takeover { .. } | TakeoverEnd { .. } | Resubmit { .. } => illegal(row, kind),
         },
@@ -1156,6 +1179,7 @@ fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifec
                 if row.tip.as_deref() != Some(tip.as_str()) {
                     new.tip = Some(tip.clone());
                     new.gate_key = None;
+                    retire_certifies_nothing(&mut new);
                 }
                 new.version += 1;
                 Outcome::applied(new)
@@ -1169,6 +1193,7 @@ fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifec
                 new.holds.remove(&HoldKind::Wait);
                 new.state = BeadState::Certified;
                 new.gate_key = Some(gate_key.clone());
+                retire_certifies_nothing(&mut new);
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -1217,6 +1242,15 @@ fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifec
                 // version, because the row was written (an infra-failure attempt is
                 // recorded, even though it changes no field a caller can see).
                 let mut new = row.clone();
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            GateNothing { tip } => {
+                if row.tip.as_deref() != Some(tip.as_str()) {
+                    return tip_mismatch(row, tip);
+                }
+                let mut new = row.clone();
+                new.reason = Some(CERTIFIES_NOTHING_MARK.to_string());
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -1295,7 +1329,7 @@ fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifec
                 Outcome::applied(new)
             }
             Claim { .. } | Release | HolderDead | Done { .. } | GatePass { .. }
-            | GateInfra { .. } | Delivered { .. } | Returned { .. } | Requeued { .. }
+            | GateInfra { .. } | GateNothing { .. } | Delivered { .. } | Returned { .. } | Requeued { .. }
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Takeover { .. } | TakeoverEnd { .. } | Resubmit { .. } => {
                 illegal(row, kind)
             }
@@ -1368,7 +1402,7 @@ fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifec
                 Outcome::applied(new)
             }
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
-            | GateInfra { .. } | Deliver
+            | GateInfra { .. } | GateNothing { .. } | Deliver
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Takeover { .. } | TakeoverEnd { .. } | Resubmit { .. } => illegal(row, kind),
         },
 
@@ -1424,7 +1458,7 @@ fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifec
             }
             Delivered { merge_sha, proof: _ } => landed_under_holder(row, merge_sha),
             Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. } | GateRed { .. }
-            | GateInfra { .. } | Deliver | Returned { .. } | Requeued { .. }
+            | GateInfra { .. } | GateNothing { .. } | Deliver | Returned { .. } | Requeued { .. }
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Takeover { .. } | TakeoverEnd { .. } => illegal(row, kind),
         },
 
@@ -1436,7 +1470,7 @@ fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifec
         // own terms, without relying on that caller behavior.)
         BeadState::Landed | BeadState::Superseded | BeadState::Dropped | BeadState::Done => match kind {
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
-            | GateRed { .. } | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. }
+            | GateRed { .. } | GateInfra { .. } | GateNothing { .. } | Deliver | Delivered { .. } | Returned { .. }
             | Requeued { .. } | BaseWithdrawn { .. } | PrereqLanded { .. }
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Takeover { .. } | TakeoverEnd { .. } | Resubmit { .. } => terminal(row),
         },
@@ -1557,6 +1591,7 @@ fn kind_name(kind: &BeadEventKind) -> &'static str {
         BeadEventKind::GatePass { .. } => "GatePass",
         BeadEventKind::GateRed { .. } => "GateRed",
         BeadEventKind::GateInfra { .. } => "GateInfra",
+        BeadEventKind::GateNothing { .. } => "GateNothing",
         BeadEventKind::Deliver => "Deliver",
         BeadEventKind::Delivered { .. } => "Delivered",
         BeadEventKind::Returned { .. } => "Returned",
@@ -1603,6 +1638,7 @@ fn edge_probes() -> Vec<BeadEventKind> {
         BeadEventKind::GatePass { tip: TIP.into(), gate_key: "k".into() },
         BeadEventKind::GateRed { tip: TIP.into(), reason: GateRedReason::SuitesFailed, step: None, message: None },
         BeadEventKind::GateInfra { tip: TIP.into() },
+        BeadEventKind::GateNothing { tip: TIP.into() },
         BeadEventKind::Deliver,
         BeadEventKind::Delivered { merge_sha: "s".into(), proof: "p".into() },
         BeadEventKind::Returned { reason: ReturnedReason::PushRejected },
@@ -1731,6 +1767,7 @@ mod tests {
             BeadEventKind::GatePass { tip: "1111111111111111111111111111111111111111".into(), gate_key: "k".into() },
             BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::SuitesFailed, step: None, message: None },
             BeadEventKind::GateInfra { tip: "1111111111111111111111111111111111111111".into() },
+            BeadEventKind::GateNothing { tip: "1111111111111111111111111111111111111111".into() },
             BeadEventKind::Deliver,
             BeadEventKind::Delivered { merge_sha: "s".into(), proof: "p".into() },
             BeadEventKind::Returned { reason: ReturnedReason::PushRejected },
@@ -2522,6 +2559,45 @@ mod tests {
         both.holds.insert(HoldKind::Ask);
         let pass = go(&both, BeadEventKind::GatePass { tip: TIP.into(), gate_key: "k".into() });
         assert!(pass.row.holds.contains(&HoldKind::Ask) && !pass.row.holds.contains(&HoldKind::Wait));
+    }
+
+    #[test_id(to0m9vv)]
+    #[test]
+    fn a_gate_that_certifies_nothing_marks_the_submitted_row_about_its_current_tip_only() {
+        let mut submitted = row(BeadState::Submitted);
+        submitted.tip = Some(TIP.into());
+        let go = |r: &LifecycleRow, kind: BeadEventKind| apply(r, &ev(r.state, r.version, kind));
+
+        let other = go(&submitted, BeadEventKind::GateNothing { tip: OTHER_TIP.into() });
+        assert!(matches!(other.refusal, Some(Refusal::TipMismatch { .. })), "{:?}", other.refusal);
+        assert_eq!(other.row.reason, None);
+
+        let marked = go(&submitted, BeadEventKind::GateNothing { tip: TIP.into() });
+        assert!(marked.applied, "{:?}", marked.refusal);
+        assert_eq!((marked.row.state, marked.row.reason.as_deref(), marked.row.version), (BeadState::Submitted, Some(CERTIFIES_NOTHING_MARK), submitted.version + 1));
+        assert_eq!(marked.row.gate_key, None);
+        assert!(certifies_nothing(marked.row.state, marked.row.reason.as_deref()));
+
+        let mut certified = submitted.clone();
+        certified.state = BeadState::Certified;
+        let refused = go(&certified, BeadEventKind::GateNothing { tip: TIP.into() });
+        assert!(matches!(refused.refusal, Some(Refusal::IllegalTransition { .. })), "{:?}", refused.refusal);
+        assert!(!certifies_nothing(BeadState::Certified, Some(CERTIFIES_NOTHING_MARK)));
+
+        let same = go(&marked.row, BeadEventKind::Submit { tip: TIP.into() });
+        assert_eq!(same.row.reason.as_deref(), Some(CERTIFIES_NOTHING_MARK));
+        let moved = go(&marked.row, BeadEventKind::Submit { tip: OTHER_TIP.into() });
+        assert_eq!((moved.row.tip.as_deref(), moved.row.reason.as_deref()), (Some(OTHER_TIP), None));
+
+        let restacked = go(&marked.row, BeadEventKind::Restack { tip: OTHER_TIP.into(), stack: Stack::from([("sp-base".to_string(), "t0".to_string())]), stack_depth: 1 });
+        assert_eq!((restacked.row.tip.as_deref(), restacked.row.reason.as_deref()), (Some(OTHER_TIP), None));
+        let passed = go(&marked.row, BeadEventKind::GatePass { tip: TIP.into(), gate_key: "k".into() });
+        let moved_after_pass = go(&passed.row, BeadEventKind::Submit { tip: OTHER_TIP.into() });
+        assert_eq!((moved_after_pass.row.state, moved_after_pass.row.reason.as_deref()), (BeadState::Submitted, None), "a pass retires the mark");
+
+        let delivered = go(&marked.row, BeadEventKind::Deliver);
+        assert_eq!((delivered.row.state, delivered.row.reason.as_deref()), (BeadState::InDelivery, Some(FROM_SUBMITTED)));
+        assert!(provisional(delivered.row.state, delivered.row.reason.as_deref()));
     }
 
     fn gate_row() -> LifecycleRow {

@@ -25,10 +25,6 @@
 //!                                       reads PATH, HOME, SPIRA_PATH, SPIRA_BD from this
 //!                                       process's own environment, same as `resolve` reads
 //!                                       SPIRA_HOME/SPIRA_REPO from its own
-//!   spira-config check-bd               the cached bd-schema preflight (sp-kfimz); reads
-//!                                       SPIRA_BD, SPIRA_DB, SPIRA_RUN, SPIRA_DOCTOR,
-//!                                       SPIRA_CONF_FILE; exit 1 means the caller must
-//!                                       `exit 1` outright, never just `return`
 //!   spira-config convert-legacy DIR   DIR/spira.conf + repo-map -> DIR/spira.toml, only if absent
 //!   spira-config convert ...            spira.conf + repo-map + *.rune -> spira.toml
 //!   spira-config set <path> <v> <file>  write one value into <file> in place
@@ -482,39 +478,6 @@ fn cmd_env_bootstrap_sh() -> ExitCode {
         spira_config::env_bootstrap::bootstrap_sh(&current_path, &spira_path, &home, &existing_bd)
     );
     ExitCode::SUCCESS
-}
-
-/// `check-bd` (sp-kfimz, "wave 4.6") — the cached bd-schema preflight
-/// ([`spira_config::env_bootstrap::check_bd_schema`]), as a CLI door for `conf.sh`'s own
-/// `spira-config check-bd || exit 1`. `SPIRA_BD`, `SPIRA_DB`, `SPIRA_RUN`, `SPIRA_DOCTOR`
-/// and `SPIRA_CONF_FILE` are read from the environment, passed explicitly by `conf.sh` for
-/// the same not-yet-exported reason `cmd_env_bootstrap_sh` is. Exit code is the whole
-/// contract: 0 means the caller continues (including every tolerated or skipped case — a
-/// missing store, a cache hit, `SPIRA_DOCTOR` tolerating a failure it will itself re-check),
-/// non-zero means `conf.sh` must `exit 1` outright. Every diagnostic line is printed here,
-/// to stderr, so `conf.sh` itself prints nothing further.
-fn cmd_check_bd() -> ExitCode {
-    // Handed explicitly by conf.sh from the resolved config; a missing one is a refusal.
-    let need = |k: &str| env::var(k).ok().filter(|v| !v.is_empty()).ok_or_else(|| format!("spira-config check-bd: {k} was not handed in — refusing"));
-    let (bd, db, run, conf_file) = match (need("SPIRA_BD"), need("SPIRA_DB"), need("SPIRA_RUN"), need("SPIRA_TOML_FILE")) {
-        (Ok(a), Ok(b), Ok(c), Ok(d)) => (a, b, c, d),
-        (a, b, c, d) => {
-            for e in [a.err(), b.err(), c.err(), d.err()].into_iter().flatten() {
-                eprintln!("{e}");
-            }
-            return ExitCode::FAILURE;
-        }
-    };
-    let doctor = env::var("SPIRA_DOCTOR").is_ok_and(|v| !v.is_empty());
-    let result = spira_config::env_bootstrap::check_bd_schema(&bd, &db, &run, doctor, &conf_file);
-    for m in &result.messages {
-        eprintln!("{m}");
-    }
-    if result.refuse {
-        ExitCode::FAILURE
-    } else {
-        ExitCode::SUCCESS
-    }
 }
 
 /// `unit <base> [kind]` / `unit --watch <name>` (sp-wqj3o, "wave 4.10") — `conf.sh`'s own
@@ -1779,7 +1742,7 @@ fn main() -> ExitCode {
     spira_otel::oneshot::begin(endpoint.as_deref(), "spira-config", op);
     let code = dispatch(&args);
     let failed = format!("{code:?}") != format!("{:?}", ExitCode::SUCCESS);
-    if failed && matches!(op, "validate" | "get" | "export" | "resolve" | "env-bootstrap" | "check-bd") {
+    if failed && matches!(op, "validate" | "get" | "export" | "resolve" | "env-bootstrap") {
         spira_otel::oneshot::event("spira_config_resolve_failures", 1, &[]);
     }
     spira_otel::oneshot::finish(code)
@@ -1849,7 +1812,6 @@ fn dispatch(args: &[String]) -> ExitCode {
                 ExitCode::FAILURE
             }
         }
-        Some("check-bd") => cmd_check_bd(),
         Some("convert") => cmd_convert(&args[1..]),
         Some("repo") => cmd_repo(&args[1..]),
         Some("retire") => cmd_retire(&args[1..]),
@@ -1926,7 +1888,7 @@ fn dispatch(args: &[String]) -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: spira-config <validate|get|export|locate|resolve|env-bootstrap|check-bd|\n\
+                "usage: spira-config <validate|get|export|locate|resolve|env-bootstrap|\n\
                  \x20       convert|set|unset|writeback|schema|path-tail|rune|unit|deps|\n\
                  \x20       convert-legacy|migrate|repo> ...\n\
                  \n\
@@ -1937,7 +1899,6 @@ fn dispatch(args: &[String]) -> ExitCode {
                  \x20 locate\n\
                  \x20 resolve --sh|--sh-all [--conf-d DIR] [file]\n\
                  \x20 env-bootstrap --sh\n\
-                 \x20 check-bd\n\
                  \x20 convert --conf F --repo-map F [--rune F]... [--home DIR] [--out F]\n\
                  \x20         [--force-shrink]\n\
                  \x20 convert-legacy <config-dir> [--home DIR] [--rune F]...\n\

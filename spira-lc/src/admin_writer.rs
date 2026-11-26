@@ -16,6 +16,38 @@ const WRITTEN: [&str; 7] = ["issues", "labels", "comments", "events", "dependenc
 /// cells are local state older stores do not carry.
 const WRITTEN_WHEN_PRESENT: [&str; 2] = ["leases", "local_metadata"];
 
+/// The columns the content writer's statements name, for each table of [`WRITTEN`] and
+/// [`WRITTEN_WHEN_PRESENT`]. A write that names a new column adds it here.
+const WRITER_COLUMNS: &[(&str, &[&str])] = &[
+    (
+        "issues",
+        &[
+            "id", "content_hash", "title", "description", "design", "acceptance_criteria", "notes", "status", "priority", "issue_type", "assignee", "owner", "created_at", "created_by", "updated_at", "started_at", "closed_at",
+            "close_reason", "closed_by_session", "external_ref", "spec_id", "work_type", "row_lock", "is_blocked", "ephemeral", "pinned", "estimated_minutes", "metadata", "await_type", "await_id", "timeout_ns",
+        ],
+    ),
+    ("labels", &["issue_id", "label"]),
+    ("comments", &["id", "issue_id", "author", "text", "created_at"]),
+    ("events", &["id", "issue_id", "event_type", "actor", "old_value", "new_value", "comment", "created_at"]),
+    ("dependencies", &["id", "issue_id", "depends_on_issue_id", "depends_on_wisp_id", "depends_on_external", "type", "created_at", "created_by", "metadata", "thread_id"]),
+    ("child_counters", &["parent_id", "last_child"]),
+    ("config", &["key", "value"]),
+    ("leases", &["issue_id"]),
+    ("local_metadata", &["key", "value"]),
+];
+
+/// The `table.column` names the writer needs that `have` lacks. A table of
+/// [`WRITTEN_WHEN_PRESENT`] the store does not carry needs nothing.
+pub(crate) fn missing_columns(have: &BTreeSet<(String, String)>) -> Vec<String> {
+    WRITER_COLUMNS
+        .iter()
+        .filter(|(t, _)| !WRITTEN_WHEN_PRESENT.contains(t) || have.iter().any(|(have_t, _)| have_t == t))
+        .flat_map(|(t, cols)| cols.iter().map(move |c| (t.to_string(), c.to_string())))
+        .filter(|column| !have.contains(column))
+        .map(|(t, c)| format!("{t}.{c}"))
+        .collect()
+}
+
 fn statements(db: &str, user: &str, password: &str, tables: &[&str], readable: &[String]) -> Vec<String> {
     let mut sql = vec![format!("CREATE USER IF NOT EXISTS '{user}'@'%' IDENTIFIED BY '{password}'"), format!("ALTER USER '{user}'@'%' IDENTIFIED BY '{password}'")];
     sql.extend(tables.iter().map(|t| format!("GRANT SELECT, INSERT, UPDATE, DELETE ON {db}.`{t}` TO '{user}'@'%'")));
@@ -237,6 +269,27 @@ mod tests {
         assert!(write.iter().all(|g| g.starts_with("GRANT SELECT, INSERT, UPDATE, DELETE ON `beadsdb`.`") && g.ends_with("TO 'wr'@'%'")), "{grants:?}");
         assert_eq!(read.iter().map(|g| g.as_str()).collect::<Vec<_>>(), ["GRANT SELECT ON `beadsdb`.`wisps` TO 'wr'@'%'"], "every other table is readable, not writable");
         assert!(!seen.iter().any(|q| q.contains(" ALL")), "no blanket grant");
+    }
+
+    #[test_id(tcaeull)]
+    #[test]
+    fn every_table_the_writer_is_granted_lists_the_columns_it_writes() {
+        let listed: BTreeSet<&str> = WRITER_COLUMNS.iter().map(|(t, _)| *t).collect();
+        let granted: BTreeSet<&str> = WRITTEN.iter().chain(WRITTEN_WHEN_PRESENT.iter()).copied().collect();
+        assert_eq!(listed, granted);
+    }
+
+    #[test_id(tznbrtr)]
+    #[test]
+    fn a_table_the_store_may_lack_needs_its_columns_only_when_present() {
+        let mut have: BTreeSet<(String, String)> = WRITER_COLUMNS.iter().flat_map(|(t, cs)| cs.iter().map(move |c| (t.to_string(), c.to_string()))).collect();
+        assert_eq!(missing_columns(&have), Vec::<String>::new());
+        have.retain(|(t, _)| t != "leases");
+        assert_eq!(missing_columns(&have), Vec::<String>::new());
+        have.insert(("leases".to_string(), "holder".to_string()));
+        assert_eq!(missing_columns(&have), ["leases.issue_id"]);
+        have.retain(|(t, _)| t != "child_counters");
+        assert_eq!(missing_columns(&have), ["child_counters.parent_id", "child_counters.last_child", "leases.issue_id"]);
     }
 
     fn present(tables: &[&str]) -> BTreeSet<String> {
