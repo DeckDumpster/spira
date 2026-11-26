@@ -26,6 +26,7 @@ pub mod restrict;
 pub mod run;
 pub mod seam;
 pub mod session;
+pub mod session_feed;
 pub mod stack;
 pub mod stop;
 pub mod direct;
