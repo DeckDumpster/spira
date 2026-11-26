@@ -326,3 +326,52 @@ fn yield_reports_an_absent_record_as_unknown_and_classifies_what_the_gate_and_a_
     assert!(silent.run(&["show"]).1.contains("THE RECORDER IS NOT RUNNING"));
     assert_eq!(y.report(&[])["YIELD_RECORDER"], "ok", "a record holding reds is not withheld by the same log");
 }
+
+#[test_id(t2hdmib)]
+#[test]
+fn the_in_process_yield_report_gives_the_keys_and_values_the_script_prints() {
+    let root = TempDir::new("yield-parity");
+    let y = Yield::new(&root, "parity");
+    let same = |what: &str| {
+        let script = y.report(&[]);
+        let native: BTreeMap<String, String> = strand::yield_report::report(&y.dir, &y.log, WINDOW, now()).into_iter().collect();
+        assert_eq!(native, script, "{what}");
+        script
+    };
+    assert_eq!(same("no record and no log")["YIELD_RECORDER"], "?");
+    y.meter(&[]);
+    assert_eq!(same("no record, an empty log")["YIELD_RECORDER"], "absent");
+    y.meter(&[(200, "spira/sp-q", 0, 90, "1", "branch-red")]);
+    assert_eq!(same("no record, a red in the log")["YIELD_RECORDER"], "silent");
+    std::fs::create_dir(&y.dir).unwrap();
+    assert_eq!(same("an empty record, a red in the log")["YIELD_REDS"], "?");
+
+    let record = |name: &str, ago: u64, fields: &str| std::fs::write(y.dir.join(name), format!("at={}\n{fields}", now() - ago)).unwrap();
+    record("stated", 100, "verdict=DEFECT\nby=stated\n");
+    record("inferred", 100, "verdict=DEFECT\nby=auto:changed-then-passed\n");
+    record("by-suite-1", 100, "reason=base-red\nsuite=test-box.sh\nverdict=GATE_FAULT\n");
+    record("by-suite-2", 100, "reason=base-red\nsuite=test-box.sh\nverdict=GATE_FAULT\n");
+    record("by-reason", 100, "reason=deadline\nsuite=-\nverdict=GATE_FAULT\n");
+    record("no-verdict", 100, "reason=branch-red\n");
+    record("empty-verdict", 100, "verdict=\n");
+    record("torn", 100, "verdict=DEFECT");
+    record("aged", WINDOW * 3, "verdict=DEFECT\n");
+    record(".hidden", 100, "verdict=DEFECT\n");
+    std::fs::write(y.dir.join("no-time"), "verdict=DEFECT\n").unwrap();
+    y.meter(&[
+        (300, "spira/sp-x", 0, 100, "0", "pass"),
+        (310, "spira/sp-y", 5, 35, "1", "branch-red"),
+        (900, "spira/sp-w", 2, 20, "0", ""),
+        (40, "spira/sp-z", 0, 60, "76", "base-red trailing=field"),
+        (30, "spira/sp-c", 0, 0, "0", "cached tree=abc"),
+        (WINDOW * 3, "spira/sp-old", 0, 999, "1", "branch-red"),
+    ]);
+    let mut log = std::fs::read_to_string(&y.log).unwrap();
+    log.push_str(&format!("{} other spira/sp-o waited=0s ran=7s rc=0\n{} repo spira/sp-torn waited=3s\nnot a row\n", utc(now() - 300), utc(now() - 20)));
+    std::fs::write(&y.log, log).unwrap();
+    let full = same("records and a log of every kind");
+    assert_eq!((full["YIELD_REDS"].as_str(), full["YIELD_TOP_FAULT"].as_str(), full["YIELD_CONC_N"].as_str()), ("8", "test-box.sh x2", "2"), "{full:?}");
+
+    std::fs::remove_file(&y.log).unwrap();
+    assert_eq!(same("records and no log")["YIELD_RECORDER"], "?");
+}

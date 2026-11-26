@@ -530,14 +530,14 @@ fn units() -> Option<&'static dyn runtime::units::Units> {
     }
 }
 
-/// Run an already-on-`PATH` tool by bare name (release/overrides.sh/tokens.sh/yield.sh/
+/// Run an already-on-`PATH` tool by bare name (release/overrides.sh/tokens.sh/
 /// tsd-query.sh/bdsim) — every one of these
 /// remains exactly what it was: a separate component this bead does not own, invoked the
 /// same way `spira/cockpit.sh` invoked it (law-units-build-what-they-exec: never construct
 /// a path to it, resolve it off `PATH` like every other caller in the release).
 pub fn run_tool(name: &str, args: &[&str], stdin: Option<&str>) -> Option<String> {
     // FORK-EDGE: generic runner for operator scripts and sibling tools (release, overrides.sh,
-    // tokens.sh, yield.sh, tsd-query.sh, spira-claim, date); each is ported with its task.
+    // tokens.sh, tsd-query.sh, spira-claim, date); each is ported with its task.
     let mut cmd = spira_config::bounded::bounded(name);
     cmd.args(args).stderr(Stdio::null());
     if let Some(input) = stdin {

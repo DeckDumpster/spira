@@ -103,8 +103,10 @@ pub fn sweep_cfg() -> Result<sweep::Cfg, String> {
         Duration::from_secs(reg_i64("SPIRA_WATCHTOWER_PROBE_TIMEOUT_S")?.max(1) as u64),
         Duration::from_secs(start_s.saturating_sub(30).max(30)),
     );
+    let run = PathBuf::from(reg("SPIRA_RUN")?);
+    let yields = strand::yield_report::Sources::resolve(&run, getenv);
     Ok(sweep::Cfg {
-        spira_run: PathBuf::from(reg("SPIRA_RUN")?),
+        spira_run: run,
         cockpit_view_dir: getenv("XDG_RUNTIME_DIR").map(|d| spira_config::cockpit_view_dir(std::path::Path::new(&d))),
         lib_sh_dir: lib_sh_dir(),
         db: reg("SPIRA_DB")?,
@@ -117,8 +119,8 @@ pub fn sweep_cfg() -> Result<sweep::Cfg, String> {
         gate_log: getenv("SPIRA_GATE_LOG").map(PathBuf::from),
         noverdict_window_s: reg_i64("SPIRA_NOVERDICT_WINDOW")?,
         noverdict_max: reg_i64("SPIRA_NOVERDICT_MAX")?,
-        yield_window_s: getenv_i64("SPIRA_YIELD_WINDOW", 86400),
-        yield_sh: getenv("SPIRA_YIELD_SH"),
+        yield_window_s: yields.window_s as i64,
+        yield_dir: yields.dir,
         disk_warn_pct: getenv_i64("SPIRA_DISK_WARN_PCT", 90),
         mem_warn_mb: getenv_i64("SPIRA_MEM_WARN_MB", 1500),
         meminfo_path: meminfo_path(),

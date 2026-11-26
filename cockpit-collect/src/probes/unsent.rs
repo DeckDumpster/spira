@@ -11,11 +11,12 @@ use crate::quoting::{parse_iso8601, rel_age, sanitize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use strand::yield_report;
 
 pub fn unsent_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     branch_backlog_section(&mut out, cfg);
-    yield_section(&mut out);
+    yield_section(&mut out, &io::run_dir());
     landing_funnel_section(&mut out, &io::run_dir(), cfg);
     acceptance_section(&mut out, cfg);
     gate_section(&mut out, &io::run_dir());
@@ -407,10 +408,10 @@ fn bead_exists_at(id: &str, timeout: &str) -> BeadStatus {
 }
 
 // ---------------------------------------------------------------------------------------
-// What the landing gate is worth: yield.sh's own reading, passed through untouched.
+// What the landing gate is worth: `strand::yield_report`'s reading, passed through untouched.
 // ---------------------------------------------------------------------------------------
 
-fn yield_section(out: &mut Kv) {
+fn yield_section(out: &mut Kv, run: &Path) {
     const MAP: &[(&str, &str)] = &[
         ("YIELD_REDS", "SP_YIELD_REDS"),
         ("YIELD_DEFECT", "SP_YIELD_DEFECT"),
@@ -420,13 +421,8 @@ fn yield_section(out: &mut Kv) {
         ("YIELD_CONC_MED", "SP_YIELD_CONC_MED"),
         ("YIELD_TOP_FAULT", "SP_YIELD_TOP_FAULT"),
     ];
-    let report = io::run_tool("yield.sh", &["report"], None).unwrap_or_default();
-    let mut found: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
-    for line in report.lines() {
-        if let Some((k, v)) = line.split_once('=') {
-            found.insert(k, v.to_string());
-        }
-    }
+    let from = yield_report::Sources::resolve(run, |k| std::env::var(k).ok());
+    let found: HashMap<String, String> = yield_report::report(&from.dir, &from.gate_log, from.window_s, io::now().max(0) as u64).into_iter().collect();
     for (src, dst) in MAP {
         push(out, dst, found.get(*src).cloned().unwrap_or_else(|| "?".to_string()));
     }
@@ -1050,28 +1046,31 @@ mod tests {
         assert!(!gate_queued(d.path(), "sp-old"));
     }
 
-    fn yield_keys(stub: &str) -> Kv {
-        let dir = testkit::TempDir::new("yield-section");
-        testkit::write_exe(dir.path().join("yield.sh"), stub);
-        let path = format!("{}:{}", dir.path().display(), std::env::var("PATH").unwrap_or_default());
-        let _env = testkit::env(&[("PATH", Some(&path))]);
+    fn yield_keys(run: &Path) -> Kv {
+        let _env = testkit::env(&[("SPIRA_YIELD", None), ("SPIRA_GATE_LOG", None), ("SPIRA_YIELD_WINDOW", None)]);
         let mut out = Kv::new();
-        yield_section(&mut out);
+        yield_section(&mut out, run);
         out
     }
 
     // covers: UC-gate-verdict-24
-    #[test_id(tlqhevu)]
+    #[test_id(tyv41s0)]
     #[test]
-    fn every_yield_key_is_written_from_the_report_and_a_report_that_cannot_be_read_is_a_question_mark() {
+    fn every_yield_key_is_written_from_the_records_under_the_run_directory_and_an_absent_record_is_a_question_mark() {
         let keys = ["SP_YIELD_REDS", "SP_YIELD_DEFECT", "SP_YIELD_FAULT", "SP_YIELD_UNKNOWN", "SP_YIELD_SOLO_MED", "SP_YIELD_CONC_MED", "SP_YIELD_TOP_FAULT"];
-        let read = yield_keys("#!/bin/sh\nprintf 'YIELD_REDS=4\\nYIELD_DEFECT=1\\nYIELD_FAULT=2\\nYIELD_UNKNOWN=1\\nYIELD_SOLO_MED=60\\nYIELD_CONC_MED=95\\nYIELD_TOP_FAULT=test-b.sh x2\\n'\n");
-        let got: Vec<(&str, &str)> = read.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-        assert_eq!(got, keys.iter().copied().zip(["4", "1", "2", "1", "60", "95", "test-b.sh x2"]).collect::<Vec<_>>());
-        for broken in ["#!/bin/sh\nexit 3\n", "#!/bin/sh\nprintf 'YIELD_REDS=7\\n'\nexit 3\n"] {
-            let out = yield_keys(broken);
-            assert_eq!(out.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), keys, "every key is still written");
-            assert!(out.iter().all(|(_, v)| v == "?"), "a failed report is ? everywhere, never 0: {out:?}");
+        let run = testkit::TempDir::new("yield-section");
+        let got = yield_keys(run.path());
+        assert_eq!(got.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), keys, "every key is still written");
+        assert!(got.iter().all(|(_, v)| v == "?"), "nothing readable is ? everywhere, never 0: {got:?}");
+
+        std::fs::create_dir(run.join("gate-yield")).unwrap();
+        for (i, verdict) in ["DEFECT", "GATE_FAULT", "GATE_FAULT", "UNKNOWN"].iter().enumerate() {
+            std::fs::write(run.join(format!("gate-yield/r{i}")), format!("at={}\nsuite=test-b.sh\nverdict={verdict}\n", io::now())).unwrap();
         }
+        let stamp = strand::timefmt::utc_stamp(io::now() - 1000);
+        std::fs::write(run.join("gate.log"), format!("{stamp} repo b waited=0s ran=60s rc=0 pass\n")).unwrap();
+        let got = yield_keys(run.path());
+        let values: Vec<&str> = got.iter().map(|(_, v)| v.as_str()).collect();
+        assert_eq!(values, ["4", "1", "2", "1", "60", "?", "test-b.sh x2"]);
     }
 }

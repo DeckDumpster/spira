@@ -666,6 +666,7 @@ dependencies = [
  "spira-desired-state",
  "spira-otel",
  "spira-test-id",
+ "strand",
  "suite-select",
  "system-paths",
  "testkit",
