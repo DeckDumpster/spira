@@ -1017,11 +1017,7 @@ impl Lib for RealLib {
             .is_ok()
     }
     fn bead_live(&self, id: &str) -> bool {
-        let shown = self
-            .store
-            .client()
-            .and_then(|c| c.answer(&["show", id]).map_err(String::from))
-            .and_then(|out| spira_store::lc_state::parse_show(&out));
+        let shown = self.store.client().and_then(|c| spira_store::lc_state::row_on(&c, id));
         matches!(shown, Ok(Some(row)) if !row.state.is_empty() && !row.terminal())
     }
 }
