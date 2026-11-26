@@ -1459,6 +1459,7 @@ mod tests {
         assert_eq!(gone.real.build_in_bases(&gone.tree, &b, &gone.bases).unwrap_err().0, BuilderMiss::Gone);
     }
 
+    // Exception to the no-binary, no-sleep unit rules: `pool()` runs git, and the owner is read only while a held lease is waited on.
     #[test_id(tb7bl86)]
     #[test]
     fn a_gate_waits_for_the_beads_own_session_to_release_its_builder_directory() {
