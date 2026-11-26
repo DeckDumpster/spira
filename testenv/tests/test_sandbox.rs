@@ -47,7 +47,7 @@ fn cargo_names_the_sandbox_runner_outside_the_sandbox_and_the_overlay_is_that_co
 fn a_test_reads_no_target_runner_in_the_cargo_config_of_its_own_run() {
     let text = fs::read_to_string(workspace().join(".cargo/config.toml")).expect("the workspace's .cargo/config.toml");
     let conf: toml::Table = text.parse().expect(".cargo/config.toml parses");
-    let runners: Vec<_> = conf.get("target").and_then(toml::Value::as_table).into_iter().flatten().filter(|(_, v)| v.get("runner").is_some()).map(|(k, _)| k).collect();
+    let runners: Vec<_> = conf.get("target").and_then(toml::Value::as_table).into_iter().flatten().filter_map(|(k, v)| v.get("runner").map(|r| format!("{k}: {r}"))).collect();
     assert!(runners.is_empty(), "cargo in the sandbox would launch each test through {runners:?}");
 }
 
