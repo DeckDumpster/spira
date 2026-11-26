@@ -995,7 +995,7 @@ pub mod edge {
         let env = e.mail.as_deref().ok_or("no mail environment configured")?;
         let mailbox = cfg("SPIRA_MAIL_SESSION_MAILBOX")?;
         let args = mail::cmds::SendArgs { mailbox: &mailbox, from: Some("queue <queue@spira>"), subject: &s.subject, kind: "note", default: "", class: "", bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
-        let bd = mail::bead::BdCli { bdq: String::new(), conn_retries: 1 };
+        let bd = mail::bead::BdCli { conn_retries: 1 };
         mail::cmds::send(&bd, env, &args, format!("## {}\n{}\n", s.repo, s.body)).map(|o| o.delivered_path.display().to_string())
     }
 

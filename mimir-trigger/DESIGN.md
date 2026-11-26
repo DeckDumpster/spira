@@ -67,16 +67,9 @@ Side effects (unchanged from the bash):
   predicates, invalid-closed row filtering/dedup, and all of the bead title/description/label
   string assembly. Every function is a table-driven unit test; this is the surface `sp-0ekp7`'s
   parity proof rests on.
-- `ports.rs` — the `World` trait: the seam between decision logic and everything stateful.
-- `real.rs` — `World` for production: `spira_home_repo`/`repo_root`/`spira_landref` and, since
-  wave 4.35 (sp-kelr2, row V), `spira_lane_admitted`/`spira_open_trigger_count`/
-  `spira_repo_lanes` all run in-process (`spira_config::repos::Registry` plus `crate::lanes`,
-  the latter fed label values `main.rs` resolves through `spira_config::resolve` — never a raw
-  `env::var` read, per law-a-binary-resolves-the-config-it-reads); `detect_invalid_closed`
-  alone still shells to the **`lib.sh` seam** (source `lib.sh`, call one function, read
-  stdout — the pattern `gate-check/src/real.rs` established); shells to `bd` directly for
-  `create`; shells to `git log` for landing counts; reads the watermark/lastpass files and
-  the repo-map file directly off disk.
+- `lanes.rs` — the lane family: `spira_lane_admitted`/`spira_repo_lanes` over the registry.
+- `observe.rs` — the reads the scheduler's trigger tasks make: the open-trigger count over the
+  store's content door and the lifecycle list, and landings counted from `git log`.
 - `main.rs` — orchestration matching the bash's control flow 1:1: lock → dedup → lane check →
   read clocks → count landings (home repo, then repo-map, skipping the home repo) → evaluate
   the three triggers → file or exit.
@@ -116,10 +109,6 @@ Side effects (unchanged from the bash):
 
 ## Decisions
 
-- **The bash calls `bd create` directly, not `bdq`** — Rust preserves that literally rather
-  than "fixing" it by routing through `bdq`'s extra fences (repo-label validation, the
-  schema-delete refusal). Changing that posture is not this bead's
-  call; noted here so a future reader does not mistake it for an oversight.
 - **Invalid-closed dedup is by an exact bead-id set, not the bash's substring-containment
   check** (`case "$acc" in *"$_bid"*)`). The two agree on every realistic input — a bead id is
   never a substring of another row's text — and an exact set is simpler to reason about and

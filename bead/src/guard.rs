@@ -1,5 +1,5 @@
-//! The write guards `bdq` applies before a write reaches bd, as a library, so the content
-//! door (`spira-lc content`, served by lc-serve) applies the same ones to the same writes:
+//! The write guards the content door (`spira-lc content`, served by lc-serve) applies before
+//! a write reaches the store:
 //!
 //! - **The czar fence.** A `SPIRA_RUNE=czar` session with a `SPIRA_CZAR_CLASS` set may
 //!   `reopen` a bead, or `update`/`close` any bead but its own trigger

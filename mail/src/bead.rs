@@ -44,14 +44,12 @@ pub trait Bd {
 /// only a call whose stderr names a dropped pooled connection (`bead::bdq::should_retry`);
 /// every other failure surfaces on the first try.
 pub struct BdCli {
-    /// Unread; removed with the bdq deletion.
-    pub bdq: String,
     pub conn_retries: u32,
 }
 
 impl BdCli {
     pub fn configured(conn_retries: u32) -> Result<BdCli, String> {
-        Ok(BdCli { bdq: String::new(), conn_retries })
+        Ok(BdCli { conn_retries })
     }
 }
 

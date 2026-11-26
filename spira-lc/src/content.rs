@@ -181,11 +181,11 @@ pub struct Forced {
     pub reason: String,
 }
 
-/// bdq's write guards on a content write (`bead::guard::write`), in bdq's order: the
+/// The write guards on a content write (`bead::guard::write`), in its order: the
 /// create-time fences, the ask-label write fence, the state-verb fence, the czar fence, the
 /// claimed-description check. The lifecycle row comes from the machine `m`; `body` is the
-/// request body a create judges as its description. A refusal is bdq's: exit 1 and its text,
-/// so a write through this door is refused whenever the same write through bdq would be.
+/// request body a create judges as its description. A refusal is the guard's: exit 1 and its
+/// text.
 /// `Ok` carries the lines to log (an overridden state write).
 pub fn guard(args: &mut Vec<String>, body: &mut Option<String>, g: &Guards, m: &mut dyn crate::callers::Machine) -> Result<String, Answer> {
     let rows = std::cell::RefCell::new(m);
@@ -288,8 +288,7 @@ fn filed_with_contract(args: &[String]) -> bool {
     }
 }
 
-/// `create-bead` is idempotent, so a transient failure is retried before it is reported, as
-/// bdq's `ensure_row_retrying` does.
+/// `create-bead` is idempotent, so a transient failure is retried before it is reported.
 const ROW_ATTEMPTS: u32 = 3;
 
 /// What a write bd applied owes the lifecycle machine (`bead::guard::after`), written here in
@@ -327,7 +326,7 @@ fn mirror_after(args: &[String], m: &mut dyn crate::callers::Machine) -> String 
     }
 }
 
-/// A forced edit bd applied: bdq's acknowledgment, through the door's own reads and writes.
+/// A forced edit bd applied: its acknowledgment, through the door's own reads and writes.
 pub fn acknowledge(forced: Forced, read: &dyn Fn(&[String]) -> Result<String, crate::composed::ReadError>, write: Write<'_>, run: &str, mail: &str) {
     let show = |id: &str| read(&["show".to_string(), id.to_string(), "--json".to_string()]).unwrap_or_default();
     let mut put = |a: &[&str]| {
@@ -395,7 +394,7 @@ pub type Guard<'a> = &'a mut dyn FnMut(&mut Vec<String>, &mut Option<String>) ->
 pub type After<'a> = &'a mut dyn FnMut(&[String], &str) -> String;
 
 /// One content call. A read goes to `read`. A write reads its request body when the sub-verb
-/// takes one (refused, before bd runs, when none was sent), passes `guard` (bdq's write
+/// takes one (refused, before bd runs, when none was sent), passes `guard` (the write
 /// guards), goes to `write`, and once bd has applied it, owes the lifecycle machine `after`.
 pub fn run(
     args: &[String],
@@ -786,10 +785,10 @@ mod tests {
         row.and_then(|r| spira_store::lc_state::parse_show(&serde_json::json!({"bead": r}).to_string()).ok().flatten())
     }
 
-    /// bdq's guards as `src/bin/bdq.rs` calls them, each at its own point and in its order: the
-    /// create-time fences, the ask-label write fence and the state-verb fence; then the czar
-    /// fence; then the claimed-description check — on the process environment and the row.
-    fn through_bdq(args: &[String], body: Option<&str>, env: &BTreeMap<String, String>, row: Option<&serde_json::Value>) -> Verdict {
+    /// `bead::guard`'s fences called one by one, in order: the create-time fences, the
+    /// ask-label write fence and the state-verb fence; then the czar fence; then the
+    /// claimed-description check — on the caller's environment and the row.
+    fn through_guards(args: &[String], body: Option<&str>, env: &BTreeMap<String, String>, row: Option<&serde_json::Value>) -> Verdict {
         let vars = |k: &str| env.get(k).cloned();
         let rows = |_: &str| row_of(row);
         let ask = || Ok::<_, String>(ASK.to_string());
@@ -822,7 +821,7 @@ mod tests {
 
     #[test_id(t6kbgrx)]
     #[test]
-    fn the_content_guard_reaches_bdqs_verdict_on_every_write() {
+    fn the_content_guard_reaches_the_guard_librarys_verdict_on_every_write() {
         let with_override = |mut c: BTreeMap<String, String>| {
             c.insert("SPIRA_BDQ_STATE_WRITE".into(), "landing".into());
             c
@@ -877,9 +876,9 @@ mod tests {
             for row in rows {
                 for (w, body) in writes {
                     let args = v(w);
-                    let (bdq, content) = (through_bdq(&args, *body, env, row), through_content(&args, *body, env, row));
-                    assert_eq!(content, bdq, "{name}, row {row:?}: {w:?} body {body:?}");
-                    let kind = match &bdq {
+                    let (library, content) = (through_guards(&args, *body, env, row), through_content(&args, *body, env, row));
+                    assert_eq!(content, library, "{name}, row {row:?}: {w:?} body {body:?}");
+                    let kind = match &library {
                         Ok(()) => "admitted",
                         Err((1, t)) if t.starts_with("czar-fence: ") => "czar",
                         Err((1, t)) if t.contains("is claimed by dwarf-sp-a") => "claim",
@@ -1365,7 +1364,7 @@ mod tests {
         for env in [caller(&[]), czar(None), czar(Some("act")), caller(&[("SPIRA_RUNE", "builder")])] {
             for args in [&["update", "sp-a", "--assignee", ""][..], &["update", "sp-a", "--assignee", "", "--force"]] {
                 for row in [None, Some(&held)] {
-                    assert_eq!(through_content(&v(args), None, &env, row), through_bdq(&v(args), None, &env, row), "{args:?} {env:?}");
+                    assert_eq!(through_content(&v(args), None, &env, row), through_guards(&v(args), None, &env, row), "{args:?} {env:?}");
                 }
             }
         }
