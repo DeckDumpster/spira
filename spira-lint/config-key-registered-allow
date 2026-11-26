@@ -228,7 +228,6 @@ SPIRA_GATE_BEAD gate/src/engine.rs
 SPIRA_GATE_BEAD gate/src/real.rs
 SPIRA_GATE_BEAD landing-pass/src/real.rs
 SPIRA_GATE_BEAD queue/src/real.rs
-SPIRA_GATE_BEAD spira-lint/src/rules/test_id_row_orphan.rs
 SPIRA_GATE_BEAD spira-runtime/src/tasks/a/gate_worker.rs
 SPIRA_GATE_BEAD spira/yield.sh
 SPIRA_GATE_BRANCH gate/src/engine.rs

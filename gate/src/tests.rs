@@ -1092,6 +1092,24 @@ fn the_trial_env_carries_spira_toml_so_the_box_tools_a_suites_step_runs_can_reso
     assert_eq!(f.env_of(0, "SPIRA_TOML"), "box/spira.toml");
 }
 
+#[test_id(t7ak8vp)]
+#[test]
+fn the_gated_item_reaches_the_gate_string_and_the_re_entry_env() {
+    let f = Fake::new();
+    f.ancestor.set(true);
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.env_of(0, "SPIRA_GATE_BEAD"), "sp-a");
+
+    let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let n = f.cmds.borrow().len();
+    for i in [0, n - 1] {
+        assert_eq!(f.env_of(i, "SPIRA_GATE_BEAD"), "sp-a", "step {i}: the gate string and the re-entry both name the item");
+    }
+}
+
 #[test_id(t6392xf)]
 #[test]
 fn a_path_tail_entry_inside_a_release_is_no_verdict_naming_it_and_nothing_runs() {
@@ -4131,7 +4149,7 @@ fn a_gate_on_a_tree_with_a_proved_fences_verdict_runs_no_fences_phase() {
     *f.base_tree_override.borrow_mut() = Some(BASE_TREE_HEX.into());
     f.files.borrow_mut().insert(
         PathBuf::from(format!("run/verdicts/fences/spira/{BASE_TREE_HEX}")),
-        fencecache::render("harness", "bash spira/fence.sh && run-suites", "fence: x checked 3 files"),
+        fencecache::render("harness", "", "bash spira/fence.sh && run-suites", "fence: x checked 3 files"),
     );
     assert_eq!(f.run(), FAIL);
     let cmds = f.cmds.borrow().clone();
@@ -6432,6 +6450,26 @@ fn a_unit_run_cut_at_its_deadline_without_a_summary_is_not_the_missing_report_fa
     assert!(!f.stderr().contains("printed no `Summary [` line"), "{}", f.stderr());
 }
 
+#[test_id(tilaj8r)]
+#[test]
+fn a_fences_pass_that_used_the_own_item_exemption_is_not_reused_for_another_item() {
+    for (owner, reused) in [("sp-a", false), ("sp-z", true)] {
+        let f = fences_fake(&["gate/src/x.rs"]);
+        for rev in [MERGE_SHA, "HEAD"] {
+            f.objects.borrow_mut().insert(format!("{rev}^{{tree}}"), BASE_TREE_HEX.into());
+        }
+        *f.deny.borrow_mut() = Ok(format!("disabled\ttest:t0aaaaa\t{owner}\t-\n"));
+        assert_eq!(f.run(), PASS, "{}", f.stderr());
+        let proved = f.written.borrow().iter().find(|(p, _)| p.starts_with("run/verdicts/fences")).cloned();
+        let (path, entry) = proved.expect("the first gate records its fences PASS");
+        f.files.borrow_mut().insert(path, entry);
+        f.put_var("SPIRA_GATE_BEAD", "sp-b");
+        f.err.borrow_mut().clear();
+        assert_eq!(f.run(), PASS, "{}", f.stderr());
+        assert_eq!(f.stderr().contains("fences reused"), reused, "row owned by {owner}: {}", f.stderr());
+    }
+}
+
 // ------------------------------------------------- the lint step reads the tree's config
 
 /// A tree whose fixture config says `mode`, holding `files`, with the tree's own
@@ -6460,6 +6498,7 @@ fn lint_fixture(mode: &str, files: &[(&str, &str)]) -> (testkit::TempDir, std::p
             "  [ -n \"$2\" ] || { echo 'spira-lint: --deny-list names no file' >&2; exit 2; }\n",
             "  echo \"fence: test-id-row-orphan checked 1 registry ($2: 1 rows, 1 test rows)\"\n",
             "else echo 'fence: test-id-row-orphan checked 0 registry (none configured)'; fi\n",
+            "while [ $# -gt 0 ]; do [ \"$1\" != --gate-bead ] || echo \"gate-bead=[$2]\"; shift; done\n",
         ),
     );
     (t, bin)
@@ -6473,6 +6512,10 @@ fn run_lint_step(t: &testkit::TempDir, bin: &std::path::Path, caller_mode: &str)
 }
 
 fn run_lint_step_with_deny(t: &testkit::TempDir, bin: &std::path::Path, caller_mode: &str, deny: Option<&str>) -> (bool, String) {
+    run_lint_step_with(t, bin, caller_mode, deny, None)
+}
+
+fn run_lint_step_with(t: &testkit::TempDir, bin: &std::path::Path, caller_mode: &str, deny: Option<&str>, gate_bead: Option<&str>) -> (bool, String) {
     let steps = checked_in_steps();
     let def = crate::def::parse(&steps).unwrap();
     let step = def.steps.iter().find(|s| s.contains("SPIRA_LINT_BIN")).expect("a spira-lint step");
@@ -6487,6 +6530,9 @@ fn run_lint_step_with_deny(t: &testkit::TempDir, bin: &std::path::Path, caller_m
         .env("SPIRA_TOML", &caller);
     if let Some(d) = deny {
         cmd.env("SPIRA_TEST_DENY_LIST", d);
+    }
+    if let Some(b) = gate_bead {
+        cmd.env("SPIRA_GATE_BEAD", b);
     }
     let out = cmd.output().unwrap();
     (out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
@@ -6525,6 +6571,17 @@ fn the_lint_step_refuses_when_the_gate_handed_no_deny_list() {
     for deny in [None, Some("")] {
         let (ok, out) = run_lint_step_with_deny(&t, &bin, "report", deny);
         assert!(!ok && out.contains("--deny-list"), "{deny:?}: {out}");
+    }
+}
+
+#[test_id(tbw806o)]
+#[test]
+fn the_lint_step_hands_spira_lint_the_gated_item_and_an_empty_one_when_unset() {
+    let (t, bin) = lint_fixture("enforce", &[("rule/tests/vocab.rs", "// nothing here\n")]);
+    let deny = t.path().join("target/gate-deny-list");
+    for (item, want) in [(Some("sp-a"), "gate-bead=[sp-a]"), (None, "gate-bead=[]")] {
+        let (ok, out) = run_lint_step_with(&t, &bin, "report", Some(deny.to_str().unwrap()), item);
+        assert!(ok && out.contains(want), "{item:?}: {out}");
     }
 }
 
