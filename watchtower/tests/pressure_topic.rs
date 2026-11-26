@@ -38,7 +38,7 @@ fn a_pass_over_the_line_publishes_and_an_identical_pass_publishes_nothing() {
     let p = pressure(&broker, d.path());
     p.pass(d.path(), &LINES, 100).unwrap();
     let first = serde_json::json!({"cpu": 1.0, "io": 45.5, "cpu_over": false, "io_over": true, "at": 100});
-    assert_eq!(held(&broker), [first.clone()]);
+    assert_eq!(held(&broker), std::slice::from_ref(&first));
 
     p.pass(d.path(), &LINES, 200).unwrap();
     assert_eq!(held(&broker), [first], "a second publish would carry at=200");
