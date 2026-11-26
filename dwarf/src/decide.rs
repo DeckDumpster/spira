@@ -142,6 +142,24 @@ pub fn tip_moved(start: &str, now: &str) -> bool {
     !start.is_empty() && start != "?" && !now.is_empty() && now != "?" && start != now
 }
 
+/// A fact about a running session that is published once: an age reached, in minutes, or that
+/// it outlived its item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mark {
+    Age(i64),
+    Lingering,
+}
+
+/// The ages `spira/topics.toml` declares under `session/<bead>/age/`.
+const SESSION_AGES_MIN: [i64; 3] = [15, 30, 60];
+
+/// The marks a session has reached by `now` and not yet `published`.
+pub fn session_marks(started_at: i64, now: i64, published: &[Mark], left_working_at: Option<i64>, linger_s: i64) -> Vec<Mark> {
+    let ages = SESSION_AGES_MIN.iter().filter(|&&m| now - started_at >= m * 60).map(|&m| Mark::Age(m));
+    let lingering = left_working_at.filter(|&left| now - left >= linger_s).map(|_| Mark::Lingering);
+    ages.chain(lingering).filter(|m| !published.contains(m)).collect()
+}
+
 /// The row's state and reason once a refused renewal shows the bead claimable again.
 pub fn sent_back(row: Option<&spira_store::lc_state::Row>, renew_refused: bool) -> Option<String> {
     let row = row.filter(|r| renew_refused && r.claimable())?;
@@ -473,6 +491,39 @@ pub fn harness_red_streak(lines: &[&str]) -> i64 {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(t6s7du3)]
+    #[test]
+    fn a_session_under_fifteen_minutes_old_has_no_marks() {
+        for now in [1000, 1000 + 14 * 60, 1000 + 15 * 60 - 1] {
+            assert_eq!(session_marks(1000, now, &[], None, 300), [], "now={now}");
+        }
+    }
+
+    #[test_id(tac1zgo)]
+    #[test]
+    fn the_fifteen_minute_mark_is_alone_at_fifteen_minutes() {
+        assert_eq!(session_marks(1000, 1000 + 900, &[], None, 300), [Mark::Age(15)]);
+    }
+
+    #[test_id(t8we2vk)]
+    #[test]
+    fn a_published_mark_is_not_repeated_and_a_late_beat_returns_every_mark_it_passed() {
+        assert_eq!(session_marks(0, 901, &[Mark::Age(15)], None, 300), []);
+        assert_eq!(session_marks(0, 7200, &[], None, 300), [Mark::Age(15), Mark::Age(30), Mark::Age(60)]);
+        assert_eq!(session_marks(0, 7200, &[Mark::Age(15), Mark::Age(60)], None, 300), [Mark::Age(30)]);
+        assert_eq!(session_marks(0, 7200, &[Mark::Age(15), Mark::Age(30), Mark::Age(60), Mark::Lingering], Some(10), 300), []);
+    }
+
+    #[test_id(t3c5g8d)]
+    #[test]
+    fn lingering_comes_the_configured_time_after_the_item_left_working_and_not_before() {
+        assert_eq!(session_marks(0, 399, &[], Some(100), 300), []);
+        assert_eq!(session_marks(0, 400, &[], Some(100), 300), [Mark::Lingering]);
+        assert_eq!(session_marks(0, 400, &[Mark::Lingering], Some(100), 300), []);
+        assert_eq!(session_marks(0, 400, &[], Some(100), 301), []);
+        assert_eq!(session_marks(0, 400, &[], None, 300), []);
+    }
+
     #[test_id(t9b7mqc)]
     #[test]
     fn harness_red_streak_table() {

@@ -82,6 +82,8 @@ pub struct Row {
     pub since: Option<i64>,
     /// When the ask hold was last raised; every raise restamps it.
     pub ask_since: Option<i64>,
+    /// Claims made with persona `builder`.
+    pub builder_claims: Option<u32>,
 }
 
 impl Row {
@@ -200,6 +202,7 @@ pub fn row_of(r: &Value) -> Result<Row, String> {
         reason: scalar(r.get("reason")).filter(|x| !x.is_empty()),
         since: scalar(r.get("since")).and_then(|x| x.trim().parse().ok()),
         ask_since: scalar(r.get("ask_since")).and_then(|x| x.trim().parse().ok()),
+        builder_claims: scalar(r.get("builder_claims")).and_then(|x| x.trim().parse().ok()),
         bead_id: id,
     })
 }

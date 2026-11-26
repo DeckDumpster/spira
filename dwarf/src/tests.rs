@@ -552,6 +552,58 @@ pub(crate) mod verdict_run {
         assert_eq!(envs[0].get("PILGRIM_GRAFANA_URL").map(String::as_str), Some("http://g:3000"), "{envs:?}");
     }
 
+    #[derive(Clone, Default)]
+    struct Told(std::sync::Arc<Mutex<Vec<String>>>);
+    impl crate::session_feed::Outlet for Told {
+        fn publish(&self, _: &str, payload: &serde_json::Value) {
+            self.0.lock().unwrap().push(payload["state"].as_str().unwrap_or_default().to_string());
+        }
+    }
+
+    /// What the feed had said by the time the world was taken down.
+    struct ToldAtWorldDown(Told, Mutex<Vec<String>>);
+    impl Exec for ToldAtWorldDown {
+        fn exec(&self, prog: &str, args: &[String], stdin: Option<Vec<u8>>, cwd: Option<&Path>) -> Out {
+            if args.get(1).map(String::as_str) == Some("down") {
+                *self.1.lock().unwrap() = self.0 .0.lock().unwrap().clone();
+            }
+            WorldUp("SPIRA_LC_SOCKET=w/lc.sock\nSPIRA_TOML=w/config/sim.toml\n").exec(prog, args, stdin, cwd)
+        }
+    }
+
+    #[test_id(tjyxad6)]
+    #[test]
+    fn a_pilgrim_session_is_published_ended_before_its_world_is_taken_down() {
+        let _otel = OTEL.lock().unwrap_or_else(|e| e.into_inner());
+        let work = testkit::TempDir::new("dwarf-pilgrim-ended");
+        let w = work.path().to_path_buf();
+        let release = w.join("release");
+        std::fs::create_dir_all(release.join("bin")).unwrap();
+        testkit::write_exe(release.join("bin/sim"), "#!/bin/sh\n");
+        let _env = testkit::env(&[(spira_config::RELEASE_ENV, Some(release.to_str().unwrap()))]);
+        let told = Told::default();
+        let exec = ToldAtWorldDown(told.clone(), Default::default());
+        let cap = Capture(Default::default());
+        let mut vars = super::super::complete_vars();
+        vars.insert("SPIRA_REPO".into(), "shared".into());
+        let cwd = std::env::current_dir().unwrap();
+        let res = with_run_launching(vars, &NoBd, Dirty(vec![]), &exec, &|| 0, &Seams(Default::default()), &Mute::default(), &cap, "", |r| {
+            r.rune = Rune::from_vars("pilgrim", &Default::default());
+            r.conf.run = w.join("run");
+            r.s.logf = Some(w.join("log"));
+            let outlet = told.clone();
+            r.s.feed = Some(std::sync::Arc::new(crate::session_feed::SessionFeed::new("sp-x", "pilgrim", 300, |_| Box::new(outlet))));
+            let bin = w.join("model-bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            testkit::write_exe(bin.join("work"), "#!/bin/sh\n");
+            r.d.env.set(spira_config::release_env::MODEL_BIN_OVERRIDE_ENV, &bin.display().to_string());
+            r.session(&w).map_err(|a| format!("{a:?}"))
+        });
+        std::env::set_current_dir(cwd).unwrap();
+        res.unwrap();
+        assert_eq!(*exec.1.lock().unwrap(), ["started", "ended"]);
+    }
+
     #[test_id(tpl1fti)]
     #[test]
     fn the_env_the_session_port_receives_carries_the_forge_fences_and_no_token() {

@@ -13,12 +13,13 @@ name = "dwarf"
 path = "src/main.rs"
 
 [features]
-integration = ["lifecycle/integration", "bead/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "strand/integration", "testkit/integration", "system-paths/integration", "spira-claim/integration", "spira-test-id/integration"]
+integration = ["lifecycle/integration", "bead/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "strand/integration", "testkit/integration", "system-paths/integration", "spira-claim/integration", "spira-test-id/integration", "spira-pub/integration"]
 [dependencies]
 bead = { path = "../bead" }
 spira-config = { path = "../spira-config" }
 spira-store = { path = "../spira-store" }
 spira-otel = { path = "../spira-otel" }
+spira-pub = { path = "../spira-pub" }
 strand = { path = "../strand" }
 runtime = { path = "../runtime" }
 system-paths = { path = "../system-paths" }
@@ -34,6 +35,11 @@ spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 lifecycle = { path = "../lifecycle" }
 spira-claim = { path = "../spira-claim" }
+
+[[test]]
+name = "session_publish"
+path = "tests/session_publish.rs"
+required-features = ["integration"]
 
 [[test]]
 name = "session_tmp_ignored"
