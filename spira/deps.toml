@@ -96,6 +96,14 @@ version_min = ""
 version_probe = "duckdb --version"
 
 [[dep]]
+name = "mosquitto"
+tier = "runtime"
+provider = "spira-env"
+purpose = "the harness's MQTT broker, run as spira-broker.service on a Unix socket only"
+version_min = ""
+version_probe = "mosquitto -h 2>/dev/null | sed -n 's/^mosquitto version //p'"
+
+[[dep]]
 name = "gh"
 tier = "optional"
 purpose = "opening and landing pull requests (repos whose land mode is 'pr')"

@@ -137,6 +137,14 @@ pub fn render_all(ctx: &Ctx) -> Result<Vec<(String, String, String)>, String> {
     Ok(out)
 }
 
+/// [`crate::broker::place_conf`] when `rendered` includes the broker's unit.
+pub(crate) fn place_broker_conf(ctx: &Ctx, rendered: &[(String, String, String)]) -> Result<bool, String> {
+    if !rendered.iter().any(|(_, template, _)| template == crate::broker::UNIT) {
+        return Ok(false);
+    }
+    crate::broker::place_conf(ctx.templates_dir, ctx.host)
+}
+
 fn render_template(ctx: &Ctx, template: &str, watcher: Option<&str>) -> Result<String, String> {
     let text = fs::read_to_string(ctx.templates_dir.join(template)).map_err(|e| format!("{template}: {e}"))?;
     render(template, &text, ctx.host, watcher)
@@ -207,6 +215,18 @@ pub fn run(ctx: &Ctx) -> Report {
     };
 
     let mut changed_templates: std::collections::BTreeSet<String> = Default::default();
+    // Before any unit is enabled: the broker cannot start without its config, and a changed
+    // config restarts it.
+    match place_broker_conf(ctx, &rendered) {
+        Ok(true) => {
+            changed_templates.insert(crate::broker::UNIT.to_string());
+        }
+        Ok(false) => {}
+        Err(e) => {
+            r.errors.push(e);
+            return r;
+        }
+    }
     let mut new_units: std::collections::BTreeSet<String> = Default::default();
     let mut masked: std::collections::BTreeSet<String> = Default::default();
 
@@ -713,7 +733,7 @@ mod tests {
     use std::fs;
 
     fn host() -> HostValues {
-        HostValues { toml: "h/cfg.toml".into(), home: "h".into(), repo: "h".into(), run: "run".into(), db: "db".into(), cockpit: "h/cockpit".into(), dolt_data: "".into(), dolt: "usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), sccache_dav_root: "run/sccache-dav".into(), repo_map: "".into(), lc_password_file: "h/lc.credential".into(), watchdog_every_s: "60".into(), unit_user: String::new() }
+        HostValues { toml: "h/cfg.toml".into(), home: "h".into(), repo: "h".into(), run: "run".into(), db: "db".into(), cockpit: "h/cockpit".into(), dolt_data: "".into(), dolt: "usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), sccache_dav_root: "run/sccache-dav".into(), repo_map: "".into(), lc_password_file: "h/lc.credential".into(), watchdog_every_s: "60".into(), unit_user: String::new(), broker_socket: "run/broker.sock".into() }
     }
 
     fn tiny_manifest() -> Manifest {
