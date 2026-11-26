@@ -123,7 +123,7 @@ fn around_binds_each_target_link_destination_writable_and_keeps_the_environment(
 fn the_held_decision_comes_before_any_work_a_held_call_does_not_need() {
     let text = fs::read_to_string(workspace().join("tools/test-sandbox/runner")).unwrap();
     let held = text.find("[ -z \"$print\" ] && held").expect("the runner decides held");
-    for later in ["readlink -f", "sed -n", "/bwrap"] { // not a path: a substring searched for in the runner script
+    for later in ["readlink -f", "gitdir:", "/bwrap"] { // not a path: a substring searched for in the runner script
         let first_use = text.find(later).unwrap();
         assert!(held < first_use, "`{later}` runs at byte {first_use}, before the held decision at {held}");
     }
