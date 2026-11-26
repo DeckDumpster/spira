@@ -807,6 +807,19 @@ fn a_rollback_with_a_unit_not_up_still_publishes_the_restored_sha() {
     assert_eq!(said["sha"].as_str(), Some(A), "{said}");
 }
 
+#[cfg(feature = "integration")]
+#[test_id(t2olnz9)]
+#[test]
+fn a_rollback_that_cannot_switch_leaves_release_active_as_it_was() {
+    let broker = testkit::broker::Broker::up();
+    let w = world_with_a_broker_on_a("sock/b.sock");
+    activate_publishing(&w, &broker_running(&w), B, broker.socket()).unwrap();
+    let before = broker.retained("release/active");
+    fs::remove_dir_all(w.cfg.releases.join(A)).unwrap();
+    rollback_publishing(&w, &broker_running(&w), broker.socket()).unwrap_err();
+    assert_eq!((current_of(&w), broker.retained("release/active")), (B.to_string(), before));
+}
+
 // ---------------------------------------------------------------- hotfix
 
 const STANDING_HOTFIX: &str = "sha cccccccccccccccccccccccccccccccccccccccc\nreason r\nat t\n";
