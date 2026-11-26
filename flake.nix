@@ -73,7 +73,7 @@
             rust-code-analysis  # 0.0.25 — rust-code-analysis-cli, the habit hooks' per-function complexity
             shellcheck          # the habit hooks' shell lint
             mold                # the linker for workspace builds (sp-mgmjhy)
-            llvmPackages.clang-unwrapped  # proc-starts/build.rs: `clang -target bpf`; the wrapped clang's hardening flags break that target
+            llvmPackages.clang-unwrapped  # proc-starts/bpf/regen.sh: `clang -target bpf`; the wrapped clang's hardening flags break that target
           ] ++ [ terraform ];
         };
         default = self.packages.${system}.spira-env;

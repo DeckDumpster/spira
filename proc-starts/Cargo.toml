@@ -29,3 +29,4 @@ libc = "0.2"
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
+sha2 = "0.10"

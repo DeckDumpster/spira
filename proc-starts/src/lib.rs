@@ -17,3 +17,17 @@ use spira_otel::metrics::MetricsSink;
 pub fn sink() -> MetricsSink {
     spira_config::process::metrics_sink("proc-starts")
 }
+
+#[cfg(test)]
+mod object_tests {
+    use sha2::{Digest, Sha256};
+
+    #[test_id(ttxdm1t)]
+    #[test]
+    fn committed_bpf_object_matches_its_source() {
+        let source = include_bytes!("../bpf/proc_starts.bpf.c");
+        let recorded = include_str!("../bpf/proc_starts.bpf.c.sha256").trim();
+        let actual: String = Sha256::digest(source).iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(actual, recorded, "bpf/proc_starts.bpf.c changed without its object: run proc-starts/bpf/regen.sh and commit both");
+    }
+}

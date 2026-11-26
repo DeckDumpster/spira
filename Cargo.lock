@@ -1565,6 +1565,7 @@ dependencies = [
  "libc",
  "ports",
  "runtime",
+ "sha2",
  "spira-config",
  "spira-otel",
  "spira-test-id",
