@@ -6,6 +6,7 @@ use crate::config_delta::{self, Txn};
 use crate::fsutil;
 use crate::git::Git;
 use crate::machine::{self, ReleaseState};
+use crate::spira_env;
 use crate::systemctl::Systemctl;
 use crate::units;
 use crate::verify;
@@ -102,6 +103,7 @@ pub struct Ctx<'a> {
     pub cfg: &'a Config,
     pub reads: &'a dyn Reads,
     pub sc: &'a dyn Systemctl,
+    pub nix: &'a dyn spira_env::Nix,
     pub git: &'a dyn Git,
     /// The repository the hotfix rule asks about ancestry in.
     pub repo: Option<PathBuf>,
@@ -324,6 +326,27 @@ fn is_up(active: &str) -> bool {
     matches!(active, "active" | "activating" | "reloading")
 }
 
+/// Builds `rel`'s tool env and links it; `None` for a release that carries no flake.
+fn build_env(ctx: &Ctx, rel: &Path, sha: &str) -> Result<Option<spira_env::Built>, String> {
+    if !spira_env::has_flake(rel) {
+        eprintln!("release: spira-env not built: {sha} has no flake.nix and flake.lock");
+        return Ok(None);
+    }
+    let home = ctx.cfg.home()?;
+    let link = home.join(spira_config::SPIRA_ENV_REL);
+    let held = fs::canonicalize(&link).ok();
+    let built = spira_env::build(ctx.nix, rel, &home).map_err(|e| {
+        // Claimed only when true: a root that failed may also have failed to put the link back.
+        let unchanged = if fs::canonicalize(&link).ok() == held { "; nothing changed" } else { "" };
+        format!("cannot build spira-env from {sha}: {e}{unchanged}")
+    })?;
+    match &built.before {
+        Some(before) if *before == built.after => eprintln!("release: spira-env unchanged ({})", built.after.display()),
+        before => eprintln!("release: spira-env {} -> {}", before.as_deref().map_or("(none)".into(), |b| b.display().to_string()), built.after.display()),
+    }
+    Ok(Some(built))
+}
+
 /// Switch the running system onto release `sha`: render and install units, swap
 /// `current`, daemon-reload, restart what changed, check it came up, and undo all of it
 /// when something did not.
@@ -371,6 +394,9 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
         return Err(format!("cannot render units against {sha}; nothing changed:\n  {}", errors.join("\n  ")));
     }
 
+    // Before any unit changes: units resolve their tools through the env this links.
+    let env = build_env(ctx, &rel, sha)?;
+
     let cur_link = cfg.releases.join(CURRENT);
     let prev = fs::read_link(&cur_link).ok().map(|t| t.to_string_lossy().to_string());
     let prev_root = prev.as_ref().map(|p| cfg.releases.join(p));
@@ -379,12 +405,12 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
     for (written, c) in changes.iter().enumerate() {
         if let Err(e) = fsutil::write_atomic(&c.path, &c.new) {
             restore_files(&changes[..written]);
-            return Err(e);
+            return Err(format!("{e}{}", incomplete(restore_env(ctx, env.as_ref()).err())));
         }
     }
     if let Err(e) = fsutil::atomic_symlink(&cur_link, sha) {
         restore_files(&changes);
-        return Err(e);
+        return Err(format!("{e}{}", incomplete(restore_env(ctx, env.as_ref()).err())));
     }
     eprintln!("release: current -> {sha} ({} unit file(s) rewritten)", changes.len());
     let mut retired = Vec::new();
@@ -402,7 +428,7 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
         }
     }
     if let Err(e) = ctx.sc.daemon_reload() {
-        let undo = undo(ctx, &changes, prev.as_deref(), &[]);
+        let undo = undo(ctx, env.as_ref(), &changes, prev.as_deref(), &[]);
         return Err(format!("daemon-reload failed: {e}; rolled back{undo}"));
     }
 
@@ -410,7 +436,7 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
         let before = unit_files(&cfg.unit_dir);
         if let Err(e) = ensure_new_units(cfg, sha) {
             let added: Vec<String> = unit_files(&cfg.unit_dir).difference(&before).cloned().collect();
-            let undo = undo(ctx, &changes, prev.as_deref(), &[]);
+            let undo = undo(ctx, env.as_ref(), &changes, prev.as_deref(), &[]);
             let shipped = if added.is_empty() { String::new() } else { format!(" (units new in {sha}: {})", added.join(", ")) };
             return Err(format!("{e}{shipped}; nothing was restarted; rolled back{undo}"));
         }
@@ -426,7 +452,7 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
         let st = match ctx.sc.state(unit) {
             Ok(st) => st,
             Err(e) if fixed.is_some() => {
-                let undo = undo(ctx, &changes, prev.as_deref(), &[]);
+                let undo = undo(ctx, env.as_ref(), &changes, prev.as_deref(), &[]);
                 return Err(format!("cannot read the state of {unit}: {e}; rolled back{undo}"));
             }
             Err(e) => {
@@ -517,7 +543,7 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
         }
     }
     if !failed.is_empty() {
-        let undo = undo(ctx, &changes, prev.as_deref(), &attempted);
+        let undo = undo(ctx, env.as_ref(), &changes, prev.as_deref(), &attempted);
         return Err(format!(
             "activating {sha} failed, rolled back to {}:\n  {}{undo}",
             prev.as_deref().unwrap_or("no current release"),
@@ -845,10 +871,20 @@ fn restore_files(changes: &[Change]) -> Vec<String> {
     errs
 }
 
-/// Put everything back: unit files, `current`, daemon-reload, and restart what was
+/// Points the env link back at what it held before this switch built over it.
+fn restore_env(ctx: &Ctx, env: Option<&spira_env::Built>) -> Result<(), String> {
+    match env.and_then(|b| b.before.as_deref().filter(|before| *before != b.after)) {
+        Some(before) => spira_env::restore(&ctx.cfg.home()?, before),
+        None => Ok(()),
+    }
+}
+
+/// Put everything back: the tool env, unit files, `current`, daemon-reload, and restart what was
 /// restarted so it runs the old release again. Returns "" or the problems undoing hit.
-fn undo(ctx: &Ctx, changes: &[Change], prev: Option<&str>, restarted: &[String]) -> String {
-    let mut errs = restore_files(changes);
+fn undo(ctx: &Ctx, env: Option<&spira_env::Built>, changes: &[Change], prev: Option<&str>, restarted: &[String]) -> String {
+    // The env goes first: what is restarted below must resolve the old release's tools.
+    let mut errs: Vec<String> = restore_env(ctx, env).err().into_iter().collect();
+    errs.extend(restore_files(changes));
     let cur_link = ctx.cfg.releases.join(CURRENT);
     match prev {
         Some(p) => {
@@ -870,6 +906,11 @@ fn undo(ctx: &Ctx, changes: &[Change], prev: Option<&str>, restarted: &[String])
             errs.push(format!("restart {u} on the previous release: {e}"));
         }
     }
+    incomplete(errs)
+}
+
+fn incomplete(errs: impl IntoIterator<Item = String>) -> String {
+    let errs: Vec<String> = errs.into_iter().collect();
     if errs.is_empty() {
         String::new()
     } else {

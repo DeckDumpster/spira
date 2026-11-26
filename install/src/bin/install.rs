@@ -238,20 +238,12 @@ fn set_dolt_metrics_disabled(path: &Path) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|e| format!("install {}: {e}", path.display()))
 }
 
-/// The flake reference for the release's `spira-env`. The root is resolved through its symlinks:
-/// nix copies a symlinked `path:` root into the store as a symlink, and a relative target (the
-/// `current` link to `spira-<name>`) then resolves against `/nix/store`, which pure evaluation refuses.
-fn spira_env_target(root: &Path) -> String {
-    let resolved = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    format!("path:{}#spira-env", resolved.display())
-}
-
 /// Builds the pinned tool environment (`flake.nix` at the release root) into
 /// `~/.local/lib/spira-env`; every unit's PATH and `dolt-beads.service`'s ExecStart resolve
 /// dolt and bd from it. Idempotent: an unchanged lock rebuilds to the same store path. Once the
 /// previous env is rooted it starts a garbage collection, which the install does not wait for.
 fn build_spira_env(dry: bool, home: &str, release_root: Option<&Path>) -> Result<(), String> {
-    let Some(root) = release_root.filter(|r| r.join("flake.nix").is_file() && r.join("flake.lock").is_file()) else {
+    let Some(root) = release_root.filter(|r| release::spira_env::has_flake(r)) else {
         info("skipping spira-env: no flake.nix/flake.lock in this release");
         return Ok(());
     };
@@ -293,29 +285,23 @@ fn root_key(root: &Path) -> String {
     std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
-type Runner<'a> = &'a dyn Fn(&str, &[&str]) -> Result<(), String>;
+use release::spira_env::Runner;
 
 fn build_spira_env_with(dry: bool, home: &str, root: &Path, run: Runner, units: Option<&dyn runtime::units::Units>, gc: Option<&GcPlan>) -> Result<(), String> {
     let out = Path::new(home).join(spira_config::SPIRA_ENV_REL);
-    let target = spira_env_target(root);
     if dry {
+        let target = release::spira_env::target(root);
         would(&format!("run: nix build {target} -o {}", out.display()));
         would("start nix-collect-garbage as a background unit once the previous spira-env is rooted");
         return Ok(());
     }
-    if let Some(parent) = out.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
-    }
-    let before = std::fs::canonicalize(&out).ok();
-    run("nix", &["--extra-experimental-features", "nix-command flakes", "build", &target, "-o", &out.display().to_string()])
-        .map_err(|e| format!("cannot build spira-env (is nix installed?): {e}"))?;
-    if let (Some(old), Ok(new)) = (before, std::fs::canonicalize(&out)) {
-        if old != new {
-            let prev = Path::new(home).join(spira_config::SPIRA_ENV_PREV_REL);
-            run("nix-store", &["--add-root", &prev.display().to_string(), "--indirect", "--realise", &old.display().to_string()])
-                .map_err(|e| format!("cannot root the previous spira-env {}: {e}", old.display()))?;
-            info(&format!("kept previous spira-env {} as a GC root at {}", old.display(), prev.display()));
-        }
+    let run = |prog: &str, args: &[&str]| {
+        run(prog, args).map_err(|e| if prog == "nix" { format!("cannot build spira-env (is nix installed?): {e}") } else { e })
+    };
+    let built = release::spira_env::build(&release::spira_env::Argv(&run), root, Path::new(home))?;
+    if let Some(old) = built.before.filter(|old| *old != built.after) {
+        let prev = Path::new(home).join(spira_config::SPIRA_ENV_PREV_REL);
+        info(&format!("kept previous spira-env {} as a GC root at {}", old.display(), prev.display()));
     }
     info(&format!("built spira-env at {}", out.display()));
     if let (Some(units), Some(gc)) = (units, gc) {
@@ -2188,17 +2174,6 @@ fn base64_no_pad(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod dependency_fetch_tests {
     use super::*;
-
-    #[test_id(tlfrwew)]
-    #[test]
-    fn spira_env_target_names_the_release_directory_not_the_symlink_to_it() {
-        let td = testkit::TempDir::new("env-target");
-        let real = td.path().join("spira-daily");
-        std::fs::create_dir_all(&real).unwrap();
-        std::os::unix::fs::symlink("spira-daily", td.path().join("current")).unwrap();
-        let want = format!("path:{}#spira-env", std::fs::canonicalize(&real).unwrap().display());
-        assert_eq!(spira_env_target(&td.path().join("current")), want);
-    }
 
     #[test_id(tm868ki)]
     #[test]

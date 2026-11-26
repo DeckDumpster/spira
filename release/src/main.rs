@@ -500,7 +500,7 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
         }
         "activate" | "rollback" => {
             let sc = RealSystemctl::from_env();
-            let ctx = Ctx { cfg: &cfg, reads: &activate::RealReads(&cfg), sc: &sc, git: &RealGit, repo: repo(), landed_ref: a.landed_ref.clone(), settle: a.settle, drain: a.drain, steady: a.steady, warm_wait: a.warm_wait, warm_pause: Duration::from_secs(1), report: &|l| eprintln!("{l}") };
+            let ctx = Ctx { cfg: &cfg, reads: &activate::RealReads(&cfg), sc: &sc, nix: &release::spira_env::RealNix, git: &RealGit, repo: repo(), landed_ref: a.landed_ref.clone(), settle: a.settle, drain: a.drain, steady: a.steady, warm_wait: a.warm_wait, warm_pause: Duration::from_secs(1), report: &|l| eprintln!("{l}") };
             if cmd == "activate" {
                 want(1)?;
                 if activate::current(&cfg).as_deref() != Some(rest[0].as_str()) {
