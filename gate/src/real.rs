@@ -1371,6 +1371,17 @@ mod tests {
         assert!(missing.is_empty(), "RETIRED_VARS names keys the registry no longer declares: {missing:?}");
     }
 
+    #[test_id(tzhn31l)]
+    #[test]
+    fn every_per_test_deadline_key_the_engine_reads_is_resolved_into_the_gates_context() {
+        for tier in ["UNIT", "INTEGRATION"] {
+            for part in ["SECS", "PERIODS"] {
+                let key = format!("SPIRA_{tier}_TEST_DEADLINE_{part}");
+                assert!(crate::real::RETIRED_VARS.contains(&key.as_str()), "{key} never reaches ctx, so every unit gate is NOVERDICT config");
+            }
+        }
+    }
+
     struct Pool {
         t: testkit::TempDir,
         bases: Vec<std::path::PathBuf>,

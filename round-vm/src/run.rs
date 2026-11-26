@@ -5078,6 +5078,7 @@ mod tests {
         assert!(defined < called, "bash runs top down: the ONLY integration-tests step calls it first");
     }
 
+    // Runs bash: the writer exists only as shell text. spira-config is stubbed so a test builds no binary.
     #[test_id(ta7a5ym)]
     #[test]
     fn each_round_deadline_comes_from_its_own_config_key_and_an_unreadable_tests_key_refuses() {
