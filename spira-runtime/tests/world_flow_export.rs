@@ -7,7 +7,7 @@ use std::os::unix::net::UnixListener;
 use std::sync::{Arc, Mutex};
 
 use runtime::RuntimeError;
-use spira_runtime::watchers::reconciler_flow::{judge, Carry, FlowSnapshot, ReconcilerFlow};
+use spira_runtime::watchers::reconciler_flow::{judge, Carry, FlowSnapshot, Mail, ReconcilerFlow};
 use spira_runtime::world::World;
 
 #[test_id(t5qrh17)]
@@ -40,7 +40,8 @@ fn the_flow_export_asks_for_the_event_head_and_not_the_whole_log() {
 
 const PARAMS: &str = r#"{"now":1700000000,"window_hours":24.0,"baseline_hours":168.0,"rework_window_hours":24.0,"sentinel_timer_secs":300}"#;
 
-/// A one-shot-per-request metrics store answering every export with one `bead-stage` sample at `stage_ts` seconds.
+/// A one-shot-per-request metrics store answering the lag query with one `bead-stage` sample at `stage_ts` seconds,
+/// and every other request with one bare `bead-stage` row.
 fn metrics_with_newest_stage(stage_ts: i64) -> String {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap().to_string();
@@ -50,8 +51,8 @@ fn metrics_with_newest_stage(stage_ts: i64) -> String {
             let mut buf = [0u8; 4096];
             let _ = std::io::Read::read(&mut stream, &mut buf);
             let request = String::from_utf8_lossy(&buf).into_owned();
-            assert!(request.starts_with("GET /api/v1/export?match[]=spira_tsd_value%7Btsd_family%3D%22bead-stage%22%7D&start=1699913600 "), "{request}"); // not a path: the HTTP request line
-            let body = format!("{{\"metric\":{{\"__name__\":\"spira_tsd_value\"}},\"values\":[1],\"timestamps\":[{}]}}\n", stage_ts * 1000);
+            let lag_query = request.starts_with("GET /api/v1/export?match[]=spira_tsd_value%7Btsd_family%3D%22bead-stage%22%7D&start=1699913600 "); // not a path: the HTTP request line
+            let body = if lag_query { format!("{{\"metric\":{{\"__name__\":\"spira_tsd_value\"}},\"values\":[1],\"timestamps\":[{}]}}\n", stage_ts * 1000) } else { "{\"metric\":{\"__name__\":\"spira_tsd_row\",\"tsd_family\":\"bead-stage\"},\"values\":[1],\"timestamps\":[1700000000000]}\n".to_string() };
             let _ = std::io::Write::write_all(&mut stream, format!("HTTP/1.0 200 OK\r\n\r\n{body}").as_bytes());
         }
     });
@@ -124,11 +125,16 @@ fn a_pass_whose_exporter_completed_mails_no_export_failure() {
     let (snap, ran) = pass_trailing_by(3, 1500);
     assert_eq!(ran, "lifecycle\n");
     assert_eq!(snap["export"], serde_json::json!({"Ok": null}), "{snap}");
-    let snap: FlowSnapshot = serde_json::from_value(snap).unwrap();
+    let mut snap: FlowSnapshot = serde_json::from_value(snap).unwrap();
+    assert!(snap.stage.is_ok(), "{:?}", snap.stage);
     let cfg = ReconcilerFlow { interval_ms: 1_800_000, window_hours: 24.0, baseline_hours: 168.0, grace_secs: 0, unobservable_grace_secs: 0, rework_window_hours: 24.0, sentinel_timer_secs: 300, shadow_kinds: vec![] };
-    let mails = judge(&cfg, snap.now, &Carry::default(), &snap, None).mails;
-    assert!(mails.iter().any(|m| m.subject.ends_with("flow:velocity:queue")), "the export-gated key still pages for its own reading: {mails:?}");
-    assert!(mails.iter().all(|m| !m.body.contains("bead-stage export failed")), "{mails:?}");
+    let blames_export = |mails: &[Mail]| mails.iter().any(|m| m.body.contains("bead-stage export failed"));
+    let pass = judge(&cfg, snap.now, &Carry::default(), &snap, None);
+    assert_eq!(pass.carry.words["flow:velocity:queue"], "satisfied");
+    assert!(!blames_export(&pass.mails), "{:?}", pass.mails);
+    snap.export = Err("planted".into());
+    let planted = judge(&cfg, snap.now, &Carry::default(), &snap, None);
+    assert!(blames_export(&planted.mails), "the matcher must see a failed export: {:?}", planted.mails);
 }
 
 #[test_id(two2b2w)]
