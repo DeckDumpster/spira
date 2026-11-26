@@ -1503,6 +1503,27 @@ mod restart_tests {
         assert!(live_reason(&unit("c3"), &unit("c3"), &pruned, Some(&exe), None).is_some_and(|w| w.contains("cannot")), "unreadable new program");
     }
 
+    /// A release restarts no subscriber: neither restart judgement finds a reason to restart a
+    /// running broker when only the release changes.
+    #[test_id(txumw36)]
+    #[test]
+    fn the_shipped_broker_unit_is_left_running_across_releases() {
+        let t = testkit::TempDir::new("release-broker-unit");
+        let rel = t.path().join("releases");
+        let (a1, b2) = (rel.join("a1"), rel.join("b2"));
+        let template = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/spira-broker.service");
+        let text = fs::read_to_string(template).unwrap();
+        let env_bin = t.path().join("env-bin");
+        let host = [("SPIRA_ENV_PATH", env_bin.clone()), ("SPIRA_RUN", t.path().join("run")), ("SPIRA_TOML", t.path().join("cfg.toml"))].map(|(k, v)| (k.to_string(), v.display().to_string())).into();
+        let render = |r: &Path| units::render("spira-broker.service", &text, r, &host, None, "prod").unwrap();
+        let (old, new) = (render(&a1), render(&b2));
+        let roots = Roots { releases: &rel, old: Some(&a1), new: &b2 };
+        let started: Vec<u8> = old.lines().filter_map(|l| l.strip_prefix("Environment=")).flat_map(|l| format!("{l}\0").into_bytes()).collect();
+        let started = crate::systemctl::release_of_environ(&started);
+        assert_eq!(restart_reason("spira-broker-prod.service", &old, &new, &roots), None);
+        assert_eq!(live_reason(&old, &new, &roots, Some(&env_bin.join("mosquitto")), started.as_deref()), None);
+    }
+
     /// sp-sv2lw2: a stale unit is restarted unless its template states a reason for never
     /// being restarted; a bare boolean is no reason, and a left unit is named with its reason.
     #[test_id(tk7gu1x)]

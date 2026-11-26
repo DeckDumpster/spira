@@ -36,6 +36,11 @@ path = "tests/units_lint.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "broker"
+path = "tests/broker.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "metrics_stack"
 path = "tests/metrics_stack.rs"
 required-features = ["integration"]

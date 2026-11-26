@@ -2,7 +2,7 @@
 //! are active — installs missing or changed unit files and daemon-reloads, but never
 //! restarts a running service. `landing-pass` runs this after every pass.
 
-use crate::install_units::{execstart_target_ok, is_masked, render_all, retire_dropped_units, write_unit, Ctx};
+use crate::install_units::{execstart_target_ok, is_masked, place_broker_conf, render_all, retire_dropped_units, write_unit, Ctx};
 use std::fs;
 
 #[derive(Debug, Default)]
@@ -25,6 +25,12 @@ pub fn run(ctx: &Ctx, retire: bool) -> Report {
             return r;
         }
     };
+
+    // Before any unit is enabled. A running broker keeps its old config until its next restart.
+    if let Err(e) = place_broker_conf(ctx, &rendered) {
+        r.errors.push(e);
+        return r;
+    }
 
     let mut newly_installed: std::collections::BTreeSet<String> = Default::default();
     for (inst, _tpl, text) in &rendered {
@@ -90,7 +96,7 @@ mod tests {
     use crate::values::HostValues;
 
     fn host() -> HostValues {
-        HostValues { toml: "h/cfg.toml".into(), home: "h".into(), repo: "h".into(), run: "run".into(), db: "db".into(), cockpit: "h/cockpit".into(), dolt_data: "".into(), dolt: "usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), sccache_dav_root: "run/sccache-dav".into(), repo_map: "".into(), lc_password_file: "h/lc.credential".into(), watchdog_every_s: "60".into(), unit_user: String::new() }
+        HostValues { toml: "h/cfg.toml".into(), home: "h".into(), repo: "h".into(), run: "run".into(), db: "db".into(), cockpit: "h/cockpit".into(), dolt_data: "".into(), dolt: "usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), sccache_dav_root: "run/sccache-dav".into(), repo_map: "".into(), lc_password_file: "h/lc.credential".into(), watchdog_every_s: "60".into(), unit_user: String::new(), broker_socket: "run/broker.sock".into() }
     }
 
     fn tiny_manifest() -> crate::manifest::Manifest {
@@ -187,7 +193,8 @@ mod tests {
         std::fs::write(dropin.join("tick-30.conf"), "[Service]\nEnvironment=X=1\n").unwrap();
         std::fs::write(unit_dir.join(".spira-installed-units"), "spira-sentinel-prod.service\nspira-sentinel-prod.timer\nspira-watch-queue-watch-prod.service\nspira-mail-deliver-prod.service\nspira-psi-sample-prod.service\nspira-psi-sample-prod.timer\n").unwrap();
         let manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: true, dolt_durable_set: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
-        let h = host();
+        // The real manifest places the broker config in the run directory.
+        let h = HostValues { run: base.join("run").display().to_string(), ..host() };
         let sc = FakeSystemctl::default();
         let no_suspend = |_: &str| false;
         let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
