@@ -758,13 +758,16 @@ fn loop_transitions_on_a_fresh_store_reads_nothing_back_and_is_short_until_warme
 #[test_id(tntey77)]
 #[test]
 fn a_request_folds_a_bounded_tail_and_answers_short_until_the_sweep_catches_up() {
-    let s = fresh();
+    const BOUND: u64 = 20;
+    let mut s = fresh();
+    s.dwell_forward_revs = BOUND;
     warm(&s, 4_000, 100);
-    for i in 0..(super::super::FORWARD_REVS as usize) {
+    for i in 0..BOUND as usize {
         work(&s, &format!("sp-{i}"), "harness", 2_000 + i as i64, None);
     }
+    assert!(s.contract().head().unwrap() > BOUND, "the writes must outrun the bound");
     let d = s.dwell(4_000, 100, None).unwrap();
-    assert!(!d.complete && d.scanned <= super::super::FORWARD_REVS as usize, "complete {} scanned {}", d.complete, d.scanned);
+    assert!(!d.complete && d.scanned > 0 && d.scanned <= BOUND as usize, "complete {} scanned {}", d.complete, d.scanned);
     assert_eq!(d.horizon, 4_000, "an index behind the head claims no coverage");
     warm(&s, 4_000, 100);
     assert!(s.dwell(4_000, 100, None).unwrap().complete);
