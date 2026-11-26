@@ -12,8 +12,11 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
 
+use lifecycle::bead::{BeadState, LifecycleRow};
+use runtime::ports::VirtualClock;
 use rumqttc::{Client, Connection, Event, MqttOptions, Packet, QoS, Transport};
 use serde_json::{json, Value};
+use state_store::{Config, Contract, Object, Ports, Request, Txn};
 use state_store_sqlite::{Options, SqliteBackend};
 use testkit::broker::Broker;
 
@@ -37,12 +40,14 @@ impl Drop for Server {
 }
 
 impl Server {
-    fn start(broker: &Broker) -> Server {
+    /// A server on a new store, which `seed` writes to first.
+    fn start(broker: &Broker, seed: impl FnOnce(&Path)) -> Server {
         let dir = testkit::TempDir::new("spira-lc-store-bridge");
         let run_dir = dir.join("run");
         std::fs::create_dir_all(&run_dir).unwrap();
         let store = dir.join("control.db");
         drop(SqliteBackend::open(&store, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap());
+        seed(&store);
         let socket = dir.join("lc.sock");
         let (d, r, s, sock) = (dir.display().to_string(), run_dir.display().to_string(), store.display().to_string(), socket.display().to_string());
         let toml = spira_config::process::fixture_toml(
@@ -111,11 +116,20 @@ impl Server {
         let (code, out) = self.event(id, "READY", 0, "dwarf-1", kind);
         assert_eq!(code, 0, "{out}");
     }
+}
 
-    fn drop_bead(&self, id: &str) {
-        let (code, out) = self.event(id, "READY", 0, "ops", json!({"Drop": {"reason": "closed-no-branch"}}));
-        assert_eq!(code, 0, "{out}");
-    }
+/// A DROPPED record, written straight to the store: the verb that drops a bead reads the
+/// content store, which this fixture has none of.
+fn seed_dropped(store: &Path, id: &str) {
+    let backend = SqliteBackend::open(store, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
+    let ports = Ports::virtual_clock(&VirtualClock::new(0));
+    let contract = Contract::open(backend, ports, Config { min_lock_ttl_ms: 1_000 }).unwrap();
+    let mut row = LifecycleRow::filed(id);
+    row.state = BeadState::Dropped;
+    let mut record = serde_json::to_value(row).unwrap();
+    record["updated_at"] = json!(PINNED_NOW);
+    let put = Txn::new().put(&format!("lifecycle/{id}"), Object::new(record));
+    assert!(contract.txn(&put, &Request::new("seed", "test", "seed")).unwrap().succeeded);
 }
 
 struct Subscriber {
@@ -166,7 +180,10 @@ impl Subscriber {
 
 /// A server whose bridge the broker has seen come up.
 fn bridged(broker: &Broker) -> Server {
-    let server = Server::start(broker);
+    watched(Server::start(broker, |_| {}), broker)
+}
+
+fn watched(server: Server, broker: &Broker) -> Server {
     wait_up(broker);
     server
 }
@@ -214,14 +231,13 @@ fn a_refused_transition_publishes_nothing() {
 #[test]
 fn a_restarted_broker_is_handed_every_open_beads_state_again_and_no_terminal_one() {
     let mut broker = Broker::up();
-    let server = bridged(&broker);
+    let server = watched(Server::start(&broker, |store| seed_dropped(store, "sp-brgone")), &broker);
     let mut before = Subscriber::to(broker.socket(), &["bead/+/state", "bead/+/sessions"]);
     server.create("sp-bropen");
-    server.create("sp-brgone");
     server.claim("sp-bropen");
-    server.drop_bead("sp-brgone");
-    let held = before.until(&["bead/sp-bropen/state", "bead/sp-bropen/sessions", "bead/sp-brgone/state"]);
-    assert_eq!(held["bead/sp-brgone/state"]["state"], "DROPPED");
+    let held = before.until(&["bead/sp-bropen/state", "bead/sp-bropen/sessions"]);
+    let (code, out) = server.call(&["show", "sp-brgone"]);
+    assert!(code == 0 && out.contains("DROPPED"), "the terminal record is there to be left out: {code} {out}");
 
     broker.restart();
     let mut after = Subscriber::to(broker.socket(), &["bead/+/state", "bead/+/sessions"]);

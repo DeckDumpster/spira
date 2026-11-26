@@ -10,13 +10,13 @@
 family = "bead/<id>/state"
 class = "state"
 publisher = "store-bridge"
-fields = ["state"]
+fields = ["state", "from", "actor", "at"]
 
 [[topic]]
 family = "bead/<id>/sessions"
 class = "state"
 publisher = "store-bridge"
-fields = ["sessions"]
+fields = ["sessions", "holder", "at"]
 
 [[topic]]
 family = "round/<repo>/<batch>"
