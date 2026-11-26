@@ -38,7 +38,15 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
     let f = fixture(testkit::env);
     spira_config::process::with_fresh(|| {
     assert_traps_and_double_are_live(&f);
+    Command::new("yield.sh").output().unwrap();
+    assert_eq!(started(&f, "yield.sh"), 1, "the yield.sh stub is what PATH resolves, so a started one is seen");
+    let records = std::path::PathBuf::from(spira_config::process::cfg("SPIRA_RUN").unwrap()).join("gate-yield");
+    std::fs::create_dir_all(&records).unwrap();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    std::fs::write(records.join("planted"), format!("at={now}\nsuite=test-planted.sh\nverdict=GATE_FAULT\n")).unwrap();
     let (warm, idle) = (START + HOUR, START + 2 * HOUR);
+    let unsent_passes = |f: &Fixture| f.seen.lock().unwrap().iter().filter(|(n, _)| n == "cockpit-tier-600s.observe").count();
+    let (mut yields_at_warm, mut yields_at_idle, mut passes_at_warm, mut passes_at_idle) = (0, 0, 0, 0);
     let marks = [warm, idle, idle + 16 * MINUTE, idle + 32 * MINUTE, idle + 43 * MINUTE, idle + 54 * MINUTE];
     let (mut at_warm, mut at_idle) = (0, 0);
     let ensures = |f: &Fixture| f.units.calls().iter().filter(|c| *c == &format!("start {ENSURE_UNIT}")).count();
@@ -49,10 +57,12 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
     run_hours(&f, &SUB_HOUR, (&[], 0), &marks, &mut |t| match t {
         t if t == warm => {
             (at_warm, ensures_at_warm) = (logged(&f).len(), ensures(&f));
+            (yields_at_warm, passes_at_warm) = (started(&f, "yield.sh"), unsent_passes(&f));
             pool_at_warm = vm_pool_publishes(&f);
         }
         t if t == idle => {
             (at_idle, ensures_at_idle) = (logged(&f).len(), ensures(&f));
+            (yields_at_idle, passes_at_idle) = (started(&f, "yield.sh"), unsent_passes(&f));
             pool_at_idle = vm_pool_publishes(&f);
             commit(&f.local, "sp-cccccc landed", LANDED_S + 10);
             git(&f.local, &["branch", "-f", "local/main"], 1);
@@ -89,6 +99,9 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
         assert!(all[..at_warm].iter().any(|l| l.contains(read)), "warm-up never ran {read:?}, so the idle hour proves nothing about it");
     }
     assert_eq!(at_idle, at_warm, "an idle virtual hour logged git: {}\n{}", argv_counts(&all[at_warm..at_idle]), all[at_warm..at_idle].join("\n"));
+    assert!(passes_at_idle - passes_at_warm >= 5, "the unsent probe ran {} times in the idle hour, so it proves little", passes_at_idle - passes_at_warm);
+    assert_eq!(yields_at_idle - yields_at_warm, 0, "an idle virtual hour started yield.sh");
+    assert!(unsent_before.contains("SP_YIELD_REDS") && unsent_before.contains("test-planted.sh x1"), "the unsent section carries the reading of the record under the run directory: {unsent_before}");
     assert_eq!((ensures_at_warm, ensures_at_idle), (1, 1), "the cockpit is ensured once on the first tick and not over an idle hour");
     assert_eq!(ensures_after_touch, 2, "a touched bin/health is one more start on the next tick");
     assert_eq!(ensures(&f), 3, "a new tmux client is one more start, and nothing else started one after the touch");

@@ -283,19 +283,8 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     let gate_silence = gate_wait::silence(&gate_log_text, &lc::beads_in("SUBMITTED").unwrap_or_default(), now, cfg.gate_silence_window_s);
 
     // YIELD ------------------------------------------------------------------------------
-    let yield_sh = cfg.yield_sh.clone().or_else(|| incident::which("yield.sh"));
-    if let Some(ysh) = &yield_sh {
-        if let Ok(out) = crate::deadline::output(
-            "yield",
-            // FORK-EDGE: yield.sh is 536 lines of shell
-            Command::new("bash")
-                .arg(ysh)
-                .arg("report")
-                .env("SPIRA_RUN", run)
-                .env("SPIRA_YIELD_WINDOW", cfg.yield_window_s.to_string()),
-        ) {
-            env.merge_lines(&String::from_utf8_lossy(&out.stdout), "YIELD_");
-        }
+    for (key, value) in strand::yield_report::report(&cfg.yield_dir, &cfg.gate_log(), cfg.yield_window_s.max(0) as u64, now.max(0) as u64) {
+        env.set(key, value);
     }
     let yield_win_label = win_label(cfg.yield_window_s);
     let yield_note = match env.raw("YIELD_RECORDER") {

@@ -252,6 +252,7 @@ SPIRA_GATE_IN_UNIT gate/src/main.rs
 SPIRA_GATE_LOG gate/src/engine.rs
 SPIRA_GATE_LOG gate/src/real.rs
 SPIRA_GATE_LOG spira/yield.sh
+SPIRA_GATE_LOG strand/src/yield_report.rs
 SPIRA_GATE_LOG watchtower/src/process.rs
 SPIRA_GATE_NOVERDICT spira-config/src/resolve.rs
 SPIRA_GATE_NOVERDICT spira/escape-classify.sh
@@ -802,11 +803,10 @@ SPIRA_WORLD_SH spira/deploy.sh
 SPIRA_WORLD_STOP_SKIP dwarf/src/run.rs
 SPIRA_WORLD_STOP_SKIP dwarf/src/seam.rs
 SPIRA_YIELD spira/yield.sh
+SPIRA_YIELD strand/src/yield_report.rs
 SPIRA_YIELD_BY spira/yield.sh
 SPIRA_YIELD_KEEP_DAYS spira/yield.sh
-SPIRA_YIELD_SH watchtower/src/process.rs
 SPIRA_YIELD_WINDOW spira/yield.sh
-SPIRA_YIELD_WINDOW watchtower/src/process.rs
-SPIRA_YIELD_WINDOW watchtower/src/sweep/collect.rs
+SPIRA_YIELD_WINDOW strand/src/yield_report.rs
 SPIRA_TOML spira-runtime/src/tasks/a/batcher_local.rs
 SPIRA_UNIT_USER install/src/values.rs

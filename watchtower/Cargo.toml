@@ -11,6 +11,11 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "sweep_yield"
+path = "tests/sweep_yield.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "stand_down"
 path = "tests/stand_down.rs"
 required-features = ["integration"]

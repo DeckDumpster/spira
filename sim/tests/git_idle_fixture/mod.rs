@@ -339,7 +339,8 @@ pub fn plan_row(id: &str) -> String {
 pub const IDLE_TASK_PROGRAMS: [&str; 5] = ["mail-health.sh", "bash", "bead.sh", "schema.sh", "spira-sendmail"];
 pub const DATE_RUNS_PER_OPEN_EPOCH: usize = 4;
 pub const ENSURE_UNIT: &str = spira_runtime::tasks::g::cockpit_ensure::UNIT;
-pub const LOGGED_PROGRAMS: [&str; 23] = [
+pub const LOGGED_PROGRAMS: [&str; 24] = [
+    "yield.sh",
     "tmux",
     "spira-claim",
     "systemctl",

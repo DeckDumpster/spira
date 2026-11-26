@@ -66,7 +66,7 @@ unit tested against literal fixtures) and inline in each probe module using
 `unsent_keys` and `core_detail_keys` (the two largest bash functions, ~545 lines each) are
 each their own module (`probes/unsent.rs`, `probes/core_detail.rs`) with one function per
 named section (NEXT, RECENT, INFLOW, AWAITING CI, THROUGHPUT, TOKENS for `core_detail`; the
-branch backlog, `yield.sh` passthrough, the 24h landing funnel, ACCEPTANCE
+branch backlog, the `strand::yield_report` passthrough, the 24h landing funnel, ACCEPTANCE
 and the GATE/`landing.progress` block for `unsent` — note these five belong to
 `unsent_keys` in the bash, not `core_detail_keys`; they sit inside `unsent_keys`'s own
 closing brace at `spira/cockpit.sh:1551`).
