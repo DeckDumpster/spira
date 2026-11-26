@@ -1380,7 +1380,7 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
 const ANNOUNCE_FLUSH: Duration = Duration::from_secs(1);
 
 /// Publishes `release/active` and waits for the broker to take it: the process may exit next.
-/// The activation already stands, so a failure is only said.
+/// The switch already stands, so a failure is only said.
 fn announce(ctx: &Ctx, sha: &str, restarted: &[String]) {
     let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let payload = serde_json::json!({ "sha": sha, "at": at, "restarted": restarted });
@@ -1433,6 +1433,7 @@ pub fn rollback(ctx: &Ctx) -> Result<String, String> {
     write_history(&state, &history)?;
     let rec = prev.hotfix.as_ref().map(|r| Hotfix { sha: prev.sha.clone(), reason: r.clone(), at: fsutil::now_rfc3339() });
     write_hotfix(&state, rec.as_ref())?;
+    announce(ctx, &prev.sha, &switched.restarted);
     if !switched.down.is_empty() {
         let units: Vec<String> = switched.down.iter().map(|d| format!("{} ({}): systemctl --user start {}", d.unit, d.state, d.unit)).collect();
         let config = late.map(|e| format!("\n  {e}")).unwrap_or_default();

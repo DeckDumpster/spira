@@ -718,15 +718,28 @@ fn a_box_without_the_broker_unit_gets_no_broker_config_from_activation() {
 
 // ---------------------------------------------------------------- release/active
 
+#[cfg(feature = "integration")]
+fn publisher_to(socket: &Path) -> Result<spira_pub::Publisher, spira_pub::PubError> {
+    let clock = std::sync::Arc::new(runtime::ports::VirtualClock::new(0));
+    spira_pub::Publisher::with("release", spira_pub::Options::new(socket, clock, Box::new(runtime::ports::SeededRng::new(1))))
+}
+
+/// [`rollback_with`] publishing to the broker at `socket`.
+#[cfg(feature = "integration")]
+fn rollback_publishing(w: &World, sc: &FakeSystemctl, socket: &Path) -> Result<String, String> {
+    let reads = FakeReads::serving();
+    let nix = FakeNix::default();
+    let publisher = || publisher_to(socket);
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None, publisher: &publisher };
+    activate::rollback(&ctx)
+}
+
 /// [`activate_sha`] publishing to the broker at `socket`.
 #[cfg(feature = "integration")]
 fn activate_publishing(w: &World, sc: &FakeSystemctl, sha: &str, socket: &Path) -> Result<activate::Switched, String> {
     let reads = FakeReads::serving();
     let nix = FakeNix::default();
-    let publisher = || {
-        let clock = std::sync::Arc::new(runtime::ports::VirtualClock::new(0));
-        spira_pub::Publisher::with("release", spira_pub::Options::new(socket, clock, Box::new(runtime::ports::SeededRng::new(1))))
-    };
+    let publisher = || publisher_to(socket);
     let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None, publisher: &publisher };
     activate::activate(&ctx, sha, None)
 }
@@ -763,6 +776,35 @@ fn with_the_broker_stopped_an_activation_succeeds_as_before() {
     let w = world_with_a_broker_on_a("sock/b.sock");
     let out = activate_publishing(&w, &broker_running(&w), B, broker.socket()).unwrap();
     assert_eq!((out.restarted, current_of(&w)), (vec![BROKER.to_string()], B.to_string()));
+}
+
+#[cfg(feature = "integration")]
+#[test_id(tslj7p2)]
+#[test]
+fn a_rollback_republishes_release_active_with_the_restored_sha() {
+    let broker = testkit::broker::Broker::up();
+    let w = world_with_a_broker_on_a("sock/b.sock");
+    activate_publishing(&w, &broker_running(&w), B, broker.socket()).unwrap();
+    let sc = broker_running(&w);
+    assert_eq!(rollback_publishing(&w, &sc, broker.socket()), Ok(A.to_string()));
+    let held = broker.retained("release/active");
+    let said: serde_json::Value = serde_json::from_str(&held[0].1).unwrap();
+    assert_eq!((said["sha"].as_str(), &said["restarted"]), (Some(A), &serde_json::json!([BROKER])), "{said}");
+}
+
+#[cfg(feature = "integration")]
+#[test_id(tr8d9z6)]
+#[test]
+fn a_rollback_with_a_unit_not_up_still_publishes_the_restored_sha() {
+    let broker = testkit::broker::Broker::up();
+    let w = world_rolling_back_to_a();
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.slow_starts.borrow_mut().insert("spira-tool-prod.service".into(), 2);
+    let e = rollback_publishing(&w, &sc, broker.socket()).unwrap_err();
+    assert!(e.starts_with(&format!("rolled back to {A}; 1 unit(s) not up")), "{e}");
+    let held = broker.retained("release/active");
+    let said: serde_json::Value = serde_json::from_str(&held.first().expect("release/active is not retained").1).unwrap();
+    assert_eq!(said["sha"].as_str(), Some(A), "{said}");
 }
 
 // ---------------------------------------------------------------- hotfix
