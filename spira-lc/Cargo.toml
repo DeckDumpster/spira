@@ -36,6 +36,11 @@ path = "tests/serve_memory.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "store_bridge"
+path = "tests/store_bridge.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "writer_retry"
 path = "tests/writer_retry.rs"
 required-features = ["integration"]
@@ -46,7 +51,7 @@ path = "tests/verbs_on_store.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["system-paths/integration", "bead/integration", "watchtower/integration", "incident/integration", "lifecycle/integration", "gate/integration", "forge/integration", "groomer/integration", "reconciler-engine/integration", "runtime/integration", "round-vm/integration", "sentinel/integration", "spira-config/integration", "spira-store/integration", "spira-desired-state/integration", "spira-otel/integration", "state-store/integration", "state-store-sqlite/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration", "ports/integration", "mail/integration", "tsd-lifecycle-export/integration"]
+integration = ["system-paths/integration", "bead/integration", "watchtower/integration", "incident/integration", "lifecycle/integration", "gate/integration", "forge/integration", "groomer/integration", "reconciler-engine/integration", "runtime/integration", "round-vm/integration", "sentinel/integration", "spira-config/integration", "spira-store/integration", "spira-desired-state/integration", "spira-otel/integration", "spira-pub/integration", "state-store/integration", "state-store-sqlite/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration", "ports/integration", "mail/integration", "tsd-lifecycle-export/integration"]
 
 [dependencies]
 system-paths = { path = "../system-paths" }
@@ -58,6 +63,7 @@ spira-store = { path = "../spira-store" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 spira-otel = { path = "../spira-otel" }
+spira-pub = { path = "../spira-pub" }
 spira-desired-state = { path = "../desired-state" }
 serde_path_to_error = "0.1"
 sha2 = "0.10"
@@ -82,6 +88,7 @@ spira-test-id = { path = "../spira-test-id" }
 inotify = { version = "0.11", default-features = false }
 opentelemetry-proto = { version = "0.30", default-features = false, features = ["trace", "gen-tonic-messages", "with-serde"] }
 testkit = { path = "../testkit" }
+rumqttc = { version = "0.25.1", default-features = false }
 rusqlite = { version = "0.37", features = ["bundled"] }
 reconciler-engine = { path = "../reconciler-engine" }
 incident = { path = "../incident" }
