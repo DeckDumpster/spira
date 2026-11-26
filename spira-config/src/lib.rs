@@ -407,7 +407,18 @@ pub fn tail_refusals(tail: &str) -> Vec<String> {
 /// `conf.sh`, whose own PATH-append already carried it). An empty tail changes nothing.
 /// Refuses, naming the offending entry, when [`tail_refusals`] finds one.
 pub fn release_path_with_tail(release: &str, tail: &str) -> Result<String, String> {
-    let base = release_path(release);
+    append_tail(release_path(release), tail)
+}
+
+/// The PATH every unit template renders:
+/// `<release>/bin:<release>/spira:<env_bin>:<system dirs>[:<tail>]`. An empty `env_bin` has no
+/// entry. Refuses a tail as [`release_path_with_tail`] does.
+pub fn release_path_with_env_and_tail(release: &str, env_bin: &str, tail: &str) -> Result<String, String> {
+    let env = if env_bin.is_empty() { String::new() } else { format!("{env_bin}:") };
+    append_tail(format!("{release}/bin:{release}/spira:{env}{SYSTEM_PATH}"), tail)
+}
+
+fn append_tail(base: String, tail: &str) -> Result<String, String> {
     let tail = tail.trim();
     if tail.is_empty() {
         return Ok(base);
@@ -423,16 +434,7 @@ pub fn release_path_with_tail(release: &str, tail: &str) -> Result<String, Strin
 /// counterpart to [`release_path_from_env`], for a launcher that resets its environment
 /// (`env -i`) and so cannot lean on an inherited PATH for either half.
 pub fn release_path_from_env_with_tail(release: Option<&str>, tail: &str) -> Result<String, String> {
-    let base = release_path_from_env(release)?;
-    let tail = tail.trim();
-    if tail.is_empty() {
-        return Ok(base);
-    }
-    let refusals = tail_refusals(tail);
-    if !refusals.is_empty() {
-        return Err(refusals.join("; "));
-    }
-    Ok(format!("{base}:{tail}"))
+    append_tail(release_path_from_env(release)?, tail)
 }
 
 /// The retired lifecycle switch (sp-v62vn): the lifecycle machine is the only mode, so

@@ -114,17 +114,7 @@ pub fn dwarf_unit_env() -> Result<Vec<(String, String)>, String> {
 pub fn launcher_path(release: Option<&str>, home: Option<&str>, tail: &str) -> Result<String, String> {
     let release = release_root(release)?;
     let home = home.filter(|h| !h.is_empty()).ok_or_else(|| "HOME is not set — the child PATH names its spira-env bin; there is no fallback".to_string())?;
-    let r = release.display();
-    let base = format!("{r}/bin:{r}/spira:{}:{}", crate::spira_env_bin(home), crate::SYSTEM_PATH);
-    let tail = tail.trim();
-    if tail.is_empty() {
-        return Ok(base);
-    }
-    let refusals = crate::tail_refusals(tail);
-    if !refusals.is_empty() {
-        return Err(refusals.join("; "));
-    }
-    Ok(format!("{base}:{tail}"))
+    crate::release_path_with_env_and_tail(&release.display().to_string(), &crate::spira_env_bin(home), tail)
 }
 
 /// `PATH` and `SPIRA_RELEASE` for a child process: [`launcher_path`] and the release it names.

@@ -132,6 +132,7 @@ fn staged_config(cfg: &Config, rel: &Path) -> Result<Option<(PathBuf, String)>, 
 pub(crate) fn pre_activate_env(cfg: &Config, rel: &Path) -> Result<[(String, String); 3], String> {
     let rel_str = rel.display().to_string();
     let tail = cfg.path_tail()?;
-    let path = spira_config::release_path_with_tail(&rel_str, &tail)?;
+    let env_bin = spira_config::spira_env_bin(&cfg.home()?.display().to_string());
+    let path = spira_config::release_path_with_env_and_tail(&rel_str, &env_bin, &tail)?;
     Ok([(spira_config::RELEASE_ENV.to_string(), rel_str), ("SPIRA_HOME".to_string(), rel.join("spira").display().to_string()), ("PATH".to_string(), path)])
 }
