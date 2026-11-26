@@ -50,7 +50,7 @@ fn a_hung_unit_test_is_terminated_at_its_deadline_and_named_while_the_other_test
         &[("src/lib.rs", "#[cfg(test)]\nmod t {\n#[test] fn hangs() { std::thread::sleep(std::time::Duration::from_secs(300)); }\n#[test] fn quick() {}\n#[test] fn quick_too() {}\n}\n")],
     );
     let body = format!(
-        "{}\n{}\n{}\nwrite_unit_nextest_config 1 2 \"$PWD/round-nextest.toml\"\nunit_cargo || exit 90\nstart=$(date +%s)\nunit_nextest > run.log 2>&1\nrc=$?\necho rc=$rc secs=$(( $(date +%s) - start )) >&2\nunit_stream 3 progress < run.log\ncat run.log >&2\n",
+        "{}\n{}\n{}\nwrite_unit_nextest_config 1 2 60 2 \"$PWD/round-nextest.toml\"\nunit_cargo || exit 90\nstart=$(date +%s)\nunit_nextest > run.log 2>&1\nrc=$?\necho rc=$rc secs=$(( $(date +%s) - start )) >&2\nunit_stream 3 progress < run.log\ncat run.log >&2\n",
         function("unit_cargo"),
         function("unit_nextest").replace("$HOME/round-nextest.toml", "$PWD/round-nextest.toml"),
         function("unit_stream"),
@@ -75,7 +75,7 @@ fn a_tests_target_outlives_the_unit_deadline_under_the_rounds_nextest_config() {
         &[("src/lib.rs", ""), ("tests/long.rs", "#[test] fn outlives_the_unit_deadline() { std::thread::sleep(std::time::Duration::from_secs(3)); }\n")],
     );
     let body = format!(
-        "write_unit_nextest_config 1 2 \"$PWD/round-nextest.toml\"\nunit_env {}\n",
+        "write_unit_nextest_config 1 2 60 2 \"$PWD/round-nextest.toml\"\nunit_env {}\n",
         spira_config::unit_tier::integration_words("\"$PWD/round-nextest.toml\"", Some("unittest"), "--workspace"),
     );
     let out = round_bash(&dir, &body);

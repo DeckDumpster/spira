@@ -392,8 +392,8 @@ fn conf_default(key: &str) -> u64 {
 #[test]
 fn the_nextest_config_is_the_unit_deadline_defaults() {
     let want = spira_config::unit_tier::nextest_config(
-        conf_default("SPIRA_UNIT_TEST_DEADLINE_SECS"),
-        conf_default("SPIRA_UNIT_TEST_DEADLINE_PERIODS"),
+        (conf_default("SPIRA_UNIT_TEST_DEADLINE_SECS"), conf_default("SPIRA_UNIT_TEST_DEADLINE_PERIODS")),
+        (conf_default("SPIRA_INTEGRATION_TEST_DEADLINE_SECS"), conf_default("SPIRA_INTEGRATION_TEST_DEADLINE_PERIODS")),
         &spira_config::unit_tier::DenyList::default(),
     );
     assert_eq!(fs::read_to_string(workspace().join(".config/nextest.toml")).unwrap(), want);

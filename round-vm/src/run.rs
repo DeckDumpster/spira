@@ -704,9 +704,9 @@ prune_superseded_unit() {
     echo "round-vm: unit prune removed ${n} superseded files, ${bytes} bytes" >&2
 }
 write_unit_nextest_config() {
-    printf '"#, spira_config::unit_tier_config_printf!(), r#"' "$1" "$2" > "$3"
-    printf '%s' "${4:-}" >> "$3"
-    printf '"#, spira_config::unit_tier_config_integration_printf!(), r#"' >> "$3"
+    printf '"#, spira_config::unit_tier_config_printf!(), r#"' "$1" "$2" > "$5"
+    printf '%s' "${6:-}" >> "$5"
+    printf '"#, spira_config::unit_tier_config_integration_printf!(), r#"' "$3" "$4" >> "$5"
 }
 unit_nextest() {
     test_env "#, spira_config::unit_tier_unit!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#"
@@ -1103,9 +1103,10 @@ write_unit_timings() {
     { echo "unit_build_secs $unit_build_secs"; echo "unit_secs $unit_secs"; grep -E '"#, spira_config::unit_tier_timing_lines!(), r#"' ~/round-unit-tests.log; } > "$rdir/unit-timings" || true
 }
 write_round_nextest_config() {
-    local secs periods
-    secs="$(target/release/spira-config get spira.unit_test_deadline_secs)" && periods="$(target/release/spira-config get spira.unit_test_deadline_periods)" || { echo "round-vm: cannot read the unit-test deadline from the round's config" >&2; exit 2; }
-    write_unit_nextest_config "$secs" "$periods" "$HOME/round-nextest.toml" "$deny_filter_line"
+    local secs periods tsecs tperiods
+    secs="$(target/release/spira-config get spira.unit_test_deadline_secs)" && periods="$(target/release/spira-config get spira.unit_test_deadline_periods)" || { echo "round-vm: cannot read the unit-test deadline (spira.unit_test_deadline_secs, spira.unit_test_deadline_periods) from the round's config" >&2; exit 2; }
+    tsecs="$(target/release/spira-config get spira.integration_test_deadline_secs)" && tperiods="$(target/release/spira-config get spira.integration_test_deadline_periods)" || { echo "round-vm: cannot read the tests/ deadline (spira.integration_test_deadline_secs, spira.integration_test_deadline_periods) from the round's config" >&2; exit 2; }
+    write_unit_nextest_config "$secs" "$periods" "$tsecs" "$tperiods" "$HOME/round-nextest.toml" "$deny_filter_line"
 }
 # One line per `test:` row of the deny list ($1) saying whether nextest ($2) reported a test ending `::<id>` skipped.
 unit_registry_skips() {
@@ -4769,7 +4770,13 @@ mod tests {
         let cfg = REMOTE_SCRIPT.find("spira-config get spira.unit_test_deadline_secs").unwrap();
         let run = REMOTE_SCRIPT.find("unit_nextest > ~/round-unit-tests.log 2>&1 &").unwrap();
         assert!(cfg < run && REMOTE_SCRIPT.contains("spira-config get spira.unit_test_deadline_periods"));
-        assert!(script_fn("write_round_nextest_config").contains("write_unit_nextest_config \"$secs\" \"$periods\" \"$HOME/round-nextest.toml\""));
+        let round = script_fn("write_round_nextest_config");
+        for key in ["spira.integration_test_deadline_secs", "spira.integration_test_deadline_periods"] {
+            assert!(round.contains(&format!("spira-config get {key}")), "{round}");
+        }
+        let call = REMOTE_SCRIPT[..run].rfind("\nwrite_round_nextest_config\n").expect("the keys are read before unit_nextest runs");
+        assert!(call < run);
+        assert!(round.contains("write_unit_nextest_config \"$secs\" \"$periods\" \"$tsecs\" \"$tperiods\" \"$HOME/round-nextest.toml\""));
         let body = script_fn("unit_nextest");
         let words = spira_config::unit_tier::unit_words("\"$HOME/round-nextest.toml\"", Some("unittest"), "--workspace", spira_config::unit_tier::LIB_BINS);
         assert!(body.contains(&format!("test_env {words}")), "the definition's words: {body}");
@@ -5056,11 +5063,11 @@ mod tests {
         let func = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap() + 3];
         let out = d.path().join("c.toml");
         let ok = std::process::Command::new("bash")
-            .args(["-c", &format!("{func}\nwrite_unit_nextest_config 7 3 \"$1\" \"$2\""), "bash", out.to_str().unwrap(), &deny.config_filter_line()])
+            .args(["-c", &format!("{func}\nwrite_unit_nextest_config 7 3 11 4 \"$1\" \"$2\""), "bash", out.to_str().unwrap(), &deny.config_filter_line()])
             .status()
             .unwrap();
         assert!(ok.success());
-        assert_eq!(std::fs::read_to_string(out).unwrap(), spira_config::unit_tier::nextest_config(7, 3, &deny));
+        assert_eq!(std::fs::read_to_string(out).unwrap(), spira_config::unit_tier::nextest_config((7, 3), (11, 4), &deny));
     }
 
     /// A rerun checks the survivors' tree out over `round-work`, so layers that name files

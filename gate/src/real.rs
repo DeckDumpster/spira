@@ -116,6 +116,8 @@ pub const RETIRED_VARS: &[&str] = &[
     "SPIRA_GATE_BUILDER_DIR_WAIT_SECS",
     "SPIRA_UNIT_TEST_DEADLINE_SECS",
     "SPIRA_UNIT_TEST_DEADLINE_PERIODS",
+    "SPIRA_INTEGRATION_TEST_DEADLINE_SECS",
+    "SPIRA_INTEGRATION_TEST_DEADLINE_PERIODS",
     "SPIRA_BATCH_MAXPAR",
     "SPIRA_PATH",
     // sp-xtdqi: the shared compilation cache's own address — a config-file-only setting
