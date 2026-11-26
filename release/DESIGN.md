@@ -5,7 +5,7 @@ brain `wiki/projects/spira/designs/runtime-is-a-release-2026-09-29.md`). It repl
 local use, the Makefile's `install` target, `spira/activate.sh` and `spira/build-tarball.sh`.
 
 **sp-jsnbm** (wave 2 of the rewrite programme) extends it to the public (GitHub tag/tarball)
-pipeline: `install-tarball`, `stage` move `spira/activate.sh`, `spira/stage.sh`
+pipeline: `install-tarball` moves `spira/activate.sh`
 into this crate, so the GitHub acceptance workflow and `install.sh` call
 the same binary the local path does. `spira/build-tarball.sh` stays bash (it produces the
 tarball `install-tarball` consumes; a separate concern, untouched here — DESIGN.md "Callers").
@@ -31,7 +31,6 @@ release rollback [--settle S]                           activate the previous re
 release prune [--keep N]                                keep the newest N releases
 release status                                          current, previous, RUNNING UNLANDED, ALERT
 release install-tarball <tarball> [--dry-run] [--settle S]   the public pipeline's own install
-release stage up [ROOT] | down <ROOT>                   an isolated Spira for testing
 release acceptance <tag> --scratch-repo P [...]         release acceptance on a clean machine (DESIGN.md "acceptance")
 release session-hook install|status|uninstall|prune S  the client's SessionStart hook + statusLine (DESIGN.md "session-hook")
 release intake install|status|uninstall                 wire systemd alert units into incident intake (DESIGN.md "intake")
@@ -367,29 +366,6 @@ Kept deliberately close to `spira/activate.sh`'s own behaviour rather than upgra
   `build-tarball.sh verify`'s job, run separately in the release workflow, not
   `install-tarball`'s.
 
-### stage
-
-`spira/stage.sh`'s replacement: stand up (or tear down) a fully isolated Spira for
-testing — its own git repo and bare remote, its own beads database (`bd-embedded`, via a
-private `bin/bd` symlink so nothing this stage runs can resolve the caller's real `bd`), its
-own `SPIRA_RUN`, a minimal runes (one `canary` rune, `RUNE_SINGLE_FLIGHT=1`), a
-six-column `repo-map` line, and the two synthetic dispatch scripts `sentinel` needs in place
-of `systemd-run`: `fake-call.sh` (refuses: a stage runs no model) and
-`fake-launch.sh` (records the landing dispatch timestamp and exits 0 — a stage's caller runs
-`landing-pass land` directly so it controls the timing).
-
-Every non-test `.sh`/`.py` file directly under `$SPIRA_RELEASE/spira/` (the release stage is
-run from, never a checkout — DESIGN.md's own Intent) is symlinked into the stage's own
-`spira/`, so a stage runs the actual code, not a copy frozen at setup. Isolation is asserted
-at build time: `up` refuses to return an env block where `SPIRA_DB`, `SPIRA_RUN` or
-`SPIRA_HOME` resolves outside the stage root, the same assertion `stage.sh` made. `down`
-refuses a path with no `spira/runes/canary.rune` — the one check that stands between it
-and an arbitrary `rm -rf`.
-
-`SPIRA_SCOPE_LABEL` is always empty in a stage's own env, never read from the caller's: the
-`spira.conf` default of `spira` would make sentinel query for `spira,plan` while the bead is
-created with `plan` only, and `plan_ready` stays 0 (the same reasoning `stage.sh` documented).
-
 ### acceptance
 
 **sp-ak7qm** (rewrite wave 3) moves `spira/acceptance-run.sh` and the library it sourced,
@@ -706,14 +682,12 @@ only `HOME` is required of the caller.
 | `activate` | activate, rollback, the hotfix rule, history, status |
 | `prune` | prune |
 | `install` | `install-tarball`: unpack, swap, restart, prune a timestamp-named release |
-| `stage` | stand up / tear down an isolated Spira; the rune, repo-map and dispatch-script content |
 | `acceptance` | `release acceptance`: the release acceptance run (phases A-D), its checks, forensics and note |
 | `session_hook` | `release session-hook`: the client's `SessionStart` hook and `statusLine` |
 | `intake` | `release intake`: systemd alert templates wired to `incident.sh` via a drop-in |
 
 Unit tests run activation and rollback against a fake `Systemctl` and a temporary unit
 directory; `install-tarball` against a fake `Systemctl` and a fake `Unpack` (no real `tar`);
-`stage`'s pure content (the rune, the repo-map line) and its build-time refusals directly;
 `intake` against a fake `Templates` (no real `find`) and the same fake `Systemctl`.
 `session_hook`'s JSON transformation is pure and needs no fake at all; one further test
 (`release/tests/session_hook_minimal_env.rs`) runs the real `session.sh`
@@ -738,7 +712,7 @@ sibling of the releases dir — DESIGN.md "install-tarball" resolves `state_dir(
 unconditionally; sp-ak7qm replaced acceptance-lib.sh's `_install_from_tarball`) and
 `install.sh`'s own messages. `release acceptance` replaces `spira/acceptance-run.sh` and
 `spira/acceptance-lib.sh`, which are deleted: `acceptance-ci.sh` (acceptance.yml) and
-`acceptance-local.sh` run the candidate tarball's own `bin/release acceptance`. `stage` replaces `spira/stage.sh`, which is deleted. `systemd/render.py`
+`acceptance-local.sh` run the candidate tarball's own `bin/release acceptance`. `systemd/render.py`
 remains for `install.sh` and `unit-ensure.sh`, which own unit membership.
 
 `release session-hook` replaces `spira/install-session-hook.sh`, which is deleted: every

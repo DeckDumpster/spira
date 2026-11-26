@@ -832,47 +832,6 @@ fn install_tarball_dry_run_reports_intent_and_changes_nothing() {
 }
 
 
-// ---------------------------------------------------------------- stage
-
-#[test_id(tw05wxd)]
-#[test]
-fn stage_rune_names_the_canary_persona_with_one_concurrent_slot() {
-    let f = crate::stage::rune_content();
-    assert!(f.contains("RUNE_NAME=canary"));
-    assert!(f.contains("RUNE_SINGLE_FLIGHT=1"));
-    assert!(f.contains("SPIRA_SCOPE_LABEL"));
-}
-
-#[test_id(tmyzynn)]
-#[test]
-fn stage_repo_map_line_has_six_columns_named_for_the_repo_and_an_empty_gate() {
-    let line = crate::stage::repo_map_line(Path::new("tmp/x/repo"));
-    let cols: Vec<&str> = line.trim_end().split('|').map(str::trim).collect();
-    assert_eq!(cols.len(), 6, "{line:?}");
-    assert_eq!(cols[0], "repo");
-    assert_eq!(cols[1], "tmp/x/repo");
-    assert_eq!(cols[2], "push");
-    assert_eq!(cols[3], "origin/main");
-    assert_eq!(cols[4], "");
-    assert_eq!(cols[5], "");
-}
-
-#[test_id(t0melns)]
-#[test]
-fn stage_up_refuses_an_existing_root_and_down_refuses_a_non_stage_directory() {
-    let sb = Sandbox::new();
-    let existing = sb.p().join("already-here");
-    fs::create_dir_all(&existing).unwrap();
-    let so = crate::stage::StageOpts { root: Some(existing.clone()), harness_spira: sb.p().join("nope"), bd_embedded: sb.p().join("nope"), testdb_baseline: None, scope_label: String::new() };
-    let err = crate::stage::up(&so).unwrap_err();
-    assert!(err.contains("already exists"), "{err}");
-
-    let not_a_stage = sb.p().join("plain-dir");
-    fs::create_dir_all(&not_a_stage).unwrap();
-    let err2 = crate::stage::down(&not_a_stage).unwrap_err();
-    assert!(err2.contains("does not look like a stage"), "{err2}");
-}
-
 // ---------------------------------------------------------------- config delta
 
 fn delta_git(delta: &str) -> FakeGit {

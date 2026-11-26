@@ -84,7 +84,6 @@ SPIRA_BUILD_CACHE gate/src/real.rs
 SPIRA_BUILD_CACHE spira-config/src/build.rs
 SPIRA_CALL dwarf/src/main.rs
 SPIRA_CALL dwarf/src/seam.rs
-SPIRA_CALL release/src/stage.rs
 SPIRA_CALL spira/acceptance-local.sh
 SPIRA_CALL strand/src/config.rs
 SPIRA_CAPACITY_BACKOFF archivist/src/seam.rs
@@ -303,7 +302,6 @@ SPIRA_HOME rebase-stale/src/main.rs
 SPIRA_HOME release/src/activate.rs
 SPIRA_HOME release/src/main.rs
 SPIRA_HOME release/src/repo.rs
-SPIRA_HOME release/src/stage.rs
 SPIRA_HOME release/src/units.rs
 SPIRA_HOME release/src/verify.rs
 SPIRA_HOME round-vm/src/config.rs
@@ -382,7 +380,6 @@ SPIRA_INCIDENT_UNIT incident/src/intake.rs
 SPIRA_INFERENCE_EVERY spira-runtime/src/tasks/a/sentinel_pass.rs
 SPIRA_INFLOW_WINDOW_MIN cockpit-collect/src/probes/core_detail.rs
 SPIRA_INSTALL_AERC_CONSIDERED install/src/bin/install.rs
-SPIRA_INSTALL_BD_INIT_TRIES install/src/bin/install.rs
 SPIRA_INSTALL_CONFLICT_CONSIDERED install/src/bin/install.rs
 SPIRA_INSTALL_DB_READY_WAIT install/src/install_units.rs
 SPIRA_INSTALL_DB_WAIT install/src/bin/install.rs
@@ -412,7 +409,6 @@ SPIRA_LAND_UNGATED_EVIDENCE queue/src/ops/land.rs
 SPIRA_LAND_UNIT spira-runtime/src/tasks/a/sentinel_pass.rs
 SPIRA_LAPSED_DIR watchtower/src/process.rs
 SPIRA_LAPSED_MARKER watchtower/src/process.rs
-SPIRA_LAUNCH release/src/stage.rs
 SPIRA_LC_ADMIN_PASSWORD spira-lc/src/admin_drop.rs
 SPIRA_LC_ADMIN_PASSWORD_FILE spira-config/src/resolve.rs
 SPIRA_LC_ADMIN_PASSWORD_FILE spira-lc/src/admin_drop.rs
@@ -540,7 +536,6 @@ SPIRA_REPO install/src/values.rs
 SPIRA_REPO queue/src/ops/simple.rs
 SPIRA_REPO release/src/activate.rs
 SPIRA_REPO release/src/main.rs
-SPIRA_REPO release/src/stage.rs
 SPIRA_REPO release/src/units.rs
 SPIRA_REPO release/src/vm_repro.rs
 SPIRA_REPO sentinel/src/tower.rs
@@ -725,7 +720,6 @@ SPIRA_TOML release/src/config.rs
 SPIRA_TOML release/src/config_delta.rs
 SPIRA_TOML release/src/main.rs
 SPIRA_TOML release/src/round_recert.rs
-SPIRA_TOML release/src/stage.rs
 SPIRA_TOML release/src/verify.rs
 SPIRA_TOML release/src/vm_repro.rs
 SPIRA_TOML spira-config/src/init.rs

@@ -22,8 +22,8 @@
 #                      value operators change without realising the consequence.
 #
 #   SPIRA_DOLT_DATA    Dolt server data directory. install.sh creates it, writes
-#                      dolt-server.yaml, and starts dolt-beads.service. Leave empty
-#                      only if you run the Dolt server yourself.
+#                      dolt-server.yaml, and starts dolt-beads.service. install
+#                      refuses it empty.
 #
 # USAGE
 #   configure.sh [--out PATH] [--prod PATH] [--max-dwarves N]
@@ -36,7 +36,7 @@
 #   CONFIGURE_MAX_DWARVES       SPIRA_MAX_DWARVES
 #   CONFIGURE_MAX_LIVE_DWARVES  SPIRA_MAX_LIVE_DWARVES (empty string = the registered default)
 #   CONFIGURE_LOOM_ADDR       SPIRA_LOOM_ADDR
-#   CONFIGURE_DOLT_DATA       SPIRA_DOLT_DATA (empty string = do not manage the server)
+#   CONFIGURE_DOLT_DATA       SPIRA_DOLT_DATA
 #
 # An unset env var triggers an interactive prompt if stdin is a TTY, or falls
 # through to the derived default with a notice if not.
@@ -173,8 +173,7 @@ if [ -z "$_dolt_given" ]; then
     _dolt="$(_ask \
         "SPIRA_DOLT_DATA — the Dolt server's data directory.
   install.sh creates this directory, writes dolt-server.yaml, and starts
-  dolt-beads.service to manage the server. Leave empty only if you run
-  the Dolt server yourself and handle the data directory manually." \
+  dolt-beads.service to manage the server. install refuses it empty." \
         SPIRA_DOLT_DATA "$(_def SPIRA_DOLT_DATA)")"
 fi
 

@@ -32,7 +32,7 @@ const DOORS: &[(&str, &str)] = &[
     ("spira-lint/", "the rule's own fixtures and detectors name the programs it refuses"),
     ("lifecycle-guard/", "detectors for direct bd calls carry them as fixtures"),
     ("testenv/", "builds and tears down the throwaway fixture databases tests run on"),
-    ("install/", "installs, boots and probes the dolt server itself"),
+    ("install/", "starts the dolt server and asks it a first query before the store exists"),
     ("spira/testdb", "throwaway fixture database on an embedded dolt"),
     ("spira/dolt-", "operates the dolt server process"),
     ("spira/build-bd.sh", "builds the bd binary"),

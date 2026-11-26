@@ -915,7 +915,13 @@ fn run_declared(opts: Opts) -> ExitCode {
     // ---- phase 3: database --------------------------------------------------------------
     phase("phase 3: database");
     let db = nonempty_env("SPIRA_DB").unwrap_or_default();
-    let dolt_data = nonempty_env("SPIRA_DOLT_DATA");
+    let dolt_data = match install::guards::require_dolt_data(nonempty_env("SPIRA_DOLT_DATA").as_deref()) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("install: phase database failed — {e}");
+            return ExitCode::from(2);
+        }
+    };
     {
         let own_remotes = git_remotes(&db.to_string());
         let ancestor_git = ancestor_git_dir(Path::new(&db).parent());
@@ -927,53 +933,34 @@ fn run_declared(opts: Opts) -> ExitCode {
     let mut seed_deferred = false;
     let mut db_fresh = false;
     let mut dolt_bg: Option<std::process::Child> = None;
-    let mut dolt_port: u16 = 3307;
-    if let Some(dd) = &dolt_data {
-        if !Path::new(dd).is_dir() {
-            if opts.dry {
-                would(&format!("create Dolt data directory: {dd}"));
-            } else {
-                info(&format!("create Dolt data directory: {dd}"));
-                let _ = std::fs::create_dir_all(dd);
-                changes += 1;
-            }
+    if !Path::new(&dolt_data).is_dir() {
+        if opts.dry {
+            would(&format!("create Dolt data directory: {dolt_data}"));
         } else {
-            skip(&format!("Dolt data directory exists: {dd}"));
+            info(&format!("create Dolt data directory: {dolt_data}"));
+            let _ = std::fs::create_dir_all(&dolt_data);
+            changes += 1;
         }
-        let yaml_dest = format!("{dd}/dolt-server.yaml");
-        let yaml_tpl = format!("{}/dolt-server.yaml", bootstrap::templates_dir().display());
-        changes += place_dolt_yaml(&yaml_tpl, &yaml_dest, &[("@SPIRA_DOLT_DATA@", dd)], opts.dry);
-        dolt_port = read_yaml_port(&yaml_dest).unwrap_or(3307);
-
+    } else {
+        skip(&format!("Dolt data directory exists: {dolt_data}"));
     }
+    let yaml_dest = format!("{dolt_data}/dolt-server.yaml");
+    let yaml_tpl = format!("{}/dolt-server.yaml", bootstrap::templates_dir().display());
+    changes += place_dolt_yaml(&yaml_tpl, &yaml_dest, &[("@SPIRA_DOLT_DATA@", &dolt_data)], opts.dry);
+    let dolt_port: u16 = read_yaml_port(&yaml_dest).unwrap_or(3307);
     if Path::new(&db).join(".beads").is_dir() {
         if let Ok(meta) = std::fs::read_to_string(Path::new(&db).join(".beads/metadata.json")) {
             if meta.contains("\"dolt_mode\"") && meta.contains("\"embedded\"") {
-                eprintln!("install: phase database failed — existing store at {db} is embedded (one lock, all clients queue); set SPIRA_DOLT_DATA in spira.conf and re-run install");
+                eprintln!("install: phase database failed — existing store at {db} is embedded (one lock, all clients queue), and install serves server stores only; move {db}/.beads aside (its beads are not migrated) and re-run install to create one");
                 return ExitCode::from(2);
             }
         }
-        // A bead count, not just an existence check (original: `bd -C $SPIRA_DB list --limit
-        // 0 --json`, 10s timeout, length of the JSON array, "?" on any failure to parse or
-        // to run at all). This ALSO proves the post-init skip check keeps -C — only the
-        // fresh-init call below lost it.
-        let bead_count = Command::new("timeout")
-            .args([FIRST_RUN_SECS, "bd", "-C", &db, "list", "--limit", "0", "--json"])
-            .output()
-            .ok()
-            .and_then(|o| o.status.success().then_some(o.stdout))
-            .and_then(|out| serde_json::from_slice::<serde_json::Value>(&out).ok())
-            .and_then(|v| v.as_array().map(|a| a.len().to_string()))
-            .unwrap_or_else(|| "?".to_string());
+        let bead_count = store_bead_count();
         skip(&format!("database exists at {db} ({bead_count} bead(s))"));
     } else {
         db_fresh = true;
         if opts.dry {
-            if dolt_data.is_some() {
-                would(&format!("start dolt server and run: (cd {db} && bd init --server --external)"));
-            } else {
-                would(&format!("run: (cd {db} && bd init)"));
-            }
+            would(&format!("start dolt server and run: spira-lc admin-create-beads (the beads store at {db})"));
         } else {
             info(&format!("initialising database at {db}"));
             let _ = std::fs::create_dir_all(&db);
@@ -988,62 +975,51 @@ fn run_declared(opts: Opts) -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            if let Some(_dd) = &dolt_data {
-                if which_prog("dolt").is_none() {
-                    eprintln!("install: phase database failed — dolt is not on PATH — required to init the database");
+            let lc = match spira_store::lifecycle_row::lc_bin() {
+                Ok(lc) => lc,
+                Err(e) => {
+                    eprintln!("install: phase database failed — {e}");
                     return ExitCode::from(2);
                 }
-                if !tcp_up(dolt_port) {
-                    info(&format!("starting dolt server on port {dolt_port} for database init"));
-                    let yaml = format!("{}/dolt-server.yaml", dolt_data.clone().unwrap());
-                    // batch-job: child is spawned or exec-replaced, not awaited under a deadline
-                    dolt_bg = Command::new("dolt").args(["sql-server", "--config", &yaml]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok();
-                    if !wait_tcp(dolt_port, 30) {
-                        if let Some(mut c) = dolt_bg.take() {
-                            let _ = c.kill();
-                        }
-                        eprintln!("install: phase database failed — dolt server did not start on port {dolt_port} within 30s");
-                        return ExitCode::from(2);
-                    }
-                }
-                let ready_max: u64 = nonempty_env("SPIRA_INSTALL_DOLT_READY_WAIT").and_then(|v| v.parse().ok()).unwrap_or(120);
-                if !wait_dolt_query(dolt_port, ready_max) {
+            };
+            if which_prog("dolt").is_none() {
+                eprintln!("install: phase database failed — dolt is not on PATH — required to init the database");
+                return ExitCode::from(2);
+            }
+            if !tcp_up(dolt_port) {
+                info(&format!("starting dolt server on port {dolt_port} for database init"));
+                let yaml = format!("{dolt_data}/dolt-server.yaml");
+                // batch-job: child is spawned or exec-replaced, not awaited under a deadline
+                dolt_bg = Command::new("dolt").args(["sql-server", "--config", &yaml]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok();
+                if !wait_tcp(dolt_port, 30) {
                     if let Some(mut c) = dolt_bg.take() {
                         let _ = c.kill();
                     }
-                    eprintln!("install: phase database failed — dolt server on port {dolt_port} did not answer queries within {ready_max}s");
+                    eprintln!("install: phase database failed — dolt server did not start on port {dolt_port} within 30s");
                     return ExitCode::from(2);
                 }
-                let dbname = Path::new(&db).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                let max_tries: u32 = nonempty_env("SPIRA_INSTALL_BD_INIT_TRIES").and_then(|v| v.parse().ok()).unwrap_or(3).max(1);
-                let mut tries = 0;
-                loop {
-                    tries += 1;
-                    let (rc, out) = bd_output(&db, &["init", "--non-interactive", "--prefix", &id_prefix, "--skip-agents", "--skip-hooks", "--server", "--server-host", "127.0.0.1", "--server-port", &dolt_port.to_string(), "--database", &dbname, "--external", "-q"]);
-                    if rc == 0 {
-                        break;
-                    }
-                    clean_partial_init(&db, &dbname, dolt_port);
-                    if tries < max_tries && out.contains("invalid connection") {
-                        info(&format!("  bd init hit an invalid connection — removed the partial database, retrying: {}", out.trim().lines().last().unwrap_or("")));
-                        std::thread::sleep(std::time::Duration::from_secs(2 * tries as u64));
-                        continue;
-                    }
-                    eprint!("{out}");
-                    if let Some(mut c) = dolt_bg.take() {
-                        let _ = c.kill();
-                    }
-                    eprintln!("install: phase database failed — bd init (server mode) failed");
-                    return ExitCode::from(2);
+            }
+            let ready_max: u64 = nonempty_env("SPIRA_INSTALL_DOLT_READY_WAIT").and_then(|v| v.parse().ok()).unwrap_or(120);
+            if !wait_dolt_query(dolt_port, ready_max) {
+                if let Some(mut c) = dolt_bg.take() {
+                    let _ = c.kill();
                 }
-                let _ = spira_config::bounded::bounded("git").args(["-C", &db, "config", "beads.role", "maintainer"]).status();
-            } else {
-                // cwd == SPIRA_DB, not -C: see bd_output's doc comment above for why.
-                if !bd_init_bounded().current_dir(&db).args(["init", "--prefix", &id_prefix]).status().map(|s| s.success()).unwrap_or(false) {
-                    eprintln!("install: phase database failed — bd init failed");
-                    return ExitCode::from(2);
+                eprintln!("install: phase database failed — dolt server on port {dolt_port} did not answer queries within {ready_max}s");
+                return ExitCode::from(2);
+            }
+            let dbname = Path::new(&db).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let created = install::orchestrate::create_beads(
+                &HostDeps,
+                &mut || create_beads_store(&lc, &id_prefix, dolt_port, &dbname),
+                &mut || clean_partial_init(&db, &dbname, dolt_port),
+            );
+            if let Err(out) = created {
+                eprint!("{out}");
+                if let Some(mut c) = dolt_bg.take() {
+                    let _ = c.kill();
                 }
-                let _ = spira_config::bounded::bounded("git").args(["-C", &db, "config", "beads.role", "maintainer"]).status();
+                eprintln!("install: phase database failed — spira-lc admin-create-beads failed");
+                return ExitCode::from(2);
             }
             changes += 1;
         }
@@ -1078,11 +1054,10 @@ fn run_declared(opts: Opts) -> ExitCode {
     }
 
     if Path::new(&db).join(".beads").is_dir() || !opts.dry {
-        let server_mode = dolt_data.is_some();
-        let server_up = server_mode && tcp_up(dolt_port);
+        let server_up = tcp_up(dolt_port);
         if opts.dry {
             would("run: spira/seed.sh (skips statutes already in force)");
-        } else if install::guards::seed_when(db_fresh, server_mode, server_up) == install::guards::SeedWhen::Defer {
+        } else if install::guards::seed_when(db_fresh, server_up) == install::guards::SeedWhen::Defer {
             seed_deferred = true;
             info("seeding statutes after phase 4 — the database server is not running yet");
         } else {
@@ -1092,10 +1067,8 @@ fn run_declared(opts: Opts) -> ExitCode {
             if let Some(mut c) = dolt_bg.take() {
                 let _ = c.kill();
             }
-            if dolt_data.is_some() {
-                let close_wait: u64 = nonempty_env("SPIRA_INSTALL_DOLT_CLOSE_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30);
-                wait_tcp_down(dolt_port, close_wait);
-            }
+            let close_wait: u64 = nonempty_env("SPIRA_INSTALL_DOLT_CLOSE_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30);
+            wait_tcp_down(dolt_port, close_wait);
             if rc != 0 && db_fresh {
                 eprintln!("install: phase database failed — seed.sh failed — statutes not seeded on fresh database");
                 return ExitCode::from(2);
@@ -1210,23 +1183,27 @@ fn run_declared(opts: Opts) -> ExitCode {
             println!("installed {u}");
         }
         changes += 1;
-        if let Some(dd) = &dolt_data {
-            let bp = read_yaml_port(&format!("{dd}/dolt-server.yaml")).unwrap_or(3307);
-            info(&format!("waiting for dolt-beads.service on port {bp}"));
-            let pwt: u64 = nonempty_env("SPIRA_INSTALL_DOLT_WAIT").and_then(|v| v.parse().ok()).unwrap_or(60);
-            if !wait_tcp(bp, pwt) {
-                eprintln!("install: phase units failed — dolt-beads.service is active but not listening on {bp} after {pwt}s");
-                return ExitCode::from(2);
-            }
-            info(&format!("dolt-beads.service listening on port {bp}"));
-            let _ = spira_config::bounded::bounded_for("bd", FIRST_RUN_SECS).args(["-C", &db, "doctor", "--fix", "--yes"]).env("BD_NON_INTERACTIVE", "1").status();
-            let db_max: u64 = nonempty_env("SPIRA_INSTALL_DB_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30);
-            if !wait_bd_list(&db, db_max) {
-                eprintln!("install: phase units failed — bd did not accept connections within {db_max}s after dolt-beads.service started");
-                return ExitCode::from(2);
-            }
-            info("bd store accepting connections");
+        let bp = read_yaml_port(&format!("{dolt_data}/dolt-server.yaml")).unwrap_or(3307);
+        info(&format!("waiting for dolt-beads.service on port {bp}"));
+        let pwt: u64 = nonempty_env("SPIRA_INSTALL_DOLT_WAIT").and_then(|v| v.parse().ok()).unwrap_or(60);
+        if !wait_tcp(bp, pwt) {
+            eprintln!("install: phase units failed — dolt-beads.service is active but not listening on {bp} after {pwt}s");
+            return ExitCode::from(2);
         }
+        info(&format!("dolt-beads.service listening on port {bp}"));
+        let db_max: u64 = nonempty_env("SPIRA_INSTALL_DB_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30);
+        let answered = spira_store::lifecycle_row::lc_bin().and_then(|lc| {
+            if install::orchestrate::wait_for_store(&HostDeps, &lc, db_max) {
+                Ok(())
+            } else {
+                Err(format!("the beads store did not answer spira-lc admin-store ping within {db_max}s after dolt-beads.service started"))
+            }
+        });
+        if let Err(e) = answered {
+            eprintln!("install: phase units failed — {e}");
+            return ExitCode::from(2);
+        }
+        info("beads store accepting connections");
     }
 
     if seed_deferred {
@@ -1641,45 +1618,28 @@ fn wait_dolt_query(port: u16, max_secs: u64) -> bool {
     }
 }
 
-fn wait_bd_list(db: &str, max_secs: u64) -> bool {
-    let start = std::time::Instant::now();
-    let mut attempt: u64 = 0;
-    loop {
-        let ok = spira_config::bounded::bounded_for("bd", FIRST_RUN_SECS).args(["-C", db, "list", "--json"]).env("BD_NON_INTERACTIVE", "1").output().map(|o| o.status.success()).unwrap_or(false);
-        if ok {
-            return true;
-        }
-        if start.elapsed().as_secs() >= max_secs {
-            return false;
-        }
-        attempt += 1;
-        info(&format!("  db probe: attempt {attempt} of {max_secs}: retrying"));
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
+/// The existing store's bead count for the skip line, `?` when the store cannot be asked.
+fn store_bead_count() -> String {
+    let ask = || -> Option<String> {
+        let lc = spira_store::lifecycle_row::lc_bin().ok()?;
+        let mut child = spira_config::bounded::bounded(&lc).args(["admin-store", "sql", "--json"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+        child.stdin.take()?.write_all(b"SELECT COUNT(*) AS n FROM issues").ok()?;
+        let o = child.wait_with_output().ok()?;
+        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+    };
+    install::orchestrate::bead_count(&ask().unwrap_or_default())
 }
 
-/// `bd`, bounded for `bd init`: creating a fresh database's schema takes far longer than the
-/// 5 s a call that must merely answer gets — under that bound `bd init` was killed mid-schema
-/// on every fresh install ("failed to initialize schema: context canceled").
-const BD_INIT_SECS: &str = "300";
-fn bd_init_bounded() -> Command {
-    let mut c = Command::new("timeout");
-    c.arg(BD_INIT_SECS).arg("bd");
-    c
-}
+/// Creating a store's schema takes far longer than a call that must merely answer.
+const CREATE_BEADS_SECS: &str = "300";
 
-/// Runs `bd <args>` with `db` as cwd, not `-C db` — `bd init`'s own remote-less repository
-/// is allowed (db_git_guard, above), and `-C` makes a fresh `bd init` look inside a
-/// directory that does not have a beads project yet, which is exactly what `bd` refuses
-/// (original: `( cd "$SPIRA_DB" && ... bd init ... )`, install.sh lines ~639/~660 before
-/// retirement). Only the init call needs this; every other `bd` call in this binary keeps
-/// `-C` for the already-initialised database it is allowed to name from outside.
-fn bd_output(db: &str, args: &[&str]) -> (i32, String) {
-    let mut c = bd_init_bounded();
-    c.current_dir(db).args(args).env("BD_NON_INTERACTIVE", "1");
-    match c.output() {
+fn create_beads_store(lc: &str, prefix: &str, port: u16, dbname: &str) -> (i32, String) {
+    let o = spira_config::bounded::bounded_for(lc, CREATE_BEADS_SECS)
+        .args(["admin-create-beads", "--prefix", prefix, "--host", "127.0.0.1", "--port", &port.to_string(), "--database", dbname])
+        .output();
+    match o {
         Ok(o) => (o.status.code().unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
-        Err(e) => (127, format!("cannot run bd: {e}")),
+        Err(e) => (127, format!("cannot run {lc}: {e}\n")),
     }
 }
 

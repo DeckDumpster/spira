@@ -11,7 +11,6 @@ use release::install::{self, InstallOpts, RealUnpack};
 use release::intake::{self, RealTemplates};
 use release::machine::{self, ReleaseState};
 use release::session_hook;
-use release::stage::{self, StageOpts};
 use release::systemctl::RealSystemctl;
 use release::verify::{self, VerifyOpts};
 use std::path::{Path, PathBuf};
@@ -28,8 +27,6 @@ const USAGE: &str = "usage:
   release prune [--keep N]
   release status [--json]
   release install-tarball <tarball> [--answers FILE] [--dry-run] [--settle SECS] [--skip-restart]
-  release stage up [ROOT]
-  release stage down <ROOT>
   release acceptance <tag> --scratch-repo <path> [...]   (release acceptance --help)
   release session-hook install|status|uninstall|prune <substring>
   release intake install|status|uninstall
@@ -113,24 +110,6 @@ fn parse(argv: &[String]) -> Result<Args, String> {
 
 fn system_dirs() -> Vec<PathBuf> {
     release::SYSTEM_DIRS.iter().map(PathBuf::from).collect()
-}
-
-fn which(prog: &str, path: Option<&String>) -> Option<PathBuf> {
-    let path = path.cloned().or_else(|| std::env::var("PATH").ok())?;
-    path.split(':').filter(|d| !d.is_empty()).map(|d| PathBuf::from(d).join(prog)).find(|p| p.is_file())
-}
-
-/// `stage up`'s roots: `SPIRA_RELEASE`'s own `spira/` (the release's tools, never a
-/// checkout — DESIGN.md "stage") and `bd-embedded` resolved from `PATH`. `TESTDB_SHARED`
-/// together with `TESTDB_BASELINE`, when both are set, is stage.sh's own fast path.
-/// `SPIRA_SCOPE_LABEL` is deliberately never read from the caller's environment: a stage
-/// always starts with it empty (DESIGN.md "stage").
-fn resolve_stage_opts(env: &config::Env, root: Option<PathBuf>) -> Result<StageOpts, String> {
-    let release = env.get("SPIRA_RELEASE").filter(|s| !s.is_empty()).ok_or("SPIRA_RELEASE is not set — stage needs it to find the release's own spira/ scripts")?;
-    let harness_spira = PathBuf::from(release).join("spira");
-    let bd_embedded = which("bd-embedded", env.get("PATH")).ok_or("bd-embedded not found; install: npm install -g @beads/bd")?;
-    let testdb_baseline = if env.get("TESTDB_SHARED").map(String::as_str) == Some("1") { env.get("TESTDB_BASELINE").filter(|s| !s.is_empty()).map(PathBuf::from) } else { None };
-    Ok(StageOpts { root, harness_spira, bd_embedded, testdb_baseline, scope_label: String::new() })
 }
 
 /// Records `sha` entering `to` on the release machine. A configuration with no run directory has
@@ -393,36 +372,12 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
     let env = config::process_env();
     let fail = |e: String| (1u8, e);
 
-    // stage operates entirely under its own STAGE_ROOT and never touches spira-releases/ or the host
-    // config document; resolving Config here would read the real host's own config.
     match cmd.as_str() {
-        "stage" => {
-            let (sub, srest) = rest.split_first().ok_or_else(|| usage("stage needs a subcommand: up or down".into()))?;
-            match sub.as_str() {
-                "up" => {
-                    if srest.len() > 1 {
-                        return Err(usage("stage up takes at most one argument (ROOT)".into()));
-                    }
-                    let so = resolve_stage_opts(&env, srest.first().map(PathBuf::from)).map_err(fail)?;
-                    let s = stage::up(&so).map_err(fail)?;
-                    for (k, v) in &s.env {
-                        println!("export {k}={v}");
-                    }
-                }
-                "down" => {
-                    let root = srest.first().ok_or_else(|| usage("stage down needs <ROOT>".into()))?;
-                    stage::down(Path::new(root)).map_err(fail)?;
-                }
-                other => return Err(usage(format!("unknown stage subcommand {other}"))),
-            }
-            return Ok(());
-        }
-        // session-hook/intake are handled here, before Config::resolve, for the same reason
-        // stage is: `uninstall`/`prune` (session-hook) touch only the client's own
-        // settings file and need no release at all, and `intake` needs only the unit
-        // directory — resolving the full Config would refuse every one of them on a box
-        // whose releases directory cannot be found, which is exactly the state an uninstall
-        // may be reached from.
+        // session-hook/intake are handled here, before Config::resolve: `uninstall`/`prune`
+        // (session-hook) touch only the client's own settings file and need no release at all,
+        // and `intake` needs only the unit directory — resolving the full Config would refuse
+        // every one of them on a box whose releases directory cannot be found, which is exactly
+        // the state an uninstall may be reached from.
         "config-stage" => {
             want(1)?;
             let spec = env.get("SPIRA_TOML").filter(|s| !s.is_empty()).ok_or_else(|| fail("config-stage needs SPIRA_TOML naming the layers to apply the delta to".into()))?;

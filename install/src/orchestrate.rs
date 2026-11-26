@@ -81,11 +81,8 @@ pub fn phase_0_5_conflicts(instance: &str, c: &ConflictInputs) -> Result<(), gua
     Ok(())
 }
 
-/// Phase 3's dolt bootstrap-and-`bd init` sequence (server mode only): start a temporary
-/// server if none is listening, wait for it to accept TCP then answer a real query (the port
-/// accepts before dolt can serve, and a `bd init` issued in that gap fails with "invalid
-/// connection"), then `bd init --server ...`, retrying once after clearing a partial
-/// `.beads/` on that specific failure.
+/// Phase 3 waits for the server to answer a real query before it creates the store: the port
+/// accepts before dolt can serve.
 pub fn wait_for_dolt_query_ready(deps: &dyn Deps, port: u16, max_secs: u64) -> bool {
     let start = deps.now_secs();
     loop {
@@ -110,6 +107,52 @@ pub fn wait_for_tcp(deps: &dyn Deps, port: u16, max_secs: u64) -> bool {
         }
         deps.sleep_secs(1);
     }
+}
+
+/// What both waits for the beads store ask `spira-lc`.
+pub const STORE_PING: [&str; 2] = ["admin-store", "ping"];
+
+/// Until the beads store answers `<lc> admin-store ping`, or `max_secs` pass.
+pub fn wait_for_store(deps: &dyn Deps, lc: &str, max_secs: u64) -> bool {
+    let start = deps.now_secs();
+    loop {
+        if deps.tool(lc, &STORE_PING, &[]).is_ok() {
+            return true;
+        }
+        if deps.now_secs().saturating_sub(start) >= max_secs {
+            return false;
+        }
+        deps.sleep_secs(1);
+    }
+}
+
+const CREATE_TRIES: u32 = 3;
+
+/// Runs `spira-lc admin-create-beads` through `run` (its exit code and output). A refusal is
+/// final. Any other failure is retried up to [`CREATE_TRIES`] runs, and `drop_partial` is called only when
+/// the run said it had begun creating, so a database it found holding anything is never dropped.
+pub fn create_beads(deps: &dyn Deps, run: &mut dyn FnMut() -> (i32, String), drop_partial: &mut dyn FnMut()) -> Result<(), String> {
+    let mut ran = 0;
+    loop {
+        ran += 1;
+        let (code, out) = run();
+        if code == 0 {
+            return Ok(());
+        }
+        if out.lines().any(|l| l.starts_with(spira_store::lifecycle_row::CREATING_BEADS_DATABASE)) {
+            drop_partial();
+        }
+        if code == spira_store::lc_call::REFUSED || ran >= CREATE_TRIES {
+            return Err(out);
+        }
+        deps.sleep_secs(2 * u64::from(ran));
+    }
+}
+
+/// The cell of `admin-store sql --json`'s `SELECT COUNT(*) AS n`, or `?` for anything else.
+pub fn bead_count(json: &str) -> String {
+    let rows = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    rows[0]["n"].as_str().unwrap_or("?").to_string()
 }
 
 /// The port-close wait before phase 4 starts the unit: `true` once nothing listens, `false` when
@@ -283,5 +326,85 @@ mod tests {
         let stuck = listener(0, u64::MAX);
         assert!(!wait_for_tcp_closed(&stuck, 3307, 4), "a server that never releases the port is reported, bounded");
         assert_eq!(stuck.clock.get(), 4);
+    }
+
+    /// `spira-lc admin-store ping` answers once `ok_from` seconds have passed.
+    struct Pinged {
+        ok_from: u64,
+        clock: std::cell::Cell<u64>,
+        asked: std::cell::RefCell<Vec<String>>,
+    }
+    impl Deps for Pinged {
+        fn tool(&self, name: &str, args: &[&str], _env: &[(&str, &str)]) -> Result<String, String> {
+            self.asked.borrow_mut().push(format!("{name} {}", args.join(" ")));
+            if self.clock.get() >= self.ok_from { Ok(String::new()) } else { Err("connecting: refused".into()) }
+        }
+        fn tcp_up(&self, _port: u16) -> bool {
+            true
+        }
+        fn now_secs(&self) -> u64 {
+            self.clock.get()
+        }
+        fn sleep_secs(&self, n: u64) {
+            self.clock.set(self.clock.get() + n);
+        }
+    }
+
+    #[test_id(tqpg3y7)]
+    #[test]
+    fn the_store_wait_asks_admin_store_ping_until_it_answers_and_gives_up_at_the_bound() {
+        let pinged = |ok_from| Pinged { ok_from, clock: Default::default(), asked: Default::default() };
+        let late = pinged(3);
+        assert!(wait_for_store(&late, "lc", 10));
+        assert_eq!(late.clock.get(), 3);
+        assert!(late.asked.borrow().iter().all(|a| a == "lc admin-store ping"), "{:?}", late.asked.borrow());
+        let never = pinged(u64::MAX);
+        assert!(!wait_for_store(&never, "lc", 5));
+        assert_eq!(never.clock.get(), 5);
+    }
+
+    /// Runs [`create_beads`] over `answers`, in order: its result, how often it ran, how often it dropped.
+    fn creating(answers: &[(i32, &str)]) -> (Result<(), String>, usize, usize) {
+        let mut ran = 0;
+        let mut dropped = 0;
+        let out = create_beads(
+            &Pinged { ok_from: 0, clock: Default::default(), asked: Default::default() },
+            &mut || {
+                let (code, out) = answers[ran];
+                ran += 1;
+                (code, out.to_string())
+            },
+            &mut || dropped += 1,
+        );
+        (out, ran, dropped)
+    }
+
+    const BEGAN: &str = "admin-create-beads: creating database d\nadmin-create-beads: lost";
+
+    #[test_id(t0snudv)]
+    #[test]
+    fn a_creation_cut_after_it_began_is_dropped_and_retried_up_to_the_bound() {
+        assert_eq!(creating(&[(2, BEGAN), (0, "")]), (Ok(()), 2, 1));
+        let (out, ran, dropped) = creating(&[(2, BEGAN), (124, BEGAN), (2, BEGAN)]);
+        assert_eq!((ran, dropped), (3, 3));
+        assert!(out.unwrap_err().contains("lost"));
+    }
+
+    #[test_id(tc2t2cd)]
+    #[test]
+    fn a_database_this_run_never_began_to_create_is_never_dropped() {
+        let (out, ran, dropped) = creating(&[(3, "admin-create-beads: database d is a partial beads store")]);
+        assert_eq!((ran, dropped), (1, 0), "a refusal is final");
+        assert!(out.unwrap_err().contains("partial"));
+        assert_eq!(creating(&[(2, "connecting: refused"), (0, "")]), (Ok(()), 2, 0));
+    }
+
+    #[test_id(t2g8lef)]
+    #[test]
+    fn the_bead_count_is_the_sql_counts_cell_or_unknown() {
+        assert_eq!(bead_count(r#"[{"n":"12"}]"#), "12");
+        for bad in ["", "[]", "Error 1146", r#"[{"x":"1"}]"#] {
+            assert_eq!(bead_count(bad), "?", "{bad:?}");
+        }
     }
 }

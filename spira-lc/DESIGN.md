@@ -20,6 +20,16 @@ it existed).
 `event`, the cutover verbs, `classify`, `work`, `serve`. Exit codes on `event`: 0 applied,
 3 refused, 2 cannot tell.
 
+**`admin-create-beads --prefix P --host H --port N --database D`** creates the beads store on
+that server from `beads-schema.sql`, the schema's source: the database, its tables and views,
+`issue_prefix`, one Dolt commit, then `<SPIRA_DB>/.beads/metadata.json`, written last. It runs in
+the caller's process. A database that already holds the whole store under that prefix is success
+and is not touched (a missing `metadata.json` is written). A database holding only part of one,
+another prefix, or a `metadata.json` naming another database is refused by name (3). A database
+that is absent or holds no table is created into, announced on stderr first
+(`spira_store::lifecycle_row::CREATING_BEADS_DATABASE`): only after that line may a caller drop
+the database a failed run left. 0 done · 3 refused · 2 cannot tell.
+
 **Caller verbs** — compositions of `show`/`list`/`event`, run client-side (callers.rs):
 
 | verb | replaces | exit |
