@@ -200,9 +200,9 @@ pub fn proc_starts_env(argv0: &Path, env: &BTreeMap<String, String>, passwd: Pas
     let again = format!("sudo {}/bin/spira-install --proc-starts", release.display());
 
     let home = release.join("spira");
-    let uid = std::fs::metadata(&home).map_err(|e| format!("cannot stat {}: {e}", home.display()))?.uid();
+    let uid = std::fs::metadata(&home).map_err(|e| format!("cannot stat {}: {e}; run it from a readable release: {again}", home.display()))?.uid();
     refuse_root_owner(uid, &home.display().to_string()).map_err(|e| format!("{e}; run it from a release the operator owns: sudo <release>/bin/spira-install --proc-starts"))?;
-    let (user, user_home) = passwd(uid).map_err(|e| format!("cannot name the owner of {}: {e}", home.display()))?;
+    let (user, user_home) = passwd(uid).map_err(|e| format!("cannot name the owner of {}: {e}; give uid {uid} a passwd entry, then run: {again}", home.display()))?;
 
     let toml = installed_spira_toml(&user_home, release)?;
     let (release_s, user_home_s) = (release.display().to_string(), user_home.display().to_string());
@@ -236,7 +236,8 @@ fn installed_spira_toml(user_home: &Path, release: &Path) -> Result<String, Stri
         if path.extension().is_none_or(|x| x != "service") || !path.is_file() {
             continue;
         }
-        let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| format!("cannot read {}: {e}; repair or remove it, then run: sudo {}/bin/spira-install --proc-starts", path.display(), release.display()))?;
         if !text.lines().any(runs_the_scheduler) {
             continue;
         }
@@ -248,7 +249,7 @@ fn installed_spira_toml(user_home: &Path, release: &Path) -> Result<String, Stri
     match (values.next(), values.next()) {
         (Some(one), None) => Ok(one),
         (None, _) => Err(format!(
-            "no spira-runtime-*.service naming SPIRA_TOML in {dir}; as the operator run the normal install first ({bin}/spira-install), then sudo {bin}/spira-install --proc-starts",
+            "no spira-runtime-*.service (a unit running `spira-runtime serve`) naming SPIRA_TOML in {dir}; as the operator run the normal install first ({bin}/spira-install), then sudo {bin}/spira-install --proc-starts",
             bin = bin.display()
         )),
         (Some(a), Some(b)) => Err(format!(

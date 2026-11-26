@@ -154,6 +154,11 @@ fn configured_path() -> String {
 /// the same refusal spira-config's binary makes, now without a subprocess).
 pub fn path_tail() -> Result<String, String> {
     let tail = std::env::var("SPIRA_PATH").ok().filter(|v| !v.trim().is_empty()).unwrap_or_else(configured_path);
+    checked_tail(tail)
+}
+
+/// `tail` as a unit PATH may carry it, or every reason it may not.
+pub fn checked_tail(tail: String) -> Result<String, String> {
     let refusals = spira_config::tail_refusals(&tail);
     if !refusals.is_empty() {
         return Err(refusals.join("; "));
