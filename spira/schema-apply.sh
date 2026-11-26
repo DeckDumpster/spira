@@ -6,13 +6,13 @@
 #   schema-apply.sh            apply; safe to re-run
 #   schema-apply.sh --dry-run  say what would change, change nothing
 #
-# Exit: 0 applied and verified, 1 statements failed or the store drifted, 3 embedded mode (nothing
-# applied), 4 applied but schema.sh check could not tell.
+# Exit: 0 applied and verified, 1 statements failed or the store drifted, 4 applied but schema.sh
+# check could not tell. Only a store on a Dolt sql-server is served.
 #
 # WHY ONE HOME
 # ------------
 # Three of these live below bd, in Dolt, and that is deliberate (law-schema-over-code): an
-# invariant the store enforces binds every writer, including `bd sql` and tools not yet
+# invariant the store enforces binds every writer, including ad-hoc SQL and tools not yet
 # written, while the same rule in a script binds only callers who go through it.
 #
 # But they are modifications to an EXTERNAL DEPENDENCY's schema. bd carries its own
@@ -67,23 +67,6 @@ SQL_DEADLINE=60
 sql()  { printf '%s\n' "$1" | timeout "$SQL_DEADLINE" spira-lc admin-store sql 2>&1; }
 sqlq() { sql "$1" | sed -n '3p' | tr -d ' '; }
 
-# THE ENGINE MUST BE ABLE TO CARRY THE SQL HALF AT ALL. bd in embedded mode answers
-#   Error: 'bd sql' is not yet supported in embedded mode
-# to every query, so the two existence probes below come back empty, both DDL statements are
-# attempted, both are refused, and the run ends reporting the column and constraint MISSING —
-# which reads as schema drift rather than as an engine that cannot be asked. Probing once, up
-# front, is what turns that into a sentence the reader can act on.
-if [ "$DRY" != 1 ]; then
-    _probe="$(sql "select 1;")"
-    if [ -n "$_probe" ] && printf '%s' "$_probe" | grep -qi 'not yet supported in embedded mode'; then
-        say "this store is open in EMBEDDED mode, where 'bd sql' is unsupported."
-        say "The config half (custom types and statuses) can be applied; the SQL half"
-        say "(_is_work and spira_priority_range) cannot be applied or verified here."
-        say "Point SPIRA_DB at a server-mode store to apply the full model."
-        exit 3
-    fi
-fi
-
 # ---- 1. custom types -------------------------------------------------------------------
 # EXHAUSTIVE, and that is what retires the Gas Town types. Registration is the line between a
 # type and a typo: with a type unregistered, `bd create --type <it>` is refused outright
@@ -120,7 +103,7 @@ fi
 
 # ---- 4. the priority CHECK --------------------------------------------------------------
 # bd validates priority at the application layer already; this is the same rule one layer
-# down, where `bd sql` and any future writer also meet it. Verified to refuse a bad write and
+# down, where ad-hoc SQL and any future writer also meet it. Verified to refuse a bad write and
 # accept a good one.
 if [ "$(sqlq "select count(*) from information_schema.table_constraints where table_name='issues' and constraint_type='CHECK' and constraint_name='spira_priority_range';")" = "1" ]; then
     say "spira_priority_range already present"

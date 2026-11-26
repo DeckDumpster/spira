@@ -897,6 +897,91 @@ fn recording_program(path: &Path, log: &Path) {
     testkit::write_exe(path, &format!("#!/bin/sh\necho \"$@\" >> '{}'\nexit 1\n", log.display()));
 }
 
+/// One `admin-store` run as an operator or script makes it: `(exit, stdout, stderr)`.
+fn admin_store(lc: &Lc, args: &[&str], stdin: &str) -> (i32, String, String) {
+    let mut child = lc.command().arg("admin-store").args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().expect("spira-lc runs");
+    std::io::Write::write_all(&mut child.stdin.take().unwrap(), stdin.as_bytes()).unwrap();
+    let out = child.wait_with_output().expect("spira-lc runs");
+    (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+}
+
+#[test_id(t8g40bl)]
+#[test]
+fn admin_store_sql_ping_and_config_answer_from_the_server_and_start_no_bd() {
+    let Some(store) = Store::up() else { return };
+    let lc = Lc::new(&store, "as", "");
+    assert!(Command::new(&lc.bd).args(["sql", "planted"]).output().is_ok());
+    assert!(std::fs::read_to_string(&lc.bd_log).unwrap_or_default().contains("planted"), "the recorder must see a planted bd before its silence means anything");
+    std::fs::remove_file(&lc.bd_log).unwrap();
+
+    let bead = store.create_bead();
+    let ping = admin_store(&lc, &["ping"], "");
+    let one = admin_store(&lc, &["sql"], &format!("select count(*) from issues where id = '{bead}';\n"));
+    let table = admin_store(&lc, &["sql"], &format!("select id, defer_until, 'two\\nlines' as t from issues where id = '{bead}'"));
+    let json = admin_store(&lc, &["sql", "--json"], &format!("select id, defer_until from issues where id = '{bead}'"));
+    let none = admin_store(&lc, &["sql"], "select id from issues where id = 'sp-absent'");
+    let none_json = admin_store(&lc, &["sql", "--json"], "select id from issues where id = 'sp-absent'");
+    let ddl = admin_store(&lc, &["sql"], "alter table issues add constraint spira_priority_range check (priority between 0 and 4);");
+    let unset = admin_store(&lc, &["config", "get", "status.custom"], "");
+    let set_status = admin_store(&lc, &["config", "set", "status.custom", "approved,retired"], "");
+    let status = admin_store(&lc, &["config", "get", "status.custom"], "");
+    let set_first = admin_store(&lc, &["config", "set", "types.custom", "event,gate"], "");
+    let set_types = admin_store(&lc, &["config", "set", "types.custom", "gate, proposal,it's"], "");
+    let types = admin_store(&lc, &["config", "get", "types.custom"], "");
+    let argv = std::fs::read_to_string(&lc.bd_log).unwrap_or_default();
+    assert!(argv.is_empty(), "admin-store started bd: {argv}");
+
+    for (name, (rc, _, err)) in [("ping", &ping), ("one", &one), ("table", &table), ("json", &json), ("none", &none), ("none_json", &none_json), ("ddl", &ddl), ("unset", &unset), ("set_status", &set_status), ("status", &status), ("set_first", &set_first), ("set_types", &set_types), ("types", &types)] {
+        assert_eq!(*rc, 0, "{name}: {err}");
+    }
+    assert_eq!(ping.1.lines().nth(2), Some("1"), "{}", ping.1);
+    assert_eq!(one.1.lines().count(), 3, "{}", one.1);
+    assert_eq!(one.1.lines().nth(2), Some("1"), "{}", one.1);
+    let lines: Vec<&str> = table.1.lines().collect();
+    assert_eq!(lines.len(), 3, "a header, a rule, one line per row: {}", table.1);
+    assert_eq!(lines[0].split('|').map(str::trim).collect::<Vec<_>>(), ["id", "defer_until", "t"]);
+    assert!(!lines[1].is_empty() && lines[1].chars().all(|c| c == '-' || c == '+'), "{}", table.1);
+    assert_eq!(lines[2].split('|').map(str::trim).collect::<Vec<_>>(), [bead.as_str(), "", "two lines"]);
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&json.1).unwrap(), serde_json::json!([{ "id": bead, "defer_until": null }]));
+    assert_eq!((none.1.as_str(), none_json.1.trim(), ddl.1.as_str()), ("", "[]", ""));
+    assert!(store.sql_said("select constraint_name from information_schema.table_constraints where constraint_type = 'CHECK'").contains("spira_priority_range"));
+    assert_eq!(unset.1, "status.custom (not set)\n");
+    assert_eq!(status.1, "approved,retired\n");
+    assert_eq!(types.1, "gate, proposal,it's\n");
+    let listed = store.dolt_sql("SELECT name FROM custom_types ORDER BY name", &["-r", "csv"]);
+    assert_eq!(listed.lines().skip(1).collect::<Vec<_>>(), ["gate", "it's", "proposal"], "{listed}");
+
+    store.sql("DROP TABLE custom_types");
+    let (rc, _, err) = admin_store(&lc, &["config", "set", "types.custom", "event"], "");
+    assert_eq!(rc, 0, "a store with no custom_types table: {err}");
+    assert_eq!(admin_store(&lc, &["config", "get", "types.custom"], "").1, "event\n");
+}
+
+#[test_id(tjofiw4)]
+#[test]
+fn a_failed_admin_store_statement_exits_non_zero_with_the_servers_error() {
+    let Some(store) = Store::up() else { return };
+    let lc = Lc::new(&store, "af", "");
+    let (rc, out, err) = admin_store(&lc, &["sql"], "select * from no_such_table");
+    assert_eq!(rc, 3, "the server refused it: {out}{err}");
+    assert!(err.contains("no_such_table") && err.contains("Error "), "{err}");
+    assert_eq!(out, "");
+}
+
+#[test_id(ttzsfev)]
+#[test]
+fn the_exporters_event_query_answers_rows_it_can_parse_and_stamp() {
+    let Some(store) = Store::up() else { return };
+    let lc = Lc::new(&store, "ax", "");
+    let bead = store.create_bead();
+    store.sql(&format!("INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES (UUID(), '{bead}', 'claimed', 'dwarf-1', NULL, '2026-09-15 10:00:00'), (UUID(), '{bead}', 'closed', 'dwarf-1', 'done', '2026-09-15 11:00:00')"));
+    let (rc, out, err) = admin_store(&lc, &["sql", "--json"], &tsd_lifecycle_export::legacy_events_query("2026-09-15T10:30:00Z"));
+    assert_eq!(rc, 0, "{err}");
+    let events: Vec<tsd_lifecycle_export::BdAuditEvent> = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
+    assert_eq!(events.iter().map(|e| (e.event_type.as_str(), e.created_at.as_str())).collect::<Vec<_>>(), [("closed", "2026-09-15T11:00:00Z")]);
+    assert!(tsd::parse_ts(&events[0].created_at).is_some());
+}
+
 #[test_id(tu3jyzu)]
 #[test]
 fn a_planning_write_moves_the_kv_watermark_in_sql_and_starts_no_bd_kv() {

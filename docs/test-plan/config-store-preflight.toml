@@ -132,16 +132,6 @@ date = "2026-11-02"
 bead = "sp-ao9dn2"
 
 [[use_case]]
-id = "UC-config-store-preflight-21"
-tier = "T1"
-statement = "schema-apply.sh refuses an embedded-mode store, naming cause and remedy"
-
-[use_case.uncovered]
-reason = "bead/tests/schema_sh.rs ran schema-apply.sh as a shell program; deleted with every Rust test that spawns a binary or runs over 100 ms (sp-ao9dn2)"
-date = "2026-11-02"
-bead = "sp-ao9dn2"
-
-[[use_case]]
 id = "UC-config-store-preflight-22"
 tier = "T1"
 statement = "a PreToolUse command that deletes schema_migrations rows is refused"

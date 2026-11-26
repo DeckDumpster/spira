@@ -2450,6 +2450,7 @@ dependencies = [
  "testkit",
  "tokio",
  "tsd",
+ "tsd-lifecycle-export",
  "watchtower",
 ]
 

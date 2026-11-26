@@ -189,7 +189,7 @@ impl Conn {
     pub fn query(&self, sql: &str) -> Result<Vec<Value>, DbError> {
         match self.run(sql) {
             Ok(sets) => Ok(sets.into_iter().last().unwrap_or_default()),
-            Err(ScriptFailure::LostRace) => unreachable!("a plain SELECT never conflicts"),
+            Err(ScriptFailure::LostRace) => Err(DbError::CannotTell("a statement lost a race".into())),
             Err(ScriptFailure::CannotTell(e)) => Err(DbError::CannotTell(e)),
         }
     }

@@ -162,12 +162,7 @@ pub fn run(_args: &[String]) -> (i32, String) {
         Ok(_) => return (0, "admin-provision-writer: no writer is configured (SPIRA_BEADS_SQL_WRITER_PASSWORD_FILE is empty): nothing changed".to_string()),
         Err(e) => return cannot(e),
     };
-    let get = |k: &str| std::env::var(k).ok();
-    let provisioned = || {
-        let env = std::env::vars().collect();
-        Ok(Some(("root".to_string(), spira_config::resolve::lc_admin_password_file(&env).map(|p| std::fs::read_to_string(&p).map_err(|e| format!("reading {p}: {e}"))).transpose()?.map(|s| s.trim().to_string()).unwrap_or_default())))
-    };
-    let (admin_user, admin_password) = match crate::admin_drop::administrator(get, provisioned) {
+    let (admin_user, admin_password) = match crate::admin_drop::local_administrator() {
         Ok(c) => c,
         Err(e) => return cannot(e),
     };

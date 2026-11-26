@@ -160,9 +160,8 @@ schema_custom_types() {
 # --------------------------------------------------------------------------------------
 # WHAT THE STORE REPORTS — asked, never assumed.
 # --------------------------------------------------------------------------------------
-# THE SEAM IS `bd sql`, not a direct dolt call. bd already knows which database this store
-# is, so routing through it needs no path of our own — and a path of our own is one
-# operator's box baked into a repository meant to be cloned, which inventory.sh refuses.
+# THE SEAM IS `spira-lc admin-store`, not a direct dolt call: it resolves the server, the
+# database and the credential from the store's own configuration.
 # Every probe is bounded by the one harness call deadline (law-calls-have-deadlines,
 # spira-config/src/bounded.rs CALL_TIMEOUT_SECS). `schema.sh probe-deadline` prints it.
 SCHEMA_PROBE_DEADLINE=5

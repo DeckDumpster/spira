@@ -41,12 +41,7 @@ pub fn run(_args: &[String]) -> (i32, String) {
         Ok(d) => d.to_string(),
         Err(e) => return cannot(e),
     };
-    let get = |k: &str| std::env::var(k).ok();
-    let provisioned = || {
-        let env = std::env::vars().collect();
-        Ok(Some(("root".to_string(), spira_config::resolve::lc_admin_password_file(&env).map(|p| std::fs::read_to_string(&p).map_err(|e| format!("reading {p}: {e}"))).transpose()?.map(|s| s.trim().to_string()).unwrap_or_default())))
-    };
-    let (user, password) = match crate::admin_drop::administrator(get, provisioned) {
+    let (user, password) = match crate::admin_drop::local_administrator() {
         Ok(c) => c,
         Err(e) => return cannot(e),
     };
