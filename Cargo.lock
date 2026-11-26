@@ -2437,6 +2437,7 @@ dependencies = [
  "inotify",
  "libc",
  "lifecycle",
+ "mail",
  "opentelemetry-proto",
  "ports",
  "reconciler-engine",

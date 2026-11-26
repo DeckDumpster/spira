@@ -125,7 +125,7 @@ When the deliverable is not code on this branch — child beads, a document, a m
 
 When you are blocked on a question only the operator can answer:
 
-    work blocked \"<the question>\" --default \"<what you would do by default>\"
+    work blocked \"<the question>\" --default \"<what you would do by default>\" --class <permissions|policy|destructive|design> --class-basis \"<why it is that class>\"
 
 This both holds the bead and files the ask; you do not also send mail yourself.
 
