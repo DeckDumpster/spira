@@ -3193,7 +3193,7 @@ mod tests {
             let f = Fake::default();
             let p = "/org/freedesktop/systemd1/unit/x";
             f.answer(&format!("GetAll {p} {UNIT}"), vec![dict(&[("LoadState", Val::S("loaded".into())), ("UnitFileState", Val::S("enabled".into())), ("ActiveState", Val::S("active".into())), ("SubState", Val::S("running".into())), ("InvocationID", Val::Arr(vec![Val::U(0xab); 16]))])]);
-            f.answer(&format!("GetAll {p} org.freedesktop.systemd1.Service"), vec![dict(&[("Result", Val::S("success".into())), ("MainPID", Val::U(42)), ("NRestarts", Val::U(2)), ("ExecMainStartTimestamp", Val::U(9_000_000)), ("ControlGroup", Val::S("/user.slice/spira-loom.service".into())), ("Environment", Val::Arr(vec![Val::S("SPIRA_RELEASE=/r/abc".into()), Val::S("A=1".into())]))])]);
+            f.answer(&format!("GetAll {p} org.freedesktop.systemd1.Service"), vec![dict(&[("Result", Val::S("success".into())), ("MainPID", Val::U(42)), ("NRestarts", Val::U(2)), ("ExecMainStartTimestamp", Val::U(9_000_000)), ("ControlGroup", Val::S("user.slice/spira-loom.service".into())), ("Environment", Val::Arr(vec![Val::S("SPIRA_RELEASE=/r/abc".into()), Val::S("A=1".into())]))])]);
             let d = f.units().detail(&UnitHandle::named("spira-loom.service")).unwrap();
             assert_eq!(d, UnitDetail {
                 name: "spira-loom.service".into(),
@@ -3209,7 +3209,7 @@ mod tests {
                 n_restarts: Some(2),
                 invocation_id: Some("ab".repeat(16)),
                 exec_main_start_ms: Some(9_000),
-                control_group: Some("/user.slice/spira-loom.service".into()),
+                control_group: Some("user.slice/spira-loom.service".into()),
                 environment: vec!["SPIRA_RELEASE=/r/abc".into(), "A=1".into()],
             });
             assert_eq!(f.units().facts(&UnitHandle::named("spira-loom.service")).unwrap(), d.facts());

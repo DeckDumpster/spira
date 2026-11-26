@@ -186,7 +186,7 @@ mod tests {
         p.to_string_lossy().into_owned()
     }
 
-    const SHOW: &str = "Id=spira-a.service\nLoadState=loaded\nUnitFileState=enabled\nActiveState=failed\nSubState=failed\nResult=signal\nMainPID=0\nNRestarts=3\nInvocationID=0123456789abcdef0123456789abcdef\nExecMainCode=2\nExecMainStatus=15\nControlGroup=/user.slice/spira-a.service\nEnvironment=SPIRA_RELEASE=/r/abc \"B=two words\"\n\nId=gone.service\nLoadState=not-found\nActiveState=inactive\n";
+    const SHOW: &str = "Id=spira-a.service\nLoadState=loaded\nUnitFileState=enabled\nActiveState=failed\nSubState=failed\nResult=signal\nMainPID=0\nNRestarts=3\nInvocationID=0123456789abcdef0123456789abcdef\nExecMainCode=2\nExecMainStatus=15\nControlGroup=user.slice/spira-a.service\nEnvironment=SPIRA_RELEASE=/r/abc \"B=two words\"\n\nId=gone.service\nLoadState=not-found\nActiveState=inactive\n";
 
     #[test_id(twn8mcp)]
     #[test]
@@ -196,7 +196,7 @@ mod tests {
         assert_eq!((d[0].state, d[0].exit, d[0].result.as_deref(), d[0].n_restarts, d[0].main_pid), (UnitState::Failed, Some(Exit::Signal(15)), Some("signal"), Some(3), None));
         assert_eq!(d[0].invocation_id.as_deref(), Some("0123456789abcdef0123456789abcdef"));
         assert_eq!(d[0].environment[0], "SPIRA_RELEASE=/r/abc");
-        assert_eq!(d[0].control_group.as_deref(), Some("/user.slice/spira-a.service"));
+        assert_eq!(d[0].control_group.as_deref(), Some("user.slice/spira-a.service"));
         assert_eq!(d[1].state, UnitState::Absent);
     }
 
