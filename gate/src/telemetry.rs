@@ -345,6 +345,7 @@ pub fn push_metrics(sink: &spira_otel::metrics::MetricsSink, r: &GateRun) {
         let result = match entry.rsplit_once('/').map(|(_, second)| second) {
             Some("green") => "flip",
             Some("unrun") => "unproven",
+            Some("held") => "held",
             _ => "red-twice",
         };
         sink.push(&[Point::Count { name: "spira_gate_test_reruns", value: 1 }], &[("repo", &r.repo), ("result", result)]);
@@ -446,9 +447,8 @@ mod tests {
         assert!(body.contains("spira_gate_unit_test_recompiled_total"), "{body}");
     }
 
-    #[test_id(t1dcp7z)]
-    #[test]
-    fn a_rerun_test_is_pushed_by_result_with_no_test_label() {
+    /// The body `push_metrics` sends for `r`, from a listener standing in for the metrics store.
+    fn pushed(r: GateRun) -> String {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = l.local_addr().unwrap().to_string();
         l.set_nonblocking(true).unwrap();
@@ -485,12 +485,24 @@ mod tests {
             all
         });
         let sink = spira_otel::metrics::MetricsSink::new(Some(&addr), "spira-gate", std::time::Duration::from_secs(2));
-        let r = GateRun { repo: "r".into(), status: "PASS".into(), reruns: "m::t0aaaaa:red/green".into(), ..Default::default() };
         push_metrics(&sink, &r);
         done.store(true, std::sync::atomic::Ordering::SeqCst);
-        let body = h.join().unwrap();
+        h.join().unwrap()
+    }
+
+    #[test_id(t1dcp7z)]
+    #[test]
+    fn a_rerun_test_is_pushed_by_result_with_no_test_label() {
+        let body = pushed(GateRun { repo: "r".into(), status: "PASS".into(), reruns: "m::t0aaaaa:red/green".into(), ..Default::default() });
         assert!(body.contains("spira_gate_test_reruns") && body.contains("result") && body.contains("flip"), "{body}");
         assert!(!body.contains("t0aaaaa"), "{body}");
+    }
+
+    #[test_id(t36lezt)]
+    #[test]
+    fn a_rerun_test_held_back_by_the_flip_cap_is_counted_as_held() {
+        let body = pushed(GateRun { repo: "r".into(), status: "FAIL".into(), reruns: "m::t0aaaaa:red/held".into(), ..Default::default() });
+        assert!(body.contains("spira_gate_test_reruns") && body.contains("held") && !body.contains("red-twice"), "{body}");
     }
 
     #[test_id(tx32x6r)]

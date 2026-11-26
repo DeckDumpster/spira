@@ -3879,6 +3879,37 @@ fn a_flip_with_no_test_id_stays_the_branchs_red_and_writes_no_row() {
     assert!(f.fix_beads.borrow().is_empty() && f.registry_rows.borrow().is_empty());
 }
 
+/// A nextest run of `n` distinct tests, `t::t0000001` onward, every one with `status`.
+fn many_reds(status: &str, n: usize) -> String {
+    let mut out: String = (1..=n).map(|i| format!("        {status} [   0.010s] ({i}/{n}) bin/t t::t00000{i}\n")).collect();
+    let (passed, failed) = if status == "PASS" { (n, 0) } else { (0, n) };
+    out.push_str(&format!("     Summary [   0.010s] {n} tests run: {passed} passed, {failed} failed, 0 skipped"));
+    out
+}
+
+#[test_id(t7eja4q)]
+#[test]
+fn as_many_flips_as_the_cap_or_fewer_are_each_recorded_and_the_item_passes() {
+    let f = rerun_fake(&many_reds("FAIL", 2), Some(&many_reds("PASS", 2)));
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.fix_beads.borrow().len(), 2);
+    assert_eq!(f.registry_rows.borrow().len(), 2);
+    assert!(!f.stderr().contains("held back"), "{}", f.stderr());
+}
+
+#[test_id(tu45wjn)]
+#[test]
+fn flips_beyond_the_cap_file_nothing_are_named_as_held_back_and_the_item_goes_back() {
+    let f = rerun_fake(&many_reds("FAIL", 4), Some(&many_reds("PASS", 4)));
+    let status = f.run();
+    assert_eq!((status, f.fix_beads.borrow().len()), (FAIL, 3), "(status, fix beads)");
+    let rows: Vec<String> = f.registry_rows.borrow().iter().map(|r| r.0.clone()).collect();
+    assert_eq!(rows, ["test:t000001", "test:t000002", "test:t000003"]);
+    assert!(f.stderr().contains("held back by the flip cap (3): t::t000004"), "{}", f.stderr());
+    assert!(meter(&f).contains("t::t000003:red/green,t::t000004:red/held"), "{}", meter(&f));
+    assert_eq!(certified(&f, "pass"), 0);
+}
+
 #[test_id(tpwcbp4)]
 #[test]
 fn a_flip_beside_a_test_red_twice_is_recorded_and_the_item_still_goes_back() {
