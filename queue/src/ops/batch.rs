@@ -642,6 +642,11 @@ fn barred_prereq(w: &World, row: &crate::model::LcBeadRow) -> Option<String> {
     None
 }
 
+fn row_certifies_nothing(row: &crate::model::LcBeadRow) -> bool {
+    lifecycle::bead::BeadState::from_str(&row.state)
+        .is_some_and(|s| lifecycle::bead::certifies_nothing(s, row.reason.as_deref()))
+}
+
 /// What `batch open` (and its alias `open-batch`) is asked to open.
 #[derive(Debug, Clone, Copy)]
 pub struct OpenArgs<'a> {
@@ -841,7 +846,13 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
                 Default::default()
             }
         };
-        for group in [&certs] {
+        // Provisional members rank after every certified one, so the cap drops them first.
+        let unjudged: Vec<_> = submitted
+            .iter()
+            .filter(|(id, ..)| w.lc.bead_row(id).is_some_and(|r| row_certifies_nothing(&r)))
+            .cloned()
+            .collect();
+        for group in [&certs, &unjudged] {
             if group.is_empty() {
                 continue;
             }
@@ -859,35 +870,39 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
         }
     }
 
-    // Admission: the member's lifecycle row, read fresh, is CERTIFIED — its own gate has passed; a
-    // SUBMITTED member waits for that gate. Never bd's status (design §3.4, sp-mve9i: bd status is inert for work beads, and
+    // Admission: the member's lifecycle row, read fresh, is CERTIFIED — its own gate has passed — or
+    // SUBMITTED and marked as certifying nothing at this tip, which the batch PR's CI judges. Any
+    // other SUBMITTED member waits for its gate. Never bd's status (design §3.4, sp-mve9i: bd status is inert for work beads, and
     // the work verbs never move it). A row the machine cannot read is not admitted
     // (DESIGN.md §8 D8).
     let mut admitted = Vec::new();
     for (id, tip) in cands {
-        match w.lc.bead_row(&id) {
-            None => skips.push(format!(
+        let Some(r) = w.lc.bead_row(&id) else {
+            skips.push(format!(
                 "{id}: no lifecycle row (spira-lc could not say) — not admitted"
-            )),
-            Some(r) if r.state == "SUBMITTED" => skips.push(format!(
+            ));
+            continue;
+        };
+        let provisional = row_certifies_nothing(&r) && r.tip.as_deref() == Some(tip.as_str());
+        if r.state == "SUBMITTED" && !provisional {
+            skips.push(format!(
                 "{id}: SUBMITTED — its gate has not passed at {tip}; not admitted"
-            )),
-            Some(r) if r.state == "CERTIFIED" && super::round::batch_red_at(&c, &id, &tip) => {
-                skips.push(format!(
-                    "{id}: {tip} already went red in a batch — not admitted until the tip changes"
-                ))
-            }
-            Some(r) if r.state == "CERTIFIED" && !r.holds.is_empty() => {
-                skips.push(format!("{id}: held ({}) — not admitted", r.holds.join(",")))
-            }
-            Some(r) if r.state == "CERTIFIED" => match barred_prereq(w, &r) {
-                Some(p) => skips.push(format!("{id}: stacked on held {p} — not admitted")),
-                None => admitted.push((id, tip)),
-            },
-            Some(r) => skips.push(format!(
+            ));
+        } else if r.state != "CERTIFIED" && !provisional {
+            skips.push(format!(
                 "{id}: lifecycle state={} (no longer CERTIFIED) — not admitted",
                 r.state
-            )),
+            ));
+        } else if super::round::batch_red_at(&c, &id, &tip) {
+            skips.push(format!(
+                "{id}: {tip} already went red in a batch — not admitted until the tip changes"
+            ));
+        } else if !r.holds.is_empty() {
+            skips.push(format!("{id}: held ({}) — not admitted", r.holds.join(",")));
+        } else if let Some(p) = barred_prereq(w, &r) {
+            skips.push(format!("{id}: stacked on held {p} — not admitted"));
+        } else {
+            admitted.push((id, tip));
         }
     }
     super::stage::refuse_over_cap(&mut admitted, &mut skips, |(id, _)| id);

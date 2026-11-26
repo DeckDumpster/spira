@@ -84,7 +84,7 @@ const STATIONS: &[StationDef] = &[
     },
     StationDef { back: &["bead.READY", "bead.REWORK"], ..station("bead.unclaim", "bead", "unclaim / reap", "dwarf · sentinel-pass", &["bead.Release", "bead.HolderDead"]) },
     station("bead.finish", "bead", "persona finish", "lane dwarf", &["bead.Done"]),
-    StationDef { components: &["gate-verdict"], back: &["bead.REWORK"], ..station("bead.gate", "bead", "tip gate", "gate.worker ← sentinel-pass", &["bead.GatePass", "bead.GateInfra"]) },
+    StationDef { components: &["gate-verdict"], back: &["bead.REWORK"], ..station("bead.gate", "bead", "tip gate", "gate.worker ← sentinel-pass", &["bead.GatePass", "bead.GateInfra", "bead.GateNothing"]) },
     StationDef { components: &["base-fetch"], ..station("bead.sift", "bead", "sift", "task:sift · 60 s", &["bead.Sifted"]) },
     StationDef { back: &["bead.REWORK"], ..station("bead.sendback", "bead", "send back", "queue eject --red · concierge", &["bead.GateRed"]) },
     StationDef {

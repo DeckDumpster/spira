@@ -2145,6 +2145,12 @@ impl T {
         };
         self.lc.rows.borrow_mut().as_mut().unwrap().push(row);
     }
+    /// A SUBMITTED row whose reason says its gate certifies nothing.
+    fn lc_row_certifies_nothing(&self, id: &str, tip: &str, since: u64) {
+        self.lc_row(id, "SUBMITTED", tip, since);
+        let mut rows = self.lc.rows.borrow_mut();
+        rows.as_mut().unwrap().last_mut().unwrap().reason = Some("gate-certifies-nothing".into());
+    }
     fn open_record(&self, text: &str) {
         fs::write(self.qfile("open"), text).unwrap();
     }
@@ -3302,6 +3308,80 @@ fn open_batch_leaves_a_submitted_bead_out_whose_gate_has_not_passed() {
         "no batch is cut"
     );
     assert!(!t.qfile("open").exists());
+}
+
+fn certifies_nothing_world() -> T {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    t.git.set("refs/heads/spira/sp-s", "ts");
+    *t.git.branches.borrow_mut() = vec![("spira/sp-s".into(), "ts".into())];
+    t
+}
+
+fn cut_a_batch(t: &T) -> bool {
+    t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create"))
+}
+
+#[test_id(tiq9oji)]
+#[test]
+fn open_batch_admits_a_named_submitted_bead_whose_gate_certifies_nothing() {
+    let t = certifies_nothing_world();
+    t.lc_row_certifies_nothing("sp-s", "ts", 1);
+    assert_eq!(t.run(&["open-batch", "--members", "sp-s", "--skip-pregate"]), 0, "{}\n{}", t.out(), t.err());
+    assert!(cut_a_batch(&t));
+}
+
+#[test_id(trbzc61)]
+#[test]
+fn open_batch_cuts_a_certifies_nothing_bead_from_the_pool() {
+    let t = certifies_nothing_world();
+    t.lc_row_certifies_nothing("sp-s", "ts", 1);
+    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}\n{}", t.out(), t.err());
+    assert!(cut_a_batch(&t));
+}
+
+#[test_id(tw06c8s)]
+#[test]
+fn open_batch_ranks_certifies_nothing_beads_after_certified_ones() {
+    let t = certifies_nothing_world();
+    t.git.set("refs/heads/spira/sp-c", "tc");
+    t.git.branches.borrow_mut().push(("spira/sp-c".into(), "tc".into()));
+    t.lc_row_certifies_nothing("sp-s", "ts", 1);
+    t.lc_row("sp-c", "CERTIFIED", "tc", 2);
+    assert_eq!(t.run(&["open-batch", "--dry-run"]), 0, "{}\n{}", t.out(), t.err());
+    let out = t.out();
+    let at = |id: &str| out.find(&format!("  {id}")).unwrap_or_else(|| panic!("{id} is a member: {out}"));
+    assert!(at("sp-c") < at("sp-s"), "{out}");
+}
+
+#[test_id(t1frbiu)]
+#[test]
+fn open_batch_leaves_out_a_certifies_nothing_bead_whose_row_holds_another_tip() {
+    let t = certifies_nothing_world();
+    t.lc_row_certifies_nothing("sp-s", "tm", 1);
+    assert_eq!(t.run(&["open-batch", "--members", "sp-s:ts", "--skip-pregate"]), 1);
+    assert!(t.out().contains("sp-s: named at ts, but its tip is tm — not admitted"), "{}", t.out());
+    assert!(!cut_a_batch(&t));
+}
+
+#[test_id(tfy199e)]
+#[test]
+fn open_batch_leaves_out_a_held_certifies_nothing_bead() {
+    let t = certifies_nothing_world();
+    t.lc_row_certifies_nothing("sp-s", "ts", 1);
+    t.lc.rows.borrow_mut().as_mut().unwrap().last_mut().unwrap().holds = vec!["manual".into()];
+    assert_eq!(t.run(&["open-batch", "--members", "sp-s", "--skip-pregate"]), 1);
+    assert!(t.out().contains("sp-s: held (manual) — not admitted"), "{}", t.out());
+    assert!(!cut_a_batch(&t));
+}
+
+#[test_id(tophf9x)]
+#[test]
+fn open_batch_leaves_out_a_bead_a_red_verdict_returned_to_rework() {
+    let t = certifies_nothing_world();
+    t.lc_row("sp-s", "REWORK", "ts", 1);
+    assert_eq!(t.run(&["open-batch", "--members", "sp-s", "--skip-pregate"]), 1);
+    assert!(!cut_a_batch(&t));
 }
 
 #[test_id(towy1ca)]

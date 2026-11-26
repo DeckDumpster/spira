@@ -755,7 +755,13 @@ impl<'a> Pass<'a> {
         let name = &repo.name;
         let tip = tip.to_string();
         if g.outcome == GateOutcome::NoVerdict && g.reason_or("unspecified") == spira_config::gate_source::CERTIFIES_NOTHING {
-            self.log(&format!("CHECK6 {id}: {br} in {name} at {tip} certifies nothing — its repository declares tests its gate does not run; the bead stays SUBMITTED"));
+            if repo.mode == LandMode::Queue {
+                if self.lc_certify(id, &tip, "nothing", spira_config::gate_source::CERTIFIES_NOTHING) {
+                    self.log(&format!("CHECK6 {id}: {br} in {name} at {tip} certifies nothing — admitted to its batch provisionally; the batch PR's CI is its check"));
+                }
+            } else {
+                self.log(&format!("CHECK6 {id}: {br} in {name} at {tip} certifies nothing — its repository declares tests its gate does not run; the bead stays SUBMITTED"));
+            }
             self.files.back_off(br, &tip, self.clock.now() + self.s.noverdict_class_window.max(0) as u64);
             return Flow::Next;
         }

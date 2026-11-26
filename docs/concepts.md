@@ -51,6 +51,7 @@ normally sends the event.
 | `SUBMITTED` | `GatePass {tip, gate_key}` | `CERTIFIED`; lifts a `wait` hold | `landing-pass` / `gate-worker` (per-branch gate); `batcher` (round) |
 | `SUBMITTED`, `CERTIFIED` | `GateRed {tip, reason, step?, message?}` | `REWORK` | gate, `sift`, round ejection |
 | `SUBMITTED` | `GateInfra {tip}` | `SUBMITTED` (the infrastructure faulted, not the tree) | gate |
+| `SUBMITTED` | `GateNothing {tip}` | `SUBMITTED`, reason `gate-certifies-nothing` until the tip changes; a `queue.forge` batch takes it provisionally | `landing-pass` |
 | `SUBMITTED`, `CERTIFIED` | `Deliver` | `IN_DELIVERY` | `landing-pass`, `batcher`, `queue` |
 | `IN_DELIVERY` | `Delivered {merge_sha, proof}` | `LANDED` | `queue land-local`, `landing-pass` (pr/push) |
 | `IN_DELIVERY` | `Returned {reason}` | `REWORK` | `batcher` (member ejected from a round), `queue` |
@@ -71,7 +72,7 @@ normally sends the event.
 Rules the machine enforces itself:
 
 - **Tip invariant.** A certification is a claim about one exact commit. `Submit` and
-  `Resubmit` require a full 40-hex object name; `GatePass`, `GateRed`, `GateInfra` and `Sifted`
+  `Resubmit` require a full 40-hex object name; `GatePass`, `GateRed`, `GateInfra`, `GateNothing` and `Sifted`
   must name the row's current tip or are refused. A new tip on a `CERTIFIED` row drops it back
   to `SUBMITTED`.
 - **A red tip cannot be resubmitted.** After a gate or round ejects a tip as red (any reason
