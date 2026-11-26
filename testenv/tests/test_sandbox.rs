@@ -235,7 +235,7 @@ fn print_args_for_a_command_is_what_the_landing_ref_printed_but_for_the_environm
         }
         // The carried-over broker directory is absent from a landing ref's runner that predates it.
         if let Some(i) = args.windows(3).position(|w| w[0] == "--setenv" && w[1] == "PATH") {
-            let kept: Vec<&str> = args[i + 2].split(':').filter(|d| !(d.starts_with("/nix/store/") && d.contains("-mosquitto-"))).collect();
+            let kept: Vec<&str> = args[i + 2].split(':').filter(|d| !d.contains("-mosquitto-")).collect();
             args[i + 2] = kept.join(":");
         }
         args
