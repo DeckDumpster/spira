@@ -28,7 +28,7 @@ fn round_bash(dir: &std::path::Path, body: &str) -> std::process::Output {
         panic!("cargo-nextest is required (round-vm/ami-setup.sh installs it) and absent from {cargo_home}/bin");
     }
     let script = format!(
-        "export CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\n{}\n{}\n{body}",
+        "export CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\n{}\n{}\ntest_env() {{ : > entered-test-env; unit_env \"$@\"; }}\n{body}",
         function("unit_env"),
         function("write_unit_nextest_config"),
     );
@@ -58,6 +58,7 @@ fn a_hung_unit_test_is_terminated_at_its_deadline_and_named_while_the_other_test
     let out = round_bash(&dir, &body);
     let err = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(0), "{err}");
+    assert!(dir.join("entered-test-env").exists(), "the round's unit run goes through test_env: {err}");
     let secs: u64 = err.split("secs=").nth(1).and_then(|s| s.split_whitespace().next()).and_then(|s| s.parse().ok()).expect(&err);
     assert!(!err.contains("rc=0 "), "a terminated test is a red run: {err}");
     assert!(secs < 120, "the run ended at the deadline, not after the test's own sleep: {err}");

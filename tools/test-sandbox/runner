@@ -265,6 +265,14 @@ if [ -n "$around" ]; then
     t="$(toolchain_of "$1")" && [ "$t" != "$cargo_home" ] && ro+=("$t")
 fi
 ro+=("$home/.local/lib/spira-env")
+if [ -n "$around" ]; then
+    prev=""
+    for w in "$@"; do
+        # bwrap binds a destination path as given, so a relative one is made absolute first.
+        [ "$prev" = --config-file ] && [ -f "$w" ] && ro+=("$(readlink -f "$w")")
+        prev="$w"
+    done
+fi
 # bwrap comes from the system directories alone, never the caller's PATH or the toolchain's.
 bwrap=""
 for d in /usr/local/bin /usr/bin /bin; do

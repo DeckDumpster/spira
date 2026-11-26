@@ -149,7 +149,8 @@ unit)
     cd "$d" || exit 2
     scope_of unit
     [ -f "$HOME/round-nextest.toml" ] || { echo "round-vm: no round-nextest.toml on this VM: the round's unit tier has not run here" >&2; exit 2; }
-    CARGO_TARGET_DIR="$HOME/attr-target" unit_env "#, spira_config::unit_tier_unit!("\"$HOME/round-nextest.toml\"", "unittest", "$scope"), r#" $filters 2>&1 | tee "$SPIRA_BATCH_RESULTS/unit-tests.out" >&2
+    mkdir -p "$HOME/attr-target"
+    CARGO_TARGET_DIR="$HOME/attr-target" test_env "#, spira_config::unit_tier_unit!("\"$HOME/round-nextest.toml\"", "unittest", "$scope"), r#" $filters 2>&1 | tee "$SPIRA_BATCH_RESULTS/unit-tests.out" >&2
     rc=${PIPESTATUS[0]}
     cd "$HOME" && rm -rf "$d"
     if [ "$rc" -eq 100 ] || [ "$rc" -eq 101 ]; then echo "red 0 0 - - - $rc" > "$SPIRA_BATCH_RESULTS/unit-tests.result"; exit 5; fi
@@ -170,7 +171,8 @@ integration)
             CARGO_TARGET_DIR="$HOME/attr-target" unit_env build --profile unittest --config profile.unittest.incremental=false $bin_scope >&2 || { cd "$HOME" && rm -rf "$d"; exit 4; }
         fi
     fi
-    CARGO_TARGET_DIR="$HOME/attr-target" unit_env "#, spira_config::unit_tier_integration!("\"$HOME/round-nextest.toml\"", "unittest", "$scope"), r#" $filters 2>&1 | tee "$SPIRA_BATCH_RESULTS/integration-tests.out" >&2
+    mkdir -p "$HOME/attr-target"
+    CARGO_TARGET_DIR="$HOME/attr-target" test_env "#, spira_config::unit_tier_integration!("\"$HOME/round-nextest.toml\"", "unittest", "$scope"), r#" $filters 2>&1 | tee "$SPIRA_BATCH_RESULTS/integration-tests.out" >&2
     rc=${PIPESTATUS[0]}
     cd "$HOME" && rm -rf "$d"
     if [ "$rc" -eq 100 ] || [ "$rc" -eq 101 ]; then echo "red 0 0 - - - $rc" > "$SPIRA_BATCH_RESULTS/integration-tests.result"; exit 5; fi
@@ -569,7 +571,7 @@ mod tests {
         fs::write(home.join("round-launcher.env"), launcher).unwrap();
         fs::write(home.join("round-nextest.toml"), "").unwrap();
         let stub = |name: &str, body: &str| testkit::write_exe(bin.join(name), &format!("#!/bin/bash\n{body}\n"));
-        stub("git", "for a; do last=$a; done; mkdir -p \"$last\"");
+        stub("git", "for a; do last=$a; done; mkdir -p \"$last/tools/test-sandbox\"; printf '#!/bin/bash\\n[ \"$1\" = --around ] || exit 97\\n[ -d \"$CARGO_TARGET_DIR\" ] || exit 2\\nshift\\nexport VIA_AROUND=1\\nexec \"$@\"\\n' > \"$last/tools/test-sandbox/runner\"; chmod +x \"$last/tools/test-sandbox/runner\"");
         let said = if cargo_rc == 0 { "" } else { "echo 'test x ... FAILED'; " };
         if !home.join("round-work/target/release/testenv").exists() {
             fs::create_dir_all(home.join("round-work/target/release")).unwrap();
@@ -604,6 +606,22 @@ mod tests {
             assert!(env.lines().any(|l| l.starts_with("PATH=") && l.contains(&format!("{dir}/bin"))), "{build}: {env}");
             assert!(!env.contains("SPIRA_"), "{build}: {env}");
             assert!(env.lines().any(|l| l.starts_with("CARGO_TARGET_DIR=") && l.ends_with("home/attr-target")), "{build}: the target dir arrives unquoted: {env}");
+        }
+    }
+
+    #[test_id(tpfuu3k)]
+    #[test]
+    fn the_unit_and_integration_probes_run_their_tests_through_the_runners_around_and_build_outside_it() {
+        for (build, result) in [("unit", "unit-tests.result"), ("integration", "integration-tests.result")] {
+            let d = TempDir::new();
+            fs::create_dir_all(d.path().join("home")).unwrap();
+            fs::write(d.path().join("home/test-bins"), "round-vm lifecycle\n").unwrap();
+            let (_, _, _, env) = attr_job_env(&d, build, "round-vm", 0, result, None);
+            assert!(env.contains("VIA_AROUND=1\n"), "{build}: the test run did not enter through the runner: {env}");
+            if build == "integration" {
+                let built = fs::read_to_string(d.path().join("home/build.env")).unwrap();
+                assert!(!built.contains("VIA_AROUND"), "the build stays outside the sandbox: {built}");
+            }
         }
     }
 

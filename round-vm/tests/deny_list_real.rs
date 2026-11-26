@@ -68,14 +68,16 @@ fn run_in(tmp: &testkit::TempDir, cargo_home: &str, list: &str) -> (Option<i32>,
     let dir = tmp.path().to_path_buf();
     let deny = spira_config::unit_tier::DenyList::parse(list).unwrap();
     let script = format!(
-        "export CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\n{}\n{}\n{}\n{}\n{}\nwrite_unit_nextest_config 10 1 \"$PWD/round-nextest.toml\" \"$1\"\nunit_cargo || exit 90\nunit_nextest > run.log 2>&1\nrc=$?\ncat run.log >&2\nprintf '%s' \"$2\" > round-deny-list\nunit_registry_skips round-deny-list run.log\nexit $rc\n",
+        "export CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\n{}\n{}\n{}\n{}\n{}\nwrite_unit_nextest_config 10 1 \"$PWD/round-nextest.toml\" \"$1\"\ntest_env() {{ : > entered-test-env; unit_env \"$@\"; }}\nunit_cargo || exit 90\nunit_nextest > run.log 2>&1\nrc=$?\ncat run.log >&2\nprintf '%s' \"$2\" > round-deny-list\nunit_registry_skips round-deny-list run.log\nexit $rc\n",
         function("unit_registry_skips"),
         function("unit_env"),
         function("write_unit_nextest_config"),
         function("unit_cargo"),
         function("unit_nextest").replace("$HOME/round-nextest.toml", "$PWD/round-nextest.toml"),
     );
-    bash_in_code2(&dir, cargo_home, &script, &deny.config_filter_line(), list)
+    let out = bash_in_code2(&dir, cargo_home, &script, &deny.config_filter_line(), list);
+    assert!(dir.join("entered-test-env").exists(), "the round's unit run goes through test_env: {}", out.1);
+    out
 }
 
 #[test_id(tr9w5nw)]

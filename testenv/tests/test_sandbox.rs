@@ -495,3 +495,37 @@ fn the_built_testenv_supervisor_records_who_signalled_it_and_passes_the_signal_o
     assert_eq!(status.code(), Some(143));
     killer.wait().unwrap();
 }
+
+#[test_id(tzvk5ed)]
+#[test]
+fn around_binds_a_relative_config_file_argument_at_its_absolute_path() {
+    let tmp = testkit::TempDir::new("around-config-file-relative");
+    fs::write(tmp.path().join("gate-unit-nextest.toml"), "").unwrap();
+    let out = std::process::Command::new(workspace().join("tools/test-sandbox/runner"))
+        .current_dir(tmp.path())
+        .args(["--print-args", "--around", system_paths::USR_BIN_TRUE, "--config-file", "gate-unit-nextest.toml"])
+        .output()
+        .unwrap();
+    let printed = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = printed.lines().collect();
+    let path = fs::canonicalize(tmp.path().join("gate-unit-nextest.toml")).unwrap().display().to_string();
+    assert!(lines.windows(3).any(|w| w[0] == "--ro-bind" && w[1] == path && w[2] == path), "{printed}");
+    assert!(!lines.windows(2).any(|w| w[0] == "--ro-bind" && w[1] == "gate-unit-nextest.toml"), "{printed}");
+}
+
+#[test_id(t4nmj1z)]
+#[test]
+fn around_binds_a_config_file_argument_read_only_so_a_config_in_the_hidden_home_stays_readable() {
+    let tmp = testkit::TempDir::new("around-config-file");
+    let home = fs::canonicalize(tmp.path()).unwrap().join("home");
+    fs::create_dir_all(&home).unwrap();
+    let cfg = home.join("round-nextest.toml");
+    fs::write(&cfg, "").unwrap();
+    let out = std::process::Command::new(workspace().join("tools/test-sandbox/runner")).args(["--print-args", "--around", system_paths::USR_BIN_TRUE, "--config-file"]).arg(&cfg).env("HOME", &home).output().unwrap();
+    let printed = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = printed.lines().collect();
+    let (home, path) = (home.display().to_string(), cfg.display().to_string());
+    let hidden = lines.windows(2).position(|w| w[0] == "--tmpfs" && w[1] == home).unwrap_or_else(|| panic!("the home is hidden: {printed}"));
+    let bound = lines.windows(3).position(|w| w[0] == "--ro-bind" && w[1] == path && w[2] == path).unwrap_or_else(|| panic!("the config is bound: {printed}"));
+    assert!(hidden < bound, "the config is bound on top of the hidden home: {printed}");
+}

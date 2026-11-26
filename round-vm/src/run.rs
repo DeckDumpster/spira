@@ -323,20 +323,25 @@ printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res
 
 /// The round's cargo environment, spliced into the round's phases and the attribution probes
 /// alike so a probe cannot lack a tool the phase it re-runs has.
-macro_rules! unit_env_fn {
+macro_rules! unit_env_words {
     () => {
-        concat!(r#"unit_env() {
-    env -i RUST_TEST_THREADS="#, spira_config::run_test_threads_literal!(), r#" CARGO_BUILD_JOBS="$(nproc)" HOME="$HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
+        concat!(r#"env -i RUST_TEST_THREADS="#, spira_config::run_test_threads_literal!(), r#" CARGO_BUILD_JOBS="$(nproc)" HOME="$HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
         CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="${RUSTC_WRAPPER:-}" SCCACHE_IGNORE_SERVER_IO_ERROR=1 SCCACHE_SERVER_PORT="${SCCACHE_SERVER_PORT:-4226}" \
         SCCACHE_WEBDAV_ENDPOINT="${SCCACHE_WEBDAV_ENDPOINT:-}" SCCACHE_WEBDAV_KEY_PREFIX="${SCCACHE_WEBDAV_KEY_PREFIX:-}" \
         ${CARGO_TARGET_DIR:+CARGO_TARGET_DIR="$CARGO_TARGET_DIR"} \
         GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
-        cargo "$@"
+        "#)
+    };
 }
-"#)
+
+/// `unit_env` builds; `test_env` runs the tests, entering the test sandbox once for the whole run.
+macro_rules! unit_env_fn {
+    () => {
+        concat!("unit_env() {\n    ", $crate::run::unit_env_words!(), "cargo \"$@\"\n}\ntest_env() {\n    ", $crate::run::unit_env_words!(), "tools/test-sandbox/runner --around cargo \"$@\"\n}\n")
     };
 }
 pub(crate) use unit_env_fn;
+pub(crate) use unit_env_words;
 
 #[cfg(test)]
 pub(crate) const UNIT_ENV_FN: &str = unit_env_fn!();
@@ -704,7 +709,7 @@ write_unit_nextest_config() {
     printf '"#, spira_config::unit_tier_config_integration_printf!(), r#"' >> "$3"
 }
 unit_nextest() {
-    unit_env "#, spira_config::unit_tier_unit!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#"
+    test_env "#, spira_config::unit_tier_unit!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#"
 }
 phase unit-build
 unit_build_mark="$HOME/round-work/.runtime/spira/batch-results/unit-build"
@@ -1073,7 +1078,7 @@ if [ -n "$only" ]; then
         : > "$integ_hung"
         rc=0
         write_round_nextest_config
-        unit_env "#, spira_config::unit_tier_integration!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#" > ~/round-integration-tests.log 2>&1 || rc=$?
+        test_env "#, spira_config::unit_tier_integration!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#" > ~/round-integration-tests.log 2>&1 || rc=$?
         if [ "$rc" -ne 0 ]; then
             phase_failed integration-tests "$rc"
             test_phase_red integration-tests ~/round-integration-tests.log "$rc" "$(( $(date +%s) - only_t0 ))" "$integ_hung" "$rdir/integration-tests.out" "$rdir/integration.json" false
@@ -1148,7 +1153,7 @@ else
 fi
 integ_cargo() {
     local rc=0
-    unit_env "#, spira_config::unit_tier_integration!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#" || rc=$?
+    test_env "#, spira_config::unit_tier_integration!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#" || rc=$?
     return "$rc"
 }
 : > ~/round-integration-tests.log
@@ -4767,7 +4772,7 @@ mod tests {
         assert!(script_fn("write_round_nextest_config").contains("write_unit_nextest_config \"$secs\" \"$periods\" \"$HOME/round-nextest.toml\""));
         let body = script_fn("unit_nextest");
         let words = spira_config::unit_tier::unit_words("\"$HOME/round-nextest.toml\"", Some("unittest"), "--workspace", spira_config::unit_tier::LIB_BINS);
-        assert!(body.contains(&format!("unit_env {words}")), "the definition's words: {body}");
+        assert!(body.contains(&format!("test_env {words}")), "the definition's words: {body}");
         assert!(body.contains("--cargo-profile unittest --features integration --config profile.unittest.incremental=false --workspace"), "same profile and flags as the compile: {body}");
         let cfg = REMOTE_SCRIPT.split("write_unit_nextest_config() {").nth(1).and_then(|a| a.split("\n}\n").next()).unwrap();
         assert!(cfg.contains(spira_config::unit_tier_config_printf!()), "{cfg}");
@@ -5014,12 +5019,25 @@ mod tests {
         assert!(REMOTE_SCRIPT.contains("\"$HOME/round-nextest.toml\" \"$deny_filter_line\""));
     }
 
+    #[test_id(tt7rdl5)]
+    #[test]
+    fn the_rounds_test_runs_enter_the_sandbox_once_and_its_build_does_not() {
+        let enters = |name: &str| script_fn(name).contains("test_env ");
+        assert!(enters("unit_nextest") && enters("integ_cargo"));
+        let only = REMOTE_SCRIPT.split("    integration-tests)\n").nth(1).and_then(|a| a.split(";;").next()).unwrap();
+        assert!(only.contains("test_env ") && !only.contains("unit_env "), "--only integration-tests: {only}");
+        assert!(!script_fn("unit_cargo").contains("test_env"), "the build stays outside the sandbox");
+        let tail = |f: &str| UNIT_ENV_FN.split(f).nth(1).unwrap().lines().find(|l| l.contains("cargo \"$@\"")).unwrap().trim().to_string();
+        assert!(tail("test_env() {").ends_with("tools/test-sandbox/runner --around cargo \"$@\""));
+        assert_eq!(tail("unit_env() {"), "cargo \"$@\"");
+    }
+
     #[test_id(tlprmgr)]
     #[test]
     fn the_rounds_integration_command_is_nextest_over_the_rounds_config_and_passes_no_skips() {
         let body = script_fn("integ_cargo");
         let out = std::process::Command::new("bash")
-            .args(["-c", &format!("unit_env() {{ echo \"$*\"; }}\n{body}\ninteg_cargo", )])
+            .args(["-c", &format!("test_env() {{ echo \"$*\"; }}\n{body}\ninteg_cargo")])
             .output()
             .unwrap();
         let first = String::from_utf8_lossy(&out.stdout).lines().next().unwrap().to_string();
