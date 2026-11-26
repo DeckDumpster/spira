@@ -61,6 +61,10 @@ impl Repo {
 }
 
 fn fixture(tmp: &Path, name: &str) -> Repo {
+    fixture_of(tmp, name, COMMITS)
+}
+
+fn fixture_of(tmp: &Path, name: &str, commits: u64) -> Repo {
     let (dir, home) = (tmp.join(name), tmp.join(format!("{name}-home")));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::create_dir_all(&home).unwrap();
@@ -69,7 +73,7 @@ fn fixture(tmp: &Path, name: &str) -> Repo {
     r.tool(&["config", "--global", "--add", "user.email", "t@example.invalid"]);
     r.tool(&["init", "-b", "main"]);
     let mut script = String::from("CREATE TABLE t (id INT PRIMARY KEY, body VARCHAR(2000));\nCALL DOLT_COMMIT('-Am', 'schema');\n");
-    for i in 0..COMMITS {
+    for i in 0..commits {
         script.push_str(&format!(
             "INSERT INTO t VALUES ({i}, CONCAT('{i}-', REPEAT('x', 1500))) ON DUPLICATE KEY UPDATE body = CONCAT('{i}-', REPEAT('y', 1500));\nCALL DOLT_COMMIT('-Am', 'bd: update {i}');\n"
         ));
@@ -103,8 +107,8 @@ fn squash_and_collect(r: &Repo, keep: u64) {
 fn a_squash_leaves_keep_plus_one_commits_the_same_data_and_the_uncommitted_write() {
     need_dolt!();
     let tmp = TempDir::new("store-persist-history");
-    let r = fixture(tmp.path(), "db");
-    assert_eq!(history::len(&r).unwrap(), COMMITS + 2);
+    let r = fixture_of(tmp.path(), "db", KEEP * 4);
+    assert_eq!(history::len(&r).unwrap(), KEEP * 4 + 2);
     let (rows, dirty) = (r.rows(), r.run("SELECT COUNT(*) AS n FROM dolt_diff_summary('HEAD', 'WORKING');\n", true).unwrap());
     squash_and_collect(&r, KEEP);
     assert_eq!(history::len(&r).unwrap(), history::length_after(KEEP));
