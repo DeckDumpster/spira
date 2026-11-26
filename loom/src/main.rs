@@ -4,8 +4,17 @@ use loom::{router, Config, Loom};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
+    match loom::server_runtime() {
+        Ok(rt) => rt.block_on(serve()),
+        Err(e) => {
+            eprintln!("loom: tokio runtime: {e}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+async fn serve() -> ExitCode {
     let cfg = match Config::from_env() {
         Ok(c) => c,
         Err(e) => {
