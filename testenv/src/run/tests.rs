@@ -868,7 +868,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
 #[test_id(t6ij5vg)]
 #[test]
 fn a_sandbox_run_stopped_from_outside_names_its_sender_in_the_red_verdict_and_a_plain_red_does_not() {
-    let stopped = crate::sandbox::Stopped { sig: 15, by_pid: Some(4242), cmd: "/usr/bin/kill -TERM 9".into(), cgroup: "/user.slice/user-1000.slice/user@1000.service/app.slice/x.service".into() };
+    let stopped = crate::sandbox::Stopped { sig: 15, by_pid: Some(4242), cmd: "kill -TERM 9".into(), cgroup: "/user.slice/user-1000.slice/user@1000.service/app.slice/x.service".into() }; // not a path: a cgroup name
     let ran = crate::sandbox::Ran { rc: Some(143), secs: 424, timed_out: false, stopped: Some(stopped) };
     assert_eq!(
         sandbox_red("unit-tests.sh", &ran).verdict_line(),

@@ -404,8 +404,12 @@ fn stopped_in(out: &Path) -> Option<Stopped> {
 /// The first argument of the hidden subcommand that runs [`supervise`].
 pub const SUPERVISE_ARG: &str = "sandbox-supervise";
 
+fn proc_path(pid: u32, file: &str) -> PathBuf {
+    Path::new(system_paths::PROC).join(pid.to_string()).join(file)
+}
+
 fn proc_text(pid: u32, file: &str) -> Option<String> {
-    let raw = fs::read(format!("/proc/{pid}/{file}")).ok()?;
+    let raw = fs::read(proc_path(pid, file)).ok()?;
     let text = String::from_utf8_lossy(&raw).replace(['\0', '\n'], " ");
     let text = text.trim();
     (!text.is_empty()).then(|| text.to_string())
@@ -416,7 +420,7 @@ fn sender(sig: i32, pid: u32) -> Stopped {
         return Stopped { sig, by_pid: None, cmd: "?".into(), cgroup: "?".into() };
     }
     let cmd = proc_text(pid, "cmdline").or_else(|| proc_text(pid, "comm").map(|c| format!("[{c}]"))).unwrap_or_else(|| "?".into());
-    let cgroup = fs::read_to_string(format!("/proc/{pid}/cgroup"))
+    let cgroup = fs::read_to_string(proc_path(pid, "cgroup"))
         .ok()
         .and_then(|t| t.lines().find_map(|l| l.strip_prefix("0::")).map(|p| p.trim().to_string()))
         .unwrap_or_else(|| "?".into());
@@ -444,6 +448,7 @@ pub fn supervise(argv: &[String]) -> i32 {
         libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
         set
     };
+    // batch-job: the sandbox itself, bounded by its caller's deadline, which kills this supervisor
     let mut cmd = Command::new(program);
     cmd.args(args);
     // SAFETY: only sigprocmask, which is async-signal-safe, between fork and exec.
@@ -453,7 +458,6 @@ pub fn supervise(argv: &[String]) -> i32 {
             Ok(())
         });
     }
-    // batch-job: the sandbox itself, bounded by its caller's deadline, which kills this supervisor
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
@@ -499,7 +503,7 @@ static SUPERVISE_ON_LOAD: extern "C" fn() = {
         if std::env::var_os(SUPERVISE_AT_LOAD).is_none() {
             return;
         }
-        let raw = fs::read("/proc/self/cmdline").unwrap_or_default();
+        let raw = fs::read(Path::new(system_paths::PROC).join("self/cmdline")).unwrap_or_default();
         let argv: Vec<String> = raw.split(|b| *b == 0).skip_while(|a| *a != b"--").skip(1).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
         // SAFETY: leaves the process without running libtest's startup.
         unsafe { libc::_exit(supervise(&argv)) }
@@ -830,7 +834,7 @@ mod tests {
     }
 
     fn proc_field(pid: &str, file: &str) -> String {
-        fs::read(format!("/proc/{pid}/{file}")).map(|b| String::from_utf8_lossy(&b).replace('\0', " ")).unwrap_or_default()
+        fs::read(Path::new(system_paths::PROC).join(pid).join(file)).map(|b| String::from_utf8_lossy(&b).replace('\0', " ")).unwrap_or_default()
     }
 
     #[test_id(tdw7zyc)]
@@ -850,7 +854,7 @@ mod tests {
             std::thread::spawn(move || run("bwrap", &p, &Path::new(TREE_MOUNT).join("stop.sh"), &out, Some(Duration::from_secs(60))))
         };
         let supervisor = loop {
-            let all: Vec<String> = fs::read_dir("/proc").unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.chars().all(|c| c.is_ascii_digit())).collect();
+            let all: Vec<String> = fs::read_dir(system_paths::PROC).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.chars().all(|c| c.is_ascii_digit())).collect();
             let sleeping = all.iter().any(|p| proc_field(p, "cmdline").trim() == "sleep 29.731");
             let head = all.iter().find(|p| {
                 let stat = proc_field(p, "stat");
@@ -877,7 +881,7 @@ mod tests {
     #[test_id(ti8m5k5)]
     #[test]
     fn a_stopped_line_reads_back_whatever_the_sender_command_contains() {
-        let s = Stopped { sig: 15, by_pid: Some(77), cmd: "kill -TERM 5 cgroup=x".into(), cgroup: "/user.slice/a.service".into() };
+        let s = Stopped { sig: 15, by_pid: Some(77), cmd: "kill -TERM 5 cgroup=x".into(), cgroup: "/user.slice/a.service".into() }; // not a path: a cgroup name
         assert_eq!(Stopped::parse(&s.line()), Some(s.clone()));
         assert_eq!((s.comm(), s.unit()), ("kill", "a.service"));
         let unresolved = Stopped { by_pid: None, ..s };
