@@ -1535,12 +1535,18 @@ pub fn drift_value(code: Option<i32>, out: &str, dirty: &str, finding_prefix: &s
     }
 }
 
+/// The checkout the drift probe reads: `SPIRA_REPO` when set, else the checkout holding `home`.
+fn drift_repo(repo: Option<String>, home: &Path) -> std::path::PathBuf {
+    let env = repo.map(|r| ("SPIRA_REPO".to_string(), r)).into_iter().collect();
+    spira_config::resolve::derive_home_repo(home, &env)
+}
+
 pub fn drift_keys() -> Kv {
     use install::checkout_drift::Probe;
     use install::unit_drift::UnitDrift;
-    let repo = std::env::var("SPIRA_REPO").ok().filter(|s| !s.is_empty());
+    let repo = io::try_home_dir().ok().map(|home| drift_repo(std::env::var("SPIRA_REPO").ok(), &home));
     let mut out = Kv::new();
-    let (rc, text) = match repo.as_deref().map_or(Probe::Unreadable, install::checkout_drift::checkout) {
+    let (rc, text) = match repo.map_or(Probe::Unreadable, |r| install::checkout_drift::checkout(&r.to_string_lossy())) {
         Probe::Clean => (Some(0), String::new()),
         Probe::Drift(t) => (Some(1), t),
         Probe::Unreadable => (None, String::new()),
@@ -2040,7 +2046,20 @@ mod tests {
 
 #[cfg(test)]
 mod drift_tests {
-    use super::drift_value;
+    use super::{drift_repo, drift_value};
+
+    #[test_id(tx0ite6)]
+    #[test]
+    fn the_checkout_read_is_spira_repo_or_else_the_one_holding_home() {
+        let d = testkit::TempDir::new("drift-repo");
+        std::fs::create_dir_all(d.join(".git")).unwrap();
+        std::fs::create_dir_all(d.join("spira")).unwrap();
+        let checkout = d.path().canonicalize().unwrap();
+        for unset in [None, Some(String::new())] {
+            assert_eq!(drift_repo(unset, &d.join("spira")), checkout);
+        }
+        assert_eq!(drift_repo(Some("elsewhere".into()), &d.join("spira")), std::path::PathBuf::from("elsewhere"));
+    }
 
     #[test_id(tep1yzh)]
     #[test]

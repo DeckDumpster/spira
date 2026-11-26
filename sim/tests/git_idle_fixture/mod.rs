@@ -412,8 +412,7 @@ pub fn strand_rows(f: &Fixture) -> Vec<String> {
 }
 
 pub fn cockpit_600s_every_probe() -> &'static str {
-    let probes = spira_runtime::tasks::g::cockpit_tier_600s::PROBES.iter().map(|(name, ms)| format!(r#"{{"name":"{name}","timeout_ms":{ms}}}"#)).collect::<Vec<_>>().join(",");
-    format!(r#"{{"probes":[{probes}],"config":{{}}}}"#).leak()
+    spira_runtime::tasks::g::cockpit::probe_input(spira_runtime::tasks::g::cockpit_tier_600s::PROBES, &Default::default()).leak()
 }
 
 pub const COCKPIT_UNSENT: &str = r#"{"probes":[{"name":"cockpit.unsent","timeout_ms":300000}],"config":{}}"#;
