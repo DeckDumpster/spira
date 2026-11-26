@@ -66,6 +66,8 @@ pub struct Store<B: Backend> {
     pub(super) dwell_index: std::sync::Mutex<super::dwell::LastIndex>,
     /// The most revisions one dwell request folds forward.
     pub(super) dwell_forward_revs: u64,
+    /// Revisions per chunk of [`Store::warm_dwell`]'s backward scan.
+    pub(super) dwell_chunk_revs: u64,
     /// Where every applied transition is shipped once its txn commits.
     shipper: Option<spira_otel::vlogs::Shipper>,
     /// A bead's external reference, read when it reaches a terminal state; `None` reads none.
@@ -252,6 +254,7 @@ impl<B: Backend> Store<B> {
             claim_floor_ms,
             dwell_index: Default::default(),
             dwell_forward_revs: super::dwell::FORWARD_REVS,
+            dwell_chunk_revs: super::dwell::CHUNK_REVS,
             shipper: None,
             refs: None,
         }
