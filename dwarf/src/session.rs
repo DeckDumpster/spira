@@ -27,9 +27,28 @@ pub struct Stop {
     /// Epoch at which a wait on a harness-owned slot began (0: not waiting).
     pub harness_wait: AtomicI64,
     sent_back: std::sync::Mutex<Option<String>>,
+    signaller: Signaller,
+}
+
+struct Signaller(fn(libc::pid_t, libc::c_int) -> libc::c_int);
+
+impl Default for Signaller {
+    fn default() -> Self {
+        Signaller(real_kill)
+    }
+}
+
+fn real_kill(pid: libc::pid_t, sig: libc::c_int) -> libc::c_int {
+    // SAFETY: kill takes two integers and touches no memory of ours.
+    unsafe { libc::kill(pid, sig) }
 }
 
 impl Stop {
+    #[cfg(test)]
+    fn with_signaller(f: fn(libc::pid_t, libc::c_int) -> libc::c_int) -> Self {
+        Stop { signaller: Signaller(f), ..Default::default() }
+    }
+
     /// Marks a harness wait until the guard drops, on every return path.
     pub fn harness_waiting(&self, since: i64) -> HarnessWait<'_> {
         self.harness_wait.store(since.max(1), Ordering::SeqCst);
@@ -52,11 +71,11 @@ impl Stop {
     }
     pub fn kill_session(&self) {
         let g = self.pgid.load(Ordering::SeqCst);
-        if g > 0 {
-            // SAFETY: signalling a process group we created; never 0 (our own group).
-            unsafe {
-                libc::kill(-g, libc::SIGTERM);
-            }
+        if g > 1 {
+            // Only above 1: `kill(-1, ..)` signals every process we may signal, and -0 our own group.
+            (self.signaller.0)(-g, libc::SIGTERM);
+        } else if g != 0 {
+            eprintln!("dwarf: refused to signal process group {g}");
         }
     }
     pub fn signalled(&self) -> Option<i32> {
@@ -639,6 +658,41 @@ mod tests {
         assert_eq!(stop.sent_back_why(), None);
     }
 
+    thread_local! {
+        static SENT: std::cell::RefCell<Vec<(libc::pid_t, libc::c_int)>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    fn record_signal(pid: libc::pid_t, sig: libc::c_int) -> libc::c_int {
+        SENT.with_borrow_mut(|s| s.push((pid, sig)));
+        0
+    }
+
+    fn sent() -> Vec<(libc::pid_t, libc::c_int)> {
+        SENT.take()
+    }
+
+    /// A group `watch_still` consults `FakeBeat` about, signalled only into the recorder.
+    const PLACEHOLDER_PGID: i32 = 4242;
+
+    fn recording_stop(pgid: i32) -> Stop {
+        let stop = Stop::with_signaller(record_signal);
+        stop.pgid.store(pgid, Ordering::SeqCst);
+        stop
+    }
+
+    #[test_id(tiqdyfd)]
+    #[test]
+    fn only_a_process_group_above_one_is_signalled() {
+        for refused in [1, -1, 0] {
+            let stop = recording_stop(refused);
+            stop.trip(libc::SIGTERM);
+            assert_eq!(sent(), [], "pgid {refused}");
+            assert_eq!(stop.signalled(), Some(libc::SIGTERM), "pgid {refused}");
+        }
+        recording_stop(PLACEHOLDER_PGID).trip(libc::SIGTERM);
+        assert_eq!(sent(), [(-PLACEHOLDER_PGID, libc::SIGTERM)]);
+    }
+
     fn still_hb(d: &testkit::TempDir) -> Heartbeat {
         Heartbeat { bead: "sp-a".into(), rune: "builder".into(), run: d.to_path_buf(), lease_s: 6000, every: Duration::from_millis(1), wall_min: 10_000 }
     }
@@ -689,8 +743,7 @@ mod tests {
     #[test]
     fn a_busy_child_leaves_no_still_file() {
         let d = tmp("still-busy");
-        let stop = Stop::default();
-        stop.pgid.store(1, Ordering::SeqCst);
+        let stop = recording_stop(PLACEHOLDER_PGID);
         let busy = (0..8).map(|n| Some(n * 6000)).collect();
         let b = FakeBeat { mtimes: Mutex::new(vec![5]), fuse: "?".into(), stop_after: 8, ticks: Mutex::new(busy), run: d.to_path_buf(), ..Default::default() };
         still_hb(&d).run(&b, &stop, &AtomicBool::new(false));
@@ -701,8 +754,7 @@ mod tests {
     #[test]
     fn a_child_with_no_descendants_leaves_no_still_file() {
         let d = tmp("still-none");
-        let stop = Stop::default();
-        stop.pgid.store(1, Ordering::SeqCst);
+        let stop = recording_stop(PLACEHOLDER_PGID);
         let b = FakeBeat { mtimes: Mutex::new(vec![5]), fuse: "?".into(), stop_after: 6, run: d.to_path_buf(), ..Default::default() };
         still_hb(&d).run(&b, &stop, &AtomicBool::new(false));
         assert!(b.still_seen.lock().unwrap().iter().all(Option::is_none));
@@ -712,8 +764,7 @@ mod tests {
     #[test]
     fn a_harness_wait_leaves_no_still_file() {
         let d = tmp("still-hwait");
-        let stop = Stop::default();
-        stop.pgid.store(1, Ordering::SeqCst);
+        let stop = recording_stop(PLACEHOLDER_PGID);
         let _wait = stop.harness_waiting(1);
         let b = FakeBeat { mtimes: Mutex::new(vec![5]), fuse: "?".into(), stop_after: 6, ticks: Mutex::new(idle_then(1)), run: d.to_path_buf(), ..Default::default() };
         still_hb(&d).run(&b, &stop, &AtomicBool::new(false));
@@ -724,8 +775,7 @@ mod tests {
     #[test]
     fn a_transcript_write_removes_the_still_file() {
         let d = tmp("still-write");
-        let stop = Stop::default();
-        stop.pgid.store(1, Ordering::SeqCst);
+        let stop = recording_stop(PLACEHOLDER_PGID);
         let b = FakeBeat { mtimes: Mutex::new(vec![5, 5, 5, 5, 9]), fuse: "?".into(), stop_after: 6, ticks: Mutex::new(idle_then(1)), run: d.to_path_buf(), ..Default::default() };
         still_hb(&d).run(&b, &stop, &AtomicBool::new(false));
         let seen: Vec<bool> = b.still_seen.lock().unwrap().iter().map(Option::is_some).collect();
@@ -736,12 +786,12 @@ mod tests {
     #[test]
     fn a_lapse_removes_the_still_file() {
         let d = tmp("still-lapse");
-        let stop = Stop::default();
-        stop.pgid.store(1, Ordering::SeqCst);
+        let stop = recording_stop(PLACEHOLDER_PGID);
         let hb = Heartbeat { lease_s: 150, ..still_hb(&d) };
         let b = FakeBeat { mtimes: Mutex::new(vec![5]), fuse: "0".into(), ticks: Mutex::new(idle_then(1)), run: d.to_path_buf(), ..Default::default() };
         assert_eq!(hb.run(&b, &stop, &AtomicBool::new(false)), Some(HbTick::Lapse));
         assert!(b.still_seen.lock().unwrap().iter().any(Option::is_some), "still before the lapse");
         assert!(!d.join("dwarf/sp-a.still").exists());
+        assert_eq!(sent(), [(-PLACEHOLDER_PGID, libc::SIGTERM)]);
     }
 }
