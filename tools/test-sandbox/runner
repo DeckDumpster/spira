@@ -84,15 +84,16 @@ held() {
 
 # RUST_TEST_THREADS=1 prints no hung line, so silence is bounded too.
 bounded() {
-    local w1 w2 tmp pid rc=0 limit="" period="" periods="" line name="" why="" now last act start
+    local w1 w2 tmp pid rc=0 limit="" each line name="" why="" now last act start
     tmp="$(mktemp -d)" || die "cannot make a scratch directory"
     mkfifo "$tmp/tick" && exec 9<>"$tmp/tick" || die "cannot make a wait fifo"
     if [ -r "$workspace/.config/nextest.toml" ]; then
         while IFS= read -r line; do
-            [[ $line =~ period\ *=\ *\"([0-9]+)s\" ]] && period="${BASH_REMATCH[1]}"
-            [[ $line =~ terminate-after\ *=\ *([0-9]+) ]] && periods="${BASH_REMATCH[1]}"
+            # A binary's kind is unknown here, so the longest deadline in the file bounds them all.
+            [[ $line =~ period\ *=\ *\"([0-9]+)s\".*terminate-after\ *=\ *([0-9]+) ]] || continue
+            each=$((BASH_REMATCH[1] * BASH_REMATCH[2] * 1000000))
+            [ -n "$limit" ] && [ "$limit" -ge "$each" ] || limit=$each
         done < "$workspace/.config/nextest.toml"
-        [ -n "$period" ] && [ -n "$periods" ] && limit=$((period * periods * 1000000))
     fi
     printf '%s' "${EPOCHREALTIME/./}" > "$tmp/act"
     # Each watcher forwards its stream itself: uutils tee asserts a full tee(2) into a pipe the

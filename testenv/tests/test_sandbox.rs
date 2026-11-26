@@ -445,6 +445,15 @@ fn silence_is_bounded_by_the_file_period_times_terminate_after_not_by_one_period
     assert_eq!((out.status.code(), &out.stdout[..]), (Some(0), &b"fin\n"[..]));
 }
 
+#[test_id(tav3w5w)]
+#[test]
+fn silence_is_bounded_by_the_longest_deadline_in_the_file_wherever_it_sits() {
+    let f = bounded_fixture();
+    fs::write(f.root.join(".config/nextest.toml"), "[profile.default]\nslow-timeout = { period = \"1s\", terminate-after = 3 }\n[[profile.default.overrides]]\nfilter = \"kind(lib)\"\nslow-timeout = { period = \"1s\", terminate-after = 1 }\n").unwrap();
+    let out = f.run("pause", "sleep 1.5; echo fin", false);
+    assert_eq!((out.status.code(), &out.stdout[..]), (Some(0), &b"fin\n"[..]));
+}
+
 #[test_id(tlmmajp)]
 #[test]
 fn print_args_prints_the_command_line_and_never_runs_the_binary() {
