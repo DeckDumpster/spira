@@ -36,7 +36,7 @@ impl Concierge for Mail {
         let mut child = Command::new("timeout")
             .args(["5", spira_config::release_env::tool("mail")?.as_str(), "send", "concierge", "--from", "Pilgrimage <pilgrimage@spira>", "--subject", subject, "--kind", "question", "--default", default, "--bead", id])
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
+            .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("mail send concierge: {e}"))?;
@@ -46,8 +46,7 @@ impl Concierge for Mail {
         if !out.status.success() {
             return Err(format!("mail send concierge: exit {}: {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()));
         }
-        let named = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("").trim().to_string();
-        Ok(if named.is_empty() { "mail:concierge".into() } else { named })
+        Ok("mail:concierge".into())
     }
 }
 

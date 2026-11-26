@@ -4,6 +4,7 @@
 //!
 //!   mail send <mailbox> --from "<s>" --subject "<s>" [--kind K] [--urgent]
 //!                       [--default D] [--class permissions|policy|destructive|design] [--bead ID] [--requested-by "<his words>"] [--digest] [--condition KEY] [--dry-run] < body
+//!                     stdout: `mail send: sent <msgid> to <mailbox>[; ask <id>][ (rerouted from operator: <why>)]`
 //!   mail template <kind>
 //!   mail list <mailbox> [--unread]   (first column is the id `read` and `done` take)
 //!   mail read <mailbox> [<message>]
@@ -162,14 +163,19 @@ fn run_send(args: &[String]) -> ExitCode {
     let send_args = SendArgs { mailbox: &mailbox, from: from.as_deref(), subject: &subject, kind: &kind, default: &default, class: &class, bead: &bead, urgent, digest, dry_run, requested_by: &requested_by };
     let result = cmds::send_recorded(&bd, &env, &send_args, body);
     match result {
-        Ok(out) => {
-            if dry_run {
-                for step in &out.steps {
-                    println!("mail send --dry-run: {step}");
-                }
+        Ok(out) if dry_run => {
+            for step in &out.steps {
+                println!("mail send --dry-run: {step}");
             }
             ExitCode::SUCCESS
         }
+        Ok(out) => match cmds::sent_line(&out) {
+            Ok(line) => {
+                println!("{line}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => fail(format!("send: {e}")),
+        },
         Err(e) => fail(format!("send: {e}")),
     }
 }

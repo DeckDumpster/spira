@@ -59,6 +59,29 @@ pub struct SendOutcome {
     pub delivered_path: PathBuf,
     pub x_bead: Option<String>,
     pub steps: Vec<String>,
+    /// Where the message went, after any reroute or `dwarf:` mapping.
+    pub mailbox: String,
+    pub rerouted: Option<String>,
+    /// The ask bead this send filed. `x_bead` also carries a cited bead, which is no ask.
+    pub ask_bead: Option<String>,
+}
+
+/// The one stdout line of a delivered `mail send`. An outcome naming no message is an error:
+/// success is never reported without an id.
+pub fn sent_line(out: &SendOutcome) -> Result<String, String> {
+    let name = out.delivered_path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default();
+    let msgid = name.split(':').next().unwrap_or("");
+    if msgid.trim().is_empty() {
+        return Err("nothing was delivered: the send returned no message path".to_string());
+    }
+    let mut line = format!("mail send: sent {msgid} to {}", out.mailbox);
+    if let Some(ask) = &out.ask_bead {
+        line.push_str(&format!("; ask {ask}"));
+    }
+    if let Some(why) = &out.rerouted {
+        line.push_str(&format!(" (rerouted from operator: {why})"));
+    }
+    Ok(line)
 }
 
 /// Each escalation class of law-escalate-decisions-not-problems with the spellings it is accepted under.
@@ -204,6 +227,12 @@ fn send_recorded_with(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String, del
 }
 
 pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deliver: DeliverFn) -> Result<SendOutcome, String> {
+    if body.trim().is_empty() {
+        return Err(format!(
+            "the message body is empty — mail send reads the body from stdin (mail send {} … < body; through work: work ask … --body-file -); nothing was sent",
+            args.mailbox
+        ));
+    }
     let mut mailbox = args.mailbox.to_string();
     maildir::mailbox_valid(&mailbox)?;
     let mut steps = vec![format!("mailbox {mailbox}: valid")];
@@ -223,7 +252,7 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deli
     }
 
     let sent_body = body.clone();
-    let mut rerouted = false;
+    let mut rerouted: Option<String> = None;
     if mailbox == "operator" && !args.digest && env.operator_considered.is_none() {
         if let Some(why) = operator_refusal(args.kind, args.default, args.class, &body, args.requested_by) {
             if matches!(args.kind, "question" | "decision") {
@@ -239,7 +268,7 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deli
             );
             body = format!("(Routed here from an operator mail: {why}.)\n\n{body}");
             mailbox = "concierge".to_string();
-            rerouted = true;
+            rerouted = Some(why);
         }
     }
     if (mailbox == "operator" || mailbox == "concierge") && !args.digest {
@@ -249,7 +278,7 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deli
         }
     }
     steps.push(match mailbox.as_str() {
-        "concierge" if rerouted => "route: concierge (rerouted: ask does not qualify for the operator)".to_string(),
+        "concierge" if rerouted.is_some() => "route: concierge (rerouted: ask does not qualify for the operator)".to_string(),
         m => format!("route: {m}"),
     });
 
@@ -309,7 +338,7 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deli
     let mut body = body;
 
     if args.dry_run {
-        if asks && db_configured && !rerouted && mailbox != "concierge" {
+        if asks && db_configured && rerouted.is_none() && mailbox != "concierge" {
             if env.ask_label.is_empty() {
                 return Err("ask label does not resolve — refusing to file an ask under a guessed one".to_string());
             }
@@ -320,10 +349,10 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deli
         if is_operator {
             repeat::repeat_release(repeat_guard.take().unwrap());
         }
-        return Ok(SendOutcome { delivered_path: PathBuf::new(), x_bead: None, steps });
+        return Ok(SendOutcome { delivered_path: PathBuf::new(), x_bead: None, steps, mailbox, rerouted, ask_bead: None });
     }
 
-    if (args.kind == "question" || args.kind == "decision") && db_configured && !rerouted && mailbox != "concierge" {
+    if (args.kind == "question" || args.kind == "decision") && db_configured && rerouted.is_none() && mailbox != "concierge" {
         if env.ask_label.is_empty() {
             if is_operator {
                 repeat::repeat_release(repeat_guard.take().unwrap());
@@ -442,7 +471,9 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deli
         }
     }
 
-    Ok(SendOutcome { delivered_path, x_bead: if x_bead.is_empty() { None } else { Some(x_bead) }, steps })
+    let x_bead = Some(x_bead).filter(|b| !b.is_empty());
+    let ask_bead = x_bead.clone().filter(|_| asks);
+    Ok(SendOutcome { delivered_path, x_bead, steps, mailbox, rerouted, ask_bead })
 }
 
 /// A `mail send` as an alarm attempt: delivered as its tracking bead or message file, or failed
@@ -1048,6 +1079,87 @@ mod probe_tests {
         assert!(!t.path().join("mail/fresh").exists());
     }
 
+    #[test_id(tevvg0d)]
+    #[test]
+    fn an_empty_body_is_refused_before_lint_naming_stdin_with_nothing_filed_or_written() {
+        let t = testkit::TempDir::new("mail-empty-body");
+        std::fs::create_dir_all(t.path().join("kinds")).unwrap();
+        std::fs::write(t.path().join("kinds/question.md"), "---\n---\n\n## Question\n\n## Default\n").unwrap();
+        for mb in ["concierge", "operator"] {
+            maildir::mail_ensure(&t.path().join("mail").join(mb)).unwrap();
+        }
+        let snapshot = || -> Vec<(String, Vec<String>)> {
+            let mut v = Vec::new();
+            for mb in ["concierge", "operator"] {
+                for sub in ["tmp", "new", "cur"] {
+                    let d = t.path().join("mail").join(mb).join(sub);
+                    let mut names: Vec<String> = std::fs::read_dir(&d).map(|r| r.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+                    names.sort();
+                    v.push((format!("{mb}/{sub}"), names));
+                }
+            }
+            v
+        };
+        let before = snapshot();
+        let mut e = env(t.path());
+        e.db = "db".into();
+        e.lint_considered = None;
+        e.repeat_considered = None;
+        e.repeat_window_s = 3600;
+        let bd = FakeBd::new(vec![]);
+        for body in ["", "\n \n"] {
+            for dry_run in [false, true] {
+                let Err(msg) = send(&bd, &e, &args("Refresh it?", dry_run), body.into()) else { panic!("{body:?} delivered") };
+                assert!(msg.contains("reads the body from stdin") && msg.contains("--body-file -"), "{msg}");
+            }
+        }
+        assert!(bd.calls().is_empty(), "{:?}", bd.calls());
+        assert_eq!(snapshot(), before);
+        assert!(!t.path().join("run").exists(), "no repeat stamp or lock is taken");
+    }
+
+    #[test_id(t3pg0i7)]
+    #[test]
+    fn a_delivered_ask_is_reported_with_its_message_id_mailbox_and_ask_bead() {
+        let t = testkit::TempDir::new("mail-sent-ask");
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]);
+        let out = send_ask(t.path(), &bd, "grant it", "policy", "## Question\nq\n\n## Class basis\nit is policy\n", "question");
+        let id = out.delivered_path.file_name().unwrap().to_str().unwrap();
+        assert_eq!(sent_line(&out).unwrap(), format!("mail send: sent {id} to operator; ask sp-new1"));
+    }
+
+    #[test_id(tz9a88h)]
+    #[test]
+    fn a_rerouted_note_is_reported_as_sent_to_the_concierge_with_the_reason() {
+        let t = testkit::TempDir::new("mail-sent-rerouted");
+        let mut e = env(t.path());
+        e.mute = true;
+        let note = SendArgs { kind: "note", default: "", class: "", ..args("Disk is filling", false) };
+        let out = send(&FakeBd::new(vec![]), &e, &note, "## Note\nx\n".into()).unwrap();
+        let name = out.delivered_path.file_name().unwrap().to_str().unwrap();
+        let id = name.strip_suffix(":2,S").expect("a muted delivery carries flags");
+        let line = sent_line(&out).unwrap();
+        assert!(line.starts_with(&format!("mail send: sent {id} to concierge (rerouted from operator: kind 'note'")), "{line}");
+        assert!(line.ends_with(')') && !line.contains('\n'), "{line}");
+    }
+
+    #[test_id(tnd5mxf)]
+    #[test]
+    fn a_note_citing_a_bead_reports_no_ask() {
+        let t = testkit::TempDir::new("mail-sent-cited");
+        let note = SendArgs { mailbox: "concierge", kind: "note", default: "", class: "", bead: "sp-work1", ..args("Disk is filling", false) };
+        let out = send(&FakeBd::new(vec![]), &env(t.path()), &note, "## Note\nx\n".into()).unwrap();
+        let line = sent_line(&out).unwrap();
+        assert!(line.ends_with(" to concierge"), "{line}");
+    }
+
+    #[test_id(t8nnyce)]
+    #[test]
+    fn an_outcome_with_no_message_path_is_not_reported_as_sent() {
+        let out = SendOutcome { delivered_path: PathBuf::new(), x_bead: Some("sp-ask1".into()), steps: vec![], mailbox: "operator".into(), rerouted: None, ask_bead: Some("sp-ask1".into()) };
+        assert_eq!(sent_line(&out).unwrap_err(), "nothing was delivered: the send returned no message path");
+    }
+
     fn root_mailbox_entries(root: &Path, mb: &str) -> usize {
         std::fs::read_dir(root.join("mail").join(mb).join("new")).map(|d| d.count()).unwrap_or(0)
     }
@@ -1090,12 +1202,10 @@ mod probe_tests {
         let mut e = env(t.path());
         e.lint_considered = None;
         let a = SendArgs { class: "policy", bead: "sp-work1", ..args("x", false) };
-        for body in ["", "no sections here\n"] {
-            let msg = send(&FakeBd::new(vec![]), &e, &a, body.into()).unwrap_err();
-            assert!(msg.contains("section \"Question\" is empty") && msg.contains("section \"Default\" is empty"), "{msg}");
-            assert_eq!(root_mailbox_entries(t.path(), "operator"), 0);
-            assert_eq!(root_mailbox_entries(t.path(), "concierge"), 0);
-        }
+        let msg = send(&FakeBd::new(vec![]), &e, &a, "no sections here\n".into()).unwrap_err();
+        assert!(msg.contains("section \"Question\" is empty") && msg.contains("section \"Default\" is empty"), "{msg}");
+        assert_eq!(root_mailbox_entries(t.path(), "operator"), 0);
+        assert_eq!(root_mailbox_entries(t.path(), "concierge"), 0);
         let msg = send(&FakeBd::new(vec![]), &e, &a, "## Question\nx?\n\n## Default\ny\n".into()).unwrap_err();
         assert!(msg.contains("## Class basis") && !msg.contains("section \"Question\" is empty"), "{msg}");
         assert_eq!(root_mailbox_entries(t.path(), "operator"), 0);
@@ -1205,12 +1315,12 @@ mod probe_tests {
     fn every_send_is_one_attempt_a_failure_keeps_its_message_and_a_dry_run_is_none() {
         use tsd::alarm::Outcome;
         let args = SendArgs { mailbox: "operator", from: None, subject: "Mute it?", kind: "question", default: "mute", class: "policy", bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
-        let ok = Ok(SendOutcome { delivered_path: PathBuf::from("m/operator/new/1.2.3"), x_bead: Some("sp-ask1".into()), steps: vec![] });
+        let ok = Ok(SendOutcome { delivered_path: PathBuf::from("m/operator/new/1.2.3"), x_bead: Some("sp-ask1".into()), steps: vec![], mailbox: "operator".into(), rerouted: None, ask_bead: Some("sp-ask1".into()) });
         let a = attempt_of_send(&args, "body", &ok, 7).unwrap();
         assert_eq!((a.at, a.reference.as_str(), &a.outcome, a.message.is_none()), (7, "mail:operator:Mute it?", &Outcome::Delivered { id: "sp-ask1".into() }, true));
-        let plain = Ok(SendOutcome { delivered_path: PathBuf::from("m/concierge/new/1.2.3"), x_bead: None, steps: vec![] });
+        let plain = Ok(SendOutcome { delivered_path: PathBuf::from("m/concierge/new/1.2.3"), x_bead: None, steps: vec![], mailbox: "operator".into(), rerouted: None, ask_bead: None });
         assert_eq!(attempt_of_send(&args, "body", &plain, 7).unwrap().outcome, Outcome::Delivered { id: "1.2.3".into() });
-        let none = Ok(SendOutcome { delivered_path: PathBuf::new(), x_bead: None, steps: vec![] });
+        let none = Ok(SendOutcome { delivered_path: PathBuf::new(), x_bead: None, steps: vec![], mailbox: "operator".into(), rerouted: None, ask_bead: None });
         assert!(matches!(attempt_of_send(&args, "body", &none, 7).unwrap().outcome, Outcome::Failed { .. }), "a send with no id failed");
         let failed = attempt_of_send(&args, "body", &Err("disk full".into()), 7).unwrap();
         assert_eq!(failed.outcome, Outcome::Failed { reason: "disk full".into() });
