@@ -14,9 +14,10 @@ use watchtower::pressure_topic::{record_path, run_pass, Lines, Pressure, CPU_LIN
 
 const LINES: Lines = Lines { cpu: 20.0, io: 30.0 };
 
-fn psi(dir: &Path, cpu: &str, io: &str) {
-    for (resource, full) in [("cpu", cpu), ("io", io)] {
-        let text = format!("some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300={full} total=0\n");
+/// cpu is read from its `some` line and the kernel reports its `full` as zero; io from `full`.
+fn psi(dir: &Path, cpu_some: &str, io_full: &str) {
+    for (resource, some, full) in [("cpu", cpu_some, "0.00"), ("io", "0.00", io_full)] {
+        let text = format!("some avg10=0.00 avg60=0.00 avg300={some} total=0\nfull avg10=0.00 avg60=0.00 avg300={full} total=0\n");
         std::fs::write(dir.join(resource), text).unwrap();
     }
 }
@@ -80,4 +81,19 @@ fn with_the_broker_stopped_a_pass_returns_and_a_later_pass_publishes_the_crossin
     broker.restart();
     p.pass(d.path(), &LINES, 200).unwrap();
     assert_eq!(held(&broker)[0]["at"], 200);
+}
+
+#[test_id(twzrhl2)]
+#[test]
+fn cpu_some_pressure_over_its_line_is_published_though_cpu_full_is_zero() {
+    let (broker, d) = (Broker::up(), TempDir::new("psi"));
+    psi(d.path(), "25.00", "0.00");
+    let p = pressure(&broker, d.path());
+    let cfg = |key: &str| match key {
+        CPU_LINE_KEY => Ok("20".to_string()),
+        IO_LINE_KEY => Ok("30".to_string()),
+        other => Err(format!("{other} is not declared")),
+    };
+    run_pass(Ok(&p), d.path(), &cfg, 100);
+    assert_eq!(held(&broker), [serde_json::json!({"cpu": 25.0, "io": 0.0, "cpu_over": true, "io_over": false, "at": 100})]);
 }
