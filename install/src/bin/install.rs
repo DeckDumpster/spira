@@ -1983,15 +1983,8 @@ fn standalone_proc_starts(instance: Option<&str>, dry: bool) -> ExitCode {
     phase("proc-starts: system unit");
     let argv0 = bootstrap::argv0_path().unwrap_or_default();
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    // spira-config loads its key registry through the PROCESS environment, which plain sudo
-    // leaves empty, so the derived values are declared to it before any config is resolved.
-    let declare = |derived: &std::collections::BTreeMap<String, String>| {
-        for key in ["SPIRA_HOME", spira_config::process::TOML_ENV, "HOME", spira_config::RELEASE_ENV] {
-            std::env::set_var(key, &derived[key]);
-        }
-    };
     let dest = Path::new(system_paths::ETC_SYSTEMD_SYSTEM);
-    match standalone_proc_starts_with(instance, &argv0, &env, &bootstrap::stat_owner, &bootstrap::getent_passwd, &declare, is_root(), dest, &run_ok, dry) {
+    match standalone_proc_starts_with(instance, &argv0, &env, &bootstrap::stat_owner, &bootstrap::getent_passwd, is_root(), dest, &run_ok, dry) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("install: {e}");
@@ -2016,14 +2009,12 @@ fn standalone_proc_starts_with(
     env: &std::collections::BTreeMap<String, String>,
     owner: bootstrap::Owner,
     passwd: bootstrap::Passwd,
-    declare: &dyn Fn(&std::collections::BTreeMap<String, String>),
     is_root: bool,
     dest_dir: &Path,
     run: RunCmd,
     dry: bool,
 ) -> Result<(), String> {
     let (env, user) = bootstrap::proc_starts_env(argv0, env, owner, passwd)?;
-    declare(&env);
     let host = proc_starts_host(instance, &env).map_err(|e| {
         let release = &env[spira_config::RELEASE_ENV];
         let toml = &env[spira_config::process::TOML_ENV];
@@ -2634,13 +2625,8 @@ mod proc_starts_phase_tests {
                 _ => Ok(()),
             }
         };
-        let declared = std::cell::RefCell::new(None);
-        let declare = |derived: &std::collections::BTreeMap<String, String>| *declared.borrow_mut() = Some(derived.clone());
         let owner = |_: &Path| Ok(1000);
-        let got = standalone_proc_starts_with(None, &release.join("bin/spira-install"), &env, &owner, &passwd, &declare, !case.not_root, &dest, &run, case.dry);
-        let declared = declared.into_inner().expect("the derived environment is declared to the config loader");
-        assert_eq!(declared["SPIRA_HOME"], release.join("spira").display().to_string());
-        assert_eq!(declared[spira_config::process::TOML_ENV], toml.display().to_string());
+        let got = standalone_proc_starts_with(None, &release.join("bin/spira-install"), &env, &owner, &passwd, !case.not_root, &dest, &run, case.dry);
         (td, calls.into_inner(), rendered.into_inner(), got)
     }
 

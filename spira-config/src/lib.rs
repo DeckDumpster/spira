@@ -163,7 +163,12 @@ pub fn parse_foreign<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, St
 }
 
 pub fn load(path: &Path) -> Result<SpiraToml, String> {
-    load_layered(&path.to_string_lossy()).map(|(doc, _)| doc)
+    load_with(path, registry::for_process()?)
+}
+
+/// [`load`] against `reg`, for a caller handed the home whose registry judges the document.
+pub fn load_with(path: &Path, reg: &registry::Registry) -> Result<SpiraToml, String> {
+    load_layered(&path.to_string_lossy(), reg).map(|(doc, _)| doc)
 }
 
 /// Refuses an added value that names a host path through a `placeholder` segment: a delta is
@@ -243,7 +248,7 @@ pub fn parse_config_delta(text: &str) -> Result<(Vec<String>, Vec<String>), Stri
 /// [`load`] plus the warnings and [`require_id_prefix`] — the check `spira-config validate`
 /// runs (doctor, pre-activate) over the config in force, layers and all.
 pub fn load_strict(path: &Path) -> Result<(SpiraToml, Vec<String>), String> {
-    let (doc, warnings) = load_layered(&path.to_string_lossy())?;
+    let (doc, warnings) = load_layered(&path.to_string_lossy(), registry::for_process()?)?;
     require_id_prefix(&doc)?;
     Ok((doc, warnings))
 }
@@ -253,9 +258,9 @@ pub fn load_strict(path: &Path) -> Result<(SpiraToml, Vec<String>), String> {
 /// layer is parsed once; the layers' tables are unioned key by key (a later layer's leaf
 /// replaces the earlier one, nested tables merge); the result is validated once. Every listed
 /// file must exist. Callers never see layers — they get one [`SpiraToml`].
-fn load_layered(spec: &str) -> Result<(SpiraToml, Vec<String>), String> {
+fn load_layered(spec: &str, reg: &registry::Registry) -> Result<(SpiraToml, Vec<String>), String> {
     let merged = merge_layers(spec)?;
-    validate_value(toml::Value::Table(merged), registry::for_process()?).map_err(|e| format!("{spec}: {e}"))
+    validate_value(toml::Value::Table(merged), reg).map_err(|e| format!("{spec}: {e}"))
 }
 
 /// The layers `spec` names, read and merged, and nothing else: no schema, no registry.

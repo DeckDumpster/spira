@@ -49,6 +49,19 @@
         }
     }
 
+    #[test_id(tvrfat9)]
+    #[test]
+    fn a_homes_registry_is_loaded_once_and_a_refusal_is_not_remembered() {
+        let dir = testkit::TempDir::new("spira-config-registry-for-home");
+        let refused = for_home(dir.path()).unwrap_err();
+        assert_eq!(refused, format!("no config registry at {}", dir.join("conf.d").display()));
+        for d in SOURCE_DIRS {
+            std::fs::create_dir_all(dir.join(d)).unwrap();
+        }
+        let first = for_home(dir.path()).unwrap();
+        assert!(std::ptr::eq(first, for_home(dir.path()).unwrap()));
+    }
+
     /// sp-1cdgq round 3: a missing directory is now a NAMED error, not a silent empty
     /// registry — this is the test that used to assert the opposite. Two base reds
     /// (sp-8qm8g, sp-1cdgq) came from a test fixture's `--home` lacking `conf.d`, and
