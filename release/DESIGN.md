@@ -138,7 +138,11 @@ about which release they name.
    starts, without waiting for it, and no service is restarted for an env change.
 4. Install the rendered files that differ (write `.new`, rename).
 5. Swap `current` atomically (a symlink written beside it, renamed over it).
-6. `daemon-reload`.
+6. `daemon-reload`. Then, when the broker's unit is installed and the release ships
+   `systemd/mosquitto.conf`, render it into the run directory (`release::broker`, the renderer
+   the installers call too), before `unit-ensure` can. A rewrite restarts the broker in step 7
+   with "its config changed", whatever its `Exec*=` lines say; a refusal to render, like any
+   later failure, puts the old file back. `rollback` does the same for its target.
 7. Restart each **service whose `Exec*=` lines changed, that is active, and is not a
    oneshot**. An active oneshot finishes its run from the old release, which is still on
    disk and still immutable, and its next start reads the new unit file. Inactive units are

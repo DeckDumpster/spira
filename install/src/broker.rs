@@ -1,32 +1,19 @@
-//! The MQTT broker's config file, rendered into the run directory where `spira-broker.service`
-//! reads it.
+//! The installers' call to the one renderer of the MQTT broker's config ([`release::broker`]).
 
-use crate::values::{render_file, HostValues};
+use crate::values::HostValues;
 use std::path::Path;
+
+pub use release::broker::CONF_FILE;
 
 /// The unit template that reads the config.
 pub const UNIT: &str = "spira-broker.service";
-/// The config's template name, and its file name in the run directory.
-pub const CONF_FILE: &str = "mosquitto.conf";
 
-/// Renders the broker config into the run directory. The file is the harness's, not the
-/// operator's to tune, so it is rewritten whenever the rendering differs: a kept file would
-/// leave the broker on an old socket path. `Ok(true)` when it was written.
+/// [`release::broker::place_conf`] with this host's socket and run directory.
 pub fn place_conf(templates_dir: &Path, host: &HostValues) -> Result<bool, String> {
-    if host.broker_socket.is_empty() {
-        return Err(format!("SPIRA_BROKER_SOCKET is empty — refusing to render {CONF_FILE}"));
-    }
-    let text = render_file(&templates_dir.join(CONF_FILE), host, None)?;
     let run = Path::new(&host.run);
-    let dest = run.join(CONF_FILE);
-    if std::fs::read_to_string(&dest).is_ok_and(|old| old == text) {
-        return Ok(false);
+    let wrote = release::broker::place_conf(templates_dir, &host.broker_socket, run)?;
+    if wrote {
+        println!("install: wrote {}", run.join(CONF_FILE).display());
     }
-    // mosquitto creates the socket, never its directory.
-    for dir in [Some(run), Path::new(&host.broker_socket).parent()].into_iter().flatten() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    }
-    spira_config::write_atomic(&dest, &text).map_err(|e| format!("cannot write {}: {e}", dest.display()))?;
-    println!("install: wrote {}", dest.display());
-    Ok(true)
+    Ok(wrote)
 }

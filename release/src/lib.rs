@@ -9,6 +9,7 @@ extern crate spira_test_id;
 pub mod acceptance;
 pub mod activate;
 pub mod artifacts;
+pub mod broker;
 pub mod build;
 pub mod compat;
 pub mod config;

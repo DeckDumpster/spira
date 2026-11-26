@@ -1,6 +1,7 @@
 //! `release activate`, `release rollback`, `release status`, and the hotfix rule
 //! (DESIGN.md "activate", "Hotfix", "rollback").
 
+use crate::broker;
 use crate::config::Config;
 use crate::config_delta::{self, Txn};
 use crate::fsutil;
@@ -122,6 +123,8 @@ pub struct Ctx<'a> {
     pub warm_pause: Duration,
     /// Where the lines that state a measurement go.
     pub report: &'a dyn Fn(&str),
+    /// Installs the units the new release adds: [`ensure_new_units`], which runs its `unit-ensure`.
+    pub unit_ensure: &'a dyn Fn(&Config, &str) -> Result<(), String>,
     /// Collects the envs a switch supersedes; `None` collects nothing.
     pub gc: Option<spira_env::Collector<'a>>,
 }
@@ -445,15 +448,30 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
         }
     }
     if let Err(e) = ctx.sc.daemon_reload() {
-        let undo = undo(ctx, env.as_ref(), &changes, prev.as_deref(), &[]);
+        let undo = undo(ctx, env.as_ref(), &changes, None, prev.as_deref(), &[]);
         return Err(format!("daemon-reload failed: {e}; rolled back{undo}"));
     }
 
+    // Before the new release's unit-ensure: it writes the same file, and a write made there
+    // would never be seen here and so never restart the broker.
+    let broker_unit = broker::installed_unit(&instance);
+    let conf = if rendered.iter().any(|r| r.0 == broker_unit) {
+        match follow_broker_conf(cfg, &rel, &host) {
+            Ok(replaced) => replaced,
+            Err(e) => {
+                let undo = undo(ctx, env.as_ref(), &changes, None, prev.as_deref(), &[]);
+                return Err(format!("{e}; nothing was restarted; rolled back{undo}"));
+            }
+        }
+    } else {
+        None
+    };
+
     if install_new {
         let before = unit_files(&cfg.unit_dir);
-        if let Err(e) = ensure_new_units(cfg, sha) {
+        if let Err(e) = (ctx.unit_ensure)(cfg, sha) {
             let added: Vec<String> = unit_files(&cfg.unit_dir).difference(&before).cloned().collect();
-            let undo = undo(ctx, env.as_ref(), &changes, prev.as_deref(), &[]);
+            let undo = undo(ctx, env.as_ref(), &changes, conf.as_ref(), prev.as_deref(), &[]);
             let shipped = if added.is_empty() { String::new() } else { format!(" (units new in {sha}: {})", added.join(", ")) };
             return Err(format!("{e}{shipped}; nothing was restarted; rolled back{undo}"));
         }
@@ -465,11 +483,11 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
         if !unit.ends_with(".service") {
             continue;
         }
-        let fixed = restart_reason(unit, old, new, &roots);
+        let fixed = restart_reason(unit, old, new, &roots).or_else(|| (conf.is_some() && *unit == broker_unit).then(|| "its config changed".to_string()));
         let st = match ctx.sc.state(unit) {
             Ok(st) => st,
             Err(e) if fixed.is_some() => {
-                let undo = undo(ctx, env.as_ref(), &changes, prev.as_deref(), &[]);
+                let undo = undo(ctx, env.as_ref(), &changes, conf.as_ref(), prev.as_deref(), &[]);
                 return Err(format!("cannot read the state of {unit}: {e}; rolled back{undo}"));
             }
             Err(e) => {
@@ -560,7 +578,7 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
         }
     }
     if !failed.is_empty() {
-        let undo = undo(ctx, env.as_ref(), &changes, prev.as_deref(), &attempted);
+        let undo = undo(ctx, env.as_ref(), &changes, conf.as_ref(), prev.as_deref(), &attempted);
         return Err(format!(
             "activating {sha} failed, rolled back to {}:\n  {}{undo}",
             prev.as_deref().unwrap_or("no current release"),
@@ -898,12 +916,53 @@ fn restore_env(ctx: &Ctx, env: Option<&spira_env::Built>) -> Result<(), String> 
     }
 }
 
-/// Put everything back: the tool env, unit files, `current`, daemon-reload, and restart what was
+/// The broker config a switch rewrote, as it was before; `None` when there was none.
+struct ReplacedConf {
+    path: PathBuf,
+    before: Option<String>,
+}
+
+impl ReplacedConf {
+    fn restore(&self) -> Result<(), String> {
+        match &self.before {
+            Some(text) => fsutil::write_atomic(&self.path, text),
+            None => fs::remove_file(&self.path).map_err(|e| format!("cannot remove {}: {e}", self.path.display())),
+        }
+    }
+}
+
+/// Places the broker config `rel` ships, so the broker runs the one of the release it is on;
+/// `Some` when that rewrote the file. A release without the template places nothing.
+fn follow_broker_conf(cfg: &Config, rel: &Path, host: &std::collections::BTreeMap<String, String>) -> Result<Option<ReplacedConf>, String> {
+    let templates = rel.join("systemd");
+    if !templates.join(broker::CONF_FILE).is_file() {
+        return Ok(None);
+    }
+    let run = cfg.run.as_ref().ok_or_else(|| format!("no run directory to place {} in", broker::CONF_FILE))?;
+    let path = run.join(broker::CONF_FILE);
+    let before = match fs::read_to_string(&path) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+    };
+    let socket = host.get(spira_config::broker::SOCKET_KEY).map(String::as_str).unwrap_or_default();
+    let wrote = broker::place_conf(&templates, socket, run).map_err(|e| match cfg.broker_socket_refusal.as_str() {
+        "" => e,
+        why => format!("{e} ({why})"),
+    })?;
+    if wrote {
+        eprintln!("release: wrote {}", path.display());
+    }
+    Ok(wrote.then_some(ReplacedConf { path, before }))
+}
+
+/// Put everything back: the tool env, unit files, the broker config, `current`, daemon-reload, and restart what was
 /// restarted so it runs the old release again. Returns "" or the problems undoing hit.
-fn undo(ctx: &Ctx, env: Option<&spira_env::Built>, changes: &[Change], prev: Option<&str>, restarted: &[String]) -> String {
+fn undo(ctx: &Ctx, env: Option<&spira_env::Built>, changes: &[Change], conf: Option<&ReplacedConf>, prev: Option<&str>, restarted: &[String]) -> String {
     // The env goes first: what is restarted below must resolve the old release's tools.
     let mut errs: Vec<String> = restore_env(ctx, env).err().into_iter().collect();
     errs.extend(restore_files(changes));
+    errs.extend(conf.and_then(|c| c.restore().err()));
     let cur_link = ctx.cfg.releases.join(CURRENT);
     match prev {
         Some(p) => {
@@ -960,7 +1019,7 @@ fn switch_with_config(ctx: &Ctx, sha: &str, txn: Option<&Txn>, install_new: bool
 /// through the release's own `unit-ensure` (which owns the manifest: gates, enable flags,
 /// watchers). `switch` only rewrites units already on disk. A release with no `unit-ensure`
 /// has nothing to install them with and is skipped.
-fn ensure_new_units(cfg: &Config, sha: &str) -> Result<(), String> {
+pub fn ensure_new_units(cfg: &Config, sha: &str) -> Result<(), String> {
     let rel = verify::release_dir(cfg, sha)?;
     let bin = rel.join("bin/unit-ensure");
     if !fsutil::is_executable(&bin) {
