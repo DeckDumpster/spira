@@ -24,7 +24,7 @@ mod tests {
     fn a_relative_socket_is_under_the_run_dir_an_absolute_one_stands_and_none_is_defaulted() {
         let of = |v: &'static str| socket_path("h/run", &move |_| Ok(v.to_string()));
         assert_eq!(of("nested/b.sock").unwrap(), "h/run/nested/b.sock");
-        let absolute = "/b.sock";
+        let absolute: &'static str = format!("{}b.sock", std::path::MAIN_SEPARATOR).leak();
         assert_eq!(of(absolute).unwrap(), absolute);
         assert!(of("").unwrap_err().contains(SOCKET_KEY));
         let undeclared = socket_path("h/run", &|k| Err(format!("{k} is not declared")));
