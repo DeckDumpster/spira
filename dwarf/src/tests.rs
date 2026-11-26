@@ -311,6 +311,24 @@ pub(crate) mod verdict_run {
         assert_eq!(gate_reservation_after_release(None), None);
     }
 
+    #[test_id(tqumq7u)]
+    #[test]
+    fn a_reservation_that_cannot_be_written_is_logged_with_its_path_and_bead() {
+        let work = testkit::TempDir::new("dwarf-reserve-fail");
+        let base = work.path().join("builds");
+        std::fs::create_dir_all(base.join("dir.1.gate")).unwrap();
+        let sink = Mute::default();
+        with_run_sink(crate::tests::complete_vars(), &NoBd, Dirty(vec![]), &Lc, &|| 0, &Seams(Default::default()), &sink, "", |r| {
+            r.s.bead = "sp-res".into();
+            r.s.submitted_at = Some(T0);
+            r.s.build_dir = Some(spira_config::build_dir::lease(std::slice::from_ref(&base), "sp-res").unwrap());
+            r.release_build_dir();
+        });
+        let lines = sink.0.lock().unwrap();
+        let gate = base.join("dir.1.gate").display().to_string();
+        assert!(lines.iter().any(|l| l.contains("could not reserve") && l.contains(&gate) && l.contains("sp-res")), "{lines:?}");
+    }
+
     fn session_env_of(builds: bool) -> BTreeMap<String, String> {
         let _otel = OTEL.lock().unwrap_or_else(|e| e.into_inner());
         let work = testkit::TempDir::new("dwarf-cargo-env");

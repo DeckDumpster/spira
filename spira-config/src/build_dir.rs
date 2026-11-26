@@ -49,6 +49,8 @@ pub const CLEAN_DEADLINE_SECS: &str = "900";
 /// not by the close: a forked child shares the open file description until it execs.
 pub struct Lease {
     dir: PathBuf,
+    base: PathBuf,
+    n: u64,
     lock: std::fs::File,
     /// True when the directory held a previous session's build (a warm start).
     pub reused: bool,
@@ -85,14 +87,11 @@ impl Lease {
     }
 
     /// [`Lease::release`], leaving the slot reserved for `bead`'s gate: [`lease`] takes a
-    /// reserved idle slot only when no unreserved one is idle.
-    pub fn release_reserved(self, bead: &str) -> Trimmed {
-        let _ = std::fs::write(gate_path(self.dir.parent().unwrap_or(Path::new("")), self.slot_n()), bead);
-        self.release_stamped()
-    }
-
-    fn slot_n(&self) -> u64 {
-        self.dir.file_name().and_then(|f| f.to_str()).and_then(|f| f.strip_prefix("dir.")).and_then(|n| n.parse().ok()).unwrap_or(0)
+    /// reserved idle slot only when no unreserved one is idle. The second value is the result of
+    /// writing the reservation; the slot is released either way.
+    pub fn release_reserved(self, bead: &str) -> (Trimmed, std::io::Result<()>) {
+        let reserved = std::fs::write(gate_path(&self.base, self.n), bead);
+        (self.release_stamped(), reserved)
     }
 
     fn release_stamped(self) -> Trimmed {
@@ -269,7 +268,7 @@ fn take(base: &Path, n: u64, mut lock: std::fs::File, reused: bool, who: &str) -
     let _ = std::fs::remove_file(gate_path(base, n));
     let _ = lock.set_len(0);
     let _ = lock.write_all(who.as_bytes());
-    Ok(Lease { dir, lock, reused, started: SystemTime::now() })
+    Ok(Lease { dir, base: base.to_path_buf(), n, lock, reused, started: SystemTime::now() })
 }
 
 /// Empty `dir` in place: everything under it goes, the directory stays. Only for a directory
@@ -821,7 +820,7 @@ mod tests {
         fill(&d1.join("x"), 8);
         fill(&d2.join("x"), 8);
         two.release();
-        one.release_reserved("sp-a");
+        one.release_reserved("sp-a").1.unwrap();
         let older = std::fs::OpenOptions::new().write(true).open(lock_path(&bases[0], 2)).unwrap();
         older.set_modified(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1)).unwrap();
         let got = lease(&bases, "c").unwrap();
@@ -845,8 +844,28 @@ mod tests {
         let (d1, d2) = (one.dir().to_path_buf(), two.dir().to_path_buf());
         fill(&d1.join("x"), 8);
         two.release();
-        one.release_reserved("sp-a");
+        one.release_reserved("sp-a").1.unwrap();
         assert_eq!(lease(&bases, "c").unwrap().dir(), d2);
+    }
+
+    #[test_id(tztffqp)]
+    #[test]
+    fn a_reservation_that_cannot_be_written_is_returned_and_the_slot_is_still_released() {
+        for blocked in [true, false] {
+            let d = testkit::TempDir::new("bdir-reserve-write");
+            let bases = vec![d.path().join("base")];
+            let one = lease(&bases, "a").unwrap();
+            let dir = one.dir().to_path_buf();
+            if blocked {
+                std::fs::create_dir(gate_path(&bases[0], 1)).unwrap();
+            }
+            let (_, written) = one.release_reserved("sp-a");
+            assert_eq!(written.is_err(), blocked, "{written:?}");
+            if !blocked {
+                assert_eq!(std::fs::read_to_string(gate_path(&bases[0], 1)).unwrap(), "sp-a");
+            }
+            assert!(lease_dir(&bases, &dir, "gate", "", std::time::Duration::ZERO).unwrap().is_ok(), "the slot is released");
+        }
     }
 
     #[test_id(tplace2)]
@@ -870,7 +889,7 @@ mod tests {
         let base = d.path().join("base");
         let l = lease(std::slice::from_ref(&base), "sp-a").unwrap();
         fill(&l.dir().join("x"), 64);
-        l.release_reserved("sp-a");
+        l.release_reserved("sp-a").1.unwrap();
         assert!(gate_path(&base, 1).exists());
         evict_idle_in(std::slice::from_ref(&base), 0, &crate::build::size_of, &empty_proc(d.path()));
         assert!(!gate_path(&base, 1).exists());
