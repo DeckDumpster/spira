@@ -2026,9 +2026,9 @@ fn standalone_proc_starts_with(
     declare(&env);
     let host = proc_starts_host(instance, &env).map_err(|e| {
         let release = &env[spira_config::RELEASE_ENV];
+        let toml = &env[spira_config::process::TOML_ENV];
         format!(
-            "{e}; the config is {}, named by the installed spira-runtime unit: as the operator fix it or re-render the units ({release}/bin/units-install), then run: sudo {release}/bin/spira-install --proc-starts",
-            env[spira_config::process::TOML_ENV]
+            "{e}; the config is {toml}, named by the installed spira-runtime unit: as the operator fix it or re-render the units (SPIRA_TOML={toml} SPIRA_RELEASE={release} {release}/bin/units-install), then run: sudo {release}/bin/spira-install --proc-starts"
         )
     })?;
     if dry {

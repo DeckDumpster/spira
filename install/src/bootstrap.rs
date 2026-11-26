@@ -259,16 +259,16 @@ fn installed_spira_toml(user_home: &Path, release: &Path) -> Result<String, Stri
         let declared = text.lines().filter_map(|l| l.trim().strip_prefix("Environment=")?.strip_prefix(TOML_ENV)?.strip_prefix('='));
         values.extend(declared.filter(|v| !v.is_empty()).map(str::to_string));
     }
-    let (bin, dir) = (release.join("bin"), dir.display());
+    let (bin, dir, rel) = (release.join("bin"), dir.display(), release.display());
     let mut values = values.into_iter();
     match (values.next(), values.next()) {
         (Some(one), None) => Ok(one),
         (None, _) => Err(format!(
-            "no spira-runtime-*.service (a unit running `spira-runtime serve`) naming SPIRA_TOML in {dir}; as the operator run the normal install first ({bin}/spira-install), then sudo {bin}/spira-install --proc-starts",
+            "no spira-runtime-*.service (a unit running `spira-runtime serve`) naming SPIRA_TOML in {dir}; as the operator run the normal install first (SPIRA_TOML=<your config file> SPIRA_RELEASE={rel} {bin}/spira-install), then sudo {bin}/spira-install --proc-starts",
             bin = bin.display()
         )),
         (Some(a), Some(b)) => Err(format!(
-            "the spira-runtime units in {dir} name different SPIRA_TOML values: {}; as the operator re-render them ({bin}/units-install) or remove the stale unit, then sudo {bin}/spira-install --proc-starts",
+            "the spira-runtime units in {dir} name different SPIRA_TOML values: {}; as the operator re-render them (SPIRA_TOML=<the one you mean> SPIRA_RELEASE={rel} {bin}/units-install) or remove the stale unit, then sudo {bin}/spira-install --proc-starts",
             [a, b].into_iter().chain(values).collect::<Vec<_>>().join(", "),
             bin = bin.display()
         )),
@@ -728,6 +728,13 @@ mod proc_starts_env_tests {
         proc_starts_env(argv0, &env, &owner, &move |_| Ok(("operator".to_string(), home.clone())))
     }
 
+    #[test_id(tex5q96)]
+    #[test]
+    fn the_owner_read_from_the_filesystem_is_the_uid_that_made_the_file() {
+        let td = testkit::TempDir::new("proc-starts-owner");
+        assert_eq!(stat_owner(td.path()), Ok(spira_config::resolve::current_uid()));
+    }
+
     #[test_id(tnmuczz)]
     #[test]
     fn a_release_whose_harness_root_owns_is_refused_with_the_way_past_it() {
@@ -751,6 +758,8 @@ mod proc_starts_env_tests {
         let r = rig(&[]);
         let e = derive(&r, &r.release.join("bin/spira-install"), &[]).unwrap_err();
         assert!(e.contains(&r.units.display().to_string()) && e.contains("--proc-starts"), "{e}");
+        let rel = r.release.display();
+        assert!(e.contains(&format!("SPIRA_TOML=<your config file> SPIRA_RELEASE={rel} {rel}/bin/spira-install")), "{e}");
     }
 
     #[test_id(tiabljm)]
@@ -768,7 +777,9 @@ mod proc_starts_env_tests {
     fn runtime_units_that_disagree_on_the_config_are_refused_naming_each() {
         let r = rig(&[("prod", "cfg/a.toml"), ("two", "cfg/b.toml")]);
         let e = derive(&r, &r.release.join("bin/spira-install"), &[]).unwrap_err();
-        assert!(e.contains("cfg/a.toml") && e.contains("cfg/b.toml") && e.contains("units-install"), "{e}");
+        assert!(e.contains("cfg/a.toml") && e.contains("cfg/b.toml"), "{e}");
+        let rel = r.release.display();
+        assert!(e.contains(&format!("SPIRA_TOML=<the one you mean> SPIRA_RELEASE={rel} {rel}/bin/units-install")), "{e}");
     }
 
     #[test_id(t1xmxv8)]
