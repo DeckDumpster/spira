@@ -188,6 +188,30 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     })
     .unwrap();
 }
+#[test_id(tbsxtno)]
+#[test]
+fn the_sweeps_in_process_reads_reach_its_snapshot() {
+    let f = fixture(testkit::env);
+    spira_config::process::with_fresh(|| {
+        let rune = spira_config::process::cfg("SPIRA_RUNES").unwrap().split_whitespace().next().expect("a rune").to_string();
+        let idle: String = (0..5).map(|i| format!("2026-01-01T00:00:0{i}Z awake {rune} idle\n")).collect();
+        let run = process_run();
+        std::fs::write(run.join("dwarf-ledger.log"), idle).unwrap();
+        std::fs::create_dir_all(run.join("release")).unwrap();
+        let sha = "a".repeat(40);
+        std::fs::write(run.join("release/hotfix"), format!("sha {sha}\nreason urgent\nat 2020-01-01T00:00:00Z\n")).unwrap();
+        let bead = format!("{{\"bead_id\":\"sp-zzzzzz\",\"verdict\":\"claimable\",\"runes\":[\"{rune}\"],\"row\":{},\"content\":{}}}", lc_row("sp-zzzzzz"), plan_row("sp-zzzzzz"));
+        *f.claimable.lock().unwrap() = format!("{{\"beads\":[{bead}]}}");
+        let observe = spira_runtime::tasks::d::watch_tower::OBSERVE;
+        let out = runtime::host::EffectRunner::run(f.effects.as_ref(), "k", &runtime::EffectSpec::keyed(observe, "k", String::new(), 60_000)).expect("the sweep ran");
+        let snap: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(snap["hotfix"].as_str().is_some_and(|h| h.contains(&format!("RUNNING UNLANDED {sha}: urgent"))), "release status: {}", snap["hotfix"]);
+        let references: Vec<&str> = snap["escalations"].as_array().unwrap().iter().filter_map(|e| e["reference"].as_str()).collect();
+        assert!(references.contains(&format!("incident:idle-while-ready:{rune}").as_str()), "ready by rune: {references:?}");
+    })
+    .unwrap();
+}
+
 #[test_id(trx3p6f)]
 #[test]
 fn a_podman_that_fails_to_list_images_is_asked_again_on_the_next_pass() {

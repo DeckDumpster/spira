@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use spira_config::bounded::bounded;
-use spira_config::git_refs::{held, refs_digest, sha_of};
+use spira_config::git_refs::{git_dirs, held, read_ref_in, refs_digest, remotes, sha_of, Ref};
 use spira_config::repos::{self, Column, Registry};
 
 const DWARF_EMAIL_SUFFIX: &str = "@spira.local";
@@ -44,15 +44,44 @@ fn held_on<T: Clone + Send + 'static>(root: &Path, question: &str, key: Option<S
     }
 }
 
-/// A declared base verifies from the ref files, but a row without one asks git.
+/// The text of the checkout's own config files, which name its remotes. A file they `include`
+/// is not part of it.
+fn config_key(root: &Path) -> Option<String> {
+    let (gitdir, common) = git_dirs(root)?;
+    let shared = std::fs::read_to_string(common.join("config")).ok()?;
+    Some(format!("{shared}\0{}", std::fs::read_to_string(gitdir.join("config.worktree")).unwrap_or_default()))
+}
+
+/// `repo_field`'s declared base verifies from the ref files; anything else asks git, so the
+/// answer, "unresolved" included, is held until a ref or the config moves.
 fn landref(reg: &Registry, name: &str, root: &str) -> Option<String> {
     let declared = reg.field(name, Column::Base).unwrap_or_default();
     let path = Path::new(root);
-    let key = refs_digest(path).map(|d| format!("{d} {declared}"));
-    held_on(path, "branch-guard-landref", key, || repos::landref_explained(reg, root)).ok()
+    let key = refs_digest(path).zip(config_key(path)).map(|(refs, config)| format!("{refs}\0{config}\0{declared}"));
+    held_on(path, "branch-guard-landref", key, || Ok(repos::landref(reg, root))).ok().flatten()
+}
+
+/// The remote `landref` names, if its first component is one: `local/main` is a local branch.
+/// [`repos::ref_remote`] runs an unheld git for a config the files cannot answer for
+/// (`worktreeConfig`, `include`), so that read is made here.
+fn remote_of(root: &Path, landref: &str) -> Option<String> {
+    let prefix = landref.split_once('/')?.0;
+    let names = match remotes(root) {
+        Some(names) => names,
+        None => held_on(root, "branch-guard-remotes", config_key(root), || Ok(git(root, &["remote"])?.lines().map(str::to_string).collect::<Vec<_>>())).ok()?,
+    };
+    names.iter().any(|n| n == prefix).then(|| prefix.to_string())
+}
+
+/// `short` is a ref without its `refs/`: the ref files say no such ref, so git has nothing to read.
+fn absent(root: &Path, short: &str) -> bool {
+    read_ref_in(root, short) == Ref::Absent
 }
 
 fn tip(root: &Path, base: &str) -> Option<Tip> {
+    if absent(root, &format!("heads/{base}")) {
+        return None;
+    }
     let full = format!("refs/heads/{base}");
     held_on(root, "branch-guard-tip", sha_of(root, &full), || {
         let text = git(root, &["log", "-1", "--format=%ae%x00%P%x00%h%x00%s", &full])?;
@@ -65,6 +94,9 @@ fn tip(root: &Path, base: &str) -> Option<Tip> {
 }
 
 fn ahead(root: &Path, remote: &str, base: &str) -> Result<u64, String> {
+    if absent(root, &format!("heads/{base}")) || absent(root, &format!("remotes/{remote}/{base}")) {
+        return Err("no such ref".to_string());
+    }
     let (local, tracking) = (format!("refs/heads/{base}"), format!("refs/remotes/{remote}/{base}"));
     let key = sha_of(root, &local).zip(sha_of(root, &tracking)).map(|(l, t)| format!("{l} {t}"));
     held_on(root, "branch-guard-ahead", key, || git(root, &["rev-list", "--count", &format!("{remote}/{base}..{local}")])?.parse().map_err(|e| format!("not a count: {e}")))
@@ -89,7 +121,7 @@ pub fn check(reg: &Registry) -> Audit {
             lines.push(format!("branch-guard: DWARF COMMIT ON {name}/{base} — {} by <{}>: {subject}", t.short, t.email));
             bad = true;
         }
-        let Some(remote) = repos::ref_remote(&landref, Some(&root)) else { continue };
+        let Some(remote) = remote_of(path, &landref) else { continue };
         match ahead(path, &remote, &base) {
             Ok(0) => {}
             Ok(n) => {
@@ -131,15 +163,8 @@ mod tests {
     const DWARF: &str = "dwarf-x@spira.local";
 
     fn run(repo: &Path, email: &str, args: &[&str]) {
-        let out = std::process::Command::new("git")
-            .arg("-C")
-            .arg(repo)
-            .args(args)
-            .envs([("GIT_AUTHOR_NAME", "t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_AUTHOR_EMAIL", email), ("GIT_COMMITTER_EMAIL", email)])
-            .envs([("GIT_CONFIG_GLOBAL", system_paths::DEV_NULL), ("GIT_CONFIG_SYSTEM", system_paths::DEV_NULL)])
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        let email = format!("user.email={email}");
+        testkit::git(repo, &[&["-c", &email][..], args].concat());
     }
 
     fn commit(repo: &Path, email: &str, msg: &str) {
@@ -224,6 +249,32 @@ mod tests {
         assert_eq!(gits(&reg), 0);
         commit(&repo, OPERATOR, "moved");
         assert_eq!(gits(&reg), 2);
+    }
+
+    // covers: UC-safety-fences-19
+    #[test_id(t0j6afk)]
+    #[test]
+    fn a_missing_ref_or_an_unresolved_base_is_not_asked_of_git_again_while_nothing_moves() {
+        let d = testkit::TempDir::new("guard-missing");
+        let repo = checkout(d.path());
+        run(&repo, OPERATOR, &["remote", "add", "up", "does-not-exist"]);
+        let gits = |reg: &Registry| spira_config::bounded::counting(|| check(reg)).1.get("git").copied().unwrap_or(0);
+
+        run(&repo, OPERATOR, &["update-ref", "refs/remotes/up/gone", "trunk"]);
+        let no_local = registry(d.path(), &repo, "up/gone");
+        gits(&no_local);
+        assert_eq!(gits(&no_local), 0, "no local base branch");
+        assert!(audited(&no_local).contains("could not count commits ahead of up/gone"), "{}", audited(&no_local));
+
+        run(&repo, OPERATOR, &["branch", "untracked"]);
+        run(&repo, OPERATOR, &["update-ref", "refs/heads/up/untracked", "trunk"]);
+        let no_tracking = registry(d.path(), &repo, "up/untracked");
+        gits(&no_tracking);
+        assert_eq!(gits(&no_tracking), 0, "no remote-tracking ref");
+
+        let unresolved = registry(d.path(), &repo, "nonesuch");
+        gits(&unresolved);
+        assert_eq!(gits(&unresolved), 0, "a base that does not resolve");
     }
 
     // covers: UC-safety-fences-19

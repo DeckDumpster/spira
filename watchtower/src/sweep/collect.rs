@@ -358,7 +358,9 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     };
 
     // MENU / GUARD -----------------------------------------------------------------------------
-    let guard_block = branch_guard::block(&branch_guard::check(&seams::registry(&cfg.lib_sh_dir)));
+    let registry = seams::registry(&cfg.lib_sh_dir);
+    let guard_block = crate::deadline::call("branch guard", move || branch_guard::block(&branch_guard::check(&registry)))
+        .unwrap_or_else(|| "  (unavailable — the branch guard did not answer within its deadline)".to_string());
 
     // RELEASE STATUS (for the hotfix escalation, computed here so escalate.rs need not
     // ask `release` a second time).

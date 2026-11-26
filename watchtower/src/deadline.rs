@@ -51,6 +51,30 @@ pub fn output(label: &str, cmd: &mut Command) -> io::Result<Output> {
     output_within(label, cmd, limit())
 }
 
+/// [`output`]'s bound for a probe answered in process. Past it the probe is recorded as slow
+/// and the caller gets `None`; the thread left behind ends with its own calls' deadlines.
+pub fn call<T: Send + 'static>(label: &str, probe: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    call_within(label, limit(), probe)
+}
+
+fn call_within<T: Send + 'static>(label: &str, within: Duration, probe: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let (answer, answered) = std::sync::mpsc::channel();
+    let tally = spira_config::bounded::tally();
+    std::thread::Builder::new().name("watchtower-probe".into()).spawn(move || answer.send(spira_config::bounded::in_tally(tally, probe))).ok()?;
+    match answered.recv_timeout(within) {
+        Ok(v) => Some(v),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            record_slow(label, within);
+            None
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => None,
+    }
+}
+
+fn record_slow(label: &str, within: Duration) {
+    STATE.lock().unwrap().slow.push(format!("{label} (>{}s)", within.as_secs()));
+}
+
 pub fn output_within(label: &str, cmd: &mut Command, within: Duration) -> io::Result<Output> {
     let mut child = cmd
         .stdin(Stdio::null())
@@ -87,7 +111,7 @@ pub fn output_within(label: &str, cmd: &mut Command, within: Duration) -> io::Re
             let _ = child.kill();
             let _ = child.wait();
             drop((t_out, t_err));
-            STATE.lock().unwrap().slow.push(format!("{label} (>{}s)", within.as_secs()));
+            record_slow(label, within);
             Err(io::Error::new(io::ErrorKind::TimedOut, format!("{label} exceeded its deadline")))
         }
     }
@@ -96,6 +120,17 @@ pub fn output_within(label: &str, cmd: &mut Command, within: Duration) -> io::Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(tk3p9q8)]
+    #[test]
+    fn a_probe_in_process_past_its_deadline_is_recorded_as_slow_and_answers_nothing() {
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let late = call_within("stuck store", Duration::ZERO, move || held.recv().is_ok());
+        assert_eq!(late, None);
+        assert!(slow_probes().contains(&"stuck store (>0s)".to_string()), "{:?}", slow_probes());
+        drop(release);
+        assert_eq!(call_within("prompt store", Duration::from_secs(60), || 7), Some(7));
+    }
 
     #[test_id(tv0kia8)]
     #[test]

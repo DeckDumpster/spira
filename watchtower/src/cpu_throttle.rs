@@ -226,6 +226,22 @@ mod tests {
         assert_eq!(read(s(5000, 10), s(100, 0), 100), Reading::Baseline);
     }
 
+    #[test_id(tqjjwzg)]
+    #[test]
+    fn a_units_sample_is_the_cpu_stat_under_the_control_group_the_unit_manager_names() {
+        let d = testkit::TempDir::new("wt-cpu-cgroup");
+        std::fs::create_dir_all(d.join("user.slice/a.service")).unwrap();
+        std::fs::write(d.join("user.slice/a.service/cpu.stat"), STAT).unwrap();
+        let manager = Arc::new(runtime::units::ScriptedUnits::new(Arc::new(runtime::ports::VirtualClock::new(0))));
+        manager.install_detail(runtime::units::UnitDetail { name: "a.service".into(), control_group: Some("/user.slice/a.service".into()), ..Default::default() }); // not a path: a cgroup path under the hierarchy root
+        manager.install_detail(runtime::units::UnitDetail { name: "stopped.service".into(), ..Default::default() });
+        let cfg = Cfg { units: vec!["a.service".into(), "stopped.service".into()], warn_pct: 5, min_periods: 100, cgroup_root: d.path().to_string_lossy().into_owned(), manager };
+        let state = d.join("state");
+        let readings: Vec<Reading> = gather(&cfg, &state).into_iter().map(|r| r.reading).collect();
+        assert_eq!(readings, [Reading::Baseline, Reading::Unknown]);
+        assert_eq!(std::fs::read_to_string(&state).unwrap(), "a.service 1088059 657510\n");
+    }
+
     #[test_id(tzatiuq)]
     #[test]
     fn state_round_trips_and_skips_junk() {

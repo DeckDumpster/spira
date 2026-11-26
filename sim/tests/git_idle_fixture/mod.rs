@@ -146,6 +146,9 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
     git(&pr, &["remote", "add", "origin", remote.to_str().unwrap()], 1);
     git(&pr, &["push", "-q", "origin", "main"], 1);
     git(&pr, &["fetch", "-q", "origin"], 1);
+    for shared in [&local, &pr] {
+        git(shared, &["config", "extensions.worktreeConfig", "true"], 1);
+    }
 
     let map = dir.join("repos");
     std::fs::write(&map, format!("spira|{}|queue.local|local/main||\nprrepo|{}|pr|origin/main||\n", local.display(), pr.display())).unwrap();

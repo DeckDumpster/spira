@@ -39,7 +39,7 @@ pub fn pipeline_probe(_lib_sh_dir: &str, ledger_path: Option<&str>) -> Option<Pi
 
 /// `bulk-ready-by-rune`'s `<rune> <n>` lines; `None` when it could not answer.
 fn bulk_ready_by_rune() -> Option<String> {
-    spira_claim::cli::bulk_ready_by_rune().ok().map(|r| r.lines)
+    crate::deadline::call("dwarves alive / ready (bd)", || spira_claim::cli::bulk_ready_by_rune().ok().map(|r| r.lines)).flatten()
 }
 
 /// The probe from the roster (space separated, priority order), a per-rune count, and the
