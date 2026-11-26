@@ -116,6 +116,8 @@ pub const RETIRED_VARS: &[&str] = &[
     "SPIRA_GATE_BUILDER_DIR_WAIT_SECS",
     "SPIRA_UNIT_TEST_DEADLINE_SECS",
     "SPIRA_UNIT_TEST_DEADLINE_PERIODS",
+    "SPIRA_INTEGRATION_TEST_DEADLINE_SECS",
+    "SPIRA_INTEGRATION_TEST_DEADLINE_PERIODS",
     "SPIRA_BATCH_MAXPAR",
     "SPIRA_PATH",
     // sp-xtdqi: the shared compilation cache's own address — a config-file-only setting
@@ -1367,6 +1369,17 @@ mod tests {
         let missing: Vec<&str> =
             crate::real::RETIRED_VARS.iter().copied().filter(|k| !spira_config::registry::declares_key(&home, k)).collect();
         assert!(missing.is_empty(), "RETIRED_VARS names keys the registry no longer declares: {missing:?}");
+    }
+
+    #[test_id(tzhn31l)]
+    #[test]
+    fn every_per_test_deadline_key_the_engine_reads_is_resolved_into_the_gates_context() {
+        for tier in ["UNIT", "INTEGRATION"] {
+            for part in ["SECS", "PERIODS"] {
+                let key = format!("SPIRA_{tier}_TEST_DEADLINE_{part}");
+                assert!(crate::real::RETIRED_VARS.contains(&key.as_str()), "{key} never reaches ctx, so every unit gate is NOVERDICT config");
+            }
+        }
     }
 
     struct Pool {
