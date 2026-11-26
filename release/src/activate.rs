@@ -123,6 +123,8 @@ pub struct Ctx<'a> {
     pub warm_pause: Duration,
     /// Where the lines that state a measurement go.
     pub report: &'a dyn Fn(&str),
+    /// Installs the units the new release adds: [`ensure_new_units`], which runs its `unit-ensure`.
+    pub unit_ensure: &'a dyn Fn(&Config, &str) -> Result<(), String>,
     /// Collects the envs a switch supersedes; `None` collects nothing.
     pub gc: Option<spira_env::Collector<'a>>,
 }
@@ -467,7 +469,7 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
 
     if install_new {
         let before = unit_files(&cfg.unit_dir);
-        if let Err(e) = ensure_new_units(cfg, sha) {
+        if let Err(e) = (ctx.unit_ensure)(cfg, sha) {
             let added: Vec<String> = unit_files(&cfg.unit_dir).difference(&before).cloned().collect();
             let undo = undo(ctx, env.as_ref(), &changes, conf.as_ref(), prev.as_deref(), &[]);
             let shipped = if added.is_empty() { String::new() } else { format!(" (units new in {sha}: {})", added.join(", ")) };
@@ -944,7 +946,10 @@ fn follow_broker_conf(cfg: &Config, rel: &Path, host: &std::collections::BTreeMa
         Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
     };
     let socket = host.get(spira_config::broker::SOCKET_KEY).map(String::as_str).unwrap_or_default();
-    let wrote = broker::place_conf(&templates, socket, run)?;
+    let wrote = broker::place_conf(&templates, socket, run).map_err(|e| match cfg.broker_socket_refusal.as_str() {
+        "" => e,
+        why => format!("{e} ({why})"),
+    })?;
     if wrote {
         eprintln!("release: wrote {}", path.display());
     }
@@ -1014,7 +1019,7 @@ fn switch_with_config(ctx: &Ctx, sha: &str, txn: Option<&Txn>, install_new: bool
 /// through the release's own `unit-ensure` (which owns the manifest: gates, enable flags,
 /// watchers). `switch` only rewrites units already on disk. A release with no `unit-ensure`
 /// has nothing to install them with and is skipped.
-fn ensure_new_units(cfg: &Config, sha: &str) -> Result<(), String> {
+pub fn ensure_new_units(cfg: &Config, sha: &str) -> Result<(), String> {
     let rel = verify::release_dir(cfg, sha)?;
     let bin = rel.join("bin/unit-ensure");
     if !fsutil::is_executable(&bin) {

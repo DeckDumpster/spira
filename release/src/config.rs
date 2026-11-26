@@ -53,6 +53,8 @@ pub struct Registered {
     pub lc_password_file: String,
     pub repo_map: String,
     pub broker_socket: String,
+    /// Why `broker_socket` could not be read, when it could not.
+    pub broker_socket_refusal: String,
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +78,7 @@ pub struct Config {
     lc_password_file: String,
     repo_map: String,
     broker_socket: String,
+    pub(crate) broker_socket_refusal: String,
     /// `spira.hotfix_alert_hours` from the host config document — `SPIRA_HOTFIX_ALERT_HOURS`
     /// is not a registered key, so this one field is still read from the typed document
     /// rather than `cfg_parse` (see [`Config::hotfix_alert_hours`]).
@@ -117,6 +120,7 @@ impl Config {
     pub fn resolve(flags: &Flags, env: &Env) -> Result<Config, String> {
         use spira_config::process::cfg;
         let doc = spira_config::discover(None).map(|p| spira_config::load(&p)).transpose()?;
+        let broker_socket = cfg(spira_config::broker::SOCKET_KEY);
         let reg = Registered {
             releases: cfg("SPIRA_RELEASES")?,
             run: cfg("SPIRA_RUN")?,
@@ -135,9 +139,10 @@ impl Config {
             sccache_dav_root: cfg("SPIRA_SCCACHE_DAV_ROOT").unwrap_or_default(),
             lc_password_file: cfg("SPIRA_LC_PASSWORD_FILE")?,
             repo_map: cfg("SPIRA_REPO_MAP")?,
-            // Unregistered in an active release older than the key: empty, which only placing
-            // the broker's config refuses.
-            broker_socket: cfg(spira_config::broker::SOCKET_KEY).unwrap_or_default(),
+            // An active registry older than the key refuses it. That must not refuse every
+            // release command: only placing the broker's config needs it, and says why.
+            broker_socket_refusal: broker_socket.as_ref().err().cloned().unwrap_or_default(),
+            broker_socket: broker_socket.unwrap_or_default(),
         };
         Config::resolve_with(flags, env, doc, &reg)
     }
@@ -185,6 +190,7 @@ impl Config {
             lc_password_file: reg.lc_password_file.clone(),
             repo_map: reg.repo_map.clone(),
             broker_socket: reg.broker_socket.clone(),
+            broker_socket_refusal: reg.broker_socket_refusal.clone(),
             hotfix_alert_hours_toml,
         })
     }

@@ -309,4 +309,27 @@ pub(crate) mod tests {
         assert_eq!(listed(), "", "masked");
         assert!(sc.enabled_now.borrow().is_empty());
     }
+
+    #[test_id(toe7uoo)]
+    #[test]
+    fn a_refused_enable_keeps_the_unit_deferred_for_both_installers() {
+        let (base, manifest) = deferred_fixture();
+        let (unit_dir, tmpl_dir) = (base.join("units"), base.join("templates"));
+        let (h, sc, no_suspend) = (host(), FakeSystemctl::default(), |_: &str| false);
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        run(&ctx, false);
+        testkit::write_exe(base.join("tool"), "");
+        sc.set(DEFERRED, crate::systemctl::FakeUnit { enabled: Some("disabled".into()), ..Default::default() });
+        sc.enable_fails.borrow_mut().insert(DEFERRED.into());
+        let listed = || std::fs::read_to_string(unit_dir.join(".spira-deferred-enable")).unwrap_or_default();
+
+        assert!(run(&ctx, false).enabled_started.is_empty());
+        assert_eq!(listed(), format!("{DEFERRED}\n"), "after unit-ensure");
+        crate::install_units::run(&ctx);
+        assert_eq!(listed(), format!("{DEFERRED}\n"), "after units-install");
+
+        sc.enable_fails.borrow_mut().clear();
+        assert_eq!(run(&ctx, false).enabled_started, [DEFERRED]);
+        assert_eq!(listed(), "");
+    }
 }

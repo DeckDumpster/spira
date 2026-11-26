@@ -511,7 +511,7 @@ fn world_rolling_back_to_a() -> World {
 fn rollback_with(w: &World, sc: &FakeSystemctl) -> Result<String, String> {
     let reads = FakeReads::serving();
     let nix = FakeNix::default();
-    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None };
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None };
     activate::rollback(&ctx)
 }
 
@@ -602,7 +602,7 @@ fn broker_running(w: &World) -> FakeSystemctl {
 fn activate_sha(w: &World, sc: &FakeSystemctl, sha: &str) -> Result<activate::Switched, String> {
     let reads = FakeReads::serving();
     let nix = FakeNix::default();
-    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None };
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None };
     activate::activate(&ctx, sha, None)
 }
 
@@ -630,6 +630,22 @@ fn activate_and_rollback_each_place_their_releases_broker_config_and_restart_the
     assert_eq!(placed_broker_conf(&w), broker_conf_of(&w, "first"));
     assert_eq!(restarts_of_the_broker(&sc), 2);
     assert_eq!(*sc.at_restart.borrow(), [broker_conf_of(&w, "second"), broker_conf_of(&w, "first")], "each restart finds its release's config in place");
+}
+
+#[test_id(tixqeuj)]
+#[test]
+fn the_broker_is_restarted_though_the_new_releases_unit_ensure_writes_the_same_config() {
+    let w = world_with_a_broker_on_a("sock/b.sock");
+    let sc = broker_running(&w);
+    // What the release's unit-ensure does to this file: the same renderer, the same values.
+    let unit_ensure = |cfg: &Config, sha: &str| {
+        let socket = cfg.host_values()?["SPIRA_BROKER_SOCKET"].clone();
+        crate::broker::place_conf(&cfg.releases.join(sha).join("systemd"), &socket, cfg.run.as_ref().unwrap()).map(|_| ())
+    };
+    let reads = FakeReads::serving();
+    let nix = FakeNix::default();
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc: &sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &unit_ensure, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None };
+    assert_eq!(activate::activate(&ctx, B, None).unwrap().restarted, [BROKER]);
 }
 
 #[test_id(ty8gcer)]
@@ -669,6 +685,21 @@ fn a_broker_config_that_cannot_be_placed_undoes_the_activation_naming_the_key() 
     assert!(sc.restarts.borrow().is_empty(), "{e}");
 }
 
+#[test_id(tlgbn0x)]
+#[test]
+fn a_registry_that_refuses_the_socket_key_resolves_and_the_refused_placing_says_why() {
+    let w = world_with_a_broker_on_a("");
+    let reg = Registered { instance: "prod".into(), broker_socket_refusal: "fixture registry refusal".into(), ..Default::default() };
+    let mut env = Env::new();
+    env.insert("HOME".into(), w.cfg.home().unwrap().display().to_string());
+    env.insert("SPIRA_UNIT_DIR".into(), w.cfg.unit_dir.display().to_string());
+    env.insert("SPIRA_TOML".into(), w.cfg.toml_spec().unwrap());
+    let flags = Flags { releases: Some(w.cfg.releases.clone()), run: w.cfg.run.clone(), keep: Some(2) };
+    let w = World { cfg: Config::resolve_with(&flags, &env, None, &reg).unwrap(), ..w };
+    let e = activate_sha(&w, &broker_running(&w), B).unwrap_err();
+    assert!(e.contains("SPIRA_BROKER_SOCKET is empty") && e.contains("fixture registry refusal"), "{e}");
+}
+
 #[test_id(t99geib)]
 #[test]
 fn a_box_without_the_broker_unit_gets_no_broker_config_from_activation() {
@@ -695,7 +726,7 @@ fn world_activating_over_a_landed_hotfix() -> World {
 fn activate_as_the_batcher(w: &World, sc: &FakeSystemctl) -> Result<activate::Switched, String> {
     let reads = FakeReads::serving();
     let nix = FakeNix::default();
-    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: Some(w.cfg.releases.clone()), landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(5), report: &|_| {}, gc: None };
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: Some(w.cfg.releases.clone()), landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(5), report: &|_| {}, gc: None };
     activate::activate(&ctx, A, None)
 }
 
@@ -1318,7 +1349,7 @@ fn activate_reading_within(w: &World, sc: &FakeSystemctl, reads: &FakeReads, ste
 
 fn activate_reporting(w: &World, sc: &FakeSystemctl, reads: &FakeReads, steady: Duration, warm_wait: Duration, report: &dyn Fn(&str)) -> Result<activate::Switched, String> {
     let nix = FakeNix::default();
-    let ctx = activate::Ctx { cfg: &w.cfg, reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady, warm_wait, warm_pause: Duration::from_millis(5), report, gc: None };
+    let ctx = activate::Ctx { cfg: &w.cfg, reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady, warm_wait, warm_pause: Duration::from_millis(5), report, gc: None };
     activate::activate(&ctx, A, None)
 }
 
@@ -2497,7 +2528,7 @@ fn world_activating_a_flake_release() -> World {
 }
 
 fn ctx_with_nix<'a>(w: &'a World, sc: &'a FakeSystemctl, nix: &'a FakeNix, reads: &'a FakeReads) -> activate::Ctx<'a> {
-    activate::Ctx { cfg: &w.cfg, reads, sc, nix, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None }
+    activate::Ctx { cfg: &w.cfg, reads, sc, nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None }
 }
 
 fn activate_with_nix(w: &World, sc: &FakeSystemctl, nix: &FakeNix) -> Result<activate::Switched, String> {

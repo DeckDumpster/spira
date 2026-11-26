@@ -772,6 +772,7 @@ mod tests {
         manifest.units.retain(|u| u.name == crate::broker::UNIT);
         let unit = "spira-broker-prod.service";
         assert_eq!(manifest.enable("prod"), [unit], "the manifest installs and enables the broker");
+        assert_eq!(release::broker::installed_unit("prod"), unit, "activation looks for the unit the manifest installs");
         let no_suspend = |_: &str| false;
         let host_in = |name: &str, socket: &str| HostValues { run: td.join(name).display().to_string(), broker_socket: td.join(name).join(socket).display().to_string(), ..host() };
         let conf = |h: &HostValues| fs::read_to_string(Path::new(&h.run).join(crate::broker::CONF_FILE)).unwrap();
