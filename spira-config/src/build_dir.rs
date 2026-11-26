@@ -45,13 +45,21 @@ pub const CLEAN_SCRIPT: &str = "target-clean.sh";
 pub const CLEAN_DEADLINE_SECS: &str = "900";
 
 /// A live lease on one owned build directory. Dropping it releases the directory without
-/// stamping it; [`Lease::release`] is the teardown path.
+/// stamping it; [`Lease::release`] is the teardown path. Either way the lock goes by `LOCK_UN`,
+/// not by the close: a forked child shares the open file description until it execs.
 pub struct Lease {
     dir: PathBuf,
     lock: std::fs::File,
     /// True when the directory held a previous session's build (a warm start).
     pub reused: bool,
     started: SystemTime,
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        // SAFETY: unlocking our own fd; closing alone would leave a forked child holding it.
+        unsafe { libc::flock(self.lock.as_raw_fd(), libc::LOCK_UN) };
+    }
 }
 
 impl std::fmt::Debug for Lease {
@@ -741,6 +749,49 @@ mod tests {
         assert!(got.reused);
         got.release();
         assert!(lease_dir(&bases, &dir, "gate", "builder", std::time::Duration::ZERO).unwrap().is_ok());
+    }
+
+    /// Whether a slot given up by `give_up` is leasable while a forked child, not yet exec'd,
+    /// still shares the lock's open file description.
+    fn lockable_beside_a_forked_child(tag: &str, give_up: fn(Lease)) -> Result<(), Refused> {
+        let d = testkit::TempDir::new(tag);
+        let bases = vec![d.path().join("base")];
+        let l = lease(&bases, "builder").unwrap();
+        let dir = l.dir().to_path_buf();
+        // SAFETY: the child calls only the async-signal-safe sleep and _exit.
+        let child = unsafe { libc::fork() };
+        if child == 0 {
+            // SAFETY: as above.
+            unsafe {
+                // clock-safe: nothing waits on it; the parent kills the child, and this only caps an orphan's life
+                libc::sleep(5);
+                libc::_exit(0);
+            }
+        }
+        assert!(child > 0, "fork failed");
+        give_up(l);
+        let got = lease_dir(&bases, &dir, "probe", "", std::time::Duration::ZERO).unwrap().map(drop);
+        // SAFETY: `child` is our own unreaped child.
+        unsafe {
+            libc::kill(child, libc::SIGKILL);
+            libc::waitpid(child, std::ptr::null_mut(), 0);
+        }
+        got
+    }
+
+    #[test_id(tam523y)]
+    #[test]
+    fn a_released_lease_is_lockable_while_a_forked_child_still_shares_its_lock() {
+        let got = lockable_beside_a_forked_child("bdir-fork-release", |l| {
+            l.release();
+        });
+        assert_eq!(got, Ok(()));
+    }
+
+    #[test_id(t30qgon)]
+    #[test]
+    fn a_dropped_lease_is_lockable_while_a_forked_child_still_shares_its_lock() {
+        assert_eq!(lockable_beside_a_forked_child("bdir-fork-drop", drop), Ok(()));
     }
 
     #[test_id(t0ujgqv)]
