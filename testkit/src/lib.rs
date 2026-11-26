@@ -226,8 +226,19 @@ pub struct EnvGuard {
     saved: Vec<(String, Option<std::ffi::OsString>)>,
 }
 
+thread_local! {
+    static ENV_EDITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times this thread has called [`env`]: the witness that code under test edited no
+/// environment, unaffected by other tests' threads.
+pub fn env_edits() -> usize {
+    ENV_EDITS.with(|c| c.get())
+}
+
 /// Hold the environment lock, then set (`Some`) or unset (`None`) each key.
 pub fn env(edits: &[(&str, Option<&str>)]) -> EnvGuard {
+    ENV_EDITS.with(|c| c.set(c.get() + 1));
     let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     ENV_HELD.with(|h| h.set(true));
     let mut saved = Vec::new();

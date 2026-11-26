@@ -19,9 +19,8 @@ pub fn row(name: &str) -> &'static Task {
 }
 
 /// Settings loaded through the one config door from the complete fixture (`spira/testlib`), with
-/// `declare` on top. The door resolves once per process and keeps what it read, so the
-/// environment names the fixture only while it loads: a sibling test in the same binary must
-/// not resolve its own config through this fixture.
+/// `declare` on top. The fixture's path is handed to the door as a value, so the process
+/// environment is never edited and a sibling test reads what the process started with.
 #[cfg(feature = "integration")]
 pub fn pinned_settings(declare: &[(&str, &str)]) -> Result<Settings, String> {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
@@ -32,7 +31,10 @@ pub fn pinned_settings(declare: &[(&str, &str)]) -> Result<Settings, String> {
     let service: &[(&str, &str)] = &[("SPIRA_LC_SOCKET", "fixture/run/lc.sock"), ("SPIRA_TASK_MODES", &modes)];
     let toml = spira_config::process::fixture_toml(&dir, &[service, declare].concat());
     let home = spira_config::resolve::locate_home_for_process()?;
-    let _env = testkit::env(&[(spira_config::process::TOML_ENV, Some(&toml.to_string_lossy())), ("SPIRA_HOME", Some(&home.to_string_lossy()))]);
+    let mut env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    env.insert(spira_config::process::TOML_ENV.into(), toml.to_string_lossy().into());
+    env.insert("SPIRA_HOME".into(), home.to_string_lossy().into());
+    spira_config::process::config_with(&env)?;
     Settings::load()
 }
 
