@@ -292,6 +292,25 @@ pub(crate) mod verdict_run {
         assert_eq!(envs[0].get("TMPDIR"), Some(&want));
     }
 
+    fn gate_reservation_after_release(submitted: Option<i64>) -> Option<String> {
+        let work = testkit::TempDir::new("dwarf-reserve");
+        let base = work.path().join("builds");
+        with_run(&NoBd, &Seams(Default::default()), Dirty(vec![]), "", |r| {
+            r.s.bead = "sp-res".into();
+            r.s.submitted_at = submitted;
+            r.s.build_dir = Some(spira_config::build_dir::lease(std::slice::from_ref(&base), "sp-res").unwrap());
+            r.release_build_dir();
+        });
+        std::fs::read_to_string(base.join("dir.1.gate")).ok()
+    }
+
+    #[test_id(tplace4)]
+    #[test]
+    fn a_submitted_run_reserves_its_build_directory_for_its_gate_and_an_unsubmitted_one_does_not() {
+        assert_eq!(gate_reservation_after_release(Some(T0)).as_deref(), Some("sp-res"));
+        assert_eq!(gate_reservation_after_release(None), None);
+    }
+
     fn session_env_of(builds: bool) -> BTreeMap<String, String> {
         let _otel = OTEL.lock().unwrap_or_else(|e| e.into_inner());
         let work = testkit::TempDir::new("dwarf-cargo-env");

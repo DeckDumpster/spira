@@ -1,6 +1,6 @@
 TYPE=u64
 GROUP=gate
-DOC=SECONDS A UNIT GATE WAITS for the session that submitted its bead to release the build directory the gate will build in. Past it the gate builds as it would without one.
+DOC=SECONDS A UNIT GATE WAITS for the bead's own session to release the build directory the gate will build in; a directory held by any other session is not waited for. Past it the gate builds as it would without one.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     : "${SPIRA_GATE_BUILDER_DIR_WAIT_SECS:=120}"
 SPIRA_CONF_DEFAULT_EOF

@@ -306,7 +306,7 @@ impl Real {
 
     fn build_in_bases(&self, tree: &Path, b: &crate::ports::Builder, bases: &[PathBuf]) -> Result<String, (BuilderMiss, String)> {
         use spira_config::build_dir as bd;
-        let lease = match bd::lease_dir(bases, &b.dir, &format!("gate {}", b.bead), b.wait).map_err(|e| (BuilderMiss::Unusable, format!("cannot lease it: {e}")))? {
+        let lease = match bd::lease_dir(bases, &b.dir, &format!("gate {}", b.bead), &b.bead, b.wait).map_err(|e| (BuilderMiss::Unusable, format!("cannot lease it: {e}")))? {
             Ok(l) => l,
             Err(bd::Refused::Held { holder }) => {
                 let miss = if holder == b.bead { BuilderMiss::Held } else { BuilderMiss::Taken };
@@ -1412,7 +1412,7 @@ mod tests {
     }
 
     fn lockable(p: &Pool) -> bool {
-        spira_config::build_dir::lease_dir(&p.bases, &p.slot, "probe", std::time::Duration::ZERO).unwrap().is_ok()
+        spira_config::build_dir::lease_dir(&p.bases, &p.slot, "probe", "", std::time::Duration::ZERO).unwrap().is_ok()
     }
 
     #[test_id(t1jwthh)]
@@ -1432,16 +1432,25 @@ mod tests {
         let _ = &p.t;
     }
 
+    #[test_id(tplaceh)]
+    #[test]
+    fn a_slot_released_reserved_for_the_bead_is_leased_by_its_gate() {
+        let p = pool("exit 0\n");
+        let _ = spira_config::build_dir::lease_dir(&p.bases, &p.slot, "sp-a", "sp-a", std::time::Duration::ZERO).unwrap().ok().unwrap().release_reserved("sp-a");
+        let line = p.real.build_in_bases(&p.tree, &builder(&p), &p.bases).unwrap();
+        assert!(line.contains(&p.slot.display().to_string()), "{line}");
+    }
+
     #[test_id(ty70twa)]
     #[test]
     fn a_builder_directory_another_lease_holds_is_taken_and_one_the_bead_holds_is_held() {
         let other = pool("exit 0\n");
-        let _held = spira_config::build_dir::lease_dir(&other.bases, &other.slot, "sp-other", std::time::Duration::ZERO).unwrap().ok().unwrap();
+        let _held = spira_config::build_dir::lease_dir(&other.bases, &other.slot, "sp-other", "", std::time::Duration::ZERO).unwrap().ok().unwrap();
         let (miss, why) = other.real.build_in_bases(&other.tree, &builder(&other), &other.bases).unwrap_err();
         assert_eq!(miss, BuilderMiss::Taken, "{why}");
 
         let own = pool("exit 0\n");
-        let _held = spira_config::build_dir::lease_dir(&own.bases, &own.slot, "sp-a", std::time::Duration::ZERO).unwrap().ok().unwrap();
+        let _held = spira_config::build_dir::lease_dir(&own.bases, &own.slot, "sp-a", "sp-a", std::time::Duration::ZERO).unwrap().ok().unwrap();
         let (miss, why) = own.real.build_in_bases(&own.tree, &builder(&own), &own.bases).unwrap_err();
         assert_eq!(miss, BuilderMiss::Held, "{why}");
 

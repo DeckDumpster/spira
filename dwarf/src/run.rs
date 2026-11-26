@@ -1630,7 +1630,7 @@ impl<'a> Run<'a> {
             }
         }
         let dir = lease.dir().to_path_buf();
-        let trimmed = lease.release();
+        let trimmed = if self.s.submitted_at.is_some() { lease.release_reserved(&self.s.bead) } else { lease.release() };
         self.log(&format!("{}: released build directory {}: {trimmed}", self.f(), dir.display()));
         use spira_config::build_dir as pool;
         let bases = pool::parse_bases(&self.conf.s(pool::BASE_ENV));
