@@ -6,6 +6,12 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+/// [`RealSystemctl::running_exe`] over `systemctl`'s `(succeeded, stdout, stderr)`.
+fn running_exe_via(unit: &str, systemctl: impl FnOnce(&[&str]) -> (bool, String, String)) -> Option<PathBuf> {
+    let (ok, out, _) = systemctl(&["show", unit, "-p", "MainPID", "--value"]);
+    release::systemctl::main_pid_exe(&out).filter(|_| ok)
+}
+
 pub trait Systemctl {
     fn daemon_reload(&self) -> Result<(), String>;
     fn is_active(&self, unit: &str) -> bool;
@@ -181,8 +187,7 @@ impl Systemctl for RealSystemctl {
         }
     }
     fn running_exe(&self, unit: &str) -> Option<PathBuf> {
-        let (ok, out, _) = self.run(&["show", unit, "-p", "MainPID", "--value"]);
-        release::systemctl::main_pid_exe(&out).filter(|_| ok)
+        running_exe_via(unit, |args| self.run(args))
     }
     fn unit_type(&self, unit: &str) -> String {
         self.run(&["show", "-p", "Type", "--value", unit]).1.trim().to_string()
@@ -389,6 +394,19 @@ mod tests {
         assert_eq!(sc.is_active_many(&u), vec![true, false]);
         assert_eq!(sc.is_enabled_many(&u), vec![Some("enabled".into()), Some("disabled".into())]);
         assert_eq!(calls(&log), 2);
+    }
+
+    #[test_id(to3gnqj)]
+    #[test]
+    fn the_running_executable_comes_from_the_main_pid_systemctl_shows() {
+        let shown = |ok: bool| {
+            running_exe_via("a.service", |args| {
+                assert_eq!(args, ["show", "a.service", "-p", "MainPID", "--value"]);
+                (ok, "42\n".into(), String::new())
+            })
+        };
+        assert_eq!(shown(true), Some(std::path::Path::new(system_paths::PROC).join("42/exe")));
+        assert_eq!(shown(false), None, "a failed show names no process");
     }
 
     #[test_id(tuckxsb)]

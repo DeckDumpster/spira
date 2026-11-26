@@ -735,6 +735,7 @@ mod tests {
     }
     use crate::manifest::{build, Inputs};
     use crate::systemctl::{FakeSystemctl, FakeUnit};
+    use std::os::unix::fs::OpenOptionsExt;
     #[test_id(t0ch9rh)]
     #[test]
     fn the_enable_loop_asks_systemd_about_every_unit_in_two_calls_not_two_per_unit() {
@@ -840,8 +841,17 @@ mod tests {
         fs::copy(spira_config::resolve::checkout_root_for_process().unwrap().join("systemd").join(crate::broker::CONF_FILE), tmpl_dir.join(crate::broker::CONF_FILE)).unwrap();
         let mut manifest = build(&Inputs { instance: "prod".into(), ..Default::default() }).unwrap();
         manifest.units.retain(|u| u.name == crate::broker::UNIT);
+        manifest.units.push(crate::manifest::Template { name: "dolt-beads.service".into(), enable: true });
         let unit = "spira-broker-prod.service";
-        let h = HostValues { env_bin: env_bin.display().to_string(), run: td.join("run").display().to_string(), broker_socket: td.join("run/s").display().to_string(), ..host() };
+        let dolt = env_bin.join("dolt");
+        // Never executed: the mode only satisfies `execstart_target_ok`, so no child need write them.
+        let fixture = |path: &Path, body: &str| {
+            let mut f = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o755).open(path).unwrap();
+            io::Write::write_all(&mut f, body.as_bytes()).unwrap();
+        };
+        fixture(&dolt, "A");
+        fs::write(tmpl_dir.join("dolt-beads.service"), "[Service]\nExecStart=@DOLT@ sql-server\n").unwrap();
+        let h = HostValues { dolt: dolt.display().to_string(), env_bin: env_bin.display().to_string(), run: td.join("run").display().to_string(), broker_socket: td.join("run/s").display().to_string(), ..host() };
         let no_suspend = |_: &str| false;
         // Installs a broker unit running `exec`, then leaves it active on a process whose executable is `running`.
         let installed = |case: &str, exec: &str, running: &str| {
@@ -864,7 +874,7 @@ mod tests {
         };
 
         let program = env_bin.join("mosquitto");
-        testkit::write_exe(&program, "A");
+        fixture(&program, "A");
         let (sc, unit_dir) = installed("env", "@SPIRA_ENV_PATH@/mosquitto", "A");
         assert_eq!(rerun(&sc, &unit_dir), Vec::<String>::new(), "a matching program leaves the broker running");
         fs::write(&program, "B").unwrap();
@@ -875,13 +885,22 @@ mod tests {
         assert_eq!(rerun(&sc, &unit_dir), [unit], "an executable that cannot be compared is not assumed current");
 
         let outside = td.join("mosquitto");
-        testkit::write_exe(&outside, "B");
+        fixture(&outside, "B");
         let (sc, unit_dir) = installed("outside", &outside.display().to_string(), "A");
         assert_eq!(rerun(&sc, &unit_dir), Vec::<String>::new(), "a program outside spira-env is not judged here");
 
-        testkit::write_exe(&program, "#!/bin/sh\n");
+        fixture(&program, "#!/bin/sh\n");
         let (sc, unit_dir) = installed("script", "@SPIRA_ENV_PATH@/mosquitto", "A");
         assert_eq!(rerun(&sc, &unit_dir), Vec::<String>::new(), "a script's process runs its interpreter");
+
+        let store = "dolt-beads.service";
+        fixture(&program, "A");
+        let (sc, unit_dir) = installed("store", "@SPIRA_ENV_PATH@/mosquitto", "A");
+        sc.set(store, FakeUnit { active: true, enabled: Some("enabled".into()), kind: "notify".into(), file_listed: true });
+        sc.running_exes.borrow_mut().insert(store.to_string(), td.join("dolt.running"));
+        fs::write(td.join("dolt.running"), "old dolt").unwrap();
+        assert_eq!(rerun(&sc, &unit_dir), Vec::<String>::new(), "the store refuses a restart job");
+        assert_eq!(sc.kills.borrow().as_slice(), [store], "an outlived store is killed onto the new dolt");
     }
 
     #[test_id(ttoei3p)]
