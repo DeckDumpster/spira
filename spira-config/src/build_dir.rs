@@ -763,6 +763,7 @@ mod tests {
         if child == 0 {
             // SAFETY: as above.
             unsafe {
+                // clock-safe: nothing waits on it; the parent kills the child, and this only caps an orphan's life
                 libc::sleep(5);
                 libc::_exit(0);
             }
