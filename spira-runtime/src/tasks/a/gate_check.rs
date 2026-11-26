@@ -1,6 +1,5 @@
-//! `gate.check` — pattern P1, every 2 minutes: resolves `gh:run` gates whose CI escalated and runs
-//! bd-gate discovery for pr-mode repositories. It makes no `gh` call; CI runs are not read, ingested
-//! or filed from here.
+//! `gate.check` — pattern P1, every 2 minutes: resolves `gh:run` gates whose CI escalated. It makes
+//! no `gh` call; CI runs are not read, ingested or filed from here.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -14,7 +13,6 @@ pub const STREAM: &str = "task.gate.check";
 pub const TICK: EventKindTag = "gate.check.tick";
 pub const STATE: EventKindTag = "gate.check.state";
 pub const OBSERVE: &str = "gate.check.observe";
-pub const DISCOVER: &str = "gate.check.discover";
 pub const RESOLVE: &str = "gate.check.resolve";
 pub const CI_FAILED: &str = "gate.check.ci_failed";
 
@@ -22,30 +20,20 @@ pub const CADENCE_MS: u64 = 120_000;
 /// The contract gives the probe no deadline of its own; its slowest read is the 5 s LcClient `list`.
 pub const OBSERVE_DEADLINE_MS: u64 = 30_000;
 
-pub const ACTS: &[(&str, u64)] = &[(DISCOVER, 10_000), (RESOLVE, 10_000), (CI_FAILED, 5_000)];
+pub const ACTS: &[(&str, u64)] = &[(RESOLVE, 10_000), (CI_FAILED, 5_000)];
 pub const EMITS: &[EventKindTag] = &[];
-pub const EFFECTS: &[&str] = &[OBSERVE, DISCOVER, RESOLVE, CI_FAILED];
+pub const EFFECTS: &[&str] = &[OBSERVE, RESOLVE, CI_FAILED];
 pub const KEYS: &[&str] = &[];
-/// `SPIRA_HOME` is the process's own home, not a `conf.d` key.
-pub const UNREGISTERED: &[&str] = &["SPIRA_HOME"];
+pub const UNREGISTERED: &[&str] = &[];
 
 pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: STATE, observe: OBSERVE, observe_deadline_ms: OBSERVE_DEADLINE_MS };
 
-/// A pr-mode repository and its branches, for bd-gate discovery.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PrRepo {
-    pub name: String,
-    pub branches: Vec<String>,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
-    pub gate_list: Vec<String>,
     /// `bd gate check --type=gh:run`, stdout and stderr merged.
     pub gate_check_out: String,
     /// The bead each ESCALATE line's gate blocks (`bd show <gate>`), `None` for none.
     pub gate_blocked: BTreeMap<String, Option<String>>,
-    pub pr_repos: Vec<PrRepo>,
 }
 
 /// Carried between ticks; the `ingested` rows are kept as written before CI ingest was removed.
@@ -69,13 +57,7 @@ pub struct CiFailed {
 pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     use gate_check::engine;
     let mut acts = vec![];
-    // STEP 1: discover, pr-mode repositories only.
-    for repo in &snap.pr_repos {
-        for branch in &repo.branches {
-            acts.push(Act::new(DISCOVER, format!("{}/{branch}", repo.name)).with_input(serde_json::json!({"repo": repo.name, "branch": branch}).to_string()));
-        }
-    }
-    // STEP 2b: each ESCALATE line's gate, when it blocks a bead.
+    // Each ESCALATE line's gate, when it blocks a bead.
     for esc in engine::escalate_lines(&snap.gate_check_out) {
         // The id as `gate_id_in` reads it, else a gate the snapshot knows named as a word in it.
         let named = || snap.gate_blocked.keys().find(|g| esc.split(|c: char| c.is_whitespace() || c == ':').any(|w| w == g.as_str())).cloned();
@@ -121,25 +103,9 @@ pub fn unit_leg(e: &crate::Effects, task: &str, key: &str, argv: Vec<String>, cw
     serde_json::to_string(&h).map_err(|e| e.to_string())
 }
 
-/// The snapshot: the gate list over the content door and the pr-mode repositories from the
-/// repository map, in-process.
 /// `bd gate check` has no store verb, so no ESCALATE line is observed until one exists.
-pub fn observe(e: &crate::Effects) -> Result<String, String> {
-    use gate_check::engine;
-    let lc = store(e);
-    let home = spira_config::resolve::locate_home_for_process()?;
-    let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home);
-    let gate_json = lc.answer(&["content", "gate", "list", "--json"]).unwrap_or_default();
-    let branches = engine::discover_branches(&gate_json);
-    let mut pr_repos = vec![];
-    if !branches.is_empty() {
-        for name in reg.names() {
-            if reg.land(&name) == "pr" && reg.root(&name).is_some_and(|r| std::path::Path::new(&r).join(".git").exists()) {
-                pr_repos.push(PrRepo { name, branches: branches.clone() });
-            }
-        }
-    }
-    serde_json::to_string(&Snapshot { gate_list: branches, pr_repos, ..Snapshot::default() }).map_err(|e| e.to_string())
+pub fn observe() -> Result<String, String> {
+    serde_json::to_string(&Snapshot::default()).map_err(|e| e.to_string())
 }
 
 /// `ci.failed`: `spira_event`, now `bead::event::emit` in this process, at bead's own default
@@ -151,21 +117,8 @@ pub fn ci_failed(e: &crate::Effects, input: &str) -> Result<String, String> {
     Ok(format!("ci.failed {}", ev.blocked))
 }
 
-fn discover_argv(repo: &str, branch: &str) -> Vec<String> {
-    ["spira-lc", "content", "gate", "discover", "--branch", branch, "--repo", repo].map(String::from).to_vec()
-}
-
 fn resolve_argv(gate: &str) -> Vec<String> {
     ["spira-lc", "content", "gate", "resolve", gate].map(String::from).to_vec()
-}
-
-/// `discover`: `spira-lc content gate discover` for the repository, as a unit leg.
-pub fn discover(e: &crate::Effects, key: &str, input: &str) -> Result<String, String> {
-    let v: serde_json::Value = serde_json::from_str(input).map_err(|e| format!("{DISCOVER}: bad input: {e}"))?;
-    let (repo, branch) = (v["repo"].as_str().unwrap_or(""), v["branch"].as_str().unwrap_or(""));
-    let home = spira_config::resolve::locate_home_for_process()?;
-    spira_config::repos::Registry::from_env(std::env::vars().collect(), &home).root(repo).ok_or_else(|| format!("{DISCOVER}: {repo} has no checkout — refused"))?;
-    unit_leg(e, NAME, key, discover_argv(repo, branch), None)
 }
 
 /// `resolve`: `spira-lc content gate resolve <gate>`, as a unit leg.
@@ -251,7 +204,6 @@ mod leg_argv_tests {
     #[test_id(tlf5wrf)]
     #[test]
     fn the_gate_legs_go_to_the_content_door_not_bdq() {
-        assert_eq!(super::super::discover_argv("spira", "b").join(" "), "spira-lc content gate discover --branch b --repo spira");
         assert_eq!(super::super::resolve_argv("sp-g").join(" "), "spira-lc content gate resolve sp-g");
     }
 }

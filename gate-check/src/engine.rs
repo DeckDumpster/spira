@@ -4,37 +4,6 @@
 
 use serde_json::Value;
 
-/// `bd gate list --json`'s open, unbound (`await_id` empty) `gh:run` gates, reduced to the
-/// distinct branches named in `metadata.branch`, in first-encounter order — the same
-/// tolerance the bash's inline `python3` had: anything not shaped as expected (not a list, a
-/// null entry, a missing field) is skipped, never a hard error (DESIGN.md "Non-goals").
-pub fn discover_branches(gate_list_json: &str) -> Vec<String> {
-    let Ok(v) = serde_json::from_str::<Value>(gate_list_json) else { return Vec::new() };
-    let gates: Vec<Value> = match v {
-        Value::Array(a) => a,
-        Value::Null => Vec::new(),
-        other => vec![other],
-    };
-    let mut seen = Vec::new();
-    for g in gates {
-        if g.is_null() {
-            continue;
-        }
-        if g.get("await_type").and_then(Value::as_str) != Some("gh:run") {
-            continue;
-        }
-        let has_await_id = g.get("await_id").and_then(Value::as_str).map(|s| !s.is_empty()).unwrap_or(false);
-        if has_await_id {
-            continue;
-        }
-        let branch = g.get("metadata").and_then(|m| m.get("branch")).and_then(Value::as_str).unwrap_or("");
-        if !branch.is_empty() && !seen.iter().any(|s| s == branch) {
-            seen.push(branch.to_string());
-        }
-    }
-    seen
-}
-
 /// `no run ID specified` lines in `bd gate check`'s output — gates `bd` cannot resolve and
 /// never will, counted separately so "0 resolved" is never ambiguous between nothing to do
 /// and every gate being permanently wedged.

@@ -26,7 +26,7 @@ impl Real {
 
     /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
     /// 4.13"), built once per process, in-process — no `bash -c '. lib.sh; <fn>'`
-    /// subprocess per `repo_names`/`repo_land`/`repo_root`/`home_repo` call, and no
+    /// subprocess per `repo_root`/`home_repo` call, and no
     /// one-shot snapshot subprocess either: `from_env` resolves
     /// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`/`SPIRA_REPO_MAP` the same way
     /// conf.sh does, in-process, when this (bare, unit-launched) process's own
@@ -102,28 +102,12 @@ fn with_real_gh<T>(f: impl FnOnce(&Gh) -> T) -> T {
 }
 
 impl World for Real {
-    fn repo_names(&self) -> Vec<String> {
-        self.registry().names()
-    }
-
-    fn repo_land(&self, name: &str) -> String {
-        self.registry().land(name)
-    }
-
     fn repo_root(&self, name: &str) -> Option<PathBuf> {
         self.registry().root(name).map(PathBuf::from)
     }
 
     fn home_repo(&self) -> String {
         self.registry().home_repo().to_string()
-    }
-
-    fn bd_gate_list_json(&self) -> String {
-        self.door_out(&["gate", "list", "--json"])
-    }
-
-    fn bd_gate_discover(&self, repo: &str, branch: &str) {
-        let _ = self.door(&["gate", "discover", "--branch", branch, "--repo", repo], None);
     }
 
     fn bd_gate_check(&self) -> String {
@@ -277,7 +261,6 @@ mod door_tests {
         let world = Real::new(PathBuf::new(), Ok(LcClient::over(door.clone(), true)), None);
         world.bd_priority("sp-a", 1);
         world.bd_note("sp-a", "text");
-        world.bd_gate_discover("spira", "b");
         world.bd_gate_resolve("sp-g");
         let _ = world.bd_gate_check();
         let _ = world.bd_list_json();
@@ -287,7 +270,6 @@ mod door_tests {
             [
                 "content update sp-a --priority 1",
                 "content note sp-a --stdin",
-                "content gate discover --branch b --repo spira",
                 "content gate resolve sp-g",
                 "content gate check --type=gh:run",
                 "content list --all --limit 0 --json",

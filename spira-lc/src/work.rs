@@ -1497,9 +1497,6 @@ pub fn exec(id: &str) -> (i32, String) {
 
 fn run_recorded(request: &crate::control::work_requests::WorkRequest) -> (i32, String) {
     let mut argv = request.argv.clone();
-    if request.argv.first().map(String::as_str) == Some(crate::composed::CONTENT_WRITE) {
-        return crate::composed::run_recorded(&argv, request.stdin.as_deref());
-    }
     if let Some(body) = &request.stdin {
         argv.extend(["--stdin".to_string(), body.clone()]);
     }
@@ -2956,6 +2953,16 @@ mod tests {
     }
 
     use super::*;
+
+    #[test_id(theaybd)]
+    #[test]
+    fn a_content_write_recorded_by_the_previous_release_is_answered_and_runs_nothing() {
+        let argv = ["content-write", "", "gate", "discover", "--branch", "b"].map(String::from).to_vec();
+        let row = crate::control::work_requests::WorkRequest { id: "wr-1".into(), bead: "-".into(), actor: "content".into(), argv, stdin: None, bound_ms: 1, state: "running".into(), code: None, output: String::new(), truncated: false, queued_at: 0, started_at: None, finished_at: None };
+        let (code, out) = super::run_recorded(&row);
+        assert_eq!(code, crate::CANNOT_TELL, "{out}");
+        assert!(out.contains("unknown verb \"gate\""), "{out}");
+    }
 
     fn commit(sha: &str, message: &str) -> (String, String, String) {
         (sha.into(), message.lines().next().unwrap_or("").into(), message.into())
