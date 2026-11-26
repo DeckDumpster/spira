@@ -5,7 +5,6 @@
 # executor. A count above the file's is refused; a count below it passes.
 3 census/src/real.rs
 1 cert-sweep/src/main.rs
-1 concierge.sh
 3 doctor/src/real.rs
 1 dwarf/src/session.rs
 1 dwarf/src/util.rs
@@ -17,7 +16,6 @@
 1 mail/tests/no_fork_edges.rs
 1 reconciler-flow/src/io.rs
 1 release/src/stage.rs
-2 rule/src/main.rs
 1 spira-claim/src/store.rs
 1 spira-world/src/bin/slay.rs
 1 spira/acceptance-ci.sh

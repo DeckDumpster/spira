@@ -7,13 +7,15 @@
 extern crate spira_test_id;
 use std::collections::BTreeMap;
 use std::io::Write;
+use std::ops::ControlFlow;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rule::{
+    book::{Book, Memories, Renamed, Stop},
     code,
-    audit::{audit, finding_title}, find_duplicate, is_in_force, list_body, parse_enact_args, slugify, word_count, word_limit_refusal,
+    audit::{audit, finding_title}, list_body, parse_enact_args, slugify, word_count, word_limit_refusal,
     hook::synth, CommitOutcome, EnactError, ToolDecl, USAGE,
 };
 
@@ -43,45 +45,17 @@ fn main() {
     let cmd = args.next().unwrap_or_default();
     let rest: Vec<String> = args.collect();
 
-    // ENACT/RETIRE/LIST/SHOW are the statute book itself and refuse a `$SPIRA_DB` that is
-    // not a real store (never fall through to `bd`'s own auto-discovery of some other one).
-    // RENDER-MEMORIES/SYSTEM-PROMPT-SPLIT (wave 4.35, sp-kelr2, row Q) are lib.sh's
-    // `render_memories`/`system_prompt_split` shim doors: pure string transforms, or a read
-    // the `SPIRA_MEMORIES_CMD` test seam bypasses `bd` for entirely, so they must not share
-    // this gate — concierge.sh is their one production caller and always has a real `$SPIRA_DB`,
-    // but the seam cases deliberately never set one. SPIRA_DB is a
-    // registered config key (spira/conf.d) — resolved only for the commands that need it, via
-    // the one source of config, never a process-environment read.
     spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-rule", &cmd);
-    let needs_db = matches!(cmd.as_str(), "enact" | "retire" | "audit" | "rename-vocabulary");
-    let reads_book = matches!(cmd.as_str(), "list" | "show") || (cmd == "code" && !rest.iter().any(|a| a == "--texts"));
-    let db = if needs_db {
-        match spira_config::process::cfg("SPIRA_DB") {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("rule: {e}");
-                spira_otel::oneshot::exit(1);
-            }
-        }
-    } else if reads_book {
-        spira_config::process::cfg("SPIRA_DB").unwrap_or_default()
-    } else {
-        String::new()
-    };
-    if needs_db && !Path::new(&format!("{db}/.beads")).is_dir() {
-        eprintln!("rule: {db} has no .beads — refusing to guess a database");
-        spira_otel::oneshot::exit(1);
-    }
 
     let rc = match cmd.as_str() {
-        "enact" => cmd_enact(&db, &home, &rest),
-        "retire" => cmd_retire(&db, &home, &rest),
-        "rename-vocabulary" => cmd_rename_vocabulary(&db, &home, &rest),
-        "list" => cmd_list(&db),
-        "show" => cmd_show(&db, &rest),
-        "audit" => cmd_audit(&db, &home, &rest),
-        "code" if rest.len() == 1 && rest[0] == "--land" => cmd_land_book(&db, &home),
-        "code" => cmd_code(&db, &rest),
+        "enact" => with_book(|book| cmd_enact(book, &home, &rest)),
+        "retire" => with_book(|book| cmd_retire(book, &home, &rest)),
+        "rename-vocabulary" => with_book(|book| cmd_rename_vocabulary(book, &home, &rest)),
+        "list" => cmd_list(),
+        "show" => cmd_show(&rest),
+        "audit" => with_book(|book| cmd_audit(book, &home, &rest)),
+        "code" if rest.len() == 1 && rest[0] == "--land" => cmd_land_book(&home),
+        "code" => cmd_code(&rest),
         "render-memories" => cmd_render_memories(&home, &rest),
         "system-prompt-split" => cmd_system_prompt_split(&rest),
         _ => {
@@ -95,32 +69,18 @@ fn main() {
     spira_otel::oneshot::exit(rc);
 }
 
-/// `bd -C <db> <args...>` — never `$SPIRA_BD` (DESIGN.md "Decisions": `rule.sh` didn't
-/// either). Returns (exit code, stdout, stderr).
-fn run_bd(db: &str, args: &[&str]) -> (i32, String, String) {
-    let out = spira_config::bounded::bounded("bd").arg("-C").arg(db).args(args).output();
-    match out {
-        Ok(o) => (
-            o.status.code().unwrap_or(1),
-            String::from_utf8_lossy(&o.stdout).into_owned(),
-            String::from_utf8_lossy(&o.stderr).into_owned(),
-        ),
-        Err(e) => (127, String::new(), format!("rule: could not run bd: {e}")),
-    }
+fn configured_book() -> Result<Book, String> {
+    Book::configured().map_err(|e| format!("rule: {e}"))
 }
 
-/// `bd memories --json`, distinguishing "the store could not be reached" (bd's own exit
-/// status is non-zero) from "the statute book is genuinely empty" ({}), per sp-n93br.
-fn memories_json(db: &str) -> Result<BTreeMap<String, serde_json::Value>, String> {
-    let (code, stdout, stderr) = run_bd(db, &["memories", "--json"]);
-    if code != 0 {
-        let mut combined = stdout;
-        combined.push_str(&stderr);
-        return Err(format!(
-            "rule: cannot reach the statute book at {db}: {combined}"
-        ));
+fn with_book(run: impl FnOnce(&Book) -> i32) -> i32 {
+    match configured_book() {
+        Ok(book) => run(&book),
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
     }
-    Ok(serde_json::from_str(&stdout).unwrap_or_default())
 }
 
 fn statute_dir_from(dir: &str, run: &str) -> Option<std::path::PathBuf> {
@@ -137,19 +97,13 @@ fn statute_dir() -> Result<std::path::PathBuf, String> {
     statute_dir_from(&dir, &run).ok_or_else(|| "SPIRA_STATUTE_DIR and SPIRA_RUN are both empty in spira_config".to_string())
 }
 
-/// Reads of the book come from the on-disk mirror. Only a book never mirrored falls back to
-/// the store, and that read then fills the mirror so the next one does not need it.
-fn read_book(db: &str) -> Result<BTreeMap<String, serde_json::Value>, String> {
+/// Reads of the book come from the on-disk mirror, so a book already mirrored needs no store.
+fn read_book() -> Result<Memories, String> {
     let dir = statute_dir()?;
-    if let Some(book) = rule::mirror::read(&dir) {
-        return Ok(book);
+    match rule::mirror::read(&dir) {
+        Some(book) => Ok(book),
+        None => configured_book()?.read(&dir),
     }
-    if !Path::new(&format!("{db}/.beads")).is_dir() {
-        return Err(format!("rule: no statute mirror in {} and {db} has no .beads — refusing to guess a database", dir.display()));
-    }
-    let book = memories_json(db)?;
-    let _ = rule::mirror::sync(&dir, &book);
-    Ok(book)
 }
 
 /// Mirrors `book`; a failure is the caller's to roll back, because a statute in the store
@@ -193,15 +147,11 @@ fn refuse_hook(e: &str) -> i32 {
     1
 }
 
-/// Puts the book back as it was before a write whose page could not be regenerated:
-/// the prior text, or no key at all.
-fn rollback(db: &str, key: &str, prior: Option<&str>, before: &BTreeMap<String, serde_json::Value>) -> bool {
-    let (code, _, _) = match prior {
-        Some(text) => run_bd(db, &["remember", "--key", key, text]),
-        None => run_bd(db, &["forget", key]),
-    };
+/// Puts the book back as it was before a write whose page could not be regenerated.
+fn rollback(book: &Book, key: &str, prior: Option<&str>, before: &Memories) -> bool {
+    let restored = book.restore(key, prior);
     rm_memories_cache();
-    code == 0 && mirror_book(before).is_ok()
+    restored && mirror_book(before).is_ok()
 }
 
 /// Commits and pushes `paths` (relative to `wiki`) through `<home>/wiki-commit.sh` under `msg`.
@@ -253,7 +203,7 @@ fn commit_common_law(home: &str, verb: &str, key: &str) -> CommitOutcome {
 /// regeneration rolls the book back to `prior`, so the write and the page succeed or fail as one.
 #[allow(clippy::too_many_arguments)]
 fn finish_write(
-    db: &str,
+    book: &Book,
     home: &str,
     hook: &str,
     verb: &str,
@@ -265,7 +215,7 @@ fn finish_write(
     let prior = before.get(key).and_then(|v| v.as_str());
     if let Err(e) = mirror_book(after) {
         eprintln!("{e}");
-        if rollback(db, key, prior, before) {
+        if rollback(book, key, prior, before) {
             eprintln!("rule: {verb} of {key} rolled back, nothing written.");
         } else {
             eprintln!("rule: the rollback of {key} failed too — run `rule.sh {verb} {key}` again once the mirror is writable.");
@@ -282,7 +232,7 @@ fn finish_write(
             _ => println!("{msg}"),
         }
         0
-    } else if rollback(db, key, prior, before) {
+    } else if rollback(book, key, prior, before) {
         eprintln!("rule: hook '{hook}' failed — wiki page NOT regenerated; {verb} of {key} rolled back, nothing written.");
         1
     } else {
@@ -292,7 +242,7 @@ fn finish_write(
     }
 }
 
-fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
+fn cmd_enact(book: &Book, home: &str, rest: &[String]) -> i32 {
     if rest.is_empty() {
         println!("{USAGE}");
         return 1;
@@ -346,74 +296,62 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         return 1;
     }
 
-    let (recall_code, recall_out, _) = run_bd(db, &["recall", &key]);
-    if recall_code == 0 {
-        println!("rule: '{key}' already exists — this enact overwrites it.");
-        println!("--- current ---");
-        println!("{recall_out}");
-        println!("--- new ---");
-        println!("{text}");
-        println!("---");
-    }
-
-    let hook = match resolve_hook(home) {
-        Ok(h) => h,
-        Err(e) => return refuse_hook(&e),
-    };
-
-    if dry_run {
-        println!("DRY RUN: would enact {key} ({words} words). Nothing written.");
-        return 0;
-    }
-
-    let before = match memories_json(db) {
-        Ok(m) => m,
-        Err(e) => {
+    let enacted = book.enact(&key, &text, |current| {
+        if let Some(current) = current {
+            println!("rule: '{key}' already exists — this enact overwrites it.");
+            println!("--- current ---");
+            println!("{current}");
+            println!("--- new ---");
+            println!("{text}");
+            println!("---");
+        }
+        let hook = match resolve_hook(home) {
+            Ok(h) => h,
+            Err(e) => return ControlFlow::Break(refuse_hook(&e)),
+        };
+        if dry_run {
+            println!("DRY RUN: would enact {key} ({words} words). Nothing written.");
+            return ControlFlow::Break(0);
+        }
+        ControlFlow::Continue(hook)
+    });
+    let (hook, before) = match enacted {
+        Ok(e) => {
+            if let Some(notice) = e.put.notice(&key) {
+                eprintln!("{notice}");
+            }
+            if !e.put.in_force() {
+                return 1;
+            }
+            (e.gate, e.before)
+        }
+        Err(Stop::Gate(rc)) => return rc,
+        Err(Stop::Unreachable(e)) => {
             eprintln!("{e}");
             return 1;
         }
-    };
-    if let Some(existing) = find_duplicate(&before, &key, &text) {
-        eprintln!("rule: this text is already in force as {existing} — refused, nothing written. Retire or amend {existing} instead.");
-        return 1;
-    }
-    let (code, _, stderr) = run_bd(db, &["remember", "--key", &key, &text]);
-    if code != 0 {
-        let landed = memories_json(db).map(|m| is_in_force(&m, &key, &text));
-        match landed {
-            Ok(false) => {
-                eprintln!("rule: failed to write {key} to the statute book at {db}: {stderr}");
-                eprintln!("rule: verified against the book — nothing written, {key} is not in force.");
-                return 1;
-            }
-            Ok(true) => {
-                eprintln!("rule: bd reported an error but {key} IS in force (verified against the book): {stderr}");
-            }
-            Err(e) => {
-                eprintln!("rule: bd reported an error writing {key} and the book cannot be read back to say whether it landed: {stderr}");
-                eprintln!("{e}");
-                eprintln!("rule: run `rule.sh show {key}` before retrying; do not enact it again under another slug.");
-                return 1;
-            }
+        Err(Stop::Duplicate(existing)) => {
+            eprintln!("rule: this text is already in force as {existing} — refused, nothing written. Retire or amend {existing} instead.");
+            return 1;
         }
-    }
+    };
     rm_memories_cache();
     println!("enacted {key} ({words} words)");
     println!("{}", tool_line(&tool));
 
     let mut after = before.clone();
     after.insert(key.clone(), serde_json::Value::String(text.clone()));
-    let rc = finish_write(db, home, &hook, "enact", &key, &before, &after, "Statute is live in every agent session at its next call.");
+    let rc = finish_write(book, home, &hook, "enact", &key, &before, &after, "Statute is live in every agent session at its next call.");
     if rc != 0 {
         return rc;
     }
-    let book = strings(&after);
+    let texts = strings(&after);
     let landed = code::book_dir().and_then(|dir| {
-        let pointers = read_pointers_for_write(&dir, &book)?;
+        let pointers = read_pointers_for_write(&dir, &texts)?;
         let before_pointers = pointers.clone();
-        let (caught, pointers) = code::catch_up(&toc, &pointers, &book, Some((key.as_str(), part)), &code::numbers_on_disk(&dir), &today()).map_err(|e| format!("rule: {e}"))?;
+        let (caught, pointers) = code::catch_up(&toc, &pointers, &texts, Some((key.as_str(), part)), &code::numbers_on_disk(&dir), &today()).map_err(|e| format!("rule: {e}"))?;
         let change = code::book_change(&toc, &before_pointers, &caught, &pointers);
-        Ok((land_book(home, "enact", &key, &caught, &pointers, &book)? > 0).then_some(change))
+        Ok((land_book(home, "enact", &key, &caught, &pointers, &texts)? > 0).then_some(change))
     });
     match landed {
         Ok(Some(n)) => {
@@ -449,11 +387,11 @@ fn book_name() -> String {
     spira_config::process::cfg("SPIRA_LAW_BOOK").unwrap_or_default()
 }
 
-fn cmd_land_book(db: &str, home: &str) -> i32 {
+fn cmd_land_book(home: &str) -> i32 {
     let run = || -> Result<Option<code::BookChange>, String> {
         let dir = code::book_dir()?;
         let toc = read_toc(&dir)?;
-        let book = strings(&read_book(db)?);
+        let book = strings(&read_book()?);
         let pointers = read_pointers_for_write(&dir, &book)?;
         let (caught, caught_pointers) = code::catch_up(&toc, &pointers, &book, None, &code::numbers_on_disk(&dir), &today()).map_err(|e| format!("rule: {e}"))?;
         let change = code::book_change(&toc, &pointers, &caught, &caught_pointers);
@@ -526,7 +464,7 @@ fn book_texts(book: &BTreeMap<String, serde_json::Value>) -> impl Fn(&str) -> Op
 }
 
 
-fn cmd_code(db: &str, rest: &[String]) -> i32 {
+fn cmd_code(rest: &[String]) -> i32 {
     let (mut check, mut texts) = (false, None);
     let mut it = rest.iter();
     while let Some(a) = it.next() {
@@ -567,7 +505,7 @@ fn cmd_code(db: &str, rest: &[String]) -> i32 {
             }
             m
         }
-        None => match read_book(db) {
+        None => match read_book() {
             Ok(b) => b,
             Err(e) => {
                 eprintln!("{e}");
@@ -646,18 +584,6 @@ fn tool_line(tool: &ToolDecl) -> String {
     }
 }
 
-fn open_bead_titles(db: &str) -> Vec<String> {
-    let (code, out, _) = run_bd(db, &["list", "--json", "--limit", "0"]);
-    if code != 0 {
-        return Vec::new();
-    }
-    serde_json::from_str::<Vec<serde_json::Value>>(&out)
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|b| b.get("title").and_then(|t| t.as_str()).map(str::to_string))
-        .collect()
-}
-
 struct PromptAudit {
     findings: Vec<rule::audit::Finding>,
     total: usize,
@@ -693,7 +619,7 @@ fn prompt_audit(home: &str) -> Result<PromptAudit, String> {
     Ok(PromptAudit { findings, total: names.len() })
 }
 
-fn cmd_audit(db: &str, home: &str, rest: &[String]) -> i32 {
+fn cmd_audit(book: &Book, home: &str, rest: &[String]) -> i32 {
     let (mut file, mut persona, mut repo, mut max) = (false, None, None, 5usize);
     let mut it = rest.iter();
     while let Some(a) = it.next() {
@@ -723,7 +649,7 @@ fn cmd_audit(db: &str, home: &str, rest: &[String]) -> i32 {
         eprintln!("rule: audit --file needs --for <persona>, and --repo <name> where SPIRA_HOME_REPO does not name the harness repo");
         return 1;
     }
-    let memories = match memories_json(db) {
+    let memories = match book.memories() {
         Ok(m) => m,
         Err(e) => {
             eprintln!("{e}");
@@ -753,7 +679,13 @@ fn cmd_audit(db: &str, home: &str, rest: &[String]) -> i32 {
     if !file {
         return 0;
     }
-    let open = open_bead_titles(db);
+    let open = match book.open_bead_titles() {
+        Ok(titles) => titles,
+        Err(e) => {
+            eprintln!("{e} — nothing filed");
+            return 1;
+        }
+    };
     let (batch, bounded) = rule::audit::to_file(&findings, &open, max);
     for f in batch {
         let title = finding_title(f);
@@ -810,7 +742,7 @@ fn parse_retire_args(rest: &[String]) -> Result<RetireArgs, String> {
     Ok(RetireArgs { key, reason, replaced_by, merged_into })
 }
 
-fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
+fn cmd_retire(book: &Book, home: &str, rest: &[String]) -> i32 {
     if rest.is_empty() {
         println!("{USAGE}");
         return 1;
@@ -824,7 +756,7 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
         }
     };
 
-    let memories = match memories_json(db) {
+    let memories = match book.memories() {
         Ok(m) => m,
         Err(e) => {
             eprintln!("{e}");
@@ -832,7 +764,7 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
         }
     };
     if !memories.contains_key(&key) {
-        eprintln!("rule: no statute '{key}' in the statute book at {db}");
+        eprintln!("rule: no statute '{key}' in the statute book");
         return 1;
     }
     for successor in replaced_by.iter().chain(&merged_into) {
@@ -876,19 +808,8 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
         return 1;
     }
 
-    if let Some(record) = &record {
-        let (code, _, stderr) = run_bd(db, &["remember", "--key", &record_key, record]);
-        if code != 0 {
-            eprintln!("rule: failed to record the retirement of {key}, nothing forgotten: {stderr}");
-            return 1;
-        }
-    }
-    let (code, _, stderr) = run_bd(db, &["forget", &key]);
-    if code != 0 {
-        eprintln!("rule: failed to forget {key}: {stderr}");
-        if record.is_some() {
-            run_bd(db, &["forget", &record_key]);
-        }
+    if let Err(e) = book.retire(&key, record.as_deref().map(|r| (record_key.as_str(), r))) {
+        eprintln!("{e}");
         return 1;
     }
     println!("forgot {key}");
@@ -897,7 +818,7 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
     let mut after = memories.clone();
     after.remove(&key);
     let rc = finish_write(
-        db,
+        book,
         home,
         &hook,
         "retire",
@@ -909,10 +830,10 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
     if rc != 0 {
         return rc;
     }
-    let book = strings(&after);
-    let landed = code::catch_up(&toc, &pointers, &book, None, &code::numbers_on_disk(&law), &today())
+    let texts = strings(&after);
+    let landed = code::catch_up(&toc, &pointers, &texts, None, &code::numbers_on_disk(&law), &today())
         .map_err(|e| format!("rule: {e}"))
-        .and_then(|(caught, pointers)| land_book(home, "retire", &key, &caught, &pointers, &book));
+        .and_then(|(caught, pointers)| land_book(home, "retire", &key, &caught, &pointers, &texts));
     match landed {
         Ok(_) => {
             println!("law: {key} leaves the book and its pointer stays; committed and pushed to {}.", book_name());
@@ -938,7 +859,7 @@ fn retirement_record(from: &str, reason: &str, replaced_by: Option<&str>, before
     sop::shelf::Retired { by, at, epoch, reason: reason.into(), text, replaced_by: replaced_by.map(String::from) }.to_json()
 }
 
-fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
+fn cmd_rename_vocabulary(book: &Book, home: &str, rest: &[String]) -> i32 {
     use rule::vocab::{plan, Entry};
     let dry_run = match rest {
         [] => false,
@@ -948,7 +869,7 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
             return 1;
         }
     };
-    let before = match memories_json(db) {
+    let before = match book.memories() {
         Ok(m) => m,
         Err(e) => {
             eprintln!("{e}");
@@ -994,64 +915,9 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
         return i32::from(failed);
     }
 
-    let mut after = before.clone();
-    let mut written = 0usize;
-    let (mut statutes_written, mut runbooks_written) = (0usize, 0usize);
-    let mut renamed: Vec<(String, String, bool)> = Vec::new();
-    for e in &entries {
-        let (key, text, from) = match e {
-            Entry::Amend { key, text } => (key, text, None),
-            Entry::Rename { from, to, text, .. } => (to, text, Some(from)),
-            _ => continue,
-        };
-        let (code, _, stderr) = run_bd(db, &["remember", "--key", key, text]);
-        let landed = memories_json(db).is_ok_and(|m| is_in_force(&m, key, text));
-        if !landed {
-            eprintln!("rule: failed to write {key}: {stderr}");
-            failed = true;
-            continue;
-        }
-        if code != 0 {
-            eprintln!("rule: bd reported an error but {key} IS in force (verified against the book): {stderr}");
-        }
-        after.insert(key.clone(), serde_json::Value::String(text.clone()));
-        if let (Some(from), Entry::Rename { numbered, .. }) = (from, e) {
-            let runbook = from.starts_with("sop-");
-            let record_key = if runbook { sop::shelf::retired_key(from) } else { code::retired_key(from) };
-            let record = retirement_record(from, "renamed out of retired vocabulary", Some(key), &before);
-            let (code, _, stderr) = run_bd(db, &["remember", "--key", &record_key, &record]);
-            if code != 0 {
-                eprintln!("rule: failed to record the retirement of {from}: {stderr}");
-                run_bd(db, &["forget", key]);
-                after.remove(key);
-                failed = true;
-                continue;
-            }
-            let (code, _, stderr) = run_bd(db, &["forget", from]);
-            if code != 0 {
-                eprintln!("rule: failed to forget {from}: {stderr}");
-                run_bd(db, &["forget", &record_key]);
-                failed = true;
-                continue;
-            }
-            after.remove(from);
-            if runbook {
-                runbooks_written += 1;
-            } else {
-                renamed.push((from.clone(), key.clone(), *numbered));
-                statutes_written += 1;
-            }
-            println!("renamed {from} → {key}");
-        } else {
-            if key.starts_with("sop-") {
-                runbooks_written += 1;
-            } else {
-                statutes_written += 1;
-            }
-            println!("amended {key}");
-        }
-        written += 1;
-    }
+    let Renamed { after, written, statutes: statutes_written, runbooks: runbooks_written, statute_renames: renamed, failed: write_failed } =
+        book.rename_apply(&entries, &before, |from, to| retirement_record(from, "renamed out of retired vocabulary", Some(to), &before));
+    failed |= write_failed;
     rm_memories_cache();
     if written == 0 {
         eprintln!("rule: nothing rewritten, nothing landed.");
@@ -1072,8 +938,8 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
         println!("law: no statute rewritten; nothing to commit.");
         return i32::from(failed);
     }
-    let book = strings(&after);
-    let landed = rule::vocab::record_renames(&toc, &pointers, &renamed, &today()).and_then(|(toc, pointers)| code::catch_up(&toc, &pointers, &book, None, &code::numbers_on_disk(&law), &today())).map_err(|e| format!("rule: {e}")).and_then(|(caught, pointers)| land_book(home, "rename-vocabulary", "book", &caught, &pointers, &book));
+    let texts = strings(&after);
+    let landed = rule::vocab::record_renames(&toc, &pointers, &renamed, &today()).and_then(|(toc, pointers)| code::catch_up(&toc, &pointers, &texts, None, &code::numbers_on_disk(&law), &today())).map_err(|e| format!("rule: {e}")).and_then(|(caught, pointers)| land_book(home, "rename-vocabulary", "book", &caught, &pointers, &texts));
     match landed {
         Ok(_) => println!("law: {statutes_written} statute(s) rewritten ({runbooks_written} runbook(s) in the store); committed and pushed to {}.", book_name()),
         Err(e) => {
@@ -1086,8 +952,8 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
     i32::from(failed)
 }
 
-fn cmd_list(db: &str) -> i32 {
-    match read_book(db) {
+fn cmd_list() -> i32 {
+    match read_book() {
         Ok(m) => {
             print!("{}", list_body(&m));
             0
@@ -1099,13 +965,13 @@ fn cmd_list(db: &str) -> i32 {
     }
 }
 
-fn cmd_show(db: &str, rest: &[String]) -> i32 {
+fn cmd_show(rest: &[String]) -> i32 {
     if rest.len() != 1 {
         println!("{USAGE}");
         return 1;
     }
     let key = slugify(&rest[0]);
-    let book = match read_book(db) {
+    let book = match read_book() {
         Ok(b) => b,
         Err(e) => {
             eprintln!("{e}");
@@ -1154,7 +1020,7 @@ fn cmd_show(db: &str, rest: &[String]) -> i32 {
 // render-memories / system-prompt-split (wave 4.35, sp-kelr2, row Q) — lib.sh's
 // `render_memories`/`system_prompt_split` shim doors. The tiering/split logic itself is
 // `rule::memories`; everything here is the I/O the bash+python did inline: the cache, the
-// `SPIRA_MEMORIES_CMD` test seam, and the real `bdq memories --json` read.
+// `SPIRA_MEMORIES_CMD` test seam, and the content door's `memories --json` read.
 // =========================================================================================
 
 fn cmd_render_memories(home: &str, rest: &[String]) -> i32 {
@@ -1276,37 +1142,13 @@ fn fetch_memories_json() -> String {
                 .unwrap_or_default();
         }
     }
-    match spira_store::lc_call::LcClient::configured() {
-        Ok(lc) => memories_through(&lc),
+    match configured_book() {
+        Ok(book) => book.memories_text().unwrap_or_default(),
         Err(e) => {
-            eprintln!("rule: {e}");
+            eprintln!("{e}");
             String::new()
         }
     }
-}
-
-/// The statute book as one `content memories --json` request; any failure is empty.
-fn memories_through(lc: &spira_store::lc_call::LcClient) -> String {
-    match lc.call(&["content", "memories", "--json"]) {
-        Ok(r) if r.code == 0 => json_only(&r.out).trim_end_matches('\n').to_string(),
-        _ => String::new(),
-    }
-}
-
-/// `json_only`: keep the first line (and everything after) that starts, at column 1, with
-/// `[` or `{` — drops a warning banner `bd --json` printed on stdout first; no match at all
-/// is empty. Mirrors `bead::bdq::json_only` (not depended on: one small stdin filter is not
-/// worth a crate dependency here).
-fn json_only(input: &str) -> &str {
-    let mut offset = 0usize;
-    for line in input.split_inclusive('\n') {
-        let body = line.strip_suffix('\n').unwrap_or(line);
-        if body.starts_with('[') || body.starts_with('{') {
-            return &input[offset..];
-        }
-        offset += line.len();
-    }
-    ""
 }
 
 fn cmd_system_prompt_split(rest: &[String]) -> i32 {
@@ -1330,26 +1172,6 @@ fn cmd_system_prompt_split(rest: &[String]) -> i32 {
 #[cfg(test)]
 mod statute_dir_tests {
     use super::*;
-
-    struct Answers(std::sync::Mutex<Vec<Vec<String>>>, i32);
-
-    impl spira_store::lc_call::Transport for Answers {
-        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
-            self.0.lock().unwrap().push(argv.to_vec());
-            Ok(spira_store::lc_call::Reply { code: self.1, out: "warning\n{\"law-a\":\"x\"}\n".into(), err: String::new(), read_ended: false })
-        }
-    }
-
-    #[test_id(tgo5rt9)]
-    #[test]
-    fn the_memories_read_is_a_content_memories_json_request() {
-        let t = std::sync::Arc::new(Answers(Default::default(), 0));
-        let got = memories_through(&spira_store::lc_call::LcClient::over(t.clone(), true));
-        assert_eq!(got, "{\"law-a\":\"x\"}");
-        assert_eq!(*t.0.lock().unwrap(), vec![vec!["content".to_string(), "memories".into(), "--json".into()]]);
-        let failed = memories_through(&spira_store::lc_call::LcClient::over(std::sync::Arc::new(Answers(Default::default(), 3)), true));
-        assert_eq!(failed, "");
-    }
 
     #[test_id(tw9e7zp)]
     #[test]
