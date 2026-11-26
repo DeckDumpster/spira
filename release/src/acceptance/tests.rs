@@ -359,7 +359,8 @@ impl Fake {
                 if let Err(r) = bead::filing::create(&mut argv, &mut body, &filing_policy(), &vars) {
                     return refused(r.text);
                 }
-                let labels = args.iter().position(|a| *a == "--label").map_or("", |i| args[i + 1]);
+                assert!(!args.contains(&"--label"), "the door reads no repo from --label: {}", c.line());
+                let labels = args.iter().position(|a| *a == "--labels").map_or("", |i| args[i + 1]);
                 let probe = labels.starts_with("acceptance,");
                 if labels == "acceptance-seed" && self.seed_create_fails {
                     return refused("cannot tell\n".into());

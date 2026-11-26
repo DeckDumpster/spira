@@ -556,7 +556,8 @@ impl Run<'_> {
     /// File a probe bead labelled for the builder predicate; its id.
     pub(super) fn file_probe(&self, title: &str, description: &str, labels: &Labels) -> (Option<String>, String) {
         let l = format!("acceptance,{},{},repo:{}", labels.plan, labels.scope, self.o.scratch_name());
-        let create = self.content(&["create", "--title", title, "--label", &l, "--type", "task", "--body-file", "-"]).stdin(description);
+        // `--labels`, never `--label`: the door's repo fence and the new row's repo read only the former.
+        let create = self.content(&["create", "--title", title, "--labels", &l, "--type", "task", "--body-file", "-"]).stdin(description);
         let out = self.h.run(&create);
         let Some(id) = extract_bead_id(&out.text) else { return (None, out.text) };
         // `content create` only reports a row it could not write, and a rowless bead is never
@@ -1068,7 +1069,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
     if r.o.a.file_defects && r.fail > 0 {
         let title = format!("acceptance-run {tag}: {} phase(s) failed", r.fail);
         let desc = format!("release acceptance found {} failure(s) against tag {tag}. See the acceptance log for detail.", r.fail);
-        let create = r.content(&["create", "--title", &title, "--label", "defect,discovered-from:sp-ewwwq", "--type", "bug", "--body-file", "-"]).stdin(desc);
+        let create = r.content(&["create", "--title", &title, "--labels", "defect,discovered-from:sp-ewwwq", "--type", "bug", "--body-file", "-"]).stdin(desc);
         let filed = h.run(&create);
         if filed.rc != 0 {
             println!("warning: the defect was not filed (exit {}): {}", filed.rc, tail(&filed.text, 3));
@@ -1193,7 +1194,7 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
         }
         id
     };
-    let create = |title: &str| r.content(&["create", "--title", title, "--label", "acceptance-seed", "--type", "task"]);
+    let create = |title: &str| r.content(&["create", "--title", title, "--labels", "acceptance-seed", "--type", "task"]);
     let open = seed("create the open bead", create("aged-install: open seed bead (pre-upgrade)"));
     let closed = seed("create the closed bead", create("aged-install: closed seed bead (pre-upgrade)"));
     if let Some(id) = &closed {
