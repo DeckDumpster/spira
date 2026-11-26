@@ -21,6 +21,7 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     assert_stubs_log(&f);
     let warm = START + 10 * MINUTE;
     let (mut at_warm, mut at_idle, mut at_commit, mut at_branch, mut at_quiet_a, mut at_quiet_b) = (0, 0, 0, 0, 0, 0);
+    let (mut validated_at_quiet_a, mut validated_at_quiet_b) = (0, 0);
     let (mut programs_at_warm, mut programs_at_idle, mut programs_at_ready, mut idle_passes, mut rows_before_ready) = (0, Vec::new(), Vec::new(), 0, Vec::new());
     let (mut tower_at_warm, mut tower_at_idle, mut tower_at_edit, mut tower_at_boundary, mut level_before) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
     let spec = f.overrides.join("round-vm-spill-ec2-always.override");
@@ -64,9 +65,11 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
         t if t == quiet_a => {
             tower_at_warm = started_by_the_watchtower_checks(&f);
             at_quiet_a = logged(&f).len();
+            validated_at_quiet_a = spira_config::documents_validated();
         }
         t if t == quiet_b => {
             at_quiet_b = logged(&f).len();
+            validated_at_quiet_b = spira_config::documents_validated();
             tower_at_idle = started_by_the_watchtower_checks(&f);
             level_before = (host_level(&f, "certify_par"), host_level(&f, "stale_targets"));
             std::fs::write(&f.watchers, "a\nb\n").unwrap();
@@ -149,6 +152,11 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     let first_read = &all[at_warm..at_idle];
     assert!(first_read.len() == 1 && status_of_local(&first_read[0]), "an idle virtual hour's only git is the drift check's first status read:\n{}", first_read.join("\n"));
     assert_eq!(at_quiet_a, at_quiet_b, "a quiet stretch logged git:\n{}", all[at_quiet_a..at_quiet_b].join("\n"));
+    assert!(validated_at_quiet_a > 0, "no document was ever counted, so the quiet stretch proves nothing");
+    assert!(spira_config::documents_validated() > validated_at_quiet_b, "the rewritten config was not validated again");
+    assert!(started(&f, "gh") > 0, "the new spira/* branch asked no gh stub, so landing may have reached the host's gh");
+    let validated = validated_at_quiet_b - validated_at_quiet_a;
+    assert_eq!(validated, QUIET_STRETCH_CONFIG_VALIDATIONS, "3 quiet virtual minutes validated the unchanged config {validated} times, over the ceiling of {QUIET_STRETCH_CONFIG_VALIDATIONS}");
     assert!(!f.worktrees.parent().unwrap().join("conditions/drift-unreadable-units.count").exists(), "the units half was blind in the fixture");
     assert!(idle_passes >= 5, "the sentinel pass observed {idle_passes} times by the end of the idle hour");
     assert_eq!(programs_at_idle.len(), programs_at_warm, "an idle hour started programs:\n{}", programs_at_idle[programs_at_warm..].join("\n"));

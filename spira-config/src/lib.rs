@@ -34,6 +34,8 @@ pub fn cockpit_view_dir(runtime_dir: &std::path::Path) -> std::path::PathBuf {
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -248,30 +250,66 @@ pub fn load_strict(path: &Path) -> Result<(SpiraToml, Vec<String>), String> {
     Ok((doc, warnings))
 }
 
+static DOCUMENTS_VALIDATED: AtomicUsize = AtomicUsize::new(0);
+
+/// A document's layers as `(path, text)`.
+type Layers = Vec<(String, String)>;
+/// A document that passed validation, with its warnings.
+type Valid = (SpiraToml, Vec<String>);
+
+/// The last valid document, beside the layers it came from.
+static LAST_VALIDATED: Mutex<Option<(Layers, Valid)>> = Mutex::new(None);
+
+/// Config documents this process has run through the schema.
+pub fn documents_validated() -> usize {
+    DOCUMENTS_VALIDATED.load(Ordering::Relaxed)
+}
+
 /// THE ONE SOURCE, LAYERED (per Ryan 2026-10-05): `spec` is one file, or a `:`-separated list.
 /// The first is the complete base; each later file overrides only the keys it declares. Each
 /// layer is parsed once; the layers' tables are unioned key by key (a later layer's leaf
 /// replaces the earlier one, nested tables merge); the result is validated once. Every listed
 /// file must exist. Callers never see layers — they get one [`SpiraToml`].
 fn load_layered(spec: &str) -> Result<(SpiraToml, Vec<String>), String> {
-    let merged = merge_layers(spec)?;
-    validate_value(toml::Value::Table(merged), registry::for_process()?).map_err(|e| format!("{spec}: {e}"))
+    let layers = read_layers(spec)?;
+    // Keyed on the bytes, so a rewrite is always seen; a refusal is never kept. The other input,
+    // the registry, is pinned for the life of the process.
+    let mut last = LAST_VALIDATED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, kept)) = last.as_ref().filter(|(of, _)| *of == layers) {
+        return Ok(kept.clone());
+    }
+    let merged = merge_texts(&layers)?;
+    DOCUMENTS_VALIDATED.fetch_add(1, Ordering::Relaxed);
+    let valid = validate_value(toml::Value::Table(merged), registry::for_process()?).map_err(|e| format!("{spec}: {e}"))?;
+    *last = Some((layers, valid.clone()));
+    Ok(valid)
 }
 
 /// The layers `spec` names, read and merged, and nothing else: no schema, no registry.
 pub(crate) fn merge_layers(spec: &str) -> Result<toml::map::Map<String, toml::Value>, String> {
+    merge_texts(&read_layers(spec)?)
+}
+
+/// Each layer `spec` names, as `(path, text)`.
+fn read_layers(spec: &str) -> Result<Vec<(String, String)>, String> {
+    let layers = spec
+        .split(':')
+        .filter(|p| !p.is_empty())
+        .map(|p| registry::read_counted(Path::new(p)).map(|text| (p.to_string(), text)).map_err(|e| format!("{p}: {e}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    if layers.is_empty() {
+        return Err("no config file named".to_string());
+    }
+    Ok(layers)
+}
+
+fn merge_texts(layers: &[(String, String)]) -> Result<toml::map::Map<String, toml::Value>, String> {
     let mut merged = toml::map::Map::new();
-    let mut any = false;
-    for p in spec.split(':').filter(|p| !p.is_empty()) {
-        any = true;
-        let text = registry::read_counted(Path::new(p)).map_err(|e| format!("{p}: {e}"))?;
+    for (p, text) in layers {
         let toml::Value::Table(layer) = text.parse::<toml::Value>().map_err(|e| format!("{p}: {e}"))? else {
             return Err(format!("{p}: not a TOML table"));
         };
         union_into(&mut merged, layer);
-    }
-    if !any {
-        return Err("no config file named".to_string());
     }
     Ok(merged)
 }

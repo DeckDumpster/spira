@@ -69,6 +69,14 @@ pub fn commit(repo: &Path, msg: &str, at: u64) {
     git(repo, &["commit", "-q", "--allow-empty", "-m", msg], at);
 }
 
+/// A file as new as the index is racily clean: each `git status` rewrites the index, so a held
+/// status is read again until the wall clock moves on.
+fn settle(repo: &Path, files: &[&str]) {
+    for f in files {
+        touch(&repo.join(f), 1);
+    }
+}
+
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
 pub type EnvEdit = fn(&[(&str, Option<&str>)]) -> testkit::EnvGuard;
@@ -91,21 +99,17 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
     std::fs::create_dir_all(images.parent().unwrap()).unwrap();
     std::fs::write(&images, "[]").unwrap();
     let rows = r#"{"rows":[{"bead":"sp-aaaaaa","test":"t","state":"disabled","until":4102444800}]}"#;
+    let stub = bin.join("stub");
+    let graph = graph_root.display();
+    testkit::write_exe(&stub, &format!("#!/bin/sh\nname=${{0##*/}}\necho \"$name $*\" >> {}\ncase $name in\ntest-registry) echo '{rows}';;\npodman) case \"$1\" in info) echo {graph};; *) echo sha;; esac;;\ndate) exec {} \"$@\";;\ntimeout) shift; exec \"$@\";;\ngh) exit 1;;\n*) echo '[]';;\nesac\n", started.display(), real_tool("date").display()));
     for d in [release.join("bin"), release.join("spira"), bin.clone()] {
         std::fs::create_dir_all(&d).unwrap();
         for name in LOGGED_PROGRAMS {
-            let reply = match name {
-                "test-registry" => format!("echo '{rows}'"),
-                "podman" => format!("case \"$1\" in info) echo {};; *) echo sha;; esac", graph_root.display()),
-                "date" | "timeout" => format!("exec {} \"$@\"", real_tool(name).display()),
-                _ => "echo '[]'".to_string(),
-            };
-            testkit::write_exe(d.join(name), &format!("#!/bin/sh\necho \"{name} $*\" >> {}\n{reply}\n", started.display()));
+            std::os::unix::fs::symlink(&stub, d.join(name)).unwrap();
         }
     }
-    for d in [release.join("bin"), bin.clone()] {
-        testkit::write_exe(d.join("timeout"), &format!("#!/bin/sh\necho \"timeout $*\" >> {}\nshift\nexec \"$@\"\n", started.display()));
-    }
+    // The host's own gh would answer by whatever login and network it has; it fails here either way.
+    std::os::unix::fs::symlink(&stub, bin.join("gh")).unwrap();
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
 
     let local = dir.join("local");
@@ -113,6 +117,7 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
     git(&local, &["init", "-q", "-b", "main"], 1);
     std::fs::write(local.join("Cargo.toml"), "[dependencies]\ndumpster-kit = \"1.0\"\n").unwrap();
     std::fs::write(local.join("Cargo.lock"), "[[package]]\nname = \"dumpster-kit\"\nversion = \"1.0.0\"\n").unwrap();
+    settle(&local, &["Cargo.toml", "Cargo.lock"]);
     git(&local, &["add", "."], 1);
     commit(&local, "sp-aaaaaa landed", LANDED_S);
     git(&local, &["branch", "local/main"], 1);
@@ -128,6 +133,7 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
     std::fs::write(wiki.join("page.md"), "page").unwrap();
     std::fs::create_dir_all(wiki.join("wiki/notes")).unwrap();
     std::fs::write(wiki.join(STATUTE_PAGE), "### law-one\n").unwrap();
+    settle(&wiki, &["page.md", STATUTE_PAGE]);
     git(&wiki, &["add", "."], 1);
     commit(&wiki, "page", LANDED_S);
 
@@ -348,6 +354,7 @@ pub fn plan_row(id: &str) -> String {
 
 pub const IDLE_TASK_PROGRAMS: [&str; 5] = ["mail-health.sh", "bash", "bead.sh", "schema.sh", "spira-sendmail"];
 pub const DATE_RUNS_PER_OPEN_EPOCH: usize = 4;
+pub const QUIET_STRETCH_CONFIG_VALIDATIONS: usize = 0;
 pub const ENSURE_UNIT: &str = spira_runtime::tasks::g::cockpit_ensure::UNIT;
 pub const STATUTE_PAGE: &str = "wiki/notes/common-law.md";
 pub const LOGGED_PROGRAMS: [&str; 26] = [
