@@ -363,7 +363,8 @@ mod tests {
     #[test_id(tydpgik)]
     #[test]
     fn a_refused_remember_is_judged_by_reading_the_book_back() {
-        let cases: [(&[(i32, &str)], bool, &str); 3] = [
+        type Case = (&'static [(i32, &'static str)], bool, &'static str);
+        let cases: [Case; 3] = [
             (&[(1, ""), (0, "{}"), (1, "refused"), (0, "{\"law-a\":\"t x\"}")], true, "IS in force"),
             (&[(1, ""), (0, "{}"), (1, "refused"), (0, "{}")], false, "nothing written"),
             (&[(1, ""), (0, "{}"), (1, "refused")], false, "cannot be read back"),
