@@ -1,5 +1,5 @@
     use super::*;
-    use std::io::Write;
+    use std::io::{BufRead, BufReader, Write};
 
     #[test_id(ttb7fhc)]
     #[test]
@@ -31,10 +31,7 @@
     #[test_id(tzihn38)]
     #[test]
     fn expiry_kills_the_process_group() {
-        let out = bounded_for("sh", "2").args(["-c", "sleep 30 & echo $!; wait"]).output().unwrap();
-        assert_eq!(out.status.code(), Some(124));
-        let pid = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        assert!(!pid.is_empty(), "the child never printed the backgrounded pid before the deadline");
+        let pid = expire_when_ready("sleep 300 & echo $!; wait", false);
         let gone = (0..3000).any(|_| {
             let alive = std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC))
                 .map(|s| !s.rsplit(") ").next().unwrap_or("").starts_with('Z'))
@@ -95,17 +92,24 @@
         std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).map(|s| !s.rsplit(") ").next().unwrap_or("").starts_with('Z')).unwrap_or(false)
     }
 
+    /// Runs `script`, waits for the pid it prints once its processes are in place, then expires it.
+    fn expire_when_ready(script: &str, tree: bool) -> String {
+        let mut child = bounded_for("sh", "0").args(["-c", script]).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+        // One line only: the sleepers hold the pipe open, so reading to EOF would wait for them.
+        // Each sleeps 300 s to outlast the 30 s poll caps, so only a kill can end it in time.
+        let mut line = String::new();
+        BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+        let pid = line.trim().to_string();
+        assert!(!pid.is_empty(), "the child exited without printing its readiness pid");
+        expire(child.id() as libc::pid_t, tree);
+        assert_eq!(child.wait().unwrap().code(), Some(137));
+        pid
+    }
+
+    // These tests spawn `sh` because a session and group kill is only provable on real processes
+    // (law-a-unit-test-calls-no-binary's written exception).
     fn setsid_grandchild(kill_tree: bool) -> (String, bool) {
-        let tmp = testkit::TempDir::new("bounded-tree");
-        let dir = tmp.path().to_path_buf();
-        let script = format!("setsid sh -c 'echo $$ > {d}/gc; exec sleep 30' & sleep 30", d = dir.display());
-        let mut b = bounded_for("sh", "2");
-        b.args(["-c", &script]).stdout(Stdio::null()).stderr(Stdio::null());
-        if kill_tree {
-            b.kill_tree();
-        }
-        assert_eq!(b.status().unwrap().code(), Some(124));
-        let pid = std::fs::read_to_string(dir.join("gc")).unwrap().trim().to_string();
+        let pid = expire_when_ready("setsid sh -c 'echo $$; exec sleep 300' & sleep 300", kill_tree);
         let gone = if kill_tree {
             (0..3000).any(|_| {
                 let a = alive(&pid);
