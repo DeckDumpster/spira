@@ -6842,7 +6842,7 @@ fn published_red_fake() -> Fake {
 /// The next `n` messages, by topic.
 #[cfg(feature = "integration")]
 fn delivered(sub: &mut testkit::broker::Subscriber, n: usize) -> std::collections::BTreeMap<String, serde_json::Value> {
-    (0..n).map(|_| sub.next()).map(|m| (m.topic, serde_json::from_slice(&m.payload).unwrap())).collect()
+    (0..n).map(|_| sub.recv()).map(|m| (m.topic, serde_json::from_slice(&m.payload).unwrap())).collect()
 }
 
 #[cfg(feature = "integration")]

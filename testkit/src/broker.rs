@@ -84,7 +84,7 @@ impl Subscriber {
     }
 
     /// The next message; panics when none arrives.
-    pub fn next(&mut self) -> Delivered {
+    pub fn recv(&mut self) -> Delivered {
         use rumqttc::{Event, Packet};
         loop {
             match self.connection.recv_timeout(FAILSAFE) {

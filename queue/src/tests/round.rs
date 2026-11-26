@@ -217,7 +217,7 @@ fn bus_on(socket: &std::path::Path) -> crate::round_bus::RoundBus {
 /// The next round message: its topic and event.
 #[cfg(feature = "integration")]
 fn next_round(sub: &mut testkit::broker::Subscriber) -> (String, serde_json::Value) {
-    let m = sub.next();
+    let m = sub.recv();
     (m.topic, serde_json::from_slice(&m.payload).unwrap())
 }
 

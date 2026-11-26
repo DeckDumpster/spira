@@ -96,7 +96,7 @@ mod tests {
         let read = Stopped::parse(&sent.line()).expect("the record line parses");
         assert_eq!(
             gate_payload(&run("died"), Some(&read))["killed_by"],
-            json!({"sig": 15, "by_pid": null, "cmd": "kill -TERM 5", "cgroup": "/u.slice/a.service"})
+            json!({"sig": 15, "by_pid": null, "cmd": "kill -TERM 5", "cgroup": "/u.slice/a.service"}) // not a path: a cgroup name
         );
     }
 
