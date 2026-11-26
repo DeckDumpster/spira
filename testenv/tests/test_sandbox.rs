@@ -315,6 +315,16 @@ fn the_nextest_config_is_the_unit_deadline_defaults() {
     assert_eq!(fs::read_to_string(workspace().join(".config/nextest.toml")).unwrap(), want);
 }
 
+#[test_id(taxk2t5)]
+#[test]
+fn the_rounds_config_carries_the_unit_deadline_defaults() {
+    let text = fs::read_to_string(workspace().join("spira/testlib/complete.toml")).unwrap();
+    let config: toml::Table = text.parse().unwrap();
+    for (key, name) in [("unit_test_deadline_secs", "SPIRA_UNIT_TEST_DEADLINE_SECS"), ("unit_test_deadline_periods", "SPIRA_UNIT_TEST_DEADLINE_PERIODS")] {
+        assert_eq!(config["spira"][key].as_integer(), Some(conf_default(name) as i64), "{key}");
+    }
+}
+
 struct Fixture {
     _tmp: testkit::TempDir,
     root: PathBuf,

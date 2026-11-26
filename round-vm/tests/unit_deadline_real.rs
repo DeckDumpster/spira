@@ -26,7 +26,7 @@ fn a_hung_unit_test_is_terminated_at_its_deadline_and_named_while_the_other_test
     .unwrap();
     std::fs::write(dir.join("rust-toolchain.toml"), include_str!("../../rust-toolchain.toml")).unwrap();
     let script = format!(
-        "export CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\n{}\n{}\n{}\n{}\n{}\nwrite_unit_nextest_config 10 1 \"$PWD/round-nextest.toml\"\nunit_cargo || exit 90\nstart=$(date +%s)\nunit_nextest > run.log 2>&1\nrc=$?\necho rc=$rc secs=$(( $(date +%s) - start )) >&2\nunit_stream 3 progress < run.log\ncat run.log >&2\n",
+        "export CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\n{}\n{}\n{}\n{}\n{}\nwrite_unit_nextest_config 1 2 \"$PWD/round-nextest.toml\"\nunit_cargo || exit 90\nstart=$(date +%s)\nunit_nextest > run.log 2>&1\nrc=$?\necho rc=$rc secs=$(( $(date +%s) - start )) >&2\nunit_stream 3 progress < run.log\ncat run.log >&2\n",
         function("unit_env"),
         function("write_unit_nextest_config"),
         function("unit_cargo"),
