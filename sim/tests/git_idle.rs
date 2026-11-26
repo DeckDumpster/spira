@@ -295,3 +295,104 @@ fn the_livelock_probe_starts_no_bash_over_an_idle_hour_and_still_reports_an_ask_
     })
     .unwrap();
 }
+
+fn age(tree: &std::path::Path, by: std::time::Duration) {
+    let old = std::time::SystemTime::now() - by;
+    let dotgit = std::fs::read_to_string(tree.join(".git")).unwrap();
+    let admin = std::path::PathBuf::from(dotgit.trim().strip_prefix("gitdir:").unwrap().trim());
+    for p in [admin.join("HEAD"), admin.join("index"), tree.to_path_buf()] {
+        std::fs::File::open(&p).unwrap().set_modified(old).unwrap();
+    }
+}
+
+#[test_id(tx3aih0)]
+#[test]
+fn the_stale_reaper_asks_git_only_about_a_tree_its_cheap_rules_leave_undecided() {
+    let f = fixture(testkit::env);
+    spira_config::process::with_fresh(|| {
+    use spira_runtime::tasks::c::hel_reap_stale as task;
+    let names = ["hel.reap_stale.observe"];
+    let root = f.effects.world.run_dir.join("worktree");
+    std::fs::create_dir_all(&root).unwrap();
+    git(&f.local, &["worktree", "add", "-q", "--detach", root.join(".testbatch-1").to_str().unwrap()], 1);
+    for id in ["sp-young01", "sp-done01", "sp-open01", "sp-merged01"] {
+        git(&f.local, &["worktree", "add", "-q", "-b", &format!("spira/{id}"), root.join(id).to_str().unwrap(), "local/main"], 1);
+    }
+    commit(&root.join("sp-open01"), "sp-open01 unmerged work", LANDED_S + 5);
+    for id in ["sp-done01", "sp-open01", "sp-merged01"] {
+        age(&root.join(id), std::time::Duration::from_secs(3 * 3600));
+    }
+    *f.checkout_rows.lock().unwrap() = [("sp-young01", "READY"), ("sp-done01", "LANDED"), ("sp-open01", "READY"), ("sp-merged01", "READY")].map(|(i, s)| (i.to_string(), s.to_string())).to_vec();
+    let marks = [START + 30 * MINUTE, START + 90 * MINUTE, START + 150 * MINUTE];
+    let passes = || f.seen.lock().unwrap().iter().filter(|(n, _)| n == names[0]).count();
+    let mut at = Vec::new();
+    let (mut snapshot, mut decided_snapshot) = (String::new(), String::new());
+    run_hours(&f, &names, (&[], 0), &marks, &mut |t| {
+        at.push((logged(&f).len(), passes()));
+        if t == marks[1] {
+            let lc = spira_store::lc_call::LcClient::configured().unwrap();
+            let real = task::world(&f.effects.world.run_dir, f.release.to_str().unwrap(), &lc).unwrap();
+            snapshot = task::observe(&real, &lc, &f.proc_root).unwrap();
+            let after_first = logged(&f).len();
+            for id in ["sp-open01", "sp-merged01"] {
+                git(&f.local, &["worktree", "remove", "--force", root.join(id).to_str().unwrap()], 1);
+            }
+            let detached = root.join("sp-detach01");
+            git(&f.local, &["worktree", "add", "-q", "--detach", detached.to_str().unwrap(), "local/main"], 1);
+            age(&detached, std::time::Duration::from_secs(3 * 3600));
+            f.checkout_rows.lock().unwrap().push(("sp-detach01".into(), "READY".into()));
+            decided_snapshot = task::observe(&real, &lc, &f.proc_root).unwrap();
+            at.push((after_first, logged(&f).len()));
+        }
+    });
+    let all = logged(&f);
+    let (first_at, second_at, direct, third_at) = (at[0], at[1], at[2], at[3]);
+    assert_eq!((first_at.1, second_at.1, third_at.1), (1, 2, 3), "one pass ends at each mark: {at:?}");
+    let first = &all[..first_at.0];
+    let second = &all[first_at.0..second_at.0];
+    let variant = &all[direct.1..third_at.0];
+    let report = |lines: &[String]| format!("{}\n{}", argv_counts(lines), lines.join("\n"));
+    assert!(!first.iter().any(|l| l.contains("merge-base")), "the pass asked merge-base: {}", report(first));
+    assert_eq!(second.len(), first.len(), "a pass with nothing moved starts as many git processes as the first:\n{}\n---\n{}", report(first), report(second));
+    let landrefs = ["local/main", "main"];
+    let local = f.local.display().to_string();
+    let list = |repo: &str| format!("-C {repo} worktree list --porcelain");
+    let merge_read = |base: &str| format!("-C {local} for-each-ref --merged={base} --format=%(refname:short) refs/heads");
+    assert!(first.iter().any(|l| l.ends_with(&merge_read("local/main"))), "an undecided tree is read: {}", report(first));
+    for b in landrefs {
+        assert!(first.iter().filter(|l| l.ends_with(&merge_read(b))).count() <= 1, "{b} is read once: {}", report(first));
+    }
+    let repos = [local.clone(), f.pr.display().to_string()];
+    assert!(first.iter().all(|l| repos.iter().any(|r| l.ends_with(&list(r))) || landrefs.iter().any(|b| l.ends_with(&merge_read(b)))), "{}", report(first));
+    assert_eq!(variant.len(), repos.len(), "with no undecided tree: {}", report(variant));
+    for r in &repos {
+        for lines in [first, variant] {
+            assert_eq!(lines.iter().filter(|l| l.ends_with(&list(r))).count(), 1, "one worktree list of {r}: {}", report(lines));
+        }
+    }
+
+    let snap: task::Snapshot = serde_json::from_str(&snapshot).unwrap();
+    let tree = |id: &str| snap.repos.iter().flat_map(|r| &r.worktrees).find(|t| t.id == id).unwrap_or_else(|| panic!("{id} not scanned: {snapshot}"));
+    assert_eq!(tree("sp-merged01").merged_into.as_deref(), Some("local/main"));
+    assert_eq!(tree("sp-open01").merged_into, None);
+    assert_eq!(tree("sp-done01").bead_state.as_deref(), Some("LANDED"));
+    let resolved = |json: &str| -> std::collections::BTreeMap<String, (usize, Vec<String>)> {
+        serde_json::from_str::<task::Snapshot>(json).unwrap().repos.into_iter().map(|r| (r.name, (r.worktrees.len(), r.landrefs))).collect()
+    };
+    let refs: Vec<String> = landrefs.map(String::from).to_vec();
+    assert_eq!(resolved(&snapshot)["spira"], (4, refs));
+    assert_eq!(resolved(&snapshot)["prrepo"], (0, vec![]), "a repository with no tree resolves no land ref");
+    assert_eq!(resolved(&decided_snapshot)["spira"], (3, vec![]), "nor does one whose trees are decided, a detached one included");
+    use spira_runtime::tasks::b::kit::{testing, Input};
+    let handler = testing::handler::<task::HelReapStale>(&[(task::CADENCE_KEY, "3600"), (task::IDLE_HOURS_KEY, "48")]);
+    let (_, acts) = task::decide(&handler.cfg, &task::Carry { phase: task::Phase::Observing }, &Input::Observed(snap), START).unwrap();
+    let mut destroyed: Vec<(String, String)> = acts.iter().map(|a| {
+        assert_eq!(a.name, task::DESTROY_WORKTREE);
+        let d: task::Destroy = serde_json::from_str(&a.input).unwrap();
+        (d.id, d.why)
+    }).collect();
+    destroyed.sort();
+    assert_eq!(destroyed, [("sp-done01".to_string(), "reaper: bead is LANDED".to_string()), ("sp-merged01".to_string(), "reaper: branch is merged into local/main".to_string())]);
+    })
+    .unwrap();
+}

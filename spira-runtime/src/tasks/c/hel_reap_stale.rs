@@ -31,10 +31,15 @@
 //!   reads `LcClient` `list` (S7) and maps a terminal row to finished. bd `closed` is not
 //!   consulted. That is a behaviour change, and T5 must show it (a bd-closed bead with a live row
 //!   is no longer reaped on that ground).
-//! - `merged_into` is the first landref of which the branch is an ancestor (`stale.rs:113`,
-//!   `git.rs:38`).
+//! - `merged_into` is the first landref, in order, whose merged branches hold the tree's branch.
+//!   Git is asked only for an **undecided** tree (on a branch, no live cwd, a state that is not finished, idle
+//!   for at least `MERGED_GRACE_SECS`), because decide reads it for no other: one
+//!   `for-each-ref --merged` per landref (`Git::branches_merged_into`) per repository that has an
+//!   undecided tree. Every other tree carries null. The landrefs are
+//!   resolved only for such a repository; otherwise `landrefs` is empty.
 //! - `idle_secs` is the newest mtime of the tree directory and of the admin dir's `HEAD` and
-//!   `index` (`stale.rs:52-66`).
+//!   `index` (`stale.rs:52-66`). It costs no git, and with `bead_state` it is read before
+//!   `merged_into`, to decide whether git is asked at all.
 //!
 //! ## Decide
 //!
@@ -241,7 +246,8 @@ pub fn world(run: &std::path::Path, release: &str, lc: &spira_store::lc_call::Lc
 }
 
 /// The runner of [`OBSERVE`]: `hel::stale::scan` in-process, with each tree's lifecycle row
-/// (the held projection's rows) as its state, and the world's halt stamp.
+/// (the held projection's rows) as its state, and the world's halt stamp. Git is asked whether
+/// a branch is merged only for an undecided tree, with one merged read per land ref.
 pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, proc_root: &std::path::Path) -> Result<String, String> {
     let run = real.run();
     if run.join("world.halted").exists() {
