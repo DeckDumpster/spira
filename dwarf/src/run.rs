@@ -19,7 +19,7 @@ use crate::ports::{s, Bd, Env, Exec, Git, Seam};
 use crate::restrict;
 use crate::seam::Snapshot;
 use crate::session::{self, Beat, Heartbeat, Launcher, SessionSpec, Stop};
-use crate::session_feed::SessionFeed;
+use crate::session_feed::{Renewal, SessionFeed};
 use crate::stack;
 use crate::trace;
 use crate::util::{self, Out, Sink};
@@ -1580,7 +1580,8 @@ impl<'a> Run<'a> {
             }
             return Err(Abort::Die(format!("{}: {bead}: {why}", self.f())));
         }
-        let sessions = self.s.feed.as_ref().and_then(|_| self.builder_claims());
+        // The row's builder claim count numbers this session among the bead's.
+        let sessions = self.s.feed.as_ref().and_then(|_| self.lc_bead(&bead)?.builder_claims);
         let launched = self.now();
         if let Some(feed) = &self.s.feed {
             feed.started(launched, sessions);
@@ -1749,14 +1750,6 @@ impl<'a> Run<'a> {
         }
     }
 
-    /// The row's builder claim count, which numbers this session among the bead's.
-    fn builder_claims(&self) -> Option<u32> {
-        let o = self.d.exec.exec("spira-lc", &s(&["show", &self.s.bead]), None, None); // BDQ_READ_CONSIDERED="the spira-lc lifecycle door, not a bd read"
-        let row: Option<serde_json::Value> = o.success().then(|| serde_json::from_str(o.stdout.trim()).ok()).flatten();
-        let claims = &row.as_ref()?["bead"]["builder_claims"];
-        claims.as_u64().or_else(|| claims.as_str()?.trim().parse().ok()).and_then(|n| u32::try_from(n).ok())
-    }
-
     fn start_heartbeat<'s>(&self, sc: &'s std::thread::Scope<'s, '_>)
     where
         'a: 's,
@@ -1870,10 +1863,13 @@ impl Beat for RealBeat<'_> {
         let row = claim::ask_row(self.exec, &self.bead, 1, Duration::ZERO, &|_| {}).ok().flatten();
         decide::sent_back(row.as_ref(), refused)
     }
-    fn renewal_refused(&self) -> bool {
+    fn renewal_outcome(&self) -> Renewal {
         // 1: the row is not this holder's WORKING row. 3: the machine refused the event.
-        // 2 is "cannot tell", which says nothing about the row.
-        matches!(*self.renew_rc.lock().unwrap_or_else(|e| e.into_inner()), 1 | claim::LC_REFUSED)
+        match *self.renew_rc.lock().unwrap_or_else(|e| e.into_inner()) {
+            claim::LC_APPLIED => Renewal::Applied,
+            1 | claim::LC_REFUSED => Renewal::Refused,
+            _ => Renewal::Unjudged,
+        }
     }
     fn feed(&self) -> Option<&SessionFeed> {
         self.feed.as_deref()

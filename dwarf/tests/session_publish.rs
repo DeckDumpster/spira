@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -19,9 +19,8 @@ use dwarf::run::{Deps, Mode, Run, State};
 use dwarf::seam::Snapshot;
 use dwarf::session::{Launcher, SessionSpec, Stop};
 use dwarf::util::{Out, Sink};
-use rumqttc::{Client, Connection, Event, MqttOptions, Packet, QoS, Transport};
 use serde_json::{json, Value};
-use testkit::broker::Broker;
+use testkit::broker::{Broker, Subscriber};
 
 /// Bounds each wait on the broker or the heartbeat so a broken one fails instead of hanging.
 const FAILSAFE: Duration = Duration::from_secs(30);
@@ -29,37 +28,13 @@ const NOW: i64 = 1_800_000_000;
 const SESSION_RC: i32 = 7;
 const STATE: &str = "session/sp-x/state";
 
-struct Subscriber {
-    _client: Client,
-    connection: Connection,
+fn next(s: &mut Subscriber) -> Value {
+    serde_json::from_slice(&s.receive().payload).unwrap()
 }
 
-impl Subscriber {
-    fn of(socket: &Path, id: &str) -> Subscriber {
-        let mut options = MqttOptions::new(id, socket.to_str().unwrap(), 0);
-        options.set_transport(Transport::Unix);
-        options.set_keep_alive(Duration::ZERO);
-        let (client, mut connection) = Client::new(options, 32);
-        client.subscribe(STATE, QoS::AtLeastOnce).unwrap();
-        loop {
-            match connection.recv_timeout(FAILSAFE) {
-                Ok(Ok(Event::Incoming(Packet::SubAck(_)))) => break,
-                Ok(Ok(_)) => {}
-                other => panic!("never subscribed: {other:?}"),
-            }
-        }
-        Subscriber { _client: client, connection }
-    }
-
-    fn next(&mut self) -> Value {
-        loop {
-            match self.connection.recv_timeout(FAILSAFE) {
-                Ok(Ok(Event::Incoming(Packet::Publish(p)))) => return serde_json::from_slice(&p.payload).unwrap(),
-                Ok(Ok(_)) => {}
-                other => panic!("no message arrived: {other:?}"),
-            }
-        }
-    }
+/// The retained state a subscriber arriving now is handed.
+fn retained_state(socket: &Path) -> Value {
+    next(&mut Subscriber::subscribe(socket, &[STATE]))
 }
 
 /// The lifecycle store, the claim, and the seam of one directed claim of sp-x.
@@ -68,13 +43,19 @@ struct Store {
     holder: Mutex<String>,
     calls: Mutex<Vec<String>>,
     renewed: Condvar,
+    /// What `spira-lc renew` exits with.
+    renew_rc: AtomicI32,
 }
 
 impl Store {
-    fn await_renewal(&self) {
+    /// Waits for `n` renewals after this call. A beat reads the clock before it renews, so
+    /// after two a whole beat has run on what the test last set.
+    fn await_renewals(&self, n: usize) {
+        let count = |c: &[String]| c.iter().filter(|v| *v == "renew").count();
         let calls = self.calls.lock().unwrap();
-        let (_calls, waited) = self.renewed.wait_timeout_while(calls, FAILSAFE, |c| !c.iter().any(|v| v == "renew")).unwrap();
-        assert!(!waited.timed_out(), "the heartbeat never renewed");
+        let want = count(&calls) + n;
+        let (_calls, waited) = self.renewed.wait_timeout_while(calls, FAILSAFE, |c| count(c) < want).unwrap();
+        assert!(!waited.timed_out(), "the heartbeat stopped renewing");
     }
 
     /// Each lifecycle call's verb, a run of the same verb counted once.
@@ -96,6 +77,7 @@ impl Exec for Store {
             ("spira-claim", "stack") => Out::ok(r#"{"claimable":true,"stack":{},"stack_depth":0,"stack_max_depth":4}"#),
             ("spira-claim", "rejections") => Out::ok(r#"{"rejections":0,"stronger_rejections":0,"history":[]}"#),
             ("spira-lc", "list") => Out::ok("[]"),
+            ("spira-lc", "renew") => Out { code: self.renew_rc.load(Ordering::SeqCst), stdout: String::new(), stderr: String::new() },
             ("spira-lc", "show") => Out::ok(json!({"bead": {"bead_id": "sp-x", "state": "WORKING", "holder": *self.holder.lock().unwrap(), "holds": [], "builder_claims": "4"}}).to_string()),
             _ => Out::ok(""),
         }
@@ -162,7 +144,7 @@ fn git(dir: &Path, args: &[&str]) {
 
 /// `Run::main` over a fresh run directory and repository, publishing to `socket`;
 /// `during` is the model session.
-fn run(socket: &Path, store: &Store, during: impl Fn() + Send + Sync) -> Outcome {
+fn run(socket: &Path, store: &Store, clock: &AtomicI64, during: impl Fn() + Send + Sync) -> Outcome {
     let dir = testkit::TempDir::new("dwarf-pub");
     let run_dir = dir.join("run");
     let repo = dir.join("repo");
@@ -196,6 +178,7 @@ fn run(socket: &Path, store: &Store, during: impl Fn() + Send + Sync) -> Outcome
         ("SPIRA_METRICS_ENDPOINT", String::new()),
         ("SPIRA_SCOPE_LABEL", String::new()),
         ("SPIRA_ADMIT_JITTER_SECS", "0".to_string()),
+        ("SPIRA_THRASH_MINUTES", "100000".to_string()),
     ] {
         vars.insert(k.to_string(), v);
     }
@@ -206,20 +189,23 @@ fn run(socket: &Path, store: &Store, during: impl Fn() + Send + Sync) -> Outcome
     let mut rune = Rune::from_vars("builder", &BTreeMap::from([("RUNE_LABELS".to_string(), "plan".to_string())]));
     rune.static_prompt = true;
     rune.heartbeat_seconds = 1;
+    // Longer than any jump of the clock, so the still trace never lapses the lease.
+    rune.lease_minutes = Some(600);
     let lease = run_dir.join("dwarf/sp-x.lease");
     let lease_written = AtomicBool::new(false);
     let session = Session {
         during: Box::new(|| {
-            store.await_renewal();
-            lease_written.store(lease.is_file(), std::sync::atomic::Ordering::SeqCst);
+            store.await_renewals(1);
+            lease_written.store(lease.is_file(), Ordering::SeqCst);
             during();
         }),
         panicked: Mutex::new(None),
     };
     let sink = Lines::default();
     let git_port = RealGit { env: &env };
+    let now = || clock.load(Ordering::SeqCst);
     let mut r = Run {
-        d: Deps { bd: &Beads, seam: store, git: &git_port, exec: store, launcher: &session, sink: &sink, env: &env, clock: &|| NOW, sleep: &|_| {} },
+        d: Deps { bd: &Beads, seam: store, git: &git_port, exec: store, launcher: &session, sink: &sink, env: &env, clock: &now, sleep: &|_| {} },
         ledger: Ledger { path: run_dir.join("dwarf-ledger.log"), dry: false },
         conf,
         rune,
@@ -243,7 +229,7 @@ fn run(socket: &Path, store: &Store, during: impl Fn() + Send + Sync) -> Outcome
     }
     let session_rc = r.s.session_rc;
     let log = sink.0.lock().unwrap().join("\n");
-    Outcome { exit, session_rc, verbs: store.verbs(), lease_written: lease_written.load(std::sync::atomic::Ordering::SeqCst), log }
+    Outcome { exit, session_rc, verbs: store.verbs(), lease_written: lease_written.load(Ordering::SeqCst), log }
 }
 
 /// A run moves this process into its worktree, so one at a time.
@@ -254,21 +240,63 @@ static ONE_RUN: Mutex<()> = Mutex::new(());
 fn a_run_publishes_its_session_started_then_ended_and_runs_the_same_with_the_broker_stopped() {
     let _one = ONE_RUN.lock().unwrap_or_else(|e| e.into_inner());
     let mut broker = Broker::up();
-    let watching = Mutex::new(Subscriber::of(broker.socket(), "watching"));
+    let watching = Mutex::new(Subscriber::watch(broker.socket(), STATE));
     let seen = Mutex::new(Vec::new());
-    let up = run(broker.socket(), &Store::default(), || seen.lock().unwrap().push(watching.lock().unwrap().next()));
+    let clock = AtomicI64::new(NOW);
+    let up = run(broker.socket(), &Store::default(), &clock, || seen.lock().unwrap().push(next(&mut watching.lock().unwrap())));
     let mut watching = watching.into_inner().unwrap();
     let started = seen.lock().unwrap().pop().unwrap_or_else(|| panic!("no session ran:\n{}", up.log));
     assert_eq!(started, json!({"state": "started", "bead": "sp-x", "rune": "builder", "started_at": NOW, "sessions": 4}), "{}", up.log);
-    assert_eq!(watching.next(), json!({"state": "ended", "rc": SESSION_RC, "wall_s": 0, "at": NOW}));
-    assert_eq!(Subscriber::of(broker.socket(), "late").next()["state"], "ended", "the last state is retained");
+    assert_eq!(next(&mut watching), json!({"state": "ended", "rc": SESSION_RC, "wall_s": 0, "at": NOW}));
+    assert_eq!(retained_state(broker.socket())["state"], "ended", "the last state is retained");
     assert_eq!(up.session_rc, SESSION_RC, "positive control: the session ran\n{}", up.log);
 
     broker.stop();
-    let down = run(broker.socket(), &Store::default(), || {});
+    let down = run(broker.socket(), &Store::default(), &clock, || {});
     assert!(down.lease_written && up.lease_written, "{}", down.log);
     assert_eq!((down.exit, down.session_rc, &down.verbs), (up.exit, up.session_rc, &up.verbs), "{}", down.log);
     assert!(down.verbs.iter().any(|v| v == "renew"), "{:?}", down.verbs);
+}
+
+#[test_id(tk4kxi3)]
+#[test]
+fn a_runs_heartbeat_publishes_its_age_and_lingering_the_configured_time_after_the_first_refused_renewal() {
+    let _one = ONE_RUN.lock().unwrap_or_else(|e| e.into_inner());
+    let broker = Broker::up();
+    let socket = broker.socket().to_path_buf();
+    let (store, clock) = (Store::default(), AtomicI64::new(NOW));
+    let at = |secs: i64| clock.store(NOW + secs, Ordering::SeqCst);
+    let renewals_exit = |rc: i32| {
+        store.renew_rc.store(rc, Ordering::SeqCst);
+        store.await_renewals(2);
+    };
+    // The fixture configures the linger time as 301, not the shipped 300.
+    let linger = 301;
+    let seen = Mutex::new(Vec::new());
+    let outcome = run(&socket, &store, &clock, || {
+        let mut age = Subscriber::watch(&socket, "session/sp-x/age/15m");
+        at(900);
+        let aged = next(&mut age);
+        // Cannot tell is not a refusal; the item leaves WORKING at the refusal that follows.
+        renewals_exit(2);
+        renewals_exit(1);
+        // An unsteady store afterwards does not restart the wait.
+        renewals_exit(2);
+        at(1000);
+        store.await_renewals(2);
+        renewals_exit(3);
+        at(900 + linger - 1);
+        store.await_renewals(2);
+        let before = retained_state(&socket);
+        at(900 + linger);
+        store.await_renewals(2);
+        *seen.lock().unwrap() = vec![aged, before, retained_state(&socket)];
+    });
+    let seen = std::mem::take(&mut *seen.lock().unwrap());
+    assert_eq!(seen.len(), 3, "{}", outcome.log);
+    assert_eq!(seen[0], json!({"at": NOW + 900, "sessions": 4}));
+    assert_eq!(seen[1]["state"], "started", "not before: {}", seen[1]);
+    assert_eq!(seen[2], json!({"state": "lingering", "at": NOW + 900 + linger, "sessions": 4}));
 }
 
 #[test_id(twonu66)]
@@ -278,10 +306,10 @@ fn a_broker_restarted_during_a_session_is_told_the_session_state_again() {
     let broker = Mutex::new(Broker::up());
     let socket = broker.lock().unwrap().socket().to_path_buf();
     let told = Mutex::new(None);
-    let outcome = run(&socket, &Store::default(), || {
-        let before = Subscriber::of(&socket, "before").next();
+    let outcome = run(&socket, &Store::default(), &AtomicI64::new(NOW), || {
+        let before = retained_state(&socket);
         broker.lock().unwrap().restart();
-        let after = Subscriber::of(&socket, "after").next();
+        let after = retained_state(&socket);
         *told.lock().unwrap() = Some((before, after));
     });
     let (before, after) = told.lock().unwrap().take().unwrap_or_else(|| panic!("no session ran:\n{}", outcome.log));

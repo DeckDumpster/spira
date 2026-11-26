@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::decide::{hb_tick, HbTick};
-use crate::session_feed::SessionFeed;
+use crate::session_feed::{Renewal, SessionFeed};
 use crate::util;
 
 /// Shared between the main thread, the heartbeat and the signal watcher.
@@ -212,10 +212,9 @@ pub trait Beat: Send + Sync {
     /// The row's state and reason when the bead is claimable again (READY or REWORK) after
     /// the last renewal; `None` while this session still holds it or the row cannot be read.
     fn sent_back(&self) -> Option<String>;
-    /// Whether the machine refused the last renewal: the row is no longer this holder's
-    /// WORKING row. A renewal that could not be judged is not a refusal.
-    fn renewal_refused(&self) -> bool {
-        false
+    /// What the last renewal said about the row.
+    fn renewal_outcome(&self) -> Renewal {
+        Renewal::Unjudged
     }
     /// The session's published facts, evaluated on each beat.
     fn feed(&self) -> Option<&SessionFeed> {
@@ -417,7 +416,7 @@ impl Heartbeat {
                 return None;
             }
             if let Some(feed) = b.feed() {
-                feed.renewal(now, b.renewal_refused());
+                feed.renewal(now, b.renewal_outcome());
             }
         }
     }
@@ -463,8 +462,13 @@ mod tests {
         fn feed(&self) -> Option<&SessionFeed> {
             self.feed.as_deref()
         }
-        fn renewal_refused(&self) -> bool {
-            self.refused_at != 0 && *self.beats.lock().unwrap() as usize >= self.refused_at
+        fn renewal_outcome(&self) -> Renewal {
+            match *self.beats.lock().unwrap() as usize {
+                n if self.refused_at == 0 || n < self.refused_at => Renewal::Applied,
+                // Every other refused beat cannot be judged: an unsteady store.
+                n if (n - self.refused_at) % 2 == 1 => Renewal::Unjudged,
+                _ => Renewal::Refused,
+            }
         }
         fn descendant_ticks(&self, agent: i32) -> Option<u64> {
             if self.real_ticks {

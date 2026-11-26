@@ -37,4 +37,4 @@ toml = "0.8"
 
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
-testkit = { path = "../testkit" }
+testkit = { path = "../testkit", features = ["subscriber"] }

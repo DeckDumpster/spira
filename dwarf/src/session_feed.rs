@@ -7,6 +7,16 @@ use serde_json::{json, Value};
 
 use crate::decide::{session_marks, Mark};
 
+/// What one lease renewal said about the row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Renewal {
+    Applied,
+    /// The row is no longer this holder's WORKING row.
+    Refused,
+    /// The machine could not tell; what was last known stands.
+    Unjudged,
+}
+
 /// Where the feed publishes. A failure is the outlet's to log.
 pub trait Outlet: Send + Sync {
     fn publish(&self, topic: &str, payload: &Value);
@@ -118,10 +128,15 @@ impl SessionFeed {
         self.state(json!({"state": "ended", "rc": rc, "wall_s": wall_s, "at": at}));
     }
 
-    /// The outcome of this beat's lease renewal: refused since `now` unless already refused.
-    pub fn renewal(&self, now: i64, refused: bool) {
+    /// The outcome of this beat's lease renewal. The item left WORKING at the first refusal
+    /// since a renewal last applied.
+    pub fn renewal(&self, now: i64, outcome: Renewal) {
         let mut r = self.retained.lock();
-        r.left_working_at = if refused { r.left_working_at.or(Some(now)) } else { None };
+        match outcome {
+            Renewal::Applied => r.left_working_at = None,
+            Renewal::Refused => r.left_working_at = r.left_working_at.or(Some(now)),
+            Renewal::Unjudged => {}
+        }
     }
 
     /// Publishes every mark the running session has reached by `now`.

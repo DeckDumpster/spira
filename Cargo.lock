@@ -489,7 +489,6 @@ dependencies = [
  "libc",
  "lifecycle",
  "regex",
- "rumqttc",
  "runtime",
  "serde",
  "serde_json",

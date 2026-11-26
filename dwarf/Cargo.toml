@@ -32,10 +32,9 @@ sha2 = "0.10"
 
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
-testkit = { path = "../testkit" }
+testkit = { path = "../testkit", features = ["subscriber"] }
 lifecycle = { path = "../lifecycle" }
 spira-claim = { path = "../spira-claim" }
-rumqttc = { version = "0.25.1", default-features = false }
 
 [[test]]
 name = "session_publish"
