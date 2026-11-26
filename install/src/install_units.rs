@@ -91,6 +91,26 @@ pub fn execstart_target_ok(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Why a running service whose `ExecStart=` program is under `env_bin` has outlived it, or
+/// `None`. spira-env is repointed under an unchanged unit text, and activation judges only
+/// programs under the releases root.
+pub fn program_outlived(text: &str, env_bin: &Path, exe: Option<&Path>) -> Option<String> {
+    let line = release::units::exec_lines(text).into_iter().find(|l| l.starts_with("ExecStart="))?;
+    let prog = Path::new(line["ExecStart=".len()..].trim_start_matches(['-', '@', '+', '!', ':']).split_whitespace().next()?);
+    if !prog.starts_with(env_bin) {
+        return None;
+    }
+    let (have, want) = match (fs::read(exe?), fs::read(prog)) {
+        (Ok(have), Ok(want)) => (have, want),
+        _ => return Some(format!("cannot compare its running executable with {}", prog.display())),
+    };
+    // A script's process runs its interpreter, so its bytes never match the script's.
+    if want.starts_with(b"#!") {
+        return None;
+    }
+    (have != want).then(|| format!("its running process's executable is not {}", prog.display()))
+}
+
 /// The manifest rows rendered from [`watchdog_files`] rather than from a template file.
 const WATCHDOG_ROWS: [&str; 2] = ["spira-watchdog.service", "spira-watchdog.timer"];
 
@@ -296,11 +316,15 @@ pub fn run(ctx: &Ctx) -> Report {
         let was_deferred = deferred.contains(u);
         let disabled = enabled_all[u].as_deref() == Some("disabled") && !new_by_inst.contains(u) && !was_deferred && !is_convergence_root(u, &ctx.host.instance);
         // A changed template (spira-watch@.service) counts as a change to every instance.
-        let tmpl_of_u = rendered.iter().find(|(inst, _, _)| inst == u).map(|(_, t, _)| t.clone());
-        let changed = tmpl_of_u.as_deref().map(|t| changed_templates.contains(t)).unwrap_or(false);
-        let action = decide(State { changed, masked: false, suspended, disabled, halted: ctx.world_halted, active: active_all[u] });
+        let row = rendered.iter().find(|(inst, _, _)| inst == u);
+        let changed = row.is_some_and(|(_, t, _)| changed_templates.contains(t));
+        let outlived = row.filter(|_| !changed && active_all[u] && u.ends_with(".service")).and_then(|(_, _, text)| program_outlived(text, Path::new(&ctx.host.env_bin), ctx.systemctl.running_exe(u).as_deref()));
+        let action = decide(State { changed: changed || outlived.is_some(), masked: false, suspended, disabled, halted: ctx.world_halted, active: active_all[u] });
         // A deferred unit someone started by hand reads unchanged and active, and is still not enabled.
         let action = if was_deferred && action == Action::Skip { Action::EnableNow } else { action };
+        if let (Action::Restart, Some(reason)) = (action, &outlived) {
+            println!("restarted {u}: {reason}");
+        }
         let applied = apply(ctx, u, action, &active_all);
         if matches!(action, Action::Enable | Action::Restart | Action::EnableNow) && applied.is_ok() {
             deferred.remove(u);
@@ -711,6 +735,7 @@ mod tests {
     }
     use crate::manifest::{build, Inputs};
     use crate::systemctl::{FakeSystemctl, FakeUnit};
+    use std::os::unix::fs::OpenOptionsExt;
     #[test_id(t0ch9rh)]
     #[test]
     fn the_enable_loop_asks_systemd_about_every_unit_in_two_calls_not_two_per_unit() {
@@ -803,6 +828,79 @@ mod tests {
         assert!(run(&ctx).errors.is_empty());
         assert!(conf(&moved).contains(&format!("listener 0 {}\n", moved.broker_socket)), "a differing file is rewritten: {}", conf(&moved));
         assert_eq!(sc.restarts.borrow().as_slice(), [unit], "a changed config restarts the broker, its unit text unchanged");
+    }
+
+    #[test_id(t80w57c)]
+    #[test]
+    fn an_install_restarts_a_service_whose_spira_env_program_changed_under_it() {
+        let td = tempdir();
+        let tmpl_dir = td.join("templates");
+        let env_bin = td.join("spira-env/bin");
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        fs::create_dir_all(&env_bin).unwrap();
+        fs::copy(spira_config::resolve::checkout_root_for_process().unwrap().join("systemd").join(crate::broker::CONF_FILE), tmpl_dir.join(crate::broker::CONF_FILE)).unwrap();
+        let mut manifest = build(&Inputs { instance: "prod".into(), ..Default::default() }).unwrap();
+        manifest.units.retain(|u| u.name == crate::broker::UNIT);
+        manifest.units.push(crate::manifest::Template { name: "dolt-beads.service".into(), enable: true });
+        let unit = "spira-broker-prod.service";
+        let dolt = env_bin.join("dolt");
+        // Never executed: the mode only satisfies `execstart_target_ok`, so no child need write them.
+        let fixture = |path: &Path, body: &str| {
+            let mut f = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o755).open(path).unwrap();
+            io::Write::write_all(&mut f, body.as_bytes()).unwrap();
+        };
+        fixture(&dolt, "A");
+        fs::write(tmpl_dir.join("dolt-beads.service"), "[Service]\nExecStart=@DOLT@ sql-server\n").unwrap();
+        let h = HostValues { dolt: dolt.display().to_string(), env_bin: env_bin.display().to_string(), run: td.join("run").display().to_string(), broker_socket: td.join("run/s").display().to_string(), ..host() };
+        let no_suspend = |_: &str| false;
+        // Installs a broker unit running `exec`, then leaves it active on a process whose executable is `running`.
+        let installed = |case: &str, exec: &str, running: &str| {
+            fs::write(tmpl_dir.join(crate::broker::UNIT), format!("[Service]\nExecStart={exec} -c x\n")).unwrap();
+            let (sc, unit_dir, exe) = (FakeSystemctl::default(), td.join(case), td.join(format!("{case}.exe")));
+            fs::create_dir_all(&unit_dir).unwrap();
+            fs::write(&exe, running).unwrap();
+            let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+            let r = run(&ctx);
+            assert!(r.errors.is_empty(), "{:?}", r.errors);
+            sc.set(unit, FakeUnit { active: true, enabled: Some("enabled".into()), kind: "notify".into(), file_listed: true });
+            sc.running_exes.borrow_mut().insert(unit.to_string(), exe);
+            (sc, unit_dir)
+        };
+        let rerun = |sc: &FakeSystemctl, unit_dir: &Path| {
+            let r = run(&Ctx { unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false });
+            assert!(r.errors.is_empty(), "{:?}", r.errors);
+            assert!(r.written.is_empty(), "the unit text is unchanged: {:?}", r.written);
+            sc.restarts.borrow().clone()
+        };
+
+        let program = env_bin.join("mosquitto");
+        fixture(&program, "A");
+        let (sc, unit_dir) = installed("env", "@SPIRA_ENV_PATH@/mosquitto", "A");
+        assert_eq!(rerun(&sc, &unit_dir), Vec::<String>::new(), "a matching program leaves the broker running");
+        fs::write(&program, "B").unwrap();
+        assert_eq!(rerun(&sc, &unit_dir), [unit], "a rebuilt spira-env restarts the broker once");
+
+        let (sc, unit_dir) = installed("unreadable", "@SPIRA_ENV_PATH@/mosquitto", "B");
+        sc.running_exes.borrow_mut().insert(unit.to_string(), td.join("gone"));
+        assert_eq!(rerun(&sc, &unit_dir), [unit], "an executable that cannot be compared is not assumed current");
+
+        let outside = td.join("mosquitto");
+        fixture(&outside, "B");
+        let (sc, unit_dir) = installed("outside", &outside.display().to_string(), "A");
+        assert_eq!(rerun(&sc, &unit_dir), Vec::<String>::new(), "a program outside spira-env is not judged here");
+
+        fixture(&program, "#!/bin/sh\n");
+        let (sc, unit_dir) = installed("script", "@SPIRA_ENV_PATH@/mosquitto", "A");
+        assert_eq!(rerun(&sc, &unit_dir), Vec::<String>::new(), "a script's process runs its interpreter");
+
+        let store = "dolt-beads.service";
+        fixture(&program, "A");
+        let (sc, unit_dir) = installed("store", "@SPIRA_ENV_PATH@/mosquitto", "A");
+        sc.set(store, FakeUnit { active: true, enabled: Some("enabled".into()), kind: "notify".into(), file_listed: true });
+        sc.running_exes.borrow_mut().insert(store.to_string(), td.join("dolt.running"));
+        fs::write(td.join("dolt.running"), "old dolt").unwrap();
+        assert_eq!(rerun(&sc, &unit_dir), Vec::<String>::new(), "the store refuses a restart job");
+        assert_eq!(sc.kills.borrow().as_slice(), [store], "an outlived store is killed onto the new dolt");
     }
 
     #[test_id(ttoei3p)]

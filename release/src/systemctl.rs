@@ -111,6 +111,12 @@ pub trait Systemctl {
     }
 }
 
+/// `/proc/<pid>/exe` for the answer to `show -p MainPID --value`; `None` for no main process.
+pub fn main_pid_exe(shown: &str) -> Option<std::path::PathBuf> {
+    let pid: u32 = shown.trim().parse().ok()?;
+    (pid > 0).then(|| std::path::PathBuf::from(format!("{}/{pid}/exe", system_paths::PROC)))
+}
+
 pub struct RealSystemctl {
     pub program: String,
     /// The generic per-call deadline, in `timeout` seconds.
@@ -228,8 +234,7 @@ impl Systemctl for RealSystemctl {
         self.run(&["show", unit, "-p", "RestartUSec", "-p", "TimeoutStartUSec"]).ok().and_then(|t| budget_from_show(&t))
     }
     fn running_exe(&self, unit: &str) -> Option<std::path::PathBuf> {
-        let pid: u32 = self.run(&["show", unit, "-p", "MainPID", "--value"]).ok()?.trim().parse().ok()?;
-        (pid > 0).then(|| std::path::PathBuf::from(format!("{}/{pid}/exe", system_paths::PROC)))
+        main_pid_exe(&self.run(&["show", unit, "-p", "MainPID", "--value"]).ok()?)
     }
     fn executables(&self, unit: &str) -> Vec<std::path::PathBuf> {
         let show = |p: &str| self.run(&["show", unit, "-p", p, "--value"]).ok().map(|t| t.trim().to_string());
@@ -319,4 +324,18 @@ fn cache_servers() -> Vec<u32> {
         .filter(|pid| std::fs::read_to_string(format!("{}/{pid}/comm", system_paths::PROC)).is_ok_and(|c| c.trim() == "sccache"))
         .filter(|pid| std::fs::read(format!("{}/{pid}/environ", system_paths::PROC)).is_ok_and(|env| env.split(|b| *b == 0).any(|kv| kv == b"SCCACHE_START_SERVER=1")))
         .collect()
+}
+
+#[cfg(test)]
+mod main_pid_tests {
+    use super::*;
+
+    #[test_id(tlkj48g)]
+    #[test]
+    fn only_a_unit_with_a_main_process_has_a_running_executable() {
+        assert_eq!(main_pid_exe("42\n"), Some(std::path::Path::new(system_paths::PROC).join("42/exe")));
+        for none in ["0\n", "", "not-a-pid"] {
+            assert_eq!(main_pid_exe(none), None, "{none:?}");
+        }
+    }
 }
