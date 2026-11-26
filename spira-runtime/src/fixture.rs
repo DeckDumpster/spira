@@ -7,8 +7,7 @@ pub fn fixture() -> Settings {
     Settings::from_lookup(&lookup("7")).expect("fixture settings")
 }
 
-/// Resolves this test process's config door over the complete fixture, handed by value and not
-/// through the process environment, once, before anything reads it: a ported row whose `build` pins its keys through
+/// Resolves this test process's config door over the complete fixture, by value, once, before anything reads it: a ported row whose `build` pins its keys through
 /// `spira_config::process::cfg` (family A's `kit::pin`) then builds under `from_lookup` in a
 /// test as it does in the service.
 pub fn fixture_config_door() {
