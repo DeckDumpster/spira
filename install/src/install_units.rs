@@ -738,7 +738,7 @@ mod tests {
 
     #[test_id(ts0atet)]
     #[test]
-    fn both_installers_place_the_broker_config_before_enabling_and_only_a_changed_one_restarts_it() {
+    fn both_installers_place_the_broker_config_enable_the_unit_and_only_a_changed_config_restarts_it() {
         let td = tempdir();
         let tmpl_dir = td.join("templates");
         fs::create_dir_all(&tmpl_dir).unwrap();
