@@ -7,6 +7,7 @@ use std::path::Path;
 
 use spira_store::lc_call::{LcClient, Reply};
 
+use crate::audit::{to_file, Finding};
 use crate::vocab::Entry;
 use crate::{find_duplicate, is_in_force, mirror};
 
@@ -44,13 +45,15 @@ impl Put {
     }
 }
 
-/// Why `enact` wrote nothing before its `remember`.
+/// Why an operation stopped before it had written the book.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Stop {
     /// The caller's gate ended it, with this exit code.
     Gate(i32),
     Unreachable(String),
     Duplicate(String),
+    /// A write the store refused, leaving the book as it was.
+    Refused(String),
 }
 
 /// An `enact` that sent its `remember`: the gate's value, the book as it stood, and the outcome.
@@ -71,6 +74,17 @@ pub struct Renamed {
     /// Each renamed statute: old slug, new slug, whether the old one holds a section.
     pub statute_renames: Vec<(String, String, bool)>,
     pub failed: bool,
+}
+
+/// The mirror in `dir`; only a book never mirrored connects to the store, and that read fills
+/// the mirror.
+pub fn read_mirrored(dir: &Path, connect: impl FnOnce() -> Result<Book, String>) -> Result<Memories, String> {
+    if let Some(book) = mirror::read(dir) {
+        return Ok(book);
+    }
+    let book = connect()?.memories()?;
+    let _ = mirror::sync(dir, &book);
+    Ok(book)
 }
 
 /// `json_only`: keep the first line (and everything after) that starts, at column 1, with
@@ -124,17 +138,6 @@ impl Book {
             .map_err(|e| format!("rule: cannot reach the statute book: {e}"))
     }
 
-    /// The mirror in `dir`; only a book never mirrored is asked of the store, and that read
-    /// fills the mirror.
-    pub fn read(&self, dir: &Path) -> Result<Memories, String> {
-        if let Some(book) = mirror::read(dir) {
-            return Ok(book);
-        }
-        let book = self.memories()?;
-        let _ = mirror::sync(dir, &book);
-        Ok(book)
-    }
-
     pub fn recall(&self, key: &str) -> Option<String> {
         self.content(&["recall", key], None).ok()
     }
@@ -153,6 +156,11 @@ impl Book {
         let out = self.content(&["list", "--brief", "--json", "--limit", "0"], None).map_err(unreadable)?;
         let rows: Vec<serde_json::Value> = serde_json::from_str(json_only(&out)).map_err(|e| unreadable(e.to_string()))?;
         Ok(rows.iter().filter_map(|b| b.get("title").and_then(|t| t.as_str()).map(str::to_string)).collect())
+    }
+
+    /// What `audit --file` files ([`to_file`]); with the open beads unreadable, nothing.
+    pub fn findings_to_file<'a>(&self, findings: &'a [Finding], max: usize) -> Result<(Vec<&'a Finding>, bool), String> {
+        self.open_bead_titles().map(|open| to_file(findings, &open, max))
     }
 
     fn put(&self, key: &str, text: &str) -> Put {
@@ -180,32 +188,58 @@ impl Book {
         Ok(Enacted { gate, before, put })
     }
 
-    /// Writes the retirement `record` (key, body) when there is one, then forgets `key`; a
-    /// refused forget takes the record back out.
-    pub fn retire(&self, key: &str, record: Option<(&str, &str)>) -> Result<(), String> {
-        if let Some((record_key, body)) = record {
-            self.remember(record_key, body).map_err(|e| format!("rule: failed to record the retirement of {key}, nothing forgotten: {e}"))?;
+    /// The book's half of `retire`. `gate` sees the book and decides whether to go on, and on
+    /// what retirement record (none for a merge). The record is written, then `key` forgotten;
+    /// a refused forget takes the record back out. `Ok` carries the book as it stood.
+    pub fn retire<T>(&self, key: &str, gate: impl FnOnce(&Memories) -> ControlFlow<i32, (Option<String>, T)>) -> Result<(Memories, T), Stop> {
+        let before = self.memories().map_err(Stop::Unreachable)?;
+        let (record, gate) = match gate(&before) {
+            ControlFlow::Continue(t) => t,
+            ControlFlow::Break(rc) => return Err(Stop::Gate(rc)),
+        };
+        let record_key = crate::code::retired_key(key);
+        if let Some(body) = &record {
+            self.remember(&record_key, body).map_err(|e| Stop::Refused(format!("rule: failed to record the retirement of {key}, nothing forgotten: {e}")))?;
         }
-        self.forget(key).map_err(|e| {
-            if let Some((record_key, _)) = record {
-                let _ = self.forget(record_key);
+        if let Err(e) = self.forget(key) {
+            if record.is_some() {
+                let _ = self.forget(&record_key);
             }
-            format!("rule: failed to forget {key}: {e}")
-        })
+            return Err(Stop::Refused(format!("rule: failed to forget {key}: {e}")));
+        }
+        Ok((before, gate))
     }
 
-    /// Puts `key` back as it was: the prior text, or no key at all.
-    pub fn restore(&self, key: &str, prior: Option<&str>) -> bool {
-        match prior {
+    /// Runs `publish` after a write of `key`; when it fails, puts `key` back as `before` had
+    /// it. `None` is published; `Some` says whether the restore was accepted.
+    pub fn publish_or_restore(&self, key: &str, before: &Memories, publish: impl FnOnce() -> bool) -> Option<bool> {
+        if publish() {
+            return None;
+        }
+        let restored = match before.get(key).and_then(|v| v.as_str()) {
             Some(text) => self.remember(key, text),
             None => self.forget(key),
+        };
+        Some(restored.is_ok())
+    }
+
+    /// The book's half of `rename-vocabulary`: `gate` plans from the book and decides whether
+    /// to write, then every entry is written. `record` is the retirement record body for a key
+    /// renamed from `.1` to `.2`.
+    pub fn rename<T>(
+        &self,
+        gate: impl FnOnce(&Memories) -> ControlFlow<i32, (Vec<Entry>, T)>,
+        record: impl Fn(&Memories, &str, &str) -> String,
+    ) -> Result<(Renamed, T), Stop> {
+        let before = self.memories().map_err(Stop::Unreachable)?;
+        match gate(&before) {
+            ControlFlow::Continue((entries, t)) => Ok((self.rename_apply(&entries, &before, |from, to| record(&before, from, to)), t)),
+            ControlFlow::Break(rc) => Err(Stop::Gate(rc)),
         }
-        .is_ok()
     }
 
     /// Writes every amendment and rename of a vocabulary plan, each proved by a read-back.
-    /// `record` is the retirement record body for a key renamed from `.0` to `.1`.
-    pub fn rename_apply(&self, entries: &[Entry], before: &Memories, record: impl Fn(&str, &str) -> String) -> Renamed {
+    fn rename_apply(&self, entries: &[Entry], before: &Memories, record: impl Fn(&str, &str) -> String) -> Renamed {
         let mut done = Renamed { after: before.clone(), ..Renamed::default() };
         for e in entries {
             let (key, text, from) = match e {
@@ -382,49 +416,66 @@ mod tests {
     #[test_id(talzhdb)]
     #[test]
     fn retire_records_then_forgets_and_a_refused_forget_removes_the_record() {
-        let (t, book) = scripted(&[(0, ""), (0, "")]);
-        assert_eq!(book.retire("law-a", Some(("retired-law-a", "the record"))), Ok(()));
-        assert_eq!(sent(&t), vec![req("content remember --key retired-law-a", Some("the record")), req("content forget law-a", None)]);
+        fn with(record: Option<&str>) -> impl FnOnce(&Memories) -> ControlFlow<i32, (Option<String>, ())> + '_ {
+            move |_| ControlFlow::Continue((record.map(String::from), ()))
+        }
+        let (t, book) = scripted(&[(0, "{\"law-a\":\"A.\"}"), (0, ""), (0, "")]);
+        let (before, ()) = book.retire("law-a", with(Some("the record"))).unwrap();
+        assert!(before.contains_key("law-a"));
+        assert_eq!(sent(&t), vec![req(MEMORIES, None), req("content remember --key retired-law-a", Some("the record")), req("content forget law-a", None)]);
 
-        let (t, book) = scripted(&[(0, "")]);
-        assert_eq!(book.retire("law-a", None), Ok(()));
-        assert_eq!(sent(&t), vec![req("content forget law-a", None)]);
+        let (t, book) = scripted(&[(0, "{}"), (0, "")]);
+        assert!(book.retire("law-a", with(None)).is_ok());
+        assert_eq!(sent(&t), vec![req(MEMORIES, None), req("content forget law-a", None)]);
 
-        let (t, book) = scripted(&[(0, ""), (3, "no"), (0, "")]);
-        assert!(book.retire("law-a", Some(("retired-law-a", "r"))).unwrap_err().contains("failed to forget law-a"));
-        assert_eq!(sent(&t)[1..], [req("content forget law-a", None), req("content forget retired-law-a", None)]);
+        let (t, book) = scripted(&[(0, "{}"), (0, ""), (3, "no"), (0, "")]);
+        let Err(Stop::Refused(why)) = book.retire("law-a", with(Some("r"))) else { panic!() };
+        assert!(why.contains("failed to forget law-a"), "{why}");
+        assert_eq!(sent(&t)[2..], [req("content forget law-a", None), req("content forget retired-law-a", None)]);
 
-        let (t, book) = scripted(&[(3, "no")]);
-        assert!(book.retire("law-a", Some(("retired-law-a", "r"))).unwrap_err().contains("nothing forgotten"));
-        assert_eq!(sent(&t).len(), 1);
+        let (t, book) = scripted(&[(0, "{}"), (3, "no")]);
+        let Err(Stop::Refused(why)) = book.retire("law-a", with(Some("r"))) else { panic!() };
+        assert!(why.contains("nothing forgotten"), "{why}");
+        assert_eq!(sent(&t).len(), 2);
+
+        let (t, book) = scripted(&[(0, "{}")]);
+        assert_eq!(book.retire::<()>("law-a", |_| ControlFlow::Break(1)).unwrap_err(), Stop::Gate(1));
+        assert_eq!(sent(&t), vec![req(MEMORIES, None)]);
+
+        let (t, book) = scripted(&[]);
+        assert!(matches!(book.retire("law-a", with(None)).unwrap_err(), Stop::Unreachable(_)));
+        assert_eq!(sent(&t), vec![req(MEMORIES, None)]);
     }
 
-    #[test_id(txa6em6)]
+    #[test_id(t6c27ue)]
     #[test]
-    fn restore_puts_back_the_prior_text_or_forgets_the_key() {
+    fn a_failed_publish_puts_back_the_prior_text_or_forgets_a_new_key() {
+        let before: Memories = [("law-a".to_string(), "prior".into())].into();
         let (t, book) = scripted(&[(0, ""), (0, ""), (3, "no")]);
-        assert!(book.restore("law-a", Some("prior")));
-        assert!(book.restore("law-a", None));
-        assert!(!book.restore("law-a", None));
-        assert_eq!(sent(&t)[..2], [req("content remember --key law-a", Some("prior")), req("content forget law-a", None)]);
+        assert_eq!(book.publish_or_restore("law-a", &before, || true), None);
+        assert!(sent(&t).is_empty());
+        assert_eq!(book.publish_or_restore("law-a", &before, || false), Some(true));
+        assert_eq!(book.publish_or_restore("law-new", &before, || false), Some(true));
+        assert_eq!(book.publish_or_restore("law-new", &before, || false), Some(false));
+        assert_eq!(sent(&t)[..2], [req("content remember --key law-a", Some("prior")), req("content forget law-new", None)]);
     }
 
     #[test_id(tpou5od)]
     #[test]
     fn rename_writes_reads_back_records_and_forgets_the_old_key() {
-        let (t, book) = scripted(&[(0, ""), (0, "{\"law-new\":\"N.\"}"), (0, ""), (0, ""), (1, "late"), (0, "{\"law-b\":\"B.\"}")]);
-        let before: Memories = [("law-old".to_string(), "O.".into()), ("law-b".to_string(), "b.".into())].into();
-        let entries = [
+        let (t, book) = scripted(&[(0, "{\"law-old\":\"O.\",\"law-b\":\"b.\"}"), (0, ""), (0, "{\"law-new\":\"N.\"}"), (0, ""), (0, ""), (1, "late"), (0, "{\"law-b\":\"B.\"}")]);
+        let entries = vec![
             Entry::Rename { from: "law-old".into(), to: "law-new".into(), text: "N.".into(), numbered: true },
             Entry::Amend { key: "law-b".into(), text: "B.".into() },
         ];
-        let done = book.rename_apply(&entries, &before, |from, to| format!("{from}>{to}"));
+        let (done, ()) = book.rename(|_| ControlFlow::Continue((entries, ())), |_, from, to| format!("{from}>{to}")).unwrap();
         assert_eq!((done.written, done.statutes, done.runbooks, done.failed), (2, 2, 0, false));
         assert_eq!(done.statute_renames, vec![("law-old".to_string(), "law-new".to_string(), true)]);
         assert_eq!(done.after.keys().collect::<Vec<_>>(), ["law-b", "law-new"]);
         assert_eq!(
             sent(&t),
             vec![
+                req(MEMORIES, None),
                 req("content remember --key law-new", Some("N.")),
                 req(MEMORIES, None),
                 req("content remember --key retired-law-old", Some("law-old>law-new")),
@@ -433,6 +484,11 @@ mod tests {
                 req(MEMORIES, None),
             ]
         );
+
+        let (t, book) = scripted(&[(0, "{}")]);
+        let dry = book.rename::<()>(|_| ControlFlow::Break(0), |_, _, _| String::new());
+        assert_eq!(dry.unwrap_err(), Stop::Gate(0));
+        assert_eq!(sent(&t), vec![req(MEMORIES, None)]);
     }
 
     #[test_id(tdm7vso)]
@@ -440,21 +496,33 @@ mod tests {
     fn show_reads_the_mirror_and_asks_the_store_only_for_a_book_never_mirrored() {
         let dir = testkit::TempDir::new("book-read");
         let (t, book) = scripted(&[(0, "{\"law-a\":\"Alpha.\"}")]);
-        let first = book.read(dir.path()).unwrap();
-        assert_eq!(book.read(dir.path()).unwrap(), first);
+        let first = read_mirrored(dir.path(), || Ok(book)).unwrap();
+        let again = read_mirrored(dir.path(), || panic!("a mirrored book needs no store"));
+        assert_eq!(again.unwrap(), first);
         assert_eq!(sent(&t), vec![req(MEMORIES, None)]);
 
         let empty = testkit::TempDir::new("book-read-down");
         let (_, down) = scripted(&[]);
-        assert!(down.read(empty.path()).unwrap_err().contains("cannot reach the statute book"));
+        assert!(read_mirrored(empty.path(), || Ok(down)).unwrap_err().contains("cannot reach the statute book"));
     }
 
     #[test_id(taipxz3)]
     #[test]
     fn open_bead_titles_asks_for_the_not_closed_beads_only() {
-        let (t, book) = scripted(&[(0, "[{\"title\":\"one\"},{\"title\":\"two\"}]"), (1, "no")]);
+        let (t, book) = scripted(&[(0, "[{\"title\":\"one\"},{\"title\":\"two\"}]")]);
         assert_eq!(book.open_bead_titles(), Ok(vec!["one".to_string(), "two".to_string()]));
-        assert!(book.open_bead_titles().is_err());
-        assert_eq!(sent(&t)[0], req("content list --brief --json --limit 0", None));
+        assert_eq!(sent(&t), vec![req("content list --brief --json --limit 0", None)]);
+    }
+
+    #[test_id(tvq08a5)]
+    #[test]
+    fn audit_files_only_what_no_open_title_names_and_nothing_when_unreadable() {
+        let finding = |slug: &str| Finding { slug: slug.into(), missing: vec!["x".into()] };
+        let findings = [finding("law-filed"), finding("law-fresh")];
+        let (t, book) = scripted(&[(0, "[{\"title\":\"about law-filed\"}]"), (1, "no")]);
+        let (batch, bounded) = book.findings_to_file(&findings, 5).unwrap();
+        assert_eq!((batch.iter().map(|f| f.slug.as_str()).collect::<Vec<_>>(), bounded), (vec!["law-fresh"], false));
+        assert!(book.findings_to_file(&findings, 5).unwrap_err().contains("cannot read the open beads"));
+        assert_eq!(sent(&t), vec![req("content list --brief --json --limit 0", None); 2]);
     }
 }

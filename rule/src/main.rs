@@ -13,7 +13,7 @@ use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rule::{
-    book::{Book, Memories, Renamed, Stop},
+    book::{read_mirrored, Book, Memories, Renamed, Stop},
     code,
     audit::{audit, finding_title}, list_body, parse_enact_args, slugify, word_count, word_limit_refusal,
     hook::synth, CommitOutcome, EnactError, ToolDecl, USAGE,
@@ -99,11 +99,7 @@ fn statute_dir() -> Result<std::path::PathBuf, String> {
 
 /// Reads of the book come from the on-disk mirror, so a book already mirrored needs no store.
 fn read_book() -> Result<Memories, String> {
-    let dir = statute_dir()?;
-    match rule::mirror::read(&dir) {
-        Some(book) => Ok(book),
-        None => configured_book()?.read(&dir),
-    }
+    read_mirrored(&statute_dir()?, configured_book)
 }
 
 /// Mirrors `book`; a failure is the caller's to roll back, because a statute in the store
@@ -145,13 +141,6 @@ fn resolve_hook(home: &str) -> Result<String, String> {
 fn refuse_hook(e: &str) -> i32 {
     eprintln!("rule: {e} — wiki page NOT regenerated; nothing written, the statute book is unchanged.");
     1
-}
-
-/// Puts the book back as it was before a write whose page could not be regenerated.
-fn rollback(book: &Book, key: &str, prior: Option<&str>, before: &Memories) -> bool {
-    let restored = book.restore(key, prior);
-    rm_memories_cache();
-    restored && mirror_book(before).is_ok()
 }
 
 /// Commits and pushes `paths` (relative to `wiki`) through `<home>/wiki-commit.sh` under `msg`.
@@ -212,17 +201,16 @@ fn finish_write(
     after: &BTreeMap<String, serde_json::Value>,
     live_line: &str,
 ) -> i32 {
-    let prior = before.get(key).and_then(|v| v.as_str());
-    if let Err(e) = mirror_book(after) {
-        eprintln!("{e}");
-        if rollback(book, key, prior, before) {
-            eprintln!("rule: {verb} of {key} rolled back, nothing written.");
-        } else {
-            eprintln!("rule: the rollback of {key} failed too — run `rule.sh {verb} {key}` again once the mirror is writable.");
+    let mut unmirrored = false;
+    let published = book.publish_or_restore(key, before, || match mirror_book(after) {
+        Ok(()) => synth(hook),
+        Err(e) => {
+            eprintln!("{e}");
+            unmirrored = true;
+            false
         }
-        return 1;
-    }
-    if synth(hook) {
+    });
+    let Some(restored) = published else {
         println!();
         println!("{live_line}");
         let outcome = commit_common_law(home, verb, key);
@@ -231,15 +219,20 @@ fn finish_write(
             CommitOutcome::Failed(_) => eprintln!("{msg}"),
             _ => println!("{msg}"),
         }
-        0
-    } else if rollback(book, key, prior, before) {
-        eprintln!("rule: hook '{hook}' failed — wiki page NOT regenerated; {verb} of {key} rolled back, nothing written.");
-        1
-    } else {
-        eprintln!("rule: hook '{hook}' failed AND the rollback of {key} failed.");
-        eprintln!("The book and the wiki page now disagree. Re-run rule.sh {verb} {key} once the hook works.");
-        1
+        return 0;
+    };
+    rm_memories_cache();
+    let rolled_back = restored && mirror_book(before).is_ok();
+    match (unmirrored, rolled_back) {
+        (true, true) => eprintln!("rule: {verb} of {key} rolled back, nothing written."),
+        (true, false) => eprintln!("rule: the rollback of {key} failed too — run `rule.sh {verb} {key}` again once the mirror is writable."),
+        (false, true) => eprintln!("rule: hook '{hook}' failed — wiki page NOT regenerated; {verb} of {key} rolled back, nothing written."),
+        (false, false) => {
+            eprintln!("rule: hook '{hook}' failed AND the rollback of {key} failed.");
+            eprintln!("The book and the wiki page now disagree. Re-run rule.sh {verb} {key} once the hook works.");
+        }
     }
+    1
 }
 
 fn cmd_enact(book: &Book, home: &str, rest: &[String]) -> i32 {
@@ -327,6 +320,10 @@ fn cmd_enact(book: &Book, home: &str, rest: &[String]) -> i32 {
         }
         Err(Stop::Gate(rc)) => return rc,
         Err(Stop::Unreachable(e)) => {
+            eprintln!("{e}");
+            return 1;
+        }
+        Err(Stop::Refused(e)) => {
             eprintln!("{e}");
             return 1;
         }
@@ -679,14 +676,13 @@ fn cmd_audit(book: &Book, home: &str, rest: &[String]) -> i32 {
     if !file {
         return 0;
     }
-    let open = match book.open_bead_titles() {
-        Ok(titles) => titles,
+    let (batch, bounded) = match book.findings_to_file(&findings, max) {
+        Ok(b) => b,
         Err(e) => {
             eprintln!("{e} — nothing filed");
             return 1;
         }
     };
-    let (batch, bounded) = rule::audit::to_file(&findings, &open, max);
     for f in batch {
         let title = finding_title(f);
         let body = rule::audit::bead_body(&title);
@@ -756,62 +752,56 @@ fn cmd_retire(book: &Book, home: &str, rest: &[String]) -> i32 {
         }
     };
 
-    let memories = match book.memories() {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("{e}");
-            return 1;
+    let retired = book.retire(&key, |memories| {
+        if !memories.contains_key(&key) {
+            eprintln!("rule: no statute '{key}' in the statute book");
+            return ControlFlow::Break(1);
         }
-    };
-    if !memories.contains_key(&key) {
-        eprintln!("rule: no statute '{key}' in the statute book");
-        return 1;
-    }
-    for successor in replaced_by.iter().chain(&merged_into) {
-        if *successor == key || !memories.contains_key(successor) {
-            eprintln!("rule: refusing — {successor} is not a statute in force, so it cannot stand in for {key}");
-            return 1;
+        for successor in replaced_by.iter().chain(&merged_into) {
+            if *successor == key || !memories.contains_key(successor) {
+                eprintln!("rule: refusing — {successor} is not a statute in force, so it cannot stand in for {key}");
+                return ControlFlow::Break(1);
+            }
         }
-    }
 
-    let hook = match resolve_hook(home) {
-        Ok(h) => h,
-        Err(e) => return refuse_hook(&e),
-    };
-    let law = match code::book_dir() {
-        Ok(d) => d,
-        Err(e) => {
+        let hook = match resolve_hook(home) {
+            Ok(h) => h,
+            Err(e) => return ControlFlow::Break(refuse_hook(&e)),
+        };
+        let refuse = |e: String| {
+            eprintln!("{e}");
+            ControlFlow::Break(1)
+        };
+        let law = match code::book_dir() {
+            Ok(d) => d,
+            Err(e) => return refuse(e),
+        };
+        let (toc, mut pointers) = match read_toc(&law).and_then(|t| read_pointers_for_write(&law, &strings(memories)).map(|p| (t, p))) {
+            Ok(tp) => tp,
+            Err(e) => return refuse(e),
+        };
+        if code::section_of(&toc, &key).is_none() {
+            return refuse(format!("rule: refusing — {key} holds no section in the book's toc.toml, so no pointer can be left for it. Run rule.sh code --land to file it in a Part, then retire it again."));
+        }
+        let on = today();
+        let record = merged_into.is_none().then(|| retirement_record(&key, &reason, replaced_by.as_deref(), memories));
+        match merged_into.clone() {
+            Some(into) => pointers.merged.push(code::Merged { from: key.clone(), into, reason: reason.clone(), on }),
+            None => pointers.retired.push(code::Retired { slug: key.clone(), reason: reason.clone(), replaced_by: replaced_by.clone(), on }),
+        }
+        if let Err(e) = code::resolve(&toc, &pointers, &key) {
+            return refuse(format!("rule: refusing — {e}"));
+        }
+        ControlFlow::Continue((record, (hook, law, toc, pointers)))
+    });
+    let (memories, (hook, law, toc, pointers)) = match retired {
+        Ok(r) => r,
+        Err(Stop::Gate(rc)) => return rc,
+        Err(Stop::Unreachable(e) | Stop::Refused(e) | Stop::Duplicate(e)) => {
             eprintln!("{e}");
             return 1;
         }
     };
-    let (toc, mut pointers) = match read_toc(&law).and_then(|t| read_pointers_for_write(&law, &strings(&memories)).map(|p| (t, p))) {
-        Ok(tp) => tp,
-        Err(e) => {
-            eprintln!("{e}");
-            return 1;
-        }
-    };
-    if code::section_of(&toc, &key).is_none() {
-        eprintln!("rule: refusing — {key} holds no section in the book's toc.toml, so no pointer can be left for it. Run rule.sh code --land to file it in a Part, then retire it again.");
-        return 1;
-    }
-    let on = today();
-    let record_key = code::retired_key(&key);
-    let record = merged_into.is_none().then(|| retirement_record(&key, &reason, replaced_by.as_deref(), &memories));
-    match merged_into {
-        Some(into) => pointers.merged.push(code::Merged { from: key.clone(), into, reason, on }),
-        None => pointers.retired.push(code::Retired { slug: key.clone(), reason, replaced_by, on }),
-    }
-    if let Err(e) = code::resolve(&toc, &pointers, &key) {
-        eprintln!("rule: refusing — {e}");
-        return 1;
-    }
-
-    if let Err(e) = book.retire(&key, record.as_deref().map(|r| (record_key.as_str(), r))) {
-        eprintln!("{e}");
-        return 1;
-    }
     println!("forgot {key}");
     rm_memories_cache();
 
@@ -869,54 +859,57 @@ fn cmd_rename_vocabulary(book: &Book, home: &str, rest: &[String]) -> i32 {
             return 1;
         }
     };
-    let before = match book.memories() {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("{e}");
-            return 1;
-        }
-    };
-    let law = match code::book_dir() {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("{e}");
-            return 1;
-        }
-    };
-    let (toc, pointers) = match read_toc(&law).and_then(|t| read_pointers_for_write(&law, &strings(&before)).map(|p| (t, p))) {
-        Ok(tp) => tp,
-        Err(e) => {
-            eprintln!("{e}");
-            return 1;
-        }
-    };
-    let entries = plan(&strings(&before), &toc, &pointers);
     let mut failed = false;
-    for e in &entries {
-        match e {
-            Entry::Unresolved { key, terms } => {
-                eprintln!("rule: {key} holds {terms:?} with no replacement; rephrase it by hand with enact");
-                failed = true;
+    let outcome = book.rename(
+        |before| {
+            let refuse = |e: String| {
+                eprintln!("{e}");
+                ControlFlow::Break(1)
+            };
+            let law = match code::book_dir() {
+                Ok(d) => d,
+                Err(e) => return refuse(e),
+            };
+            let (toc, pointers) = match read_toc(&law).and_then(|t| read_pointers_for_write(&law, &strings(before)).map(|p| (t, p))) {
+                Ok(tp) => tp,
+                Err(e) => return refuse(e),
+            };
+            let entries = plan(&strings(before), &toc, &pointers);
+            for e in &entries {
+                match e {
+                    Entry::Unresolved { key, terms } => {
+                        eprintln!("rule: {key} holds {terms:?} with no replacement; rephrase it by hand with enact");
+                        failed = true;
+                    }
+                    Entry::Collision { from, to } => {
+                        eprintln!("rule: refusing to rename {from}: {to} is already a statute in force (or another rename's target)");
+                        failed = true;
+                    }
+                    _ => {}
+                }
             }
-            Entry::Collision { from, to } => {
-                eprintln!("rule: refusing to rename {from}: {to} is already a statute in force (or another rename's target)");
-                failed = true;
+            if dry_run {
+                print!("{}", rule::vocab::dry_run_report(&strings(before), &entries));
+                let runbook = |e: &Entry| matches!(e, Entry::Amend { key, .. } if key.starts_with("sop-")) || matches!(e, Entry::Rename { from, .. } if from.starts_with("sop-"));
+                let written = entries.iter().filter(|e| matches!(e, Entry::Amend { .. } | Entry::Rename { .. }));
+                let runbooks = written.clone().filter(|e| runbook(e)).count();
+                let statutes = written.count() - runbooks;
+                println!("DRY RUN: {statutes} statute(s) and {runbooks} runbook(s) would be rewritten. Nothing written.");
+                return ControlFlow::Break(i32::from(failed));
             }
-            _ => {}
+            ControlFlow::Continue((entries, (law, toc, pointers)))
+        },
+        |before, from, to| retirement_record(from, "renamed out of retired vocabulary", Some(to), before),
+    );
+    let (done, (law, toc, pointers)) = match outcome {
+        Ok(o) => o,
+        Err(Stop::Gate(rc)) => return rc,
+        Err(Stop::Unreachable(e) | Stop::Refused(e) | Stop::Duplicate(e)) => {
+            eprintln!("{e}");
+            return 1;
         }
-    }
-    if dry_run {
-        print!("{}", rule::vocab::dry_run_report(&strings(&before), &entries));
-        let runbook = |e: &Entry| matches!(e, Entry::Amend { key, .. } if key.starts_with("sop-")) || matches!(e, Entry::Rename { from, .. } if from.starts_with("sop-"));
-        let written = entries.iter().filter(|e| matches!(e, Entry::Amend { .. } | Entry::Rename { .. }));
-        let runbooks = written.clone().filter(|e| runbook(e)).count();
-        let statutes = written.count() - runbooks;
-        println!("DRY RUN: {statutes} statute(s) and {runbooks} runbook(s) would be rewritten. Nothing written.");
-        return i32::from(failed);
-    }
-
-    let Renamed { after, written, statutes: statutes_written, runbooks: runbooks_written, statute_renames: renamed, failed: write_failed } =
-        book.rename_apply(&entries, &before, |from, to| retirement_record(from, "renamed out of retired vocabulary", Some(to), &before));
+    };
+    let Renamed { after, written, statutes: statutes_written, runbooks: runbooks_written, statute_renames: renamed, failed: write_failed } = done;
     failed |= write_failed;
     rm_memories_cache();
     if written == 0 {

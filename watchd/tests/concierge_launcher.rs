@@ -124,6 +124,26 @@ fn brief_refuses_a_missing_persona_a_typo_core_and_a_stray_placeholder() {
     assert!(args.err.contains("append-system-prompt-file"), "{}", args.err);
 }
 
+// covers: UC-operator-channel-41
+#[test_id(tnh6pjq)]
+#[test]
+fn brief_with_no_statutes_tells_an_unreachable_book_from_an_empty_one() {
+    let fx = Fx::new();
+    let lc = fx.path().join("bin/spira-lc");
+    testkit::write_exe(&lc, "#!/bin/sh\n[ \"$*\" = 'content memories --json' ] || exit 9\necho 'store not running' >&2\nexit 2\n");
+    let down = fx.concierge(&["brief"], &[("STUB_STATUTES", "")]);
+    assert_eq!(down.code, Some(1));
+    assert!(down.err.contains("cannot reach the statute book: store not running"), "{}", down.err);
+    assert!(!down.err.contains("rendered empty"), "{}", down.err);
+
+    std::fs::remove_file(&lc).unwrap();
+    testkit::write_exe(&lc, "#!/bin/sh\n[ \"$*\" = 'content memories --json' ] || exit 9\necho '{}'\n");
+    let empty = fx.concierge(&["brief"], &[("STUB_STATUTES", "")]);
+    assert_eq!(empty.code, Some(1));
+    assert!(empty.err.contains("the statute book rendered empty"), "{}", empty.err);
+    assert!(!empty.err.contains("cannot reach"), "{}", empty.err);
+}
+
 // covers: UC-operator-channel-40
 #[test_id(twv8rha)]
 #[test]
