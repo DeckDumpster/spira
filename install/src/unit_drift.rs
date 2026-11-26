@@ -148,10 +148,10 @@ mod tests {
         let d = testkit::TempDir::new("unit-drift-prod");
         let outside = testkit::TempDir::new("unit-drift-outside");
         let u = d.path();
-        for f in ["spira-runtime-prod.service", "cockpit-ensure.timer", "concierge-memory-commit.service"] {
+        for f in ["spira-runtime-prod.service", "lc-backup.timer", "concierge-memory-commit.service"] {
             std::fs::write(u.join(f), "").unwrap();
         }
-        for (w, f) in [("default.target.wants", "spira-runtime-prod.service"), ("timers.target.wants", "cockpit-ensure.timer")] {
+        for (w, f) in [("default.target.wants", "spira-runtime-prod.service"), ("timers.target.wants", "lc-backup.timer")] {
             std::fs::create_dir(u.join(w)).unwrap();
             symlink(u.join(f), u.join(w).join(f)).unwrap();
         }
@@ -162,7 +162,7 @@ mod tests {
         std::fs::create_dir(u.join("dolt-beads.service.d")).unwrap();
         std::fs::write(u.join("dolt-beads.service.d/refuse-manual-stop.conf"), "").unwrap();
         std::fs::create_dir(u.join("lc-serve.service.d")).unwrap();
-        let shipped = set(&["spira-runtime-prod.service", "cockpit-ensure.timer", "spira-optional-prod.service"]);
+        let shipped = set(&["spira-runtime-prod.service", "lc-backup.timer", "spira-optional-prod.service"]);
         assert_eq!(units_drift_with(u, shipped, LOCAL, "", &|_| false), UnitDrift::Clean);
     }
 

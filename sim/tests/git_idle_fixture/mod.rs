@@ -32,9 +32,13 @@ pub struct Fixture {
     pub images: PathBuf,
     pub ready: Arc<Mutex<Option<String>>>,
     pub effects: Arc<spira_runtime::Effects>,
+    pub units: Arc<runtime::units::ScriptedUnits>,
+    pub proc_root: PathBuf,
+    pub release: PathBuf,
     pub _serial: std::sync::MutexGuard<'static, ()>,
     pub watchers: PathBuf,
     pub worktrees: PathBuf,
+    pub projects: PathBuf,
     pub published: Arc<Mutex<Vec<String>>>,
     pub checkout_rows: Arc<Mutex<Vec<(String, String)>>>,
 }
@@ -196,7 +200,9 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
     let watchers_s = watchers.display().to_string();
     let (wiki_s, prod_s, registry_s) = (wiki.display().to_string(), acc.join("spira").display().to_string(), format!("file://{}", kit.display()));
     let release_s = release.display().to_string();
-    let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", &run_s), ("SPIRA_WATCHERS", &watchers_s), ("SPIRA_HOST_WORKTREE_SUBDIR", "wt"), ("SPIRA_RUNES_DIR", &runes_s), ("SPIRA_WIKI", &wiki_s), ("SPIRA_PROD", &prod_s), ("SPIRA_KIT_REGISTRY", &registry_s), ("SPIRA_KIT_CRATE", "dumpster-kit"), ("SPIRA_KIT_SITES", "spira:Cargo.toml"), ("SPIRA_ID_PREFIX", "sp"), ("SPIRA_BATCHER_FORGE_ENABLE", "1"), ("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_TASK_MODES", &modes), ("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_RUNTIME_OVERRIDES_SECS", "60"), ("SPIRA_RELEASE", &release_s), ("SPIRA_TEST_REGISTRY_PATH", registry.to_str().unwrap()), ("SPIRA_CR_TZ", "UTC"), ("SPIRA_CR_OPEN_HOUR", "9")]);
+    let (projects, settings, releases) = (dir.join("projects"), dir.join("client-settings.json"), dir.join("releases"));
+    let (projects_s, settings_s, releases_s) = (projects.display().to_string(), settings.display().to_string(), releases.display().to_string());
+    let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", &run_s), ("SPIRA_WATCHERS", &watchers_s), ("SPIRA_HOST_WORKTREE_SUBDIR", "wt"), ("SPIRA_RUNES_DIR", &runes_s), ("SPIRA_WIKI", &wiki_s), ("SPIRA_PROD", &prod_s), ("SPIRA_KIT_REGISTRY", &registry_s), ("SPIRA_KIT_CRATE", "dumpster-kit"), ("SPIRA_KIT_SITES", "spira:Cargo.toml"), ("SPIRA_ID_PREFIX", "sp"), ("SPIRA_BATCHER_FORGE_ENABLE", "1"), ("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_TASK_MODES", &modes), ("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_RUNTIME_OVERRIDES_SECS", "60"), ("SPIRA_RELEASE", &release_s), ("SPIRA_TOKEN_PROJECTS", &projects_s), ("SPIRA_CLIENT_SETTINGS", &settings_s), ("SPIRA_RELEASES", &releases_s), ("SPIRA_TEST_REGISTRY_PATH", registry.to_str().unwrap()), ("SPIRA_CR_TZ", "UTC"), ("SPIRA_CR_OPEN_HOUR", "9")]);
     let programs = dir.join("programs.log");
     let trap = format!("#!/bin/sh\necho \"spira-lc $*\" >> {}\nexit 1\n", programs.display());
     testkit::write_exe(release.join("bin/spira-lc"), &trap);
@@ -227,11 +233,66 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
     std::fs::create_dir(&overrides).unwrap();
     let worktrees = run_dir.join("wt");
     std::fs::create_dir_all(&worktrees).unwrap();
-    let world = spira_runtime::world::World { overrides_dir: overrides.clone(), lc_socket: sock.clone(), repo_map: map, home_repo: "spira".into(), run_dir: run_dir.clone(), wiki: wiki.clone(), cr_tz: "UTC".into(), cr_open_hour: "9".into(), ..Default::default() };
+    let proc_root = dir.join("proc");
+    for (pid, comm, ppid) in [(100, "tmux: server", 1), (101, "bash", 100), (102, "lc-view", 100), (200, "tmux: client", 50)] {
+        std::fs::create_dir_all(proc_root.join(pid.to_string())).unwrap();
+        std::fs::write(proc_root.join(pid.to_string()).join("stat"), format!("{pid} ({comm}) S {ppid} 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 {} {pid}0 0\n", ["0"; 2].join(" "))).unwrap();
+    }
+    for role in ["health", "layout"] {
+        std::fs::write(release.join("bin").join(role), "").unwrap();
+    }
     let units = Arc::new(runtime::units::ScriptedUnits::new(Arc::new(runtime::ports::WallClock)));
     units.install("dolt-beads.service", runtime::units::UnitFacts { state: runtime::units::UnitState::Active, ..runtime::units::UnitFacts::absent() });
-    let effects = Arc::new(spira_runtime::Effects { world, units: Some(units), ..Default::default() });
-    Fixture { _serial: serial, _env: env, _dir: dir, log, local, pr, forge, wiki, overrides, toml, seen: Arc::default(), programs, started, sock: sock.clone(), requests, refused, claimable, ready: ready_id, registry, images, effects, watchers, worktrees, published, checkout_rows }
+    units.install(ENSURE_UNIT, runtime::units::UnitFacts { state: runtime::units::UnitState::Inactive, main_pid: None, exit: None, since_ms: None });
+    units.install("concierge.service", runtime::units::UnitFacts { state: runtime::units::UnitState::Inactive, ..runtime::units::UnitFacts::absent() });
+    let world = spira_runtime::world::World {
+        overrides_dir: overrides.clone(),
+        lc_socket: sock.clone(),
+        repo_map: map,
+        home_repo: "spira".into(),
+        run_dir: run_dir.clone(),
+        wiki: wiki.clone(),
+        cr_tz: "UTC".into(),
+        cr_open_hour: "9".into(),
+        proc_dir: proc_root.clone(),
+        ..Default::default()
+    };
+    let effects = Arc::new(spira_runtime::Effects {
+        world,
+        units: Some(units.clone()),
+        ..Default::default()
+    });
+    Fixture {
+        _serial: serial,
+        _env: env,
+        _dir: dir,
+        log,
+        local,
+        pr,
+        forge,
+        wiki,
+        overrides,
+        toml,
+        seen: Arc::default(),
+        programs,
+        started,
+        sock: sock.clone(),
+        requests,
+        refused,
+        claimable,
+        ready: ready_id,
+        registry,
+        images,
+        effects,
+        watchers,
+        worktrees,
+        published,
+        checkout_rows,
+        units,
+        proc_root,
+        release,
+        projects,
+    }
 }
 
 impl Drop for Fixture {
@@ -271,7 +332,32 @@ pub fn plan_row(id: &str) -> String {
 
 pub const IDLE_TASK_PROGRAMS: [&str; 5] = ["mail-health.sh", "bash", "bead.sh", "schema.sh", "spira-sendmail"];
 pub const DATE_RUNS_PER_OPEN_EPOCH: usize = 4;
-pub const LOGGED_PROGRAMS: [&str; 20] = ["spira-claim", "systemctl", "mail-health.sh", "bash", "bead.sh", "schema.sh", "spira-sendmail", "spira-config", "target-reap", "watchd", "test-registry", "podman", "date", "timeout", "tsd-write", "round-vm", "gate", "queue", "rebase-stale", "testenv"];
+pub const ENSURE_UNIT: &str = spira_runtime::tasks::g::cockpit_ensure::UNIT;
+pub const LOGGED_PROGRAMS: [&str; 23] = [
+    "tmux",
+    "spira-claim",
+    "systemctl",
+    "mail-health.sh",
+    "bash",
+    "bead.sh",
+    "schema.sh",
+    "spira-sendmail",
+    "spira-config",
+    "target-reap",
+    "watchd",
+    "test-registry",
+    "podman",
+    "date",
+    "timeout",
+    "tsd-write",
+    "round-vm",
+    "gate",
+    "queue",
+    "rebase-stale",
+    "testenv",
+    "concierge.sh",
+    "release",
+];
 
 pub fn logged_programs(f: &Fixture) -> Vec<String> {
     let all = std::fs::read_to_string(&f.started).unwrap_or_default();

@@ -68,6 +68,10 @@ derived from it.
   from "the whole window crashed" — both leave zero `@cockpit`-tagged panes anywhere.
 - `status`: one-line report of what is running; changes nothing.
 - `ensure`: heal every window already carrying a cockpit, **silently** when nothing needs it.
+  The scheduler's `cockpit.ensure` task starts `cockpit-ensure.service` (this verb) only when
+  a tmux process, the down marker, the release's `health`/`layout` or a cockpit conf value
+  moved, or the last start is older than `$COCKPIT_CLIENT_IDLE_SECS`; the task never judges
+  health, this verb does.
   Refuses (exit 0, not an error) when the running binary is not the one installed at
   `$SPIRA_RELEASE/bin/layout` — a worktree copy must never adopt and respawn the operator's
   live panes with its own paths. Calls `rebuild` (bare name, by way of `$PATH`) only when
@@ -228,7 +232,7 @@ writer's own dedupe.
   `sync` are idempotent against an already-correct state), but this crate's own tests below
   never repeat that mistake — every `Tmux` test seam is `TMUX_TMPDIR`-based.
 - **Cannot be verified without production:** the composed-session-brief check (needs a real
-  `claude` launch); the systemd-timer-invoked path of `layout ensure` (verified by code
+  `claude` launch); the scheduler-started path of `layout ensure` (verified by code
   inspection of `cockpit-ensure.service`'s `Environment=` lines and by confirming `conf.rs`'s
   self-sourcing fixes the gap a bare-env-read version had, not by actually running under
   `systemd --user`).

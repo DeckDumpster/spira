@@ -135,15 +135,17 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("asks.ideas", &["asks.ideas.observe", "asks.ideas.ask"]),
     ("intake.filings", &["intake.filings.observe", "intake.filings.file", "intake.filings.append", "intake.filings.ack", "inbox.append"]),
     ("intake.kit_bump", &["intake.kit_bump.observe", "intake.kit_bump.file", "intake.kit_bump.amend"]),
+    ("cockpit.ensure", &["cockpit.ensure.observe", "unit.start_installed"]),
     ("cockpit-tier-5s", &["cockpit-tier-5s.observe", "cockpit-tier-5s.publish"]),
     ("cockpit-tier-60s", &["cockpit-tier-60s.observe", "cockpit-tier-60s.publish", "cockpit-tier-60s.slots_sample"]),
     ("cockpit-tier-600s", &["cockpit-tier-600s.observe", "cockpit-tier-600s.publish"]),
     ("mail.wake", &["mail.wake.observe", "mail.wake.wake"]),
+    ("concierge.ensure", &["concierge.ensure.observe", "unit.start_installed", "concierge.ensure.alert"]),
 ];
 
 /// The effects several tasks share (spira-runtime's `tasks::SHARED`): the inbox line and the
 /// unit manager's verbs. `sim::units::with_units` replaces the latter with a scripted manager.
-pub const SHARED_EFFECTS: &[&str] = &["inbox.append", "unit.start", "unit.stop", "unit.restart", "unit.facts"];
+pub const SHARED_EFFECTS: &[&str] = &["inbox.append", "unit.start", "unit.stop", "unit.restart", "unit.facts", "unit.start_installed"];
 
 /// Every effect name `TASK_EFFECTS` and `SHARED_EFFECTS` hold, each once, sorted.
 pub fn service_effects() -> Vec<&'static str> {
