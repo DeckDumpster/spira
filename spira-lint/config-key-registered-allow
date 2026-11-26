@@ -562,7 +562,6 @@ SPIRA_REPO spira/branch-sweep.sh
 SPIRA_REPO spira/build.sh
 SPIRA_REPO spira/conf.sh
 SPIRA_REPO spira/deploy.sh
-SPIRA_REPO spira/drift.sh
 SPIRA_REPO spira/first-run.sh
 SPIRA_REPO spira/inbox-keeper.sh
 SPIRA_REPO spira/lib.sh

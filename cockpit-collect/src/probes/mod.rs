@@ -1526,7 +1526,7 @@ fn statute_skew_keys(db_n: Option<usize>, page_n: Option<usize>) -> Kv {
 // drift_keys
 // ---------------------------------------------------------------------------------------
 
-/// `OK`, `<dirty>:<n>` counting `finding_prefix` lines, or `?` when `drift.sh` could not run.
+/// `OK`, `<dirty>:<n>` counting `finding_prefix` lines, or `?` when the check could not run.
 pub fn drift_value(code: Option<i32>, out: &str, dirty: &str, finding_prefix: &str) -> String {
     match code {
         Some(0) => "OK".to_string(),
@@ -1536,35 +1536,20 @@ pub fn drift_value(code: Option<i32>, out: &str, dirty: &str, finding_prefix: &s
 }
 
 pub fn drift_keys() -> Kv {
-    let drift_sh = io::home_dir().join("drift.sh");
-    let repo = spira_config::process::cfg("SPIRA_REPO").ok().filter(|s| !s.is_empty());
-    let child_env = spira_config::release_env::child_path_env_for_process();
-    let run_one = |args: &[&str]| {
-        let Ok(envs) = child_env.clone() else { return (None, String::new()) };
-        // batch-job: runs a gate, build or forge script that takes as long as its work
-        // FORK-EDGE: script drift.sh (179 lines), ported with the drift task.
-        std::process::Command::new("bash")
-            .envs(envs)
-            .arg(&drift_sh)
-            .args(args)
-            .stdin(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .output()
-            .ok()
-            .map(|o| (o.status.code(), String::from_utf8_lossy(&o.stdout).into_owned()))
-            .unwrap_or((None, String::new()))
-    };
+    use install::checkout_drift::Probe;
+    use install::unit_drift::UnitDrift;
+    let repo = std::env::var("SPIRA_REPO").ok().filter(|s| !s.is_empty());
     let mut out = Kv::new();
-    let mut co_args = vec!["checkout"];
-    if let Some(r) = repo.as_deref() {
-        co_args.push(r);
-    }
-    let (rc, text) = run_one(&co_args);
+    let (rc, text) = match repo.as_deref().map_or(Probe::Unreadable, install::checkout_drift::checkout) {
+        Probe::Clean => (Some(0), String::new()),
+        Probe::Drift(t) => (Some(1), t),
+        Probe::Unreadable => (None, String::new()),
+    };
     push(&mut out, "SP_CHECKOUT_DRIFT", drift_value(rc, &text, "DIRTY", "DIRTY "));
     let (rc, text) = match install::unit_drift::units_drift(&install::unit_drift::default_unit_dir()) {
-        install::unit_drift::UnitDrift::Clean => (Some(0), String::new()),
-        install::unit_drift::UnitDrift::Drift(t) => (Some(1), t),
-        install::unit_drift::UnitDrift::Unreadable => (None, String::new()),
+        UnitDrift::Clean => (Some(0), String::new()),
+        UnitDrift::Drift(t) => (Some(1), t),
+        UnitDrift::Unreadable => (None, String::new()),
     };
     push(&mut out, "SP_UNIT_DRIFT", drift_value(rc, &text, "UNSHIPPED", "UNSHIPPED "));
     out

@@ -1,5 +1,4 @@
-//! Installed unit files and drop-ins this install's manifest does not ship — `drift.sh units`,
-//! answered in-process so the sentinel pass and the cockpit probe fork nothing.
+//! Installed unit files and drop-ins this install's manifest does not ship, answered in-process so the sentinel pass and the cockpit probe fork nothing.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -59,7 +58,7 @@ fn quoted_value(line: &str, key: &str) -> Option<String> {
     Some(rest[..rest.find('"')?].to_string())
 }
 
-/// Symlinks are skipped, as `find -type f` does in `drift.sh units`.
+/// Symlinks are skipped: only regular files and real directories are installed units.
 fn entries_in(dir: &Path, kind: impl Fn(&std::fs::FileType) -> bool) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = std::fs::read_dir(dir).into_iter().flatten().flatten().filter(|e| e.file_type().is_ok_and(|t| kind(&t))).map(|e| e.path()).collect();
     v.sort();
