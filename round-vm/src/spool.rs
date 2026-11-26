@@ -149,6 +149,7 @@ unit)
     cd "$d" || exit 2
     scope_of unit
     [ -f "$HOME/round-nextest.toml" ] || { echo "round-vm: no round-nextest.toml on this VM: the round's unit tier has not run here" >&2; exit 2; }
+    mkdir -p "$HOME/attr-target"
     CARGO_TARGET_DIR="$HOME/attr-target" test_env "#, spira_config::unit_tier_unit!("\"$HOME/round-nextest.toml\"", "unittest", "$scope"), r#" $filters 2>&1 | tee "$SPIRA_BATCH_RESULTS/unit-tests.out" >&2
     rc=${PIPESTATUS[0]}
     cd "$HOME" && rm -rf "$d"
@@ -170,6 +171,7 @@ integration)
             CARGO_TARGET_DIR="$HOME/attr-target" unit_env build --profile unittest --config profile.unittest.incremental=false $bin_scope >&2 || { cd "$HOME" && rm -rf "$d"; exit 4; }
         fi
     fi
+    mkdir -p "$HOME/attr-target"
     CARGO_TARGET_DIR="$HOME/attr-target" test_env "#, spira_config::unit_tier_integration!("\"$HOME/round-nextest.toml\"", "unittest", "$scope"), r#" $filters 2>&1 | tee "$SPIRA_BATCH_RESULTS/integration-tests.out" >&2
     rc=${PIPESTATUS[0]}
     cd "$HOME" && rm -rf "$d"
