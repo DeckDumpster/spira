@@ -1,5 +1,8 @@
     use super::*;
-    use std::io::{BufRead, BufReader, Write};
+    use std::ffi::CString;
+    use std::fs::File;
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::os::unix::ffi::OsStringExt;
 
     #[test_id(ttb7fhc)]
     #[test]
@@ -140,6 +143,63 @@
     fn without_kill_tree_a_grandchild_in_its_own_session_survives() {
         let (pid, gone) = setsid_grandchild(false);
         assert!(!gone, "grandchild {pid} died without kill_tree: the opt-in is not pinned");
+    }
+
+    // The tree is built in the pre_exec hook: spawn returns only once both processes have exec'd,
+    // so it is in place before the deadline starts counting.
+    #[test_id(t3pflkd)]
+    #[test]
+    fn the_deadline_watchdog_kills_the_tree_when_kill_tree_is_set() {
+        let sleep = std::env::split_paths(&std::env::var_os("PATH").unwrap()).map(|d| d.join("sleep")).find(|p| p.is_file()).expect("no sleep on PATH");
+        let sleep = CString::new(sleep.into_os_string().into_vec()).unwrap();
+        let (name, secs) = (CString::new("sleep").unwrap(), CString::new("300").unwrap());
+        let mut fds = [0; 2];
+        assert_eq!(unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) }, 0);
+        let (read, write) = unsafe { (File::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+        let (r, w) = (read.as_raw_fd(), write.as_raw_fd());
+        // Only async-signal-safe calls and no allocation after the fork.
+        let hook = move || unsafe {
+            match libc::fork() {
+                -1 => Err(io::Error::last_os_error()),
+                0 => {
+                    libc::setsid();
+                    let me = libc::getpid().to_ne_bytes();
+                    libc::write(w, me.as_ptr().cast(), me.len());
+                    let argv = [name.as_ptr(), secs.as_ptr(), std::ptr::null()];
+                    libc::execv(sleep.as_ptr(), argv.as_ptr());
+                    libc::_exit(127)
+                }
+                _ => {
+                    let mut p = libc::pollfd { fd: r, events: libc::POLLIN, revents: 0 };
+                    match libc::poll(&mut p, 1, 30_000) { // clock-safe: cap on a grandchild that never reports
+                        1 => Ok(()),
+                        _ => Err(io::ErrorKind::TimedOut.into()),
+                    }
+                }
+            }
+        };
+        let mut cmd = bounded_for("sleep", "0.05");
+        cmd.arg("300").kill_tree().stdout(Stdio::null()).stderr(Stdio::null());
+        unsafe { cmd.pre_exec(hook) };
+        let mut child = cmd.spawn().unwrap();
+        drop(write);
+        let mut pid = [0; 4];
+        (&read).read_exact(&mut pid).unwrap();
+        let pid = libc::pid_t::from_ne_bytes(pid);
+        let gone = (0..3000).any(|_| {
+            let a = alive(&pid.to_string());
+            if a {
+                std::thread::sleep(Duration::from_millis(10)); // clock-safe: cap on waiting for the killed process to be reaped
+            }
+            !a
+        });
+        if !gone {
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        assert!(gone, "grandchild {pid} survived the deadline: the watchdog did not kill, or kill_tree was lost");
+        assert_eq!(child.wait().unwrap().code(), Some(124));
     }
 
 #[test_id(tfr35id)]
