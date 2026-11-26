@@ -12,6 +12,7 @@ use std::io::{Read, Write};
 use std::ffi::OsStr;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::process::{Command, Stdio};
 
 use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
@@ -474,6 +475,10 @@ pub fn parse_bd_json(text: &str) -> Result<Vec<BeadRow>, String> {
 
 pub struct RealLib {
     pub home: PathBuf,
+    /// The store's door, for the beads queue files, notes and comments on.
+    pub store: RealLc,
+    /// Where a store write that did not apply says why.
+    pub warn: Arc<dyn Fn(&str) + Send + Sync>,
 }
 
 impl RealLib {
@@ -499,7 +504,7 @@ impl RealLib {
         let mut all = vec![home.as_str()];
         all.extend_from_slice(vals);
         // batch-job: this runs whatever its caller names, as long as that takes
-        // FORK-EDGE: needs Rust homes for the lib.sh functions the remaining ops call (bead_reopen, release_claim, rebase_branch, land_subject, repo_format, pf_gate, bug filing, spira_event, bdq comment)
+        // FORK-EDGE: needs Rust homes for the lib.sh functions the remaining ops call (bead_reopen, release_claim, rebase_branch, land_subject, repo_format, pf_gate, spira_event)
         let mut cmd = Command::new("bash");
         cmd.stdin(Stdio::piped()).stderr(Stdio::inherit());
         cmd.stdout(if capture {
@@ -525,6 +530,21 @@ impl RealLib {
         }
         let rc = child.wait().ok().and_then(|s| s.code()).unwrap_or(127);
         (rc, out)
+    }
+
+    /// One bead-content write: its stdout, or why it did not apply.
+    fn content(&self, args: &[&str], stdin: Option<&str>) -> Result<String, String> {
+        let c = self.store.client()?;
+        let argv: Vec<&str> = std::iter::once("content").chain(args.iter().copied()).collect();
+        let r = match stdin {
+            Some(body) => c.call_stdin(&argv, body),
+            None => c.call(&argv),
+        }
+        .map_err(String::from)?;
+        if r.code != 0 {
+            return Err(format!("exit {}: {}", r.code, r.why()));
+        }
+        Ok(r.out)
     }
 
     fn answer(&self, op: Op, vals: &[&str]) -> (i32, String) {
@@ -868,7 +888,9 @@ impl Lib for RealLib {
             .status();
     }
     fn comment(&self, id: &str, text: &str) {
-        self.call(Op::Comment, &[id, text], false);
+        if let Err(why) = self.content(&["comments", "add", id, text], None) {
+            (self.warn)(&format!("queue: comment on {id} not recorded: {why}"));
+        }
     }
     fn notify(&self, mailbox: &str, repo: &str, subject: &str, body: &str) {
         // In-process (sp-hwjsq, "wave 4.32"): queue owns this family now, so its own seam
@@ -967,14 +989,40 @@ impl Lib for RealLib {
         labels: &str,
         body: &str,
     ) -> Option<String> {
-        let (_, ans) = self.answer(Op::CreateBug, &[actor, title, priority, labels, body]);
-        Some(ans.trim().to_string()).filter(|id| !id.is_empty())
+        // The store's writer is spira-lc whoever calls, so the actor is recorded in the text.
+        let body = format!("Filed by {actor}.\n\n{body}");
+        let filed = self.content(
+            &["create", title, "--type", "bug", "--priority", priority, "--labels", labels, "--body-file", "-", "--silent"],
+            Some(&body),
+        );
+        match filed.map(|out| out.trim().to_string()) {
+            Ok(id) if !id.is_empty() => Some(id),
+            Ok(_) => {
+                (self.warn)(&format!("queue: bug {title:?} not filed: the store named no id"));
+                None
+            }
+            Err(why) => {
+                (self.warn)(&format!("queue: bug {title:?} not filed: {why}"));
+                None
+            }
+        }
     }
     fn amend_bug(&self, actor: &str, id: &str, note: &str) -> bool {
-        self.answer(Op::AmendBug, &[actor, id, note]).1.trim() == "amended"
+        if !self.bead_live(id) {
+            return false;
+        }
+        let note = format!("Noted by {actor}.\n\n{note}");
+        self.content(&["note", id, "--stdin"], Some(&note))
+            .map_err(|why| (self.warn)(&format!("queue: note on {id} not recorded: {why}")))
+            .is_ok()
     }
     fn bead_live(&self, id: &str) -> bool {
-        self.answer(Op::BeadLive, &[id]).1.trim() == "live"
+        let shown = self
+            .store
+            .client()
+            .and_then(|c| c.answer(&["show", id]).map_err(String::from))
+            .and_then(|out| spira_store::lc_state::parse_show(&out));
+        matches!(shown, Ok(Some(row)) if !row.state.is_empty() && !row.terminal())
     }
 }
 

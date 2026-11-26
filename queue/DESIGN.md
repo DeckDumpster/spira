@@ -314,7 +314,7 @@ operation (the function name is part of the text, never data).
 | R5 `release_claim` | `release_claim <id>` | bd assignee clear |
 | R6 `bead_close_on_land` | `bead_close_on_land <id> <sha>` | close + LANDED + branch reap |
 | ~~R7 `gh_issue_closeout`~~ | shells to `gh-intake closeout <id> <sha> <repo>` now (sp-j3fim, "wave 4.31"): `gh_issue_closeout` moved natively into gh-intake; no lib.sh seam call left | — |
-| R8 `bead_comment` | `bdq comment <id> --stdin` (text piped inside the script) | bdq's retry, czar and fixture logic |
+| ~~R8 `bead_comment`~~ | not a seam: `content comments add <id> <text>` through `LcClient`; a refusal is logged | — |
 | ~~R9 `notify`~~ | in process now (sp-hwjsq, "wave 4.32"): `ops::helpers::notify`; lib.sh's `queue_notify_concierge` is retired, not a shim | — |
 | R10 `event` | `spira_event <kind> - <title> <detail>` | rate-limited events log |
 | ~~R11 `divergence`~~ | in process now (sp-hwjsq, "wave 4.32"): `ops::helpers::check_divergence`; lib.sh's `queue_local_check_divergence` is retired, not a shim | — |
@@ -326,7 +326,7 @@ operation (the function name is part of the text, never data).
 | R17 `lc_returned` | not a seam since sp-arpjt: `spira-lc returned <id> <reason>` run directly (switch ON only) | the Returned event CAS |
 | R18 `batch_fns` | `format_batch`, `base_conflict`, `pf_gate` — open-batch only, the queue.forge assembly primitives | **inlined, sp-uwhx0**: same bodies, no longer sourced from batch.sh (deleted); `pf_gate`'s `_PF_DEADLINE` shared-wall bookkeeping dropped, since open-batch calls it exactly once (the wall is just its own `wall_secs` argument) |
 | ~~R19 `settle_publish`~~ | retired: the settle is Rust (DESIGN-verdict.md) | — |
-| R23 `create_bug` | `BEADS_ACTOR=<a> bdq create <title> --type bug … --body-file <tmp> --silent` (body read from stdin into the temp file inside the script) | the verdict's fix-forward bead; bdq's retry and fixture logic |
+| ~~R23 `create_bug`~~ | not a seam: `content create <title> --type bug … --body-file - --silent` through `LcClient`, the body on stdin and its first line naming the actor (the store's writer is spira-lc); `amend_bug` is `content note <id> --stdin` on a row `show` reads as not terminal, and `bead_live` is that read. A refusal is logged | — |
 | R20 `readback` | `repo_land`, `spira_landref` after a transition's write | the post-write verification reads what every other component will read |
 | R21 `toml_path` | `spira_toml_resolve` (transitions only, as before) | conf.sh's own resolution of which document is in force |
 
