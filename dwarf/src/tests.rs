@@ -150,6 +150,141 @@ pub(crate) mod verdict_run {
         f(&mut r)
     }
 
+    /// A store whose claim applies: `spira-claim stack` answers `proposal`, the claimed row
+    /// carries `holds`, and `spira-claim rejections` answers `rejections`.
+    #[derive(Default)]
+    struct Claimable {
+        proposal: &'static str,
+        holds: &'static [&'static str],
+        rejections: &'static str,
+        holder: Mutex<String>,
+        /// The row's state once it leaves WORKING, and when its ask hold was last raised.
+        left: Mutex<Option<&'static str>>,
+        ask_since: Mutex<i64>,
+        calls: Mutex<Vec<Vec<String>>>,
+    }
+    impl Claimable {
+        fn record(&self, prog: &str, args: &[String]) {
+            self.calls.lock().unwrap().push(std::iter::once(prog.to_string()).chain(args.iter().cloned()).collect());
+        }
+        fn called(&self, head: &[&str]) -> Vec<Vec<String>> {
+            self.calls.lock().unwrap().iter().filter(|c| c.len() >= head.len() && c.iter().zip(head).all(|(a, b)| a == b)).cloned().collect()
+        }
+    }
+    impl Exec for Claimable {
+        fn exec(&self, prog: &str, args: &[String], _: Option<Vec<u8>>, _: Option<&Path>) -> Out {
+            self.record(prog, args);
+            match (prog, args.first().map(String::as_str)) {
+                ("spira-claim", Some("stack")) => Out::ok(self.proposal),
+                ("spira-claim", Some("rejections")) => Out::ok(self.rejections),
+                ("spira-lc", Some("list")) => Out::ok("[]"),
+                ("spira-lc", Some("show")) => Out::ok(serde_json::json!({"bead": {"bead_id": "sp-x", "state": self.left.lock().unwrap().unwrap_or("WORKING"), "holder": *self.holder.lock().unwrap(), "holds": self.holds, "ask_since": self.ask_since.lock().unwrap().to_string()}}).to_string()),
+                _ => Out::ok(""),
+            }
+        }
+    }
+    impl Seam for Claimable {
+        fn call(&self, f: &str, a: &[String]) -> Out {
+            self.record(f, a);
+            if f == "lc_claim_bead" {
+                *self.holder.lock().unwrap() = a[1].clone();
+            }
+            Out::ok("")
+        }
+    }
+
+    const UNSTACKED: &str = r#"{"claimable":true,"stack":{},"stack_depth":0,"stack_max_depth":4}"#;
+
+    /// `Run::claim()` of sp-x as `dwarf direct`; returns the log lines and the ledger. The run
+    /// ends at the repository lookup, past every gate that could turn the claim away.
+    fn directed_claim(store: &Claimable) -> (Vec<String>, String) {
+        directed_claim_then(store, |_| {})
+    }
+
+    fn directed_claim_then(store: &Claimable, then: impl FnOnce(&mut Run)) -> (Vec<String>, String) {
+        let dir = testkit::TempDir::new("dwarf-directed-claim");
+        let mut vars = super::complete_vars();
+        vars.insert("SPIRA_RUN".into(), dir.path().display().to_string());
+        vars.insert("SPIRA_REPO".into(), "shared".into());
+        let ledger = dir.path().join("dwarf-ledger.log");
+        let bd = CountingBd(Default::default());
+        let sink = Mute::default();
+        with_run_sink(vars, &bd, Dirty(vec![]), store, &|| 0, store, &sink, "", |r| {
+            r.mode = Mode::Directed(crate::direct::Direct { bead: "sp-x".into(), by: "concierge".into(), reason: "loop fix".into(), replaced: None });
+            r.claim_bin = "spira-claim".into();
+            r.ledger = Ledger { path: ledger.clone(), dry: false };
+            let _ = r.claim();
+            then(r);
+        });
+        let lines = sink.0.lock().unwrap().clone();
+        (lines, std::fs::read_to_string(&ledger).unwrap_or_default())
+    }
+
+    fn assert_claim_kept(store: &Claimable, ledger: &str) {
+        assert!(store.called(&["release_own_claim"]).is_empty() && store.called(&["spira-lc", "unclaim"]).is_empty(), "{:?}", store.calls.lock().unwrap());
+        assert!(ledger.contains("unmapped-repo"), "positive control: the claim reached the repository lookup\n{ledger}");
+    }
+
+    #[test_id(tf9lqjz)]
+    #[test]
+    fn a_directed_claim_is_sent_unstacked_past_a_blocked_stack_proposal() {
+        let store = Claimable { proposal: r#"{"claimable":false,"reason":"Blocked { on: \"sp-p\" }"}"#, ..Default::default() };
+        let (lines, ledger) = directed_claim(&store);
+        let sent = store.called(&["lc_claim_bead"]);
+        assert_eq!(sent.len(), 1, "{lines:?}");
+        assert_eq!((sent[0][1].as_str(), sent[0][4].as_str()), ("sp-x", "{}"));
+        assert!(sent[0].last().is_some_and(|d| d.contains("concierge")), "{sent:?}");
+        assert_claim_kept(&store, &ledger);
+    }
+
+    #[test_id(tbvnrsy)]
+    #[test]
+    fn a_directed_claim_keeps_a_held_row_and_its_claim_line_names_the_holds() {
+        let store = Claimable { proposal: UNSTACKED, holds: &["manual"], ..Default::default() };
+        let (lines, ledger) = directed_claim(&store);
+        assert_claim_kept(&store, &ledger);
+        assert!(!ledger.contains("hold-raced"), "{ledger}");
+        assert!(lines.iter().any(|l| l.contains("directed claim of sp-x keeps its manual hold(s)")), "{lines:?}");
+    }
+
+    #[test_id(tzrnapi)]
+    #[test]
+    fn a_directed_claim_past_the_escalation_ceiling_is_kept_and_not_held() {
+        let store = Claimable { proposal: UNSTACKED, rejections: r#"{"rejections":9,"stronger_rejections":9,"history":[]}"#, ..Default::default() };
+        let (lines, ledger) = directed_claim(&store);
+        assert_claim_kept(&store, &ledger);
+        assert!(store.called(&["spira-lc", "hold"]).is_empty() && !ledger.contains("escalation-hold"), "{ledger}");
+        assert!(lines.iter().any(|l| l.contains("escalation-ceiling") && l.contains("directed")), "{lines:?}");
+    }
+
+    /// The log of a directed session on an ask-held row that ends SUBMITTED, its ask hold
+    /// last raised at `raised` (100 when claimed).
+    fn teardown_of_an_ask_held_directed_run(raised: i64) -> Vec<String> {
+        let store = Claimable { proposal: UNSTACKED, holds: &["ask"], ask_since: Mutex::new(100), ..Default::default() };
+        directed_claim_then(&store, |r| {
+            *store.left.lock().unwrap() = Some("SUBMITTED");
+            *store.ask_since.lock().unwrap() = raised;
+            r.s.session_started = true;
+            r.hb_done.store(true, std::sync::atomic::Ordering::SeqCst);
+            r.teardown(0);
+        })
+        .0
+    }
+
+    #[test_id(twobh5b)]
+    #[test]
+    fn an_ask_hold_the_directed_claim_inherited_is_not_read_as_this_sessions_question() {
+        let lines = teardown_of_an_ask_held_directed_run(100);
+        assert!(!lines.iter().any(|l| l.contains("operator-wait")), "{lines:?}");
+    }
+
+    #[test_id(tu1gb9g)]
+    #[test]
+    fn a_question_asked_during_a_directed_session_over_an_inherited_ask_is_still_seen() {
+        let lines = teardown_of_an_ask_held_directed_run(200);
+        assert!(lines.iter().any(|l| l.contains("operator-wait")), "{lines:?}");
+    }
+
     fn ready_set_call(express: Option<&str>) -> Vec<String> {
         let mut vars = super::complete_vars();
         if let Some(v) = express {
@@ -600,12 +735,19 @@ pub(crate) mod verdict_run {
         let fence_out: String = (0..2000).map(|i| format!("line {i}\n")).collect();
         let (seam, exec) = (Seams(Default::default()), FenceRed { lc: Default::default(), fact_fails, fence_rc, fence_out: fence_out.clone() });
         let notes = Notes(Default::default());
-        with_run_launching(vars, &notes, CleanGit, &exec, &|| 0, &seam, &Mute::default(), &NoLaunch, "", |r| {
-            r.s.bead = "sp-a".into();
-            r.s.work = Some(work.clone());
-            r.s.repo = work.clone();
-            r.teardown(0);
-        });
+        {
+            // The teardown moves the process into `work`, which this test then deletes.
+            let _cwd_owner = OTEL.lock().unwrap_or_else(|e| e.into_inner());
+            let cwd = std::env::current_dir().unwrap();
+            with_run_launching(vars, &notes, CleanGit, &exec, &|| 0, &seam, &Mute::default(), &NoLaunch, "", |r| {
+                r.s.bead = "sp-a".into();
+                r.s.work = Some(work.clone());
+                r.s.repo = work.clone();
+                r.hb_done.store(true, std::sync::atomic::Ordering::SeqCst);
+                r.teardown(0);
+            });
+            std::env::set_current_dir(cwd).unwrap();
+        }
         let note = notes.0.lock().unwrap().iter().filter(|a| a[0] == "note").map(|a| a[2].clone()).collect::<Vec<_>>().join("\n");
         let reopen = seam.0.lock().unwrap().iter().find(|(f, _)| f == "bead_reopen").map(|(_, a)| a.join("\n")).unwrap_or_default() + &note;
         let lc = exec.lc.lock().unwrap().clone();

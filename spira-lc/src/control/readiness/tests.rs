@@ -117,6 +117,33 @@ impl Rig {
         )
     }
 
+    fn claim_directed(&self, id: &str) -> (i32, String) {
+        self.claim_directed_stacked(id, json!({}))
+    }
+
+    fn claim_directed_stacked(&self, id: &str, stack: Value) -> (i32, String) {
+        let lease = self.now() + 60;
+        let depth = u32::from(stack.as_object().is_some_and(|s| !s.is_empty()));
+        self.event(
+            id,
+            json!({ "Claim": { "holder": "dwarf-1", "lease_until": lease, "stack": stack,
+                "stack_depth": depth, "stack_max_depth": 4,
+                "directed": { "by": "op", "reason": "r", "previous_holder": null } } }),
+        )
+    }
+
+    fn assert_directed_claim(&self, id: &str) {
+        let (code, out) = self.claim_directed(id);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(self.state(id), "WORKING");
+        let changes = self.store.history(id, None).unwrap();
+        let claim = changes.iter().rev().find(|c| c.audit.event == "Claim").unwrap();
+        let evidence = &claim.audit.evidence["Claim"];
+        assert_eq!(evidence["directed"]["by"], "op");
+        assert_eq!(evidence["directed"]["reason"], "r");
+        assert!(evidence.get("judged").is_none(), "{evidence}");
+    }
+
     /// A record taken to CERTIFIED at `tip`.
     fn certified(&self, id: &str, tip: &str) {
         self.ok(&["create-bead", id, "--submitted-tip", tip]);
@@ -403,6 +430,67 @@ fn a_record_judged_not_claimable_is_refused_its_claim_and_nothing_is_written() {
         "{out}"
     );
     assert_eq!(r.mod_rev(&keys::lifecycle("sp-a")), before);
+}
+
+#[test_id(tx04yaj)]
+#[test]
+fn a_directed_claim_takes_a_record_its_own_takeover_got_judged_taken_over() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    r.applied("sp-a", json!({ "Takeover": { "by": "op", "owner": "direct@1.2" } }));
+    r.judged_at("sp-a", "7", json!({ "claimable": false, "verdict": "taken-over" }));
+    let (code, out) = r.claim("sp-a");
+    assert_eq!(code, crate::REFUSED, "{out}");
+    assert!(out.contains("TakenOver"), "{out}");
+    r.assert_directed_claim("sp-a");
+}
+
+#[test_id(tn7n9i6)]
+#[test]
+fn a_directed_claim_takes_a_record_judged_blocked() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    r.publish(json!([{ "id": "sp-a", "claimable": false, "blocked_by": ["sp-p"] }]));
+    r.assert_directed_claim("sp-a");
+}
+
+#[test_id(t17wk73)]
+#[test]
+fn a_directed_claim_takes_a_held_rework_record_and_leaves_its_holds() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--submitted-tip", TIP]);
+    r.applied("sp-a", json!({ "GateRed": { "tip": TIP, "reason": "suites-failed" } }));
+    r.applied("sp-a", json!({ "Hold": { "kind": "Manual", "cause": "manual-hold", "detail": "op lifts it after review" } }));
+    r.judged_at("sp-a", "7", json!({ "claimable": false, "verdict": "held" }));
+    assert_eq!(r.state("sp-a"), "REWORK");
+    let held = r.row("sp-a")["holds"].clone();
+    let (code, out) = r.claim("sp-a");
+    assert_eq!(code, crate::REFUSED, "{out}");
+    r.assert_directed_claim("sp-a");
+    assert_eq!(r.row("sp-a")["holds"], held);
+    assert!(held.to_string().contains("manual"), "{held}");
+}
+
+#[test_id(t0vzsz5)]
+#[test]
+fn a_directed_claim_compares_no_blocker_gate_even_for_a_stacked_prerequisite_that_moved() {
+    let r = Rig::new();
+    r.certified("sp-b", TIP);
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    let (code, out) = r.claim_directed_stacked("sp-a", json!({ "sp-b": TIP2 }));
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(r.state("sp-a"), "WORKING");
+}
+
+#[test_id(t4bqooj)]
+#[test]
+fn show_prints_when_the_ask_was_raised_in_the_shape_the_row_reader_parses() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    let read = |r: &Rig| spira_store::lc_state::parse_show(&r.ok(&["show", "sp-a"])).unwrap().unwrap().ask_since;
+    assert_eq!(read(&r), None);
+    r.applied("sp-a", json!({ "Hold": { "kind": "Ask", "cause": "operator-question" } }));
+    assert_eq!(read(&r), Some(r.now()));
 }
 
 #[test_id(t6jw9jk)]

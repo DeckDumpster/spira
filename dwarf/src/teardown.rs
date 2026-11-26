@@ -322,10 +322,11 @@ impl Run<'_> {
         let st = decide::ledger_word(lc.as_ref()).to_string();
         // Operator-wait is the lifecycle record's (sp-v62vn follow-up): the model asks
         // through `work ask`/`work blocked`, whose broker places an `ask` hold on this bead's
-        // row. The claim released any bead already carrying a non-wait hold
-        // (run.rs blocking_holds), so an ask hold here was placed during this session — or,
-        // when the store could not tell the holds at claim, raced the claim unseen (sp-druc64).
-        let asked = lc.as_ref().is_some_and(|r| r.held("ask"));
+        // row. A pool claim releases a bead already carrying a non-wait hold (run.rs
+        // blocking_holds), so its ask hold was placed during this session, or raced the claim
+        // unseen when the store could not tell (sp-druc64). One a directed claim inherited
+        // counts only once it is raised again.
+        let asked = lc.as_ref().is_some_and(|r| r.held("ask") && self.s.inherited_ask.is_none_or(|at| r.ask_since != Some(at)));
         let disposition = lc.as_ref().and_then(|r| r.disposition.as_deref());
         let disposition_note = lc.as_ref().and_then(|r| r.disposition_note.clone()).unwrap_or_default();
         let logf = self.s.logf.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
@@ -564,7 +565,7 @@ impl Run<'_> {
                     return rc;
                 }
                 if self.lc_bead(&id).is_some_and(|r| r.held("ask")) {
-                    self.note(&format!("Harness red (rc={rc}): the dwarf could not start its session — {why}. NO attempt was charged. Already parked with an ask hold by rapid-recur."));
+                    self.note(&format!("Harness red (rc={rc}): the dwarf could not start its session — {why}. NO attempt was charged. The row already carries an ask hold, so no further ask was filed."));
                     return rc;
                 }
                 let first: String = why.lines().next().unwrap_or("").trim().chars().take(200).collect();

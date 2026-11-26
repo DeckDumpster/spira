@@ -149,7 +149,9 @@ clean, idle-only eviction) and holds it until that shell (`$$`) exits. Never a f
 halted or drained, the caps are full, the scheduler is the bug), direct a real dwarf onto that one
 bead: `dwarf direct <rune> <bead-id> --by concierge --reason "<why the normal path was bypassed>"`.
 It runs with the rune prompt, hooks, fences, build-directory lease and `work submit` of any
-dwarf, started even when the caps are full; while it lives it counts in the fleet ceiling and its rune's count, so adjust no pool for it, and the cockpit shows it as directed. A bead a
+dwarf, started even when the caps are full; while it lives it counts in the fleet ceiling and its rune's count, so adjust no pool for it, and the cockpit shows it as directed. It claims any
+READY, REWORK or WORKING bead whatever its holds, blockers or readiness verdict; the holds stay on the
+row, except a `wait` hold, which every claim clears. A bead a
 dwarf holds is taken over: that dwarf is stopped with its branch and worktree kept, and the
 directed dwarf continues on the same branch. The claim event records you, the reason and the
 dwarf it replaced. When it reaches SUBMITTED, drive it with `queue round open --members ... --by concierge` and land as for any bead.

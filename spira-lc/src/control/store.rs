@@ -766,15 +766,20 @@ impl<B: Backend> Store<B> {
     /// writes the record. The holder's fencing token is that lock's `create_rev`, returned as
     /// the txn's first fence. It also compares every blocker's gate as its readiness judged it
     /// and each stacked prerequisite at its stacked tip, so a blocker that moved since conflicts
-    /// the claim. A lost compare or a live lock writes nothing, so no lock is left
-    /// behind to give back.
+    /// the claim. A directed claim reads no readiness and compares no blocker. A lost compare
+    /// or a live lock writes nothing, so no lock is left behind to give back.
     pub fn claim(
         &self,
         id: &str,
         ev: &BeadEvent,
         req: &Request,
     ) -> Result<(Outcome, Option<Fence>)> {
-        let BeadEventKind::Claim { lease_until, .. } = &ev.kind else {
+        let BeadEventKind::Claim {
+            lease_until,
+            directed,
+            ..
+        } = &ev.kind
+        else {
             return Err(Error::Backend(format!(
                 "claim of {id} with a {:?} event",
                 ev.kind
@@ -816,7 +821,10 @@ impl<B: Backend> Store<B> {
         }
         let next = self.next_record(ev, &cur, out.row);
         let (mut applied, lost) = self.audits(id, ev, &cur.value, &next);
-        let judged_read = self.readiness(id)?;
+        let judged_read = match directed {
+            Some(_) => None,
+            None => self.readiness(id)?,
+        };
         let judged_rev = judged_read.as_ref().map(|r| r.mod_rev);
         let judged = judged_read.map(|r| r.value);
         if let Some(j) = judged
@@ -826,17 +834,19 @@ impl<B: Backend> Store<B> {
             let (blocked_by, verdict) = (j.blocked_by.clone(), j.verdict.clone());
             return Ok((Outcome::JudgedUnclaimable { blocked_by, verdict }, None));
         }
-        let edges = claim_edges(judged.as_ref(), &next.row.stack);
+        let edges = match directed {
+            Some(_) => Vec::new(),
+            None => claim_edges(judged.as_ref(), &next.row.stack),
+        };
         if let Some(j) = &judged {
             if let Some(Value::Object(claim)) = applied[0].evidence.get_mut("Claim") {
                 claim.insert("judged".into(), judged_evidence(j)?);
             }
         }
         let mut t = Txn::new().when(Compare::ModRev(key.clone(), Some(cur.mod_rev)));
-        t = t.when(Compare::ModRev(
-            keys::readiness(id),
-            judged_rev,
-        ));
+        if directed.is_none() {
+            t = t.when(Compare::ModRev(keys::readiness(id), judged_rev));
+        }
         for (blocker, gate) in &edges {
             t = t.when(gate_compare(blocker, gate.as_ref())?);
         }
