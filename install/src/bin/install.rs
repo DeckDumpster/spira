@@ -2585,6 +2585,7 @@ mod proc_starts_phase_tests {
     fn plain_sudo(case: Case) -> (testkit::TempDir, Vec<String>, String, Result<(), String>) {
         let td = testkit::TempDir::new("proc-starts-sudo");
         let release = spira_config::process::fixture_release(td.path(), true);
+        testkit::disown_from_root(&release.join("spira"));
         std::fs::create_dir_all(release.join("systemd")).unwrap();
         let template = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/spira-proc-starts.service");
         std::fs::copy(template, release.join("systemd/spira-proc-starts.service")).unwrap();

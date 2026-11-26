@@ -55,6 +55,17 @@ impl Deref for TempDir {
     }
 }
 
+/// Gives a root-created fixture path a non-root owner, for code that refuses a root-owned
+/// path: rounds run the suites as root. A no-op for any other user.
+pub fn disown_from_root(path: &Path) {
+    use std::os::unix::fs::MetadataExt;
+    let owner = std::fs::metadata(path).unwrap_or_else(|e| panic!("stat {}: {e}", path.display())).uid();
+    if owner == 0 {
+        const NOBODY: u32 = 65534;
+        std::os::unix::fs::chown(path, Some(NOBODY), None).unwrap_or_else(|e| panic!("chown {}: {e}", path.display()));
+    }
+}
+
 /// Runs `git -C dir args` with a fixed identity; panics on failure. Returns trimmed stdout.
 pub fn git(dir: &Path, args: &[&str]) -> String {
     let o = Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().expect("spawn git");

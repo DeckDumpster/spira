@@ -692,6 +692,7 @@ mod proc_starts_env_tests {
         for d in ["spira/conf.d", "systemd", "bin"] {
             std::fs::create_dir_all(release.join(d)).unwrap();
         }
+        testkit::disown_from_root(&release.join("spira"));
         std::fs::write(release.join("systemd/spira-proc-starts.service"), "[Service]\n").unwrap();
         let units = td.path().join("home/.config/systemd/user");
         std::fs::create_dir_all(&units).unwrap();
