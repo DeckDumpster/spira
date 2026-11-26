@@ -3021,6 +3021,9 @@ fn eject_leaving_a_member_abandons_the_batch_row_so_the_survivor_is_not_stranded
     let out = t.out();
     assert!(out.contains("queue.sh eject: sp-b returned to SUBMITTED"), "{out}");
     assert!(!out.contains("CERTIFIED"), "{out}");
+    let mails = format!("{:?}", t.lib.mails.borrow());
+    assert!(mails.contains("Survivors requeued: sp-b:SUBMITTED"), "{mails}");
+    assert!(!mails.contains("CERTIFIED"), "{mails}");
     let calls = t.lc.calls.borrow().clone();
     let e = calls
         .iter()
@@ -5347,6 +5350,7 @@ fn eject_dry_run_writes_nothing() {
     assert!(t
         .out()
         .contains("dry-run: would return bead sp-a to spira-lc via a Returned event"));
+    assert!(t.out().contains("dry-run: would requeue survivors: sp-b"), "{}", t.out());
     assert!(!t.lc.has("event") && !t.lc.has("eject-member"));
     assert!(t.qfile("open").exists());
     assert!(t.lib.calls.borrow().is_empty());
@@ -5386,16 +5390,19 @@ fn abandon_keeps_reworked_members_archives_and_audits() {
 #[test]
 fn abandon_reports_each_member_in_the_state_spira_lc_requeued_it_to() {
     let t = T::new(LandMode::Queue);
-    t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta sp-b:tb sp-c:tc\nbatch_id=spira-1\nversion=3\nbranch=spira/queue/x\nowner=batcher\n");
+    t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta sp-b:tb sp-c:tc sp-d:td\nbatch_id=spira-1\nversion=3\nbranch=spira/queue/x\nowner=batcher\n");
     t.lc_row("sp-a", "REWORK", "ta", 5);
     t.lc_requeues_to("sp-b", "tb", None, "CERTIFIED");
     t.lc_requeues_to("sp-c", "tc", Some("delivered-from-submitted"), "SUBMITTED");
+    // REWORK only once requeued: it was returned there, not left there.
+    t.lc_requeues_to("sp-d", "td", None, "REWORK");
     t.var("SPIRA_QUEUE_ACTOR", "op");
     assert_eq!(t.run(&["abandon", "--reason", "x"]), 0, "{}", t.err());
     let (out, log) = (t.out(), t.landing_log());
     assert!(out.contains("sp-b: returned to CERTIFIED"), "{out}");
     assert!(out.contains("sp-c: returned to SUBMITTED"), "{out}");
-    assert!(log.contains("members=sp-a:REWORK,sp-b:CERTIFIED,sp-c:SUBMITTED"), "{log}");
+    assert!(out.contains("sp-d: returned to REWORK"), "{out}");
+    assert!(log.contains("members=sp-a:REWORK,sp-b:CERTIFIED,sp-c:SUBMITTED,sp-d:REWORK"), "{log}");
     for text in [&out, &log] {
         assert!(!text.contains("sp-c:CERTIFIED"), "{text}");
         assert!(!text.contains("sp-c: returned to CERTIFIED"), "{text}");
