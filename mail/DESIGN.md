@@ -32,6 +32,8 @@ exactly as they are today:
 ```
 mail send <mailbox> --from "<s>" --subject "<s>" [--kind K] [--urgent]
                      [--default D] [--bead ID] [--digest] < body
+                                  stdout: `mail send: sent <msgid> to <mailbox>[; ask <id>][ (rerouted from operator: <why>)]`;
+                                  an empty body is refused
 mail template <kind>              print the kind's body skeleton
 mail list <mailbox> [--unread]
 mail read <mailbox> [<message>]   prints, moves new -> cur
