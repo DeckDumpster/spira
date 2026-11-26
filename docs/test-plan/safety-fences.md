@@ -368,7 +368,7 @@ UC-safety-fences-16 is marked `[use_case.uncovered]` in the TOML catalogue, citi
 Also retired dead in the same bead, outside this area's own catalogue: `dwarf_claude_argv`
 (table moved to `dwarf/src/run.rs`, already exercised end to end by
 `test-dwarf-prompt-layers.sh`'s T3 and `test-persona-model.sh`'s real-binary rows) and
-`rune_fenced` (now `dwarf/src/conf.rs` and `release/src/stage.rs`; `test-scope-label.sh`
+`rune_fenced` (now `dwarf/src/conf.rs`; `test-scope-label.sh`
 and `test-dwarf-elastic-concurrency.sh` keep their still-live `rune_get`/elastic-pool rows
 and lose only the direct `rune_fenced` calls, neither of which carried a UC id here).
 

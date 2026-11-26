@@ -351,40 +351,34 @@ fn drain_oneshot(ctx: &Ctx, unit: &str, was_active: &BTreeMap<&String, bool>) {
     eprintln!("install: warning — {svc} did not finish within {max}s; proceeding");
 }
 
-/// `_db_server_wait` (systemd/install.sh, gone with sp-31dm0's port): after dolt-beads.service
-/// is applied, hold every timer behind it in the same `ordered` pass until `bd` can read the
-/// database — so a timer whose elapsed-since-boot condition is already met does not fire into
-/// a server still starting (acceptance phase B, 2026-09-26: units.sh listed dolt-beads.service
-/// near the end of ENABLE, after every timer; the sentinel ran first, logged DATABASE
-/// UNREADABLE, exited 1 and was left failed). No database yet (a first install before phase
-/// 3's seed) or no `bd` at all: nothing to wait for. A server that never answers is reported,
-/// not fatal — the end-state check and the units' own failures say what is wrong more
-/// precisely than a refusal here would. `SPIRA_INSTALL_DB_READY_WAIT` bounds the wait
-/// (seconds, default 60); `SPIRA_DRAIN_INTERVAL` paces it (default 2, tests set it to 0).
+/// After dolt-beads.service is applied, hold every timer behind it in the same `ordered` pass
+/// until the beads store answers, so a timer already due does not fire into a server still
+/// starting. No store yet (a first install before phase 3's seed): nothing to wait for. A server
+/// that never answers is reported, not fatal: the end-state check and the units' own failures say
+/// what is wrong more precisely. `SPIRA_INSTALL_DB_READY_WAIT` bounds the wait (seconds, default
+/// 60); `SPIRA_DRAIN_INTERVAL` paces it (default 2, tests set it to 0).
 fn db_server_wait(ctx: &Ctx) {
     let db = ctx.host.db.as_str();
     if db.is_empty() || !Path::new(db).join(".beads").is_dir() {
         return;
     }
-    let bd = crate::bootstrap::nonempty_env("SPIRA_BD").unwrap_or_else(|| "bd".to_string());
+    let lc = match spira_store::lifecycle_row::lc_bin() {
+        Ok(lc) => lc,
+        Err(e) => {
+            eprintln!("install: warning — cannot ask the beads database whether it is up ({e}); arming timers anyway");
+            return;
+        }
+    };
     let interval = crate::bootstrap::nonempty_env("SPIRA_DRAIN_INTERVAL").and_then(|v| v.parse::<u64>().ok()).unwrap_or(2);
     let max = crate::bootstrap::nonempty_env("SPIRA_INSTALL_DB_READY_WAIT").and_then(|v| v.parse::<u64>().ok()).unwrap_or(60);
     let mut waited = 0u64;
     let mut printed_waiting = false;
     loop {
-        match spira_config::bounded::bounded(&bd).args(["-C", db, "sql", "select 1"]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status() {
-            Ok(s) if s.success() => {
-                if waited > 0 {
-                    println!("install: beads database answering after {waited}s");
-                }
-                return;
+        if spira_config::bounded::bounded(&lc).args(["admin-store", "ping"]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success()) {
+            if waited > 0 {
+                println!("install: beads database answering after {waited}s");
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound && !printed_waiting && waited == 0 => {
-                // No bd on the path: nothing to wait for. Any other spawn failure (ETXTBSY on a
-                // just-written script, EAGAIN under load) is transient and is retried as a miss.
-                return;
-            }
-            _ => {}
+            return;
         }
         if waited >= max {
             break;

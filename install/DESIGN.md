@@ -46,6 +46,14 @@ unit-ensure [--diff]
     but never restarts a running service. `landing-pass` runs this after every pass.
 ```
 
+## The beads store
+
+Phase 3 needs `SPIRA_DOLT_DATA`; unset, install refuses it by name. On a box with no store it
+runs `spira-lc admin-create-beads` against the dolt server, retrying a failure that is not a
+refusal, and drops the database only when the failed run said it had begun creating it. Both
+waits for a store (phase 4, and `units-install` before it arms timers) are
+`spira-lc admin-store ping`; an existing store's bead count is a SQL count. install starts no bd.
+
 ## Schema (modules)
 
 | module | replaces | owns |
@@ -58,7 +66,7 @@ unit-ensure [--diff]
 | `install_units` | `systemd/install.sh`'s main body | Render, write, mask detection, ExecStart executability, `--render`/`--diff`, the enable/restart/prune loop (via `decide`), legacy-unit migration, cockpit-state migration, prune-target computation. |
 | `ensure` | `systemd/unit-ensure.sh` | The same render/write, without restart: enable+start only newly-installed units, the MISSING-TARGET guard, and run on every invocation. |
 | `checks` | root `install.sh`'s path-collision/landref/live-dwarf refusals as `units-install` runs them | Shared between `units-install` and `install`'s phase 4 so the two cannot resolve a different answer from the same box. |
-| `orchestrate` | root `install.sh`'s phase sequencing (the parts worth unit-testing without doctor.sh/a real dolt server/systemd) | The `Deps` trait for external tools not yet ported, the dolt-query-ready retry loop, phase 4's wiring, `spira-config path-tail`'s logic read in-process instead of shelled out to. |
+| `orchestrate` | root `install.sh`'s phase sequencing (the parts worth unit-testing without doctor.sh/a real dolt server/systemd) | The `Deps` trait for external tools not yet ported, the dolt-query-ready retry loop, the store's creation, wait and count, phase 4's wiring, `spira-config path-tail`'s logic read in-process instead of shelled out to. |
 | `bootstrap` | glue `systemd/install.sh`/`unit-ensure.sh` both had (source conf.sh/units.sh, call `watchd.sh units`, read `ctrl.sh`'s suspended set) | Resolve host values, the manifest and the unit directory from the environment a caller already set — the one place this is done, so `install`, `units-install` and `unit-ensure` cannot each derive it slightly differently. Also applies the two plain `conf.sh` defaults that matter to rendering (`SPIRA_SNAP_STALE_S=60`, `SPIRA_COCKPIT=dirname(SPIRA_HOME)/cockpit`) when the caller's environment leaves them unset — see Decisions. |
 
 The root `install` binary's phase bodies (database bootstrap, spira-lc system-user creation,

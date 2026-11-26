@@ -13,16 +13,14 @@ use crate::admin_drop::Dolt;
 use crate::db::Conn;
 use crate::{CANNOT_TELL, REFUSED};
 
-pub(crate) const SUBCOMMANDS: &str = "migrate | migrate-status | ping | version | dolt-start | init | config get|set <types.custom|status.custom> [value] | sql [--json] (statement on stdin)";
+pub(crate) const SUBCOMMANDS: &str = "migrate | migrate-status | ping | version | dolt-start | config get|set <types.custom|status.custom> [value] | sql [--json] (statement on stdin)";
 const CONFIG_KEYS: [&str; 2] = ["types.custom", "status.custom"];
 const CALL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// What one subcommand asks of bd: its argv after `-C <db>`, whether it runs in the store's
-/// directory, and whether the caller wants bd's version line followed by the binary's path.
+/// What one subcommand asks of bd: its argv after `-C <db>`, and whether the caller wants bd's version line followed by the binary's path.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Plan {
     pub argv: Vec<String>,
-    pub in_store_dir: bool,
     pub with_path: bool,
 }
 
@@ -36,19 +34,18 @@ pub(crate) enum Ask {
     ConfigSet(String, String),
 }
 
-fn plan(argv: &[&str], in_store_dir: bool, with_path: bool) -> Ask {
-    Ask::Bd(Plan { argv: argv.iter().map(|s| s.to_string()).collect(), in_store_dir, with_path })
+fn plan(argv: &[&str], with_path: bool) -> Ask {
+    Ask::Bd(Plan { argv: argv.iter().map(|s| s.to_string()).collect(), with_path })
 }
 
 pub(crate) fn ask_of(args: &[String], stdin: &mut dyn FnMut() -> Result<String, String>) -> Result<Ask, String> {
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     match words.as_slice() {
-        ["migrate"] => Ok(plan(&["migrate", "schema"], false, false)),
-        ["migrate-status"] => Ok(plan(&["migrate", "status"], false, false)),
+        ["migrate"] => Ok(plan(&["migrate", "schema"], false)),
+        ["migrate-status"] => Ok(plan(&["migrate", "status"], false)),
         ["ping"] => Ok(Ask::Ping),
-        ["version"] => Ok(plan(&["version"], false, true)),
-        ["dolt-start"] => Ok(plan(&["dolt", "start"], false, false)),
-        ["init"] => Ok(plan(&["init", "--non-interactive", "--prefix", "sp", "--skip-agents", "--skip-hooks", "-q"], true, false)),
+        ["version"] => Ok(plan(&["version"], true)),
+        ["dolt-start"] => Ok(plan(&["dolt", "start"], false)),
         ["config", "get", key] if CONFIG_KEYS.contains(key) => Ok(Ask::ConfigGet(key.to_string())),
         ["config", "set", key, value] if CONFIG_KEYS.contains(key) => Ok(Ask::ConfigSet(key.to_string(), value.to_string())),
         ["sql"] | ["sql", "--json"] => {
@@ -165,9 +162,7 @@ fn on_server(ask: &Ask) -> i32 {
 
 pub(crate) fn command(p: &Plan, bd: &str, db: &str) -> Result<Command, String> {
     let mut cmd = crate::proc::command(bd)?;
-    if p.in_store_dir {
-        cmd.current_dir(db);
-    } else if !db.is_empty() {
+    if !db.is_empty() {
         cmd.args(["-C", db]);
     }
     cmd.args(&p.argv);
@@ -268,32 +263,29 @@ mod tests {
         let (bd, db) = (stub.to_str().unwrap(), dir.join("store"));
         std::fs::create_dir(&db).unwrap();
         let db = db.to_str().unwrap();
-        for args in [vec!["migrate"], vec!["dolt-start"], vec!["init"]] {
+        for args in [vec!["migrate"], vec!["dolt-start"]] {
             assert!(command(&bd_plan(&args), bd, db).unwrap().status().unwrap().success());
         }
         let seen = std::fs::read_to_string(&log).unwrap();
         let want = [
             format!("[-C][{db}][migrate][schema]"),
             format!("[-C][{db}][dolt][start]"),
-            format!("{db}\n[init][--non-interactive][--prefix][sp][--skip-agents][--skip-hooks][-q]"),
         ];
         for w in &want {
             assert!(seen.contains(w), "{w} not in {seen}");
         }
-        assert!(!seen.contains(&format!("[-C][{db}][init]")), "init runs in the store dir: {seen}");
     }
 
     #[test_id(th3i9bi)]
     #[test]
     fn the_store_callers_name_no_bd() {
-        let files: [(&str, &str); 8] = [
+        let files: [(&str, &str); 7] = [
             ("spira/deploy.sh", include_str!("../../spira/deploy.sh")),
             ("spira/bd-pin.sh", include_str!("../../spira/bd-pin.sh")),
             ("spira/schema-apply.sh", include_str!("../../spira/schema-apply.sh")),
             ("spira/schema.sh", include_str!("../../spira/schema.sh")),
             ("spira/pre-activate.sh", include_str!("../../spira/pre-activate.sh")),
             ("env_bootstrap.rs", include_str!("../../spira-config/src/env_bootstrap.rs")),
-            ("stage.rs", include_str!("../../release/src/stage.rs")),
             ("tsd-lifecycle-export", include_str!("../../tsd-lifecycle-export/src/main.rs")),
         ];
         for (name, text) in files {

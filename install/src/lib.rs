@@ -22,8 +22,6 @@ pub mod ensure;
 pub mod guards;
 pub mod install_units;
 pub mod kit_bump;
-/// Install's lifecycle-store phase (sp-xfqnr) lives in `release` since sp-880u4, so
-/// `release stage up` builds the stage's store with the same code install does.
 pub mod manifest;
 pub mod orchestrate;
 pub mod round_records;

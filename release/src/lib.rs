@@ -24,7 +24,6 @@ pub mod prune;
 pub mod repo;
 pub mod session_hook;
 pub mod spira_env;
-pub mod stage;
 pub mod symbols;
 pub mod systemctl;
 pub mod telemetry;
