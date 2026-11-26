@@ -222,17 +222,25 @@ pub fn judge(cfg: &ReconcilerFlow, now: u64, carry: &Carry, snap: &FlowSnapshot,
     };
     j.evaluate("flow:backlog", backlog_raw, true);
 
+    // One cause blinds every stage-derived invariant, so only this key mails for it.
+    let family_raw = fresh(&snap.export, match &snap.stage {
+        Ok(_) => RawStatus::Satisfied,
+        Err(e) => unobservable(e.clone()),
+    });
+    let family_readable = family_raw == RawStatus::Satisfied;
+    j.evaluate("flow:bead-stage", family_raw, true);
+
     let velocity_raw_status = match &snap.stage {
         Ok(s) => velocity_raw(&VelocityObserved { current_per_hour: s.velocity.0, baseline_per_hour: s.velocity.1, waiting: s.waiting }, snap.velocity_floor),
         Err(e) => unobservable(e.clone()),
     };
-    j.evaluate("flow:velocity:queue", fresh(&snap.export, velocity_raw_status), true);
+    j.evaluate("flow:velocity:queue", fresh(&snap.export, velocity_raw_status), family_readable);
 
     let dwell_raw_status = match &snap.stage {
         Ok(Stage { dwell: (cur_p95, cur_n, base_p95, base_n), .. }) => dwell_raw(&DwellObserved { p95_seconds: *cur_p95, n: *cur_n }, snap.dwell_limit, if *base_n > 0 { Some(*base_p95) } else { None }),
         Err(e) => unobservable(e.clone()),
     };
-    j.evaluate("flow:dwell:review", fresh(&snap.export, dwell_raw_status), true);
+    j.evaluate("flow:dwell:review", fresh(&snap.export, dwell_raw_status), family_readable);
 
     let round_health_raw_status = match &snap.stage {
         Ok(Stage { round_health: (cur_flips, cur_transitions, base_flips, base_transitions), .. }) => {
@@ -241,7 +249,7 @@ pub fn judge(cfg: &ReconcilerFlow, now: u64, carry: &Carry, snap: &FlowSnapshot,
         }
         Err(e) => unobservable(e.clone()),
     };
-    j.evaluate("flow:round-health", fresh(&snap.export, round_health_raw_status), true);
+    j.evaluate("flow:round-health", fresh(&snap.export, round_health_raw_status), family_readable);
 
     let idle_raw_status = match (&snap.slots, limit) {
         (Err(e), _) => unobservable(e.clone()),
@@ -259,9 +267,9 @@ pub fn judge(cfg: &ReconcilerFlow, now: u64, carry: &Carry, snap: &FlowSnapshot,
     match &snap.stage {
         Ok(Stage { rework: (reopens, landed, history_hours), .. }) => {
             let raw = fresh(&snap.export, rework_raw(&ReworkObserved { reopens: *reopens, landed: *landed }));
-            j.evaluate("flow:rework", raw, *history_hours >= cfg.baseline_hours);
+            j.evaluate("flow:rework", raw, family_readable && *history_hours >= cfg.baseline_hours);
         }
-        Err(e) => j.evaluate("flow:rework", unobservable(e.clone()), true),
+        Err(e) => j.evaluate("flow:rework", unobservable(e.clone()), family_readable),
     }
 
     for state_name in DWELL_REGRESSION_STATES {
@@ -276,7 +284,7 @@ pub fn judge(cfg: &ReconcilerFlow, now: u64, carry: &Carry, snap: &FlowSnapshot,
             }
             Err(e) => unobservable(e.clone()),
         };
-        j.evaluate(&key, raw, true);
+        j.evaluate(&key, raw, family_readable);
     }
     j.pass
 }
@@ -368,7 +376,7 @@ mod tests {
     fn a_quiet_world_alerts_nobody_and_reads_the_same_twice() {
         let first = judge(&cfg(), 1_000, &Carry::default(), &quiet(), None);
         assert!(first.mails.is_empty());
-        assert_eq!(first.statuses.len(), 12);
+        assert_eq!(first.statuses.len(), 13);
         let second = judge(&cfg(), 2_800, &first.carry, &quiet(), None);
         assert_eq!(second.carry, first.carry, "a pass whose verdicts did not change carries the same state");
     }
@@ -419,6 +427,58 @@ mod tests {
         let p = judge(&cfg(), 1_000, &Carry::default(), &snap, None);
         assert_eq!(p.carry.words["flow:velocity:queue"], "unobservable");
         assert_eq!(p.carry.words["flow:dwell-regression:ready"], "unobservable");
+    }
+
+    const STAGE_DERIVED: [&str; 9] = [
+        "flow:velocity:queue",
+        "flow:dwell:review",
+        "flow:round-health",
+        "flow:rework",
+        "flow:dwell-regression:ready",
+        "flow:dwell-regression:working",
+        "flow:dwell-regression:submitted",
+        "flow:dwell-regression:in_delivery",
+        "flow:dwell-regression:rework",
+    ];
+
+    fn no_unobservable_grace() -> ReconcilerFlow {
+        ReconcilerFlow { unobservable_grace_secs: 0, ..cfg() }
+    }
+
+    fn subjects(mails: &[Mail]) -> Vec<&str> {
+        mails.iter().map(|m| m.subject.as_str()).collect()
+    }
+
+    #[test_id(t93r54n)]
+    #[test]
+    fn a_failed_export_mails_once_under_its_cause_not_once_per_invariant() {
+        let snap = FlowSnapshot { export: Err("x".into()), ..quiet() };
+        let p = judge(&no_unobservable_grace(), 1_000, &Carry::default(), &snap, Some(&pool(3)));
+        assert_eq!(subjects(&p.mails), ["RECONCILER: flow gap — flow:bead-stage"]);
+        assert!(p.mails[0].body.contains("bead-stage export failed: x"), "{}", p.mails[0].body);
+        for key in STAGE_DERIVED {
+            assert_eq!(p.carry.words[key], "unobservable", "{key}");
+        }
+    }
+
+    #[test_id(tgbq51u)]
+    #[test]
+    fn unreadable_stage_rows_mail_once_under_their_cause() {
+        let snap = FlowSnapshot { stage: Err("metrics-store-unreachable".into()), ..quiet() };
+        let p = judge(&no_unobservable_grace(), 1_000, &Carry::default(), &snap, Some(&pool(3)));
+        assert_eq!(subjects(&p.mails), ["RECONCILER: flow gap — flow:bead-stage"]);
+        assert!(p.mails[0].body.contains("metrics-store-unreachable"), "{}", p.mails[0].body);
+    }
+
+    #[test_id(txetwgv)]
+    #[test]
+    fn once_the_family_reads_again_each_invariant_mails_its_own_gap() {
+        let cfg = ReconcilerFlow { grace_secs: 0, ..no_unobservable_grace() };
+        let blind = FlowSnapshot { export: Err("x".into()), ..stalled() };
+        let first = judge(&cfg, 1_000, &Carry::default(), &blind, Some(&pool(3)));
+        let second = judge(&cfg, 2_000, &first.carry, &stalled(), Some(&pool(3)));
+        assert_eq!(subjects(&second.mails), ["RECONCILER: flow gap — flow:velocity:queue", "RECONCILER: flow gap — flow:round-health"]);
+        assert_eq!(second.carry.words["flow:bead-stage"], "satisfied");
     }
 
     #[test_id(tsse3qs)]
