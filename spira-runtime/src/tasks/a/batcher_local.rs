@@ -1244,6 +1244,24 @@ pub fn select_split(repo: &Repo, max_members: usize) -> (Selection, Vec<batcher_
     (Ok((pool, key)), left)
 }
 
+/// The leg of the note a cut owes the beads it left out, one per bead, only when the set differs
+/// from `noted`, the last one named; an emptied set is sent once, so its records are dropped.
+pub fn left_out_note(repo: &str, noted: &mut Vec<(String, String, String)>, mut left: Vec<batcher_cut::io::LeftOut>) -> Option<Leg> {
+    let mut seen = std::collections::BTreeSet::new();
+    left.retain(|l| seen.insert(l.id.clone()));
+    let named: Vec<(String, String, String)> = left.iter().map(|l| (l.id.clone(), l.tag(), l.tip.clone())).collect();
+    if named == *noted {
+        return None;
+    }
+    let cleared = left.is_empty() && !noted.is_empty();
+    *noted = named;
+    if left.is_empty() && !cleared {
+        return None;
+    }
+    let why = serde_json::to_string(&left).unwrap_or_default();
+    Some(Leg { key: format!("{repo}:left-out:{}", digest(&why)), why, ..Leg::on(repo) })
+}
+
 /// Ticks the same assemble error must repeat before a person is paged.
 const ASSEMBLE_PAGE_AFTER: u32 = 3;
 
@@ -1986,7 +2004,7 @@ impl Machine<'_> {
         let (selected, selection_out) = select_split(repo, policy.max_members);
         let observed = repo.left_out.iter().filter(|l| !held.contains(&l.id.as_str())).cloned();
         let left: Vec<batcher_cut::io::LeftOut> = observed.chain(refused_out).chain(selection_out).collect();
-        self.note_left_out(left);
+        self.acts.extend(left_out_note(self.repo, &mut self.rc.left_noted, left).map(|leg| leg.act(NOTE_LEFT_OUT)));
         match selected {
             Ok((_, key)) if self.rc.held_keys.contains(&key) => {
                 self.rc.skip_why = Some(held_key_why(&key));
@@ -2159,23 +2177,6 @@ impl Machine<'_> {
         let left = repo.pool.iter().filter_map(|m| refused.get(&m.id).map(|(tip, _, kind)| batcher_cut::io::LeftOut { id: m.id.clone(), tip: tip.clone(), cause: batcher_cut::io::Cause::Refused { kind: kind.clone() } })).collect();
         let pool = repo.pool.iter().filter(|m| !refused.contains_key(&m.id)).cloned().collect();
         (Repo { pool, ..repo.clone() }, why, left)
-    }
-
-    /// One note per bead left out of this cut, pushed only when the set differs from the last one named.
-    fn note_left_out(&mut self, mut left: Vec<batcher_cut::io::LeftOut>) {
-        let mut seen = std::collections::BTreeSet::new();
-        left.retain(|l| seen.insert(l.id.clone()));
-        let named: Vec<(String, String, String)> = left.iter().map(|l| (l.id.clone(), l.tag(), l.tip.clone())).collect();
-        if named == self.rc.left_noted {
-            return;
-        }
-        let cleared = left.is_empty() && !self.rc.left_noted.is_empty();
-        self.rc.left_noted = named;
-        if left.is_empty() && !cleared {
-            return;
-        }
-        let why = serde_json::to_string(&left).unwrap_or_default();
-        self.acts.push(Leg { key: format!("{}:left-out:{}", self.repo, digest(&why)), why, ..Leg::on(self.repo) }.act(NOTE_LEFT_OUT));
     }
 
     fn leg_ended(&mut self, exit: Exit) {

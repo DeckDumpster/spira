@@ -17,13 +17,17 @@
 //! - Cadence 30 s, single-flight per queue repo; repos run independently (today they run in series, `main.rs:1217`).
 //! - Admitted only while `SPIRA_BATCHER_FORGE_ENABLE != 0` (`main.rs:1299`, `:1204`). No pacing:
 //!   pacing applies to queue.local only (`main.rs:1327`).
-//! - Wakes (proposed names): `bead.certified`, `batch.settled` from [[queue-step]], `unit.ran` for its own legs.
+//! - Wakes (`WAKES`): `work.submitted`, `queue.step.cut_wanted` from [[queue-step]]; `unit.ran` for its own legs.
+//!   No wake follows a gate's certifies-nothing mark: the next tick reads it.
 //!
 //! ## Observe
 //!
 //! Probe `batcher.forge.observe` (deadline 10 s), per repo:
 //!
-//! - **LcClient (S7a):** the same pool reads as [[batcher-local]] (`io.rs:212`, `:221`, `:244`, `:372-377`, `:495`, `:928`).
+//! - **LcClient (S7a):** the same pool reads as [[batcher-local]] (`io.rs:212`, `:221`, `:244`, `:372-377`, `:495`, `:928`):
+//!   every CERTIFIED row, and a SUBMITTED one whose reason says its gate certifies nothing
+//!   (`lifecycle::bead::certifies_nothing`), kept SUBMITTED, so provisional. Every row the read
+//!   leaves out comes with its cause.
 //! - **Batch projection (S7b):** the open batch PR and members, read in-process from the store's watched projection (`io::read_open_batch`), no `queue batch show`.
 //!   An open batch means *no cut* (`main.rs:285-288`).
 //! - **Config (S10):** registry `land/root/landref/forge` (`main.rs:142-167`), `SPIRA_LOOM_ADDR` (`main.rs:1132`).
@@ -64,6 +68,7 @@
 //! | Effect | Class | Deadline | Idempotency key | Refuses |
 //! |---|---|---|---|---|
 //! | `batcher.forge.observe` | store | 10 s | tick | — |
+//! | `batcher.forge.note_left_out` | store | 60 s | repo + the left-out set | a note already left for that bead, cause and tip |
 //! | `batcher.forge.arm` | forge | 60 s (bounded, unverified) | repo | — (`io.rs:1501`) |
 //! | `batcher.forge.fetch` / `.assemble` | git | 60 s / 120 s | repo + round_key | lock held (`main.rs:261-264`) |
 //! | `batcher.forge.corpus` | unit (`unit.start`) | `SPIRA_BATCHER_WALL_SECS` | repo + round + run n | one live run (`vm.rs:370`) |
@@ -78,8 +83,8 @@
 //!
 //! ## Silence
 //!
-//! Idle tick, an open batch already being settled, or a disabled repo whose waiting set has not changed:
-//! the probe only.
+//! Idle tick with the left-out set unchanged, an open batch already being settled, or a disabled repo
+//! whose waiting set has not changed: the probe only.
 //!
 //! ## Replaces
 //!
@@ -104,7 +109,7 @@ use batcher_cut::attribute::Attribution;
 use runtime::units::{Exit, RanOutput, UnitRan};
 use serde::{Deserialize, Serialize};
 
-use super::batcher_local::{P2, digest, green, handle_p2, interests, page_line, select, table_step, unit_key, Assembled, On, Leg, Policy, ATTRIBUTE, leg_deadline_ms};
+use super::batcher_local::{P2, digest, green, handle_p2, interests, left_out_note, page_line, select_split, table_step, unit_key, Assembled, On, Leg, Policy, ATTRIBUTE, leg_deadline_ms};
 use super::kit::{self, Act, Cadence, Shape};
 
 pub use super::batcher_local::Member;
@@ -129,6 +134,7 @@ pub const BATCH_OPEN: &str = "batcher.forge.batch_open";
 pub const FILE: &str = "batcher.forge.file";
 pub const VERDICT_WRITE: &str = "batcher.forge.verdict_write";
 pub const INBOX_APPEND: &str = crate::watchers::INBOX_APPEND;
+pub const NOTE_LEFT_OUT: &str = "batcher.forge.note_left_out";
 
 pub const CADENCE_MS: u64 = 30_000;
 pub const OBSERVE_DEADLINE_MS: u64 = 10_000;
@@ -144,11 +150,12 @@ pub const ACTS: &[(&str, u64)] = &[
     (FILE, 30_000),
     (VERDICT_WRITE, 5_000),
     (INBOX_APPEND, 10_000),
+    (NOTE_LEFT_OUT, 60_000),
 ];
 pub const EMITS: &[EventKindTag] = &[SETTLE_WANTED];
 /// Hand-offs that wake it at once, besides its tick: a submission sifted, a batch settled.
 pub const WAKES: &[EventKindTag] = &[kit::WORK_SUBMITTED, super::queue_step::CUT_WANTED];
-pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, ARM, FETCH, ASSEMBLE, CORPUS, WITHDRAW, SHOTS, BATCH_OPEN, FILE, VERDICT_WRITE, INBOX_APPEND];
+pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, ARM, FETCH, ASSEMBLE, CORPUS, WITHDRAW, SHOTS, BATCH_OPEN, FILE, VERDICT_WRITE, INBOX_APPEND, NOTE_LEFT_OUT];
 pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
     "SPIRA_DB",
@@ -193,12 +200,40 @@ pub struct Repo {
     pub base_confirmed: bool,
     /// Commits on the assembled head that belong to no member (`foreign_beads`).
     pub foreign: Vec<String>,
+    /// Beads the pool read kept out of the pool, with why.
+    #[serde(default)]
+    pub left_out: Vec<batcher_cut::io::LeftOut>,
+}
+
+/// One repository as the probe read it: a provisional member stays SUBMITTED, so the cut ranks it
+/// after the certified ones. The pool's tips are the sifted ones: a forge cut asks no sift.
+pub fn observed_repo(certified: Vec<core::Member>, left_out: Vec<batcher_cut::io::LeftOut>, open_batch: Option<Batch>, base_sha: String) -> Repo {
+    let pool: Vec<Member> = certified
+        .into_iter()
+        .map(|m| Member {
+            state: if m.provisional { "SUBMITTED" } else { "CERTIFIED" }.into(),
+            sifted_tip: Some(m.tip.clone()),
+            title: m.title.clone(),
+            priority: m.priority.unwrap_or(u8::MAX),
+            deps: m.blocked_by.clone(),
+            stack: m.stack.iter().map(|(i, t)| format!("{i}:{t}")).collect(),
+            base_fix: m.base_fix,
+            express: m.express,
+            certified_at: m.certified_at,
+            id: m.id,
+            tip: m.tip,
+            ..Member::default()
+        })
+        .collect();
+    let blockers = pool.iter().flat_map(|m| m.deps.clone()).collect();
+    let branch_tips = pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
+    Repo { pool, blockers, open_batch, branch_tips, base_sha, base_confirmed: true, left_out, ..Repo::default() }
 }
 
 impl Repo {
     /// The pool as [`super::batcher_local`]'s cut reads it.
     fn local(&self) -> super::batcher_local::Repo {
-        super::batcher_local::Repo { pool: self.pool.clone(), blockers: self.blockers.clone(), basefail: self.basefail.clone(), branch_tips: self.branch_tips.clone(), base_sha: self.base_sha.clone(), ..Default::default() }
+        super::batcher_local::Repo { pool: self.pool.clone(), blockers: self.blockers.clone(), basefail: self.basefail.clone(), branch_tips: self.branch_tips.clone(), base_sha: self.base_sha.clone(), left_out: self.left_out.clone(), ..Default::default() }
     }
 }
 
@@ -291,6 +326,9 @@ pub struct RepoCarry {
     pub leg_at_ms: u64,
     #[serde(default)]
     pub run: u32,
+    /// The (id, cause tag, tip) of each bead the last note effect named as left out of the cut.
+    #[serde(default)]
+    pub left_noted: Vec<(String, String, String)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -357,8 +395,8 @@ impl Machine<'_> {
 
     /// Back to Idle with the round forgotten.
     fn reset(&mut self) {
-        let keep = (self.rc.state, self.rc.held.clone(), self.rc.base_moved.clone(), self.rc.conflict_streaks.clone(), self.rc.held_keys.clone());
-        self.rc = RepoCarry { state: keep.0, held: keep.1, base_moved: keep.2, conflict_streaks: keep.3, held_keys: keep.4, ..RepoCarry::default() };
+        let kept = std::mem::take(&mut self.rc);
+        self.rc = RepoCarry { state: kept.state, held: kept.held, base_moved: kept.base_moved, conflict_streaks: kept.conflict_streaks, held_keys: kept.held_keys, left_noted: kept.left_noted, ..RepoCarry::default() };
     }
 
     fn observe(&mut self, policy: &Policy, enabled: bool, repo: &Repo) {
@@ -399,8 +437,11 @@ impl Machine<'_> {
             self.acts.push(Leg { key: self.repo.to_string(), ..Leg::on(self.repo) }.act(ARM));
             return;
         }
-        match select(&repo.local(), policy.max_members) {
-            Some((pool, key)) if !self.rc.held_keys.contains(&key) => {
+        let (selected, selection_out) = select_split(&repo.local(), policy.max_members);
+        let left = repo.left_out.iter().cloned().chain(selection_out).collect();
+        self.acts.extend(left_out_note(self.repo, &mut self.rc.left_noted, left).map(|leg| leg.act(NOTE_LEFT_OUT)));
+        match selected {
+            Ok((pool, key)) if !self.rc.held_keys.contains(&key) => {
                 self.go(Trigger::Cut);
                 self.rc.round_key = Some(key.clone());
                 let members: Vec<(String, String)> = pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
@@ -560,6 +601,12 @@ pub fn on_ran_with(carry: &Carry, ran: &UnitRan, out: &RanOutput, now_ms: u64) -
 
 pub fn on_outcome(carry: &Carry, effect: &str, ok: bool, body: &str, leg: &Leg, now_ms: u64) -> (Carry, Vec<Act>) {
     let mut next = carry.clone();
+    if effect == NOTE_LEFT_OUT {
+        if !ok {
+            next.repos.entry(leg.repo.clone()).or_default().left_noted.clear();
+        }
+        return (next, vec![]);
+    }
     let mut m = Machine { repo: &leg.repo, rc: carry.repos.get(&leg.repo).cloned().unwrap_or_default(), acts: vec![], now_ms };
     m.outcome(effect, ok, body, leg);
     let acts = m.acts;
@@ -619,7 +666,7 @@ pub mod edge {
     use batcher_cut::io;
 
     use super::super::batcher_local::edge::{env, leg};
-    use super::{Batch, Member, Opened, Repo, Snapshot};
+    use super::{Batch, Opened, Snapshot};
     use crate::{Effects, EffectSpec};
 
     fn json<T: serde::Serialize>(v: &T) -> Result<String, String> {
@@ -635,16 +682,15 @@ pub mod edge {
         let mut snap = Snapshot { enabled, now_ms: spira_config::vtime::now_epoch() * 1000, ..Snapshot::default() };
         for name in reg.names().into_iter().filter(|n| reg.land(n) == "queue") {
             let repo = batcher_cut::find_repo(&env, &name)?;
-            let pool: Vec<Member> = io::certified_pool(&env, &repo)?
-                .into_iter()
-                .map(|m| Member { state: "CERTIFIED".into(), sifted_tip: Some(m.tip.clone()), title: m.title.clone(), priority: m.priority.unwrap_or(u8::MAX), deps: m.blocked_by.clone(), stack: m.stack.iter().map(|(i, t)| format!("{i}:{t}")).collect(), base_fix: m.base_fix, express: m.express, certified_at: m.certified_at, id: m.id, tip: m.tip, ..Member::default() })
-                .collect();
+            let (certified, left_out) = io::certified_pool_left_out(&env, &repo)?;
             let open_batch = io::read_open_batch(&env, &name)?.map(|b| Batch { pr: b.pr.trim_start_matches('#').parse().unwrap_or_default(), head: String::new(), members: b.members.into_iter().map(|(id, _)| id).collect() });
-            let blockers = pool.iter().flat_map(|m| m.deps.clone()).collect();
-            let branch_tips = pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
-            snap.repos.insert(name, Repo { pool, blockers, open_batch, branch_tips, base_sha: io::resolve_base_sha(&repo)?, base_confirmed: true, ..Repo::default() });
+            snap.repos.insert(name, super::observed_repo(certified, left_out, open_batch, io::resolve_base_sha(&repo)?));
         }
         json(&snap)
+    }
+
+    pub fn note_left_out(e: &Effects, k: &str, spec: &EffectSpec) -> Result<String, String> {
+        super::super::batcher_local::edge::note_left_out(e, k, spec)
     }
 
     /// `forge pr-arm-queue`: the repo's merge queue is armed before a batch settles.
