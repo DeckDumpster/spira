@@ -963,7 +963,7 @@ fn a_failed_admin_store_statement_exits_non_zero_with_the_servers_error() {
     let Some(store) = Store::up() else { return };
     let lc = Lc::new(&store, "af", "");
     let (rc, out, err) = admin_store(&lc, &["sql"], "select * from no_such_table");
-    assert_ne!(rc, 0, "{out}{err}");
+    assert_eq!(rc, 3, "the server refused it: {out}{err}");
     assert!(err.contains("no_such_table") && err.contains("Error "), "{err}");
     assert_eq!(out, "");
 }

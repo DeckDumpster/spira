@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::control::facts::Fact;
 use crate::control::journal::{Carried, EffectRow, PoisonRow, ScheduleRow, StateRow};
-use crate::db::Conn;
+use crate::db::{Conn, DbError};
 use crate::{flag, CANNOT_TELL, REFUSED};
 
 /// The administrator: `SPIRA_LC_ADMIN_USER` with the password in `SPIRA_LC_ADMIN_PASSWORD_FILE` (or
@@ -68,11 +68,11 @@ pub(crate) trait Dolt {
 
 impl Dolt for Conn {
     fn rows(&self, sql: &str) -> Result<Vec<Value>, String> {
-        self.query(sql).map_err(|e| format!("{e:?}"))
+        self.query(sql).map_err(|DbError::CannotTell(m)| m)
     }
 
     fn execute(&self, sql: &str) -> Result<(), String> {
-        Conn::execute(self, sql).map_err(|e| format!("{e:?}"))
+        Conn::execute(self, sql).map_err(|DbError::CannotTell(m)| m)
     }
 }
 

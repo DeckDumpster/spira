@@ -9,11 +9,13 @@ use crate::proc::Command;
 use serde_json::Value;
 
 use crate::rows::escape;
-use crate::db::{Conn, DbError};
+use crate::admin_drop::Dolt;
+use crate::db::Conn;
 use crate::{CANNOT_TELL, REFUSED};
 
 pub(crate) const SUBCOMMANDS: &str = "migrate | migrate-status | ping | version | dolt-start | init | config get|set <types.custom|status.custom> [value] | sql [--json] (statement on stdin)";
 const CONFIG_KEYS: [&str; 2] = ["types.custom", "status.custom"];
+const CALL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// What one subcommand asks of bd: its argv after `-C <db>`, whether it runs in the store's
 /// directory, and whether the caller wants bd's version line followed by the binary's path.
@@ -28,6 +30,7 @@ pub(crate) struct Plan {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Ask {
     Bd(Plan),
+    Ping,
     Sql { statement: String, json: bool },
     ConfigGet(String),
     ConfigSet(String, String),
@@ -42,7 +45,7 @@ pub(crate) fn ask_of(args: &[String], stdin: &mut dyn FnMut() -> Result<String, 
     match words.as_slice() {
         ["migrate"] => Ok(plan(&["migrate", "schema"], false, false)),
         ["migrate-status"] => Ok(plan(&["migrate", "status"], false, false)),
-        ["ping"] => Ok(Ask::Sql { statement: "select 1".to_string(), json: false }),
+        ["ping"] => Ok(Ask::Ping),
         ["version"] => Ok(plan(&["version"], false, true)),
         ["dolt-start"] => Ok(plan(&["dolt", "start"], false, false)),
         ["init"] => Ok(plan(&["init", "--non-interactive", "--prefix", "sp", "--skip-agents", "--skip-hooks", "-q"], true, false)),
@@ -76,13 +79,8 @@ fn render(rows: &[Value], json: bool) -> String {
     out
 }
 
-fn said(e: DbError) -> String {
-    let DbError::CannotTell(m) = e;
-    m
-}
-
 fn config_get(admin: &Conn, db: &str, key: &str) -> Result<String, String> {
-    let rows = admin.query(&format!("SELECT value FROM {db}.config WHERE `key` = '{}'", escape(key))).map_err(said)?;
+    let rows = admin.rows(&format!("SELECT value FROM {db}.config WHERE `key` = '{}'", escape(key)))?;
     Ok(match rows.first().and_then(|r| r["value"].as_str()) {
         Some(v) => format!("{v}\n"),
         None => format!("{key} (not set)\n"),
@@ -95,7 +93,7 @@ fn config_set(admin: &Conn, db: &str, key: &str, value: &str) -> Result<String, 
     let mut script = vec!["START TRANSACTION".to_string(), format!("REPLACE INTO {db}.config (`key`, value) VALUES ('{}', '{}')", escape(key), escape(value))];
     if key == "types.custom" {
         let schema = db.trim_matches('`');
-        let table = admin.query(&format!("SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = 'custom_types'")).map_err(said)?;
+        let table = admin.rows(&format!("SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = 'custom_types'"))?;
         if !table.is_empty() {
             script.push(format!("DELETE FROM {db}.custom_types"));
             let names: BTreeSet<&str> = value.split(',').map(str::trim).filter(|n| !n.is_empty()).collect();
@@ -106,7 +104,7 @@ fn config_set(admin: &Conn, db: &str, key: &str, value: &str) -> Result<String, 
         }
     }
     script.push("COMMIT".to_string());
-    admin.execute(&script.join("; ")).map_err(said)?;
+    Dolt::execute(admin, &script.join("; "))?;
     Ok(format!("Set {key} = {value}\n"))
 }
 
@@ -124,21 +122,35 @@ fn administrator() -> Result<(Conn, &'static str), String> {
 /// The text a server subcommand prints, or the server's error.
 fn answer(admin: &Conn, db: &str, ask: &Ask) -> Result<String, String> {
     match ask {
-        Ask::Sql { statement, json } => admin.query(statement).map(|rows| render(&rows, *json)).map_err(said),
+        Ask::Ping => admin.rows("select 1").map(|rows| render(&rows, false)),
+        Ask::Sql { statement, json } => admin.rows(statement).map(|rows| render(&rows, *json)),
         Ask::ConfigGet(key) => config_get(admin, db, key),
         Ask::ConfigSet(key, value) => config_set(admin, db, key, value),
         Ask::Bd(_) => Err("a bd subcommand is not run on the server".to_string()),
     }
 }
 
+/// A server's own error is a refusal; anything else leaves unknown whether the statement applied.
+fn exit_of(error: &str) -> i32 {
+    if error.starts_with("Error ") {
+        REFUSED
+    } else {
+        CANNOT_TELL
+    }
+}
+
 fn on_server(ask: &Ask) -> i32 {
-    let (admin, db) = match administrator() {
+    let (mut admin, db) = match administrator() {
         Ok(a) => a,
         Err(e) => {
             eprintln!("admin-store: {e}");
             return CANNOT_TELL;
         }
     };
+    // A caller's `sql` may be DDL or a backfill over the whole store, so it keeps the administrator's limit.
+    if !matches!(ask, Ask::Sql { .. }) {
+        admin.io_timeout = CALL_DEADLINE;
+    }
     match answer(&admin, db, ask) {
         Ok(out) => {
             print!("{out}");
@@ -146,7 +158,7 @@ fn on_server(ask: &Ask) -> i32 {
         }
         Err(e) => {
             eprintln!("admin-store: {e}");
-            REFUSED
+            exit_of(&e)
         }
     }
 }
@@ -300,6 +312,15 @@ mod tests {
     fn the_bd_matcher_finds_a_planted_offender() {
         let planted = "x=$(timeout 30 bd -C \"$DB\" migrate schema)\nCommand::new(\"bd-embedded\")\n# bd -C in a comment\n";
         assert_eq!(bd_command_words(planted).len(), 2);
+    }
+
+    #[test_id(tgp71dk)]
+    #[test]
+    fn only_the_servers_own_error_is_a_refusal_and_a_lost_answer_cannot_tell() {
+        assert_eq!(exit_of("Error 1146 (HY000): table not found: t"), REFUSED);
+        for lost in ["connecting to 127.0.0.1:1: Connection refused", crate::db::DEADLINE_MESSAGE, "a statement lost a race"] {
+            assert_eq!(exit_of(lost), CANNOT_TELL, "{lost}");
+        }
     }
 
     #[test_id(t27rs3y)]
