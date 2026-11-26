@@ -1133,6 +1133,7 @@ dependencies = [
  "hel",
  "incident",
  "libc",
+ "lifecycle",
  "mail",
  "regex",
  "serde",

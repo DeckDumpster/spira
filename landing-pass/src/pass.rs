@@ -75,6 +75,10 @@ struct Job {
     fix: bool,
 }
 
+fn carries_nothing_mark(bead: &BeadRow) -> bool {
+    bead.reason.as_deref() == Some(lifecycle::bead::CERTIFIES_NOTHING_MARK)
+}
+
 /// Per-repository walk state.
 pub(crate) struct Walk<'r> {
     pub repo: &'r RepoRow,
@@ -631,6 +635,12 @@ impl<'a> Pass<'a> {
             self.gate_provisional(w, br, id, bead);
             return Flow::Next;
         }
+        // A move that rewrote the reason (a closed batch's requeue) took the mark: only a new verdict restores it.
+        if self.files.marked(br, &tip) && !carries_nothing_mark(bead) {
+            self.log(&format!("CHECK6 {id}: {br} at {tip} no longer carries its certifies-nothing mark — gating it again"));
+            self.files.forget_marked(br);
+            self.files.clear_backoff(br);
+        }
         if self.s.gate_worker {
             return self.certify_queued(w, br, id, bead, &tip);
         }
@@ -755,14 +765,18 @@ impl<'a> Pass<'a> {
         let name = &repo.name;
         let tip = tip.to_string();
         if g.outcome == GateOutcome::NoVerdict && g.reason_or("unspecified") == spira_config::gate_source::CERTIFIES_NOTHING {
+            let mut window = self.s.noverdict_class_window;
             if repo.mode == LandMode::Queue {
-                if self.lc_certify(id, &tip, "nothing", spira_config::gate_source::CERTIFIES_NOTHING) {
+                if carries_nothing_mark(bead) || self.lc_certify(id, &tip, "nothing", spira_config::gate_source::CERTIFIES_NOTHING) {
+                    self.files.note_marked(br, &tip);
                     self.log(&format!("CHECK6 {id}: {br} in {name} at {tip} certifies nothing — admitted to its batch provisionally; the batch PR's CI is its check"));
+                } else {
+                    window = self.s.gate_backoff;
                 }
             } else {
                 self.log(&format!("CHECK6 {id}: {br} in {name} at {tip} certifies nothing — its repository declares tests its gate does not run; the bead stays SUBMITTED"));
             }
-            self.files.back_off(br, &tip, self.clock.now() + self.s.noverdict_class_window.max(0) as u64);
+            self.files.back_off(br, &tip, self.clock.now() + window.max(0) as u64);
             return Flow::Next;
         }
         if g.outcome != GateOutcome::Pass {

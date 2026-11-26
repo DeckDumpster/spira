@@ -813,7 +813,8 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
     };
     let branches = w.git.branches(&path, "refs/heads/spira/");
     let certs = super::helpers::certified_rows(w.lc, &branches);
-    let submitted = super::helpers::state_rows(w.lc, &branches, "SUBMITTED");
+    let submitted_rows = w.lc.polled_rows("SUBMITTED").unwrap_or_default();
+    let submitted = super::helpers::rows_with_branch(&submitted_rows, &branches);
     let mut skips: Vec<String> = Vec::new();
     let mut cands: Vec<(String, String)> = Vec::new();
     if !members_arg.trim().is_empty() {
@@ -847,11 +848,8 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
             }
         };
         // Provisional members rank after every certified one, so the cap drops them first.
-        let unjudged: Vec<_> = submitted
-            .iter()
-            .filter(|(id, ..)| w.lc.bead_row(id).is_some_and(|r| row_certifies_nothing(&r)))
-            .cloned()
-            .collect();
+        let marked: Vec<_> = submitted_rows.iter().filter(|r| row_certifies_nothing(r)).cloned().collect();
+        let unjudged = super::helpers::rows_with_branch(&marked, &branches);
         for group in [&certs, &unjudged] {
             if group.is_empty() {
                 continue;

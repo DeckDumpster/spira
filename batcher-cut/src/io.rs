@@ -813,6 +813,15 @@ fn barred_ids(
         .collect())
 }
 
+/// The pool's own left-out rows whose commits a stacked member would carry into the cut unjudged.
+/// Held and ejected rows are [`barred_ids`]'.
+fn barred_by_left(left: &[LeftOut]) -> std::collections::BTreeSet<String> {
+    left.iter()
+        .filter(|l| matches!(l.cause, Cause::Uncertified | Cause::TipMoved { .. }))
+        .map(|l| l.id.clone())
+        .collect()
+}
+
 /// Drops every member whose recorded stack names a barred bead, or a member dropped for that
 /// reason, and returns each drop with the prerequisite it stacks on.
 fn drop_stacked_on_barred(
@@ -933,14 +942,7 @@ pub fn certified_pool_left_out(env: &Env, repo: &Repo) -> Result<(Vec<Member>, V
     let (certified, mut left) = read_pool(env, repo)?;
     let branches = repo_branch_tips(repo)?;
     left.extend(moved_tips(&certified, &branches));
-    let mut barred = std::collections::BTreeSet::new();
-    barred.extend(left.iter().filter(|l| l.cause == Cause::Uncertified).map(|l| l.id.clone()));
-    barred.extend(
-        certified
-            .iter()
-            .filter(|(id, tip, ..)| !tip_current(tip, id, &branches))
-            .map(|(id, ..)| id.clone()),
-    );
+    let mut barred = barred_by_left(&left);
     let certified: Vec<_> = certified
         .into_iter()
         .filter(|(id, tip, ..)| tip_current(tip, id, &branches))
@@ -5397,6 +5399,19 @@ mod pool_parity_tests {
         let (pool, left) = pool_rows(&rows, "spira", Land::Local);
         assert_eq!(pool.iter().map(|p| (p.0.as_str(), p.5)).collect::<Vec<_>>(), [("sp-c", false), ("sp-n", true), ("sp-u", true)]);
         assert!(left.is_empty(), "{left:?}");
+    }
+
+    #[test_id(tw514ey)]
+    #[test]
+    fn a_member_stacked_on_an_uncertified_or_moved_row_is_left_out_with_it() {
+        let rows = [serde_json::json!({"bead_id": "sp-u", "state": "SUBMITTED", "tip": "tu", "holds": []})];
+        let mut left = pool_rows(&rows, "spira", Land::Forge).1;
+        left.push(LeftOut { id: "sp-m".into(), tip: "tm".into(), cause: Cause::TipMoved { branch_tip: "new".into() } });
+        left.push(LeftOut { id: "sp-w".into(), tip: "tw".into(), cause: Cause::NoContentRow });
+        let member = |id: &str, on: &str| Member { id: id.into(), tip: format!("t-{id}"), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::from([(on.to_string(), "t".to_string())]), blocked_by: vec![], provisional: false };
+        let (kept, dropped) = drop_stacked_on_barred(vec![member("sp-a", "sp-u"), member("sp-b", "sp-m"), member("sp-c", "sp-w")], barred_by_left(&left));
+        assert_eq!(kept.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["sp-c"]);
+        assert_eq!(ids_of(&dropped), ["sp-a", "sp-b"]);
     }
 
     fn gate_own_pool(rows: &[serde_json::Value], changed: &[(&str, &[&str])]) -> (Vec<PoolRow>, Vec<LeftOut>) {

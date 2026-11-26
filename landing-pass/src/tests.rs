@@ -458,6 +458,7 @@ struct FakeLc {
     certified: RefCell<Vec<String>>,
     reds: RefCell<Vec<String>>,
     refuse_pass: Cell<bool>,
+    refuse_nothing: Cell<bool>,
     held_tip: RefCell<Option<String>>,
     resubmits: RefCell<Vec<String>>,
     holds: RefCell<Vec<String>>,
@@ -476,7 +477,7 @@ impl crate::lifecycle::Lc for FakeLc {
     fn certify(&self, id: &str, tip: &str, outcome: &str, _: &str) -> Result<String, String> {
         self.certified.borrow_mut().push(format!("{id} {tip} {outcome}"));
         let mismatched = self.held_tip.borrow().as_deref().is_some_and(|h| h != tip);
-        if outcome == "pass" && (self.refuse_pass.get() || mismatched) {
+        if (outcome == "pass" && (self.refuse_pass.get() || mismatched)) || (outcome == "nothing" && self.refuse_nothing.get()) {
             return Err("spira-lc certify exited 3: refused".into());
         }
         Ok("applied".into())
@@ -2655,6 +2656,11 @@ fn past_the_bound_an_unjudged_tip_is_not_held_and_not_gated_again_and_one_incide
     assert_eq!(q.queued()[0].tip, "t1");
 }
 
+/// The lifecycle row's `reason`, as the store would hold it after an event.
+fn set_row_reason(h: &H, id: &str, reason: Option<&str>) {
+    h.beads.rows.borrow_mut().get_mut(id).unwrap().reason = reason.map(str::to_string);
+}
+
 /// A certifies-nothing verdict filed at `sp-a`'s tip, pass after pass, never re-gated inside
 /// the window and gated again once the branch moves.
 fn certifies_nothing_across_the_window(h: &H) {
@@ -2666,6 +2672,9 @@ fn certifies_nothing_across_the_window(h: &H) {
         h.run();
         assert!(q.queued().is_empty(), "{:?}", h.out.lines());
         h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
+        if h.lc.certified.borrow().iter().any(|c| c.ends_with(" nothing")) {
+            set_row_reason(h, "sp-a", Some("gate-certifies-nothing"));
+        }
     }
     assert!(!h.lib.calls.borrow().iter().any(|c| c.starts_with("incident ") || c.starts_with("noverdict")), "{:?}", h.lib.calls.borrow());
     assert!(h.lc.holds.borrow().is_empty(), "{:?}", h.lc.holds.borrow());
@@ -2686,8 +2695,7 @@ fn gated_again_at_a_new_tip(h: &H) {
 fn under_queue_forge_a_certifies_nothing_verdict_is_recorded_on_the_row_and_never_as_a_pass() {
     let h = h_worker(LandMode::Queue);
     certifies_nothing_across_the_window(&h);
-    let certified = h.lc.certified.borrow().clone();
-    assert!(!certified.is_empty() && certified.iter().all(|c| c == "sp-a t1 nothing"), "{certified:?}");
+    assert_eq!(*h.lc.certified.borrow(), ["sp-a t1 nothing"]);
     assert!(h.logged("certifies nothing — admitted to its batch provisionally"), "{:?}", h.out.lines());
     gated_again_at_a_new_tip(&h);
 }
@@ -2700,6 +2708,41 @@ fn under_queue_local_a_certifies_nothing_verdict_records_nothing() {
     assert!(h.lc.certified.borrow().is_empty(), "{:?}", h.lc.certified.borrow());
     assert!(h.logged("the bead stays SUBMITTED"), "{:?}", h.out.lines());
     gated_again_at_a_new_tip(&h);
+}
+
+#[test_id(t2xa3zg)]
+#[test]
+fn a_row_returned_to_submitted_without_the_mark_is_gated_again_inside_the_window() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    let word = spira_config::gate_source::CERTIFIES_NOTHING;
+    file_verdict(&h, "sp-a", "t1", 75, &format!("gate: VERDICT=NO_VERDICT reason={word} branch=b repo=spira suite=- (x)\n"));
+    h.run();
+    set_row_reason(&h, "sp-a", Some("gate-certifies-nothing"));
+    h.run();
+    assert!(q.queued().is_empty(), "a marked row waits out the window: {:?}", h.out.lines());
+    // A batch that closed requeues its member to SUBMITTED with no reason.
+    set_row_reason(&h, "sp-a", None);
+    h.run();
+    assert_eq!(q.queued().iter().map(|j| j.tip.as_str()).collect::<Vec<_>>(), ["t1"], "{:?}", h.out.lines());
+}
+
+#[test_id(tcjuwnn)]
+#[test]
+fn a_mark_the_lifecycle_did_not_take_is_tried_again_after_the_short_backoff() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    h.lc.refuse_nothing.set(true);
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    let word = spira_config::gate_source::CERTIFIES_NOTHING;
+    file_verdict(&h, "sp-a", "t1", 75, &format!("gate: VERDICT=NO_VERDICT reason={word} branch=b repo=spira suite=- (x)\n"));
+    h.run();
+    assert!(!h.logged("admitted to its batch"), "{:?}", h.out.lines());
+    assert!(q.queued().is_empty());
+    h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
+    h.run();
+    assert_eq!(q.queued().len(), 1, "{:?}", h.out.lines());
 }
 
 #[test_id(t1ld90o)]

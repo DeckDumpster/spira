@@ -1139,6 +1139,8 @@ struct FLc {
     available: Cell<bool>,
     bead_rows: RefCell<std::collections::HashMap<String, (String, String)>>,
     rows: RefCell<Result<Vec<LcBeadRow>, String>>,
+    /// A bead's row as a fresh read sees it, when it moved since the pool was listed.
+    moved_rows: RefCell<std::collections::HashMap<String, LcBeadRow>>,
     certify_refused: Cell<bool>,
     land_refused: Cell<Option<&'static str>>,
     /// Another landing records the batch first: the next record writes LANDED and is refused.
@@ -1209,6 +1211,7 @@ struct FLc {
 impl Default for FLc {
     fn default() -> Self {
         FLc {
+            moved_rows: Default::default(),
             fresh_refused: RefCell::default(),
             available: Cell::new(false),
             bead_rows: RefCell::default(),
@@ -1700,6 +1703,9 @@ impl Lc for FLc {
         self.calls.borrow_mut().push(format!("row {bead}"));
         if self.row_fails.get() {
             return None;
+        }
+        if let Some(moved) = self.moved_rows.borrow().get(bead) {
+            return Some(moved.clone());
         }
         self.rows
             .borrow()
@@ -3361,6 +3367,19 @@ fn open_batch_leaves_out_a_certifies_nothing_bead_whose_row_holds_another_tip() 
     t.lc_row_certifies_nothing("sp-s", "tm", 1);
     assert_eq!(t.run(&["open-batch", "--members", "sp-s:ts", "--skip-pregate"]), 1);
     assert!(t.out().contains("sp-s: named at ts, but its tip is tm — not admitted"), "{}", t.out());
+    assert!(!cut_a_batch(&t));
+}
+
+#[test_id(tzqou5s)]
+#[test]
+fn open_batch_leaves_out_a_marked_row_whose_tip_moved_after_the_pool_was_listed() {
+    let t = certifies_nothing_world();
+    t.lc_row_certifies_nothing("sp-s", "ts", 1);
+    let mut moved = t.lc.rows.borrow().as_ref().unwrap()[0].clone();
+    moved.tip = Some("tm".into());
+    t.lc.moved_rows.borrow_mut().insert("sp-s".into(), moved);
+    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 1);
+    assert!(t.out().contains("sp-s: SUBMITTED — its gate has not passed at ts; not admitted"), "{}", t.out());
     assert!(!cut_a_batch(&t));
 }
 
