@@ -120,6 +120,24 @@ impl Files {
         let _ = atomic_write(&self.backoff_file(branch), &format!("{tip}\n{until}\n"));
     }
 
+    fn marked_file(&self, branch: &str) -> PathBuf {
+        self.run.join("certifies-nothing").join(branch_key(branch))
+    }
+
+    /// The back-off on `branch` at `tip` rests on the row carrying the certifies-nothing mark.
+    pub fn note_marked(&self, branch: &str, tip: &str) {
+        let _ = fs::create_dir_all(self.run.join("certifies-nothing"));
+        let _ = atomic_write(&self.marked_file(branch), &format!("{tip}\n"));
+    }
+
+    pub fn marked(&self, branch: &str, tip: &str) -> bool {
+        fs::read_to_string(self.marked_file(branch)).map(|t| t.trim() == tip).unwrap_or(false)
+    }
+
+    pub fn forget_marked(&self, branch: &str) {
+        let _ = fs::remove_file(self.marked_file(branch));
+    }
+
     fn pass_refused_file(&self, branch: &str) -> PathBuf {
         self.run.join("pass-refused").join(branch_key(branch))
     }

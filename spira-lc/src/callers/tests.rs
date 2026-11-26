@@ -705,6 +705,24 @@ fn certify_skips_an_infra_verdict_on_a_tip_the_row_has_left() {
     assert_eq!(go(&mut f, "certify", &["sp-st", "9191919191919191919191919191919191919191", "infra", "-"]).code, APPLIED);
 }
 
+#[test_id(t6srkub)]
+#[test]
+fn certify_nothing_marks_a_submitted_row_once_and_skips_a_tip_the_row_has_left() {
+    let mut f = Fake::default();
+    let (tip, left) = ("9191919191919191919191919191919191919191", "9090909090909090909090909090909090909090");
+    f.bead("sp-x", BeadState::Submitted).tip = Some(tip.into());
+    let stale = go(&mut f, "certify", &["sp-x", left, "nothing", "certifies-nothing"]);
+    assert_eq!((stale.code, stale.cert_log.unwrap().0), (REFUSED, "skip".into()));
+    assert!(f.events.is_empty());
+    let a = go(&mut f, "certify", &["sp-x", tip, "nothing", "certifies-nothing"]);
+    assert_eq!(a.code, APPLIED, "{a:?}");
+    assert_eq!(f.events[0].5, format!(r#"{{"GateNothing":{{"tip":"{tip}"}}}}"#));
+    assert_eq!(f.state("sp-x"), "SUBMITTED");
+    let again = go(&mut f, "certify", &["sp-x", tip, "nothing", "certifies-nothing"]);
+    assert_eq!((again.code, again.cert_log.unwrap().0), (APPLIED, "already".into()));
+    assert_eq!(f.events.len(), 1, "{:?}", f.events);
+}
+
 #[test_id(tcktc0p)]
 #[test]
 fn certify_maps_red_reasons_and_infra_and_refuses_what_it_cannot_reach() {

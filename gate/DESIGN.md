@@ -251,7 +251,7 @@ repo map → repository → yield/meter armed → landing ref → changed files 
 **merge** → `bash -n` → beads data → foreign harness → **the definition** (the tree's
 `gate.steps`; else, for a `queue.local` repository whose `.spira/testenv.toml` has a `ci_entry`
 and no harness Containerfile, that declaration's default tiers; else the column; "The tree
-owns its gate") → empty gate string (PASS `syntax-only`, column only; NO_VERDICT `certifies-nothing` when the repository declares tiers in `.spira/testenv.toml` — declare `ci_entry` on a `queue.local` repository or add `gate.steps`) → preflight (`bash <path>` words
+owns its gate") → empty gate string (PASS `syntax-only`, column only; NO_VERDICT `certifies-nothing` when the repository declares tiers in `.spira/testenv.toml` — declare `ci_entry` on a `queue.local` repository or add `gate.steps`; under queue.forge the landing pass records it on the row and the item enters its batch provisionally) → preflight (`bash <path>` words
 exist on the base for a column, on the revision under test for a tree definition) → key →
 cache → admission →
 sweep → tree lock → checkout the gate revision (proved by `rev-parse HEAD`) → **composition**

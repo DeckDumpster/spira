@@ -14,7 +14,7 @@ pub struct Waiting {
 
 /// The lifecycle machine, as far as this pass needs it: is it there?
 pub trait Lc {
-    /// `spira-lc certify <id> <tip> <pass|red|infra> <detail>`: the gate outcome as an event.
+    /// `spira-lc certify <id> <tip> <pass|red|infra|nothing> <detail>`: the gate outcome as an event.
     fn certify(&self, id: &str, tip: &str, outcome: &str, detail: &str) -> Result<String, String>;
     /// A red `certify` that also names the step it failed at and that step's last output line.
     fn certify_red(&self, id: &str, tip: &str, reason: &str, _step: &str, _message: &str) -> Result<String, String> {

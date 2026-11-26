@@ -39,7 +39,7 @@ statement = "Universal layer: a changed `*.sh` that fails `bash -n` gives FAIL `
 [[use_case]]
 id = "UC-gate-verdict-06"
 tier = "T2"
-statement = "A repo whose map row has an empty gate column passes with `reason=syntax-only` and the VERDICT line is still printed — unless the repository declares test tiers in `.spira/testenv.toml`, which answers NO_VERDICT `certifies-nothing` and writes no certificate."
+statement = "A repo whose map row has an empty gate column passes with `reason=syntax-only` and the VERDICT line is still printed — unless the repository declares test tiers in `.spira/testenv.toml`, which answers NO_VERDICT `certifies-nothing` and writes no certificate; under queue.forge the landing pass records it on the row and the item enters its batch provisionally."
 
 [[use_case]]
 id = "UC-gate-verdict-07"
