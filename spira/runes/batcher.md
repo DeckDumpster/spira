@@ -108,7 +108,10 @@ If you cannot finish — the culprit is not clear, or the fix needs a decision o
 operator can make — do **not** finish the bead. Hold it on the question (this files the ask
 too):
 
-    work blocked "<what is blocked>" --default "<what you would do>"
+    work blocked "<what is blocked>" --default "<what you would do>" --class <permissions|policy|destructive|design> --basis "<why it is that class>"
+
+The question is the human topic and must not start with a bead id: the bound bead is attached
+automatically.
 
 or, when no operator question fits, note precisely what is blocked and what you would do by
 default, and exit non-zero:

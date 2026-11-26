@@ -56,11 +56,13 @@ Checks:
 Holds your bead and files the ask in one step.
 Use when: Only the operator can answer, and you cannot finish without it.
 Arguments:
-  "<the question>"
+  "<the question>"   (the human topic; never start it with a bead id: the bound bead is attached automatically)
   --default "<what you would do by default>"
+  --class <permissions|policy|destructive|design>
+  --basis "<why it is that class>"
 Checks:
   - the bead is the bound one
-  - a default is given
+  - a default, a class and a basis are given
 
 ### work ack
 Records your answer to a live amendment of the bead.

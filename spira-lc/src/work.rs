@@ -1070,6 +1070,39 @@ fn not_a_question(text: &str) -> Option<String> {
     (text.trim().is_empty() || text.starts_with("--")).then(|| format!("{text:?} is not a question"))
 }
 
+#[derive(Debug)]
+struct BlockedAsk {
+    question: String,
+    default: String,
+    class: String,
+    body: String,
+}
+
+const BLOCKED_USAGE: &str = "usage: work blocked \"<the question>\" --default \"<what you would do>\" --class <permissions|policy|destructive|design> --basis \"<why it is that class>\"";
+
+const BLOCKED_CLASSES: [&str; 4] = ["permissions", "policy", "destructive", "design"];
+
+/// The class and basis are the asker's: a basis the verb wrote itself would argue nothing.
+fn blocked_ask(args: &[String]) -> Result<BlockedAsk, String> {
+    let refuse = |why: String| format!("work blocked: {why}; {BLOCKED_USAGE}");
+    let Some(question) = args.first() else {
+        return Err(refuse("missing \"<question>\"".into()));
+    };
+    if let Some(e) = not_a_question(question) {
+        return Err(refuse(e));
+    }
+    let required = |name: &str| flag(args, name).filter(|v| !v.trim().is_empty()).ok_or_else(|| refuse(format!("{name} is required")));
+    let default = required("--default")?;
+    let class = required("--class")?;
+    if !BLOCKED_CLASSES.contains(&class.as_str()) {
+        return Err(refuse(format!("unknown --class {class:?} (want one of {})", BLOCKED_CLASSES.join(", "))));
+    }
+    let basis = required("--basis")?;
+    // mail refuses a question ask unless each of these sections is filled.
+    let body = format!("## Question\n{question}\n\n## Default\n{default}\n\n## Class basis\n{basis}\n");
+    Ok(BlockedAsk { question: question.clone(), default, class, body })
+}
+
 fn cmd_blocked(bead_id: &str, args: &[String]) -> (i32, String) {
     let actor = match require_actor(args) {
         Ok(a) => a,
@@ -1078,23 +1111,14 @@ fn cmd_blocked(bead_id: &str, args: &[String]) -> (i32, String) {
     if let Some(quiet) = mender_calls_closed(bead_id, &actor, "blocked") {
         return quiet;
     }
-    let Some(question) = args.first() else {
-        return (CANNOT_TELL, "work blocked: missing \"<question>\"".into());
+    let ask = match blocked_ask(args) {
+        Ok(a) => a,
+        Err(e) => return (CANNOT_TELL, e),
     };
-    if let Some(e) = not_a_question(question) {
-        return (CANNOT_TELL, format!("work blocked: {e}; usage: work blocked \"<the question>\" --default \"<what you would do>\""));
-    }
-    let Some(default) = flag(args, "--default") else {
-        return (CANNOT_TELL, "work blocked: --default <default> is required".into());
-    };
-    // mail's own "question" kind requires a filled "## Question" and "## Default"
-    // section in the body (every "## " heading in its template is a required section,
-    // not just the X-Spira-Default header) — a bare question string is refused.
-    let body = format!("## Question\n{question}\n\n## Default\n{default}\n");
-    if let Err(e) = crate::bd::ask_operator(&format!("{actor} <{actor}@spira>"), question, &default, bead_id, &body) {
+    if let Err(e) = crate::bd::ask_operator_classed(&format!("{actor} <{actor}@spira>"), &ask.question, &ask.default, Some(&ask.class), bead_id, &ask.body) {
         return (REFUSED, format!("refused: work blocked: the question could not be delivered, so no hold was applied: {e}"));
     }
-    let hold = BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(question.clone()) };
+    let hold = BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(ask.question) };
     match apply_ask_hold(bead_id, &actor, hold) {
         (0, _) => (0, format!("ask filed; hold applied for {bead_id}")),
         (code, e) => (code, format!("the question WAS delivered (do not ask again), but the ask hold on {bead_id} was not applied: {e}")),
@@ -2900,6 +2924,46 @@ mod tests {
         assert_eq!(bare_id_lines(&unlanded), Vec::<String>::new(), "{unlanded}");
         assert!(unlanded.contains("No landing commit"));
         assert!(!bare_id_lines("## Question\nsp-old1 sp-new2?\n").is_empty(), "POSITIVE CONTROL: the lint shape catches a bare-id line");
+    }
+
+    #[test_id(tdn8ia1)]
+    #[test]
+    fn a_blocked_ask_missing_its_class_or_basis_is_refused_with_the_usage() {
+        let full = ["Which one?", "--default", "the first", "--class", "policy", "--basis", "it sets a rule"].map(String::from);
+        let ask = super::blocked_ask(&full).unwrap();
+        assert_eq!((ask.question.as_str(), ask.default.as_str(), ask.class.as_str()), ("Which one?", "the first", "policy"));
+        assert_eq!(ask.body, "## Question\nWhich one?\n\n## Default\nthe first\n\n## Class basis\nit sets a rule\n");
+        let without = |name: &str| {
+            let mut a = full.to_vec();
+            let i = a.iter().position(|x| x == name).unwrap();
+            a.drain(i..i + 2);
+            a
+        };
+        let with = |name: &str, value: &str| {
+            let mut a = full.to_vec();
+            let i = a.iter().position(|x| x == name).unwrap();
+            a[i + 1] = value.to_string();
+            a
+        };
+        let cases = [
+            (without("--default"), "--default"),
+            (without("--class"), "--class"),
+            (without("--basis"), "--basis"),
+            (with("--basis", " "), "--basis"),
+            (with("--class", "bogus"), "unknown --class \"bogus\""),
+            (with("--class", "bogus"), "permissions, policy, destructive, design"),
+        ];
+        for (args, want) in cases {
+            let refusal = super::blocked_ask(&args).unwrap_err();
+            assert!(refusal.contains(want), "{want:?} missing from {refusal}");
+            assert!(refusal.ends_with(super::BLOCKED_USAGE), "no usage line in {refusal}");
+        }
+        for not_asked in ["", "--default"] {
+            let mut args = full.to_vec();
+            args[0] = not_asked.to_string();
+            let refusal = super::blocked_ask(&args).unwrap_err();
+            assert!(refusal.contains("is not a question") && refusal.ends_with(super::BLOCKED_USAGE), "{refusal}");
+        }
     }
 
     #[test_id(tj4gi7f)]
