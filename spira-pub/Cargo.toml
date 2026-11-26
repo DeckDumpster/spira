@@ -1,0 +1,40 @@
+[package]
+name = "spira-pub"
+version = "0.1.0"
+edition = "2021"
+publish = false
+autotests = false
+description = "spira-pub — publishes a harness fact to the MQTT broker: the topic table, the library every component calls, and a thin CLI."
+
+[lib]
+name = "spira_pub"
+path = "src/lib.rs"
+
+[[bin]]
+name = "spira-pub"
+path = "src/main.rs"
+test = false
+
+[[test]]
+name = "broker"
+path = "tests/broker.rs"
+required-features = ["integration"]
+
+[features]
+integration = ["ports/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
+
+[dependencies]
+# TLS off: the broker is a Unix socket.
+rumqttc = { version = "0.25.1", default-features = false }
+inotify = { version = "0.11", default-features = false }
+libc = "0.2"
+ports = { path = "../ports" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+spira-config = { path = "../spira-config" }
+spira-otel = { path = "../spira-otel" }
+toml = "0.8"
+
+[dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
+testkit = { path = "../testkit" }
