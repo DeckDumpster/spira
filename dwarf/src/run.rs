@@ -364,8 +364,6 @@ impl<'a> Run<'a> {
         );
     }
 
-    /// A bead rejected twice claims on the persona's stronger model with its history in the
-    /// brief; at the third rejection it is released and held for the Concierge instead of run.
     /// A persona that requires a build spec stops at once on a bead without one: the bead is
     /// held with an ask for the Concierge, and no session starts to invent a mechanism.
     fn build_spec_gate(&mut self, c: &claim::Claimed) -> Option<i32> {
@@ -382,6 +380,8 @@ impl<'a> Run<'a> {
         Some(0)
     }
 
+    /// A bead rejected twice claims on the persona's stronger model; at the ceiling it is
+    /// released and held for the Concierge, unless the claim was directed.
     fn escalation_gate(&mut self, id: &str) -> Option<i32> {
         use spira_config::escalation::{self, Tier};
         let o = self.d.exec.exec("spira-claim", &s(&["rejections", id]), None, None);
@@ -395,6 +395,10 @@ impl<'a> Run<'a> {
                 self.s.rejection_brief = escalation::history_brief(&st.history, &model);
                 spira_otel::run::event("escalated", &[("rune", self.f()), ("model", &model)]);
                 self.s.model_override = Some(model);
+                None
+            }
+            Tier::Hold if matches!(self.mode, Mode::Directed(_)) => {
+                self.log(&format!("{}: {id} directed claim proceeds past {}", self.f(), escalation::hold_reason(st.stronger_rejections)));
                 None
             }
             Tier::Hold => {
@@ -646,6 +650,7 @@ impl<'a> Run<'a> {
         let until = (self.now() + self.rune.lease_seconds()).to_string();
         let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
         let delay = Duration::from_secs(self.conf.i("SPIRA_CLAIM_RETRY_DELAY_S").max(0) as u64);
+        let directed = matches!(self.mode, Mode::Directed(_));
         let directs = match &self.mode {
             Mode::Directed(sm) => sm.claim_json(),
             _ => String::new(),
@@ -657,7 +662,7 @@ impl<'a> Run<'a> {
             rc <= 1
         }, |id| {
             let p = self.stack_proposal(id, who);
-            if let Some(reason) = p.reason.as_deref().filter(|r| !p.claimable && r.starts_with("Blocked")) {
+            if let Some(reason) = p.reason.as_deref().filter(|r| !directed && !p.claimable && r.starts_with("Blocked")) {
                 let line = format!("{who}: {id} refused by spira-claim stack ({reason}), trying the next ranked candidate");
                 self.log(&line);
                 stack_refusals.push(line);
@@ -722,8 +727,8 @@ impl<'a> Run<'a> {
         }
     }
 
-    /// The holds on a just-claimed row that make it unclaimable: the Claim event does not
-    /// read holds, so a hold applied between the ready read and the claim is caught here.
+    /// The holds on a just-claimed row: the Claim event does not read them, so one applied
+    /// between the ready read and a pool claim is caught here. A directed claim keeps them.
     /// A store that cannot tell is retried, then `Unknown`: never read as a hold, so it never
     /// releases the claim (sp-druc64).
     fn blocking_holds(&self, id: &str) -> claim::Holds {
@@ -774,7 +779,7 @@ impl<'a> Run<'a> {
         direct::refusal_reason(bead, by, &row, &self.s.refused)
     }
 
-    fn claim(&mut self) -> Result<(), i32> {
+    pub(crate) fn claim(&mut self) -> Result<(), i32> {
         self.take_name();
         let who = format!("{}/{}", self.f(), self.s.dwarf);
         let (ids, resumable, tier) = self.candidates()?;
@@ -809,6 +814,9 @@ impl<'a> Run<'a> {
 
         // Read-after-claim: the predicate and the claim are not atomic.
         match self.blocking_holds(&c.id) {
+            claim::Holds::Known(held) if !held.is_empty() && matches!(self.mode, Mode::Directed(_)) => {
+                self.log(&format!("{who}: directed claim of {} keeps its {} hold(s)", c.id, held.join(",")));
+            }
             claim::Holds::Known(held) if !held.is_empty() => {
                 self.release();
                 self.log(&format!("{who}: {} carries a {} hold — released immediately after claim (race with the hold)", c.id, held.join(",")));

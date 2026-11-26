@@ -322,9 +322,9 @@ impl Run<'_> {
         let st = decide::ledger_word(lc.as_ref()).to_string();
         // Operator-wait is the lifecycle record's (sp-v62vn follow-up): the model asks
         // through `work ask`/`work blocked`, whose broker places an `ask` hold on this bead's
-        // row. The claim released any bead already carrying a non-wait hold
-        // (run.rs blocking_holds), so an ask hold here was placed during this session — or,
-        // when the store could not tell the holds at claim, raced the claim unseen (sp-druc64).
+        // row. A pool claim releases a bead already carrying a non-wait hold (run.rs
+        // blocking_holds), so its ask hold was placed during this session, or raced the claim
+        // unseen when the store could not tell (sp-druc64). A directed claim's may predate it.
         let asked = lc.as_ref().is_some_and(|r| r.held("ask"));
         let disposition = lc.as_ref().and_then(|r| r.disposition.as_deref());
         let disposition_note = lc.as_ref().and_then(|r| r.disposition_note.clone()).unwrap_or_default();

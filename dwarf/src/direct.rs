@@ -8,7 +8,8 @@
 //! ordinary compare-and-set, so a second direct of the same bead loses it: one directed dwarf
 //! per bead. A bead a dwarf holds is taken over: the row is reserved first, so no pool claim fits
 //! between the stop and the directed claim, then that dwarf is stopped with its work kept and the
-//! bead is claimed on the same branch.
+//! bead is claimed on the same branch. The row's state is the only thing that turns a direct
+//! away: its claim ignores holds, blockers and the readiness verdict, and the holds stay on the row.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

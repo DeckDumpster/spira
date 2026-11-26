@@ -150,6 +150,105 @@ pub(crate) mod verdict_run {
         f(&mut r)
     }
 
+    /// A store whose claim applies: `spira-claim stack` answers `proposal`, the claimed row
+    /// carries `holds`, and `spira-claim rejections` answers `rejections`.
+    #[derive(Default)]
+    struct Claimable {
+        proposal: &'static str,
+        holds: &'static [&'static str],
+        rejections: &'static str,
+        holder: Mutex<String>,
+        calls: Mutex<Vec<Vec<String>>>,
+    }
+    impl Claimable {
+        fn record(&self, prog: &str, args: &[String]) {
+            self.calls.lock().unwrap().push(std::iter::once(prog.to_string()).chain(args.iter().cloned()).collect());
+        }
+        fn called(&self, head: &[&str]) -> Vec<Vec<String>> {
+            self.calls.lock().unwrap().iter().filter(|c| c.len() >= head.len() && c.iter().zip(head).all(|(a, b)| a == b)).cloned().collect()
+        }
+    }
+    impl Exec for Claimable {
+        fn exec(&self, prog: &str, args: &[String], _: Option<Vec<u8>>, _: Option<&Path>) -> Out {
+            self.record(prog, args);
+            match (prog, args.first().map(String::as_str)) {
+                ("spira-claim", Some("stack")) => Out::ok(self.proposal),
+                ("spira-claim", Some("rejections")) => Out::ok(self.rejections),
+                ("spira-lc", Some("list")) => Out::ok("[]"),
+                ("spira-lc", Some("show")) => Out::ok(serde_json::json!({"bead": {"bead_id": "sp-x", "state": "WORKING", "holder": *self.holder.lock().unwrap(), "holds": self.holds}}).to_string()),
+                _ => Out::ok(""),
+            }
+        }
+    }
+    impl Seam for Claimable {
+        fn call(&self, f: &str, a: &[String]) -> Out {
+            self.record(f, a);
+            if f == "lc_claim_bead" {
+                *self.holder.lock().unwrap() = a[1].clone();
+            }
+            Out::ok("")
+        }
+    }
+
+    const UNSTACKED: &str = r#"{"claimable":true,"stack":{},"stack_depth":0,"stack_max_depth":4}"#;
+
+    /// `Run::claim()` of sp-x as `dwarf direct`; returns the log lines and the ledger. The run
+    /// ends at the repository lookup, past every gate that could turn the claim away.
+    fn directed_claim(store: &Claimable) -> (Vec<String>, String) {
+        let dir = testkit::TempDir::new("dwarf-directed-claim");
+        let mut vars = super::complete_vars();
+        vars.insert("SPIRA_RUN".into(), dir.path().display().to_string());
+        vars.insert("SPIRA_REPO".into(), "shared".into());
+        let ledger = dir.path().join("dwarf-ledger.log");
+        let bd = CountingBd(Default::default());
+        let sink = Mute::default();
+        with_run_sink(vars, &bd, Dirty(vec![]), store, &|| 0, store, &sink, "", |r| {
+            r.mode = Mode::Directed(crate::direct::Direct { bead: "sp-x".into(), by: "concierge".into(), reason: "loop fix".into(), replaced: None });
+            r.claim_bin = "spira-claim".into();
+            r.ledger = Ledger { path: ledger.clone(), dry: false };
+            let _ = r.claim();
+        });
+        let lines = sink.0.lock().unwrap().clone();
+        (lines, std::fs::read_to_string(&ledger).unwrap_or_default())
+    }
+
+    fn assert_claim_kept(store: &Claimable, ledger: &str) {
+        assert!(store.called(&["release_own_claim"]).is_empty() && store.called(&["spira-lc", "unclaim"]).is_empty(), "{:?}", store.calls.lock().unwrap());
+        assert!(ledger.contains("unmapped-repo"), "positive control: the claim reached the repository lookup\n{ledger}");
+    }
+
+    #[test_id(tf9lqjz)]
+    #[test]
+    fn a_directed_claim_is_sent_unstacked_past_a_blocked_stack_proposal() {
+        let store = Claimable { proposal: r#"{"claimable":false,"reason":"Blocked { on: \"sp-p\" }"}"#, ..Default::default() };
+        let (lines, ledger) = directed_claim(&store);
+        let sent = store.called(&["lc_claim_bead"]);
+        assert_eq!(sent.len(), 1, "{lines:?}");
+        assert_eq!((sent[0][1].as_str(), sent[0][4].as_str()), ("sp-x", "{}"));
+        assert!(sent[0].last().is_some_and(|d| d.contains("concierge")), "{sent:?}");
+        assert_claim_kept(&store, &ledger);
+    }
+
+    #[test_id(tbvnrsy)]
+    #[test]
+    fn a_directed_claim_keeps_a_held_row_and_its_claim_line_names_the_holds() {
+        let store = Claimable { proposal: UNSTACKED, holds: &["manual"], ..Default::default() };
+        let (lines, ledger) = directed_claim(&store);
+        assert_claim_kept(&store, &ledger);
+        assert!(!ledger.contains("hold-raced"), "{ledger}");
+        assert!(lines.iter().any(|l| l.contains("directed claim of sp-x keeps its manual hold(s)")), "{lines:?}");
+    }
+
+    #[test_id(tzrnapi)]
+    #[test]
+    fn a_directed_claim_past_the_escalation_ceiling_is_kept_and_not_held() {
+        let store = Claimable { proposal: UNSTACKED, rejections: r#"{"rejections":9,"stronger_rejections":9,"history":[]}"#, ..Default::default() };
+        let (lines, ledger) = directed_claim(&store);
+        assert_claim_kept(&store, &ledger);
+        assert!(store.called(&["spira-lc", "hold"]).is_empty() && !ledger.contains("escalation-hold"), "{ledger}");
+        assert!(lines.iter().any(|l| l.contains("escalation-ceiling") && l.contains("directed")), "{lines:?}");
+    }
+
     fn ready_set_call(express: Option<&str>) -> Vec<String> {
         let mut vars = super::complete_vars();
         if let Some(v) = express {
