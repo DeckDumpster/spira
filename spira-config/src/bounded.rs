@@ -321,14 +321,19 @@ fn watch(child: &Child, limit: Duration, expired: Arc<AtomicBool>, tree: bool) -
         }
         if Instant::now() >= end || n < 0 {
             expired.store(true, Ordering::SeqCst);
-            if tree {
-                kill_descendants(pid as u32);
-            }
-            unsafe { libc::kill(-pid, libc::SIGKILL) };
+            expire(pid, tree);
             return;
         }
     })?;
     Ok(())
+}
+
+// Descendants first: they are found through their parent, which the group kill takes away.
+fn expire(pid: libc::pid_t, tree: bool) {
+    if tree {
+        kill_descendants(pid as u32);
+    }
+    unsafe { libc::kill(-pid, libc::SIGKILL) };
 }
 
 pub fn children(pid: u32) -> Vec<u32> {
