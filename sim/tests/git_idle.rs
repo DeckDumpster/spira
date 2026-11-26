@@ -226,6 +226,9 @@ fn the_livelock_probe_starts_no_bash_over_an_idle_hour_and_still_reports_an_ask_
     spira_config::process::with_fresh(|| {
     assert_traps_and_double_are_live(&f);
     assert_stubs_log(&f);
+    let extra = spira_config::release_env::child_path_env_for_process().unwrap();
+    std::process::Command::new("bash").args(["-c", "true"]).envs(extra).output().unwrap();
+    assert_eq!(started(&f, "bash"), 1, "a bash started the way a probe starts one is counted");
     let lib = std::path::PathBuf::from(std::env::var("SPIRA_HOME").unwrap()).join("lib.sh");
     assert!(lib.is_file(), "no lib.sh at SPIRA_HOME, so a probe that sources it would be skipped: {}", lib.display());
     let ask = spira_config::process::cfg("SPIRA_ASK_LABEL").unwrap();
