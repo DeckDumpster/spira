@@ -57,7 +57,7 @@ const REWORK_THRESHOLD: f64 = 1.0;
 pub const DWELL_REGRESSION_STATES: [&str; 5] = ["READY", "WORKING", "SUBMITTED", "IN_DELIVERY", "REWORK"];
 
 /// Current vs. trailing-baseline backlog size (a self-produced tsd series — see
-/// `io::backlog_count` and the `backlog` family it appends to every pass).
+/// `io::backlog_of` and the `backlog` family a pass appends to).
 pub struct BacklogObserved {
     pub current: u64,
     pub baseline: f64,

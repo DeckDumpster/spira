@@ -1,10 +1,7 @@
 //! Pure logic behind the `bead` binary. Contract: DESIGN.md. Kept separate from `main.rs`
-//! (which does the `bdq`/`.rune`/`schema.sh`/`mail` subprocess work) so the CLI's own
+//! (which does the `.rune`/`schema.sh`/`mail` subprocess work) so the CLI's own
 //! rules — the lane-admission guard, label composition, the lint judge — are unit-testable
 //! with no database, no runes and no subprocess.
-//!
-//! `bdq` (the module, not the `bead` binary's own bridge to it) is `bdq` the standalone
-//! binary's own pure logic — see `src/bin/bdq.rs` and `bdq.rs`'s own module doc.
 
 #[cfg(test)]
 #[macro_use]
@@ -20,7 +17,6 @@ pub mod lc;
 pub mod event;
 pub mod identity;
 pub mod statute;
-pub mod latency;
 
 use std::collections::{BTreeMap, HashMap};
 

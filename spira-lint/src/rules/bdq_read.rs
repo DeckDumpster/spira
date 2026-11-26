@@ -23,8 +23,7 @@ const OVERRIDE: &str = "BDQ_READ_CONSIDERED=";
 /// Path prefixes (or exact files) that may read through bdq, each with why.
 const EXEMPT: &[(&str, &str)] = &[
     ("spira-lc/", "the door: its content verbs are what bdq reads are moved to"),
-    ("bead/src/bin/bdq.rs", "the bdq program itself"),
-    ("bead/src/bdq.rs", "the bdq program's library"),
+    ("bead/src/bdq.rs", "the argv classifiers the write guards share"),
     ("spira/bdq.sh", "the bdq wrapper itself"),
     ("spira-lint/", "the rule's own fixtures and detectors name the reads it refuses"),
     ("spira/test-", "suite fixtures drive the throwaway store they created"),

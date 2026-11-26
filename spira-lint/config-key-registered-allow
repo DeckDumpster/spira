@@ -67,15 +67,11 @@ SPIRA_BATCH_SUITE_DIR suite-select/src/gate.rs
 SPIRA_BATCH_SUITE_DIR suite-select/src/main.rs
 SPIRA_BATCH_SUITE_DIR testenv/src/settings.rs
 SPIRA_BATCH_TIERS testenv/src/settings.rs
-SPIRA_BDJSON_FIXTURE bead/src/bin/bdq.rs
 SPIRA_BDJSON_FIXTURE cockpit-collect/src/io.rs
 SPIRA_BDJSON_FIXTURE dwarf/src/main.rs
 SPIRA_BDJSON_FIXTURE dwarf/src/seam.rs
 SPIRA_BDJSON_FIXTURE landing-pass/src/main.rs
-SPIRA_BDQ_CONN_BACKOFF_MS bead/src/bin/bdq.rs
 SPIRA_BDQ_STATE_WRITE bead/src/guard.rs
-SPIRA_BDQ_WRITERS bead/src/bin/bdq.rs
-SPIRA_BDQ_WRITER_WAIT_S bead/src/bin/bdq.rs
 SPIRA_BD_LOG testenv/src/bd_meter_main.rs
 SPIRA_BD_LOG testenv/src/fixture.rs
 SPIRA_BD_TIMING_LOG testenv/src/fixture.rs
@@ -279,7 +275,6 @@ SPIRA_HOME archivist/src/main.rs
 SPIRA_HOME batcher-cut/src/io.rs
 SPIRA_HOME batcher-cut/src/main.rs
 SPIRA_HOME batcher-cut/src/vm.rs
-SPIRA_HOME bead/src/bin/bdq.rs
 SPIRA_HOME bead/src/main.rs
 SPIRA_HOME broker/src/main.rs
 SPIRA_HOME broker/src/repo_map.rs

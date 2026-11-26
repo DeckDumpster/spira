@@ -12,9 +12,7 @@
 3 incident/src/real.rs
 1 incident/tests/no_fork_edges.rs
 1 landing-pass/src/land_verify.rs
-1 mail/src/bead.rs
 1 mail/tests/no_fork_edges.rs
-1 reconciler-flow/src/io.rs
 1 release/src/stage.rs
 1 spira-claim/src/store.rs
 1 spira-world/src/bin/slay.rs
