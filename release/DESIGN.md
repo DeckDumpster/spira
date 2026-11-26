@@ -415,7 +415,7 @@ the tag's checkout, which was the same commit by another route.
 
 ```
 release acceptance <tag> --scratch-repo <path> [--prev-tag <tag>] [--record]
-                   [--notes-repo <path>] [--file-defects] [--bd-db <path>]
+                   [--notes-repo <path>] [--file-defects]
                    [--agent <path>] [--waive-upgrade] [--tarball <path>]
                    [--prev-tarball <path>]
 ```
@@ -431,7 +431,7 @@ Exit `0` every check passed; `1` a check failed; `2` usage, or a failed prerequi
 
 **Phases.** The same four, with the same check names, so a log from the script and a log from
 the binary compare line for line. The prerequisites are the positive control of the tool lookup;
-`bd`, `dolt`, `git`, `gh` and `python3` on `PATH` (`install.sh` and `systemd/render.py`
+`dolt`, `git`, `gh` and `python3` on `PATH` (`install.sh` and `systemd/render.py`
 still need python3); a working `systemctl --user`; and a git scratch repo. **A** checks the
 positive control of the binary check, then acquires the tarball (a bounded wait for the forge
 asset, sp-5olmi), stages it into the local release source, and runs `install-tarball`. It then
@@ -454,8 +454,8 @@ the migration.
 writes one JSON line to `<forensics>/checks.jsonl`:
 `{"phase","check","verdict":"ok"|"fail","reason"?,"ts","elapsed"}`. The first failure in a
 phase takes a forensics snapshot, `<forensics>/NN-first-fail-<phase>/`, and the end of the
-run takes one too. A snapshot holds the timers, unit status, per-unit journals, `bd`
-list/ready/probe, the run dir, the instance config directory, the scratch repo's refs, `ps`,
+run takes one too. A snapshot holds the timers, unit status, per-unit journals, the
+store's list, claim view and probe, the run dir, the instance config directory, the scratch repo's refs, `ps`,
 `free` and `df`. A forensics failure never changes the verdict. The summary is
 `<pass> passed, <fail> failed`, followed by `verdict: PASS|FAIL  tag=<tag>  date=<rfc3339>`.
 The note on `refs/tags/<tag>` under `refs/notes/acceptance` has this form:
@@ -467,6 +467,23 @@ sha256:<hex> tarball:<name>            (when a tarball was acquired)
 aged-install from=<prev>: PASS|FAIL    (when a predecessor was tested)
 upgrade phases waived by operator      (when waived)
 ```
+
+**The store is the installed release's.** Every probe, seed, count and snapshot read goes
+through `spira-lc` on the release's launcher environment; the run starts no `bd`. So a
+predecessor must have the content writer: acceptance accepts the previous release only.
+
+- A probe is filed with `content create`, so the filing contract judges its labels and body.
+  `create-bead` is then polled until the row exists.
+- "Claimable" is `spira-lc claimable` offering the probe to a builder, or its history showing a
+  builder already claimed it, which takes it out of the view.
+- The closed seed is closed with `spira-lc close`: the content door refuses its own `close`.
+- A seed's lifecycle row is read with `show`. A row nothing has moved has no history.
+- A seed the store did not take is a FAIL, so the counts are never compared over nothing.
+- The installed instance's `db` is `$HOME/.local/share/spira/db`.
+- The installer's answers include `metrics_flush_minutes` and `gate_target_cap_mib`: typed keys with
+  no registered default.
+- The `--file-defects` bead carries no `repo:` label: the instance's repo map holds only the
+  scratch repositories.
 
 **Structure, where the script had text.** The `acceptance-run` spira-lint rule held the
 script to about 55 textual invariants, because the script ran for real only on a clean
@@ -504,7 +521,7 @@ a PASS, each class of FAIL, and the waiver.
    note is written to and the forge repo is derived from. It defaults to
    `$SPIRA_NOTES_REPO`. **`--record` with neither is a usage error (exit 2)**, where the
    script always had a checkout to fall back on.
-5. **A count that cannot be read is a FAIL.** `bd list --all --json | python3 … || printf 0`
+5. **A count that cannot be read is a FAIL.** A `list | count || printf 0`
    read an unreadable store as 0 both before and after the upgrade, and 0 ≥ 0 passed. Now
    phase D fails when it cannot count. The same applies to a `SPIRA_RELEASES` that the
    release conf does not yield: phase B's sidecar check no longer guesses

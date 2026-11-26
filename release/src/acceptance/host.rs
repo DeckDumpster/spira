@@ -14,6 +14,8 @@ pub struct Cmd {
     pub args: Vec<String>,
     /// Added to (and overriding) the inherited environment, like `env K=V prog`.
     pub env: Vec<(String, String)>,
+    /// The program's stdin; none is an empty one.
+    pub stdin: Option<String>,
 }
 
 impl Cmd {
@@ -30,6 +32,10 @@ impl Cmd {
     }
     pub fn env(mut self, k: impl Into<String>, v: impl Into<String>) -> Cmd {
         self.env.push((k.into(), v.into()));
+        self
+    }
+    pub fn stdin(mut self, body: impl Into<String>) -> Cmd {
+        self.stdin = Some(body.into());
         self
     }
     pub fn envs(mut self, e: &[(String, String)]) -> Cmd {
@@ -86,6 +92,19 @@ fn command(c: &Cmd) -> Command {
     cmd
 }
 
+fn output(c: &Cmd) -> std::io::Result<std::process::Output> {
+    let mut cmd = command(c);
+    let Some(body) = &c.stdin else { return cmd.stdin(Stdio::null()).output() };
+    let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let pipe = child.stdin.take();
+    // Fed from its own thread: a program that writes before it reads would otherwise deadlock.
+    std::thread::scope(|s| {
+        // A program that exits without reading closes the pipe; its exit code is the answer.
+        s.spawn(move || pipe.map(|mut p| p.write_all(body.as_bytes())));
+        child.wait_with_output()
+    })
+}
+
 fn code(s: std::process::ExitStatus) -> i32 {
     use std::os::unix::process::ExitStatusExt;
     s.code().unwrap_or_else(|| 128 + s.signal().unwrap_or(0))
@@ -93,7 +112,7 @@ fn code(s: std::process::ExitStatus) -> i32 {
 
 impl Host for RealHost {
     fn run(&self, c: &Cmd) -> Out {
-        match command(c).stdin(Stdio::null()).output() {
+        match output(c) {
             Ok(o) => {
                 let out = String::from_utf8_lossy(&o.stdout).into_owned();
                 let text = format!("{out}{}", String::from_utf8_lossy(&o.stderr));

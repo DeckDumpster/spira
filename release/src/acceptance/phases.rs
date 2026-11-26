@@ -27,7 +27,7 @@ impl Run<'_> {
     /// config file, every path pinned; nothing here writes config itself. `operated = 0` and
     /// the agent are this run's own: no operator is watching, and the agent is a stub.
     pub(super) fn answers_text(&self, releases: &Path) -> String {
-        let db = &self.o.bd_db;
+        let db = &self.o.db;
         let data = db.parent().unwrap_or(Path::new("/"));
         let mut c = String::new();
         c.push_str("instance = prod\nid_prefix = sp\n");
@@ -38,6 +38,8 @@ impl Run<'_> {
         c.push_str(&format!("releases = {}\n", Self::s(releases)));
         c.push_str(&format!("dolt_data = {}\n", Self::s(&data.join("dolt"))));
         c.push_str("operated = 0\n");
+        // Typed keys with no registered default: the installer refuses until they are answered.
+        c.push_str("metrics_flush_minutes = 60\ngate_target_cap_mib = 81920\n");
         c.push_str(&format!("release_repo = {}\n", Self::s(&self.o.release_src())));
         if let Some(a) = &self.o.a.agent {
             c.push_str(&format!("agent = {a}\n"));
@@ -58,7 +60,7 @@ impl Run<'_> {
     }
 
     /// `deploy.sh`, `uninstall.sh`, `world.sh`, `doctor`: by bare name on the launcher env.
-    fn tool(&self, name: &str) -> Cmd {
+    pub(super) fn tool(&self, name: &str) -> Cmd {
         Cmd::new(name).envs(&self.launcher_env())
     }
 
@@ -182,8 +184,9 @@ impl Run<'_> {
         (p, out)
     }
 
-    fn bd(&self, args: &[&str]) -> Cmd {
-        Cmd::new("bd").arg("-C").arg(Self::s(&self.o.bd_db)).args(args.iter().copied())
+    /// The bead store, through the installed release's content door.
+    fn content(&self, args: &[&str]) -> Cmd {
+        self.tool("spira-lc").arg("content").args(args.iter().copied())
     }
 
     fn git(&self, args: &[&str]) -> Cmd {
@@ -553,11 +556,12 @@ impl Run<'_> {
     /// File a probe bead labelled for the builder predicate; its id.
     pub(super) fn file_probe(&self, title: &str, description: &str, labels: &Labels) -> (Option<String>, String) {
         let l = format!("acceptance,{},{},repo:{}", labels.plan, labels.scope, self.o.scratch_name());
-        let out = self.h.run(&self.bd(&["create", "--title", title, "--description", description, "--label", &l, "--type", "task"]));
+        // `--labels`, never `--label`: the door's repo fence and the new row's repo read only the former.
+        let create = self.content(&["create", "--title", title, "--labels", &l, "--type", "task", "--body-file", "-"]).stdin(description);
+        let out = self.h.run(&create);
         let Some(id) = extract_bead_id(&out.text) else { return (None, out.text) };
-        // File the way bead.sh does: the bead's lifecycle row is part of filing it. Under
-        // the machine a rowless bead is never claimable, so the probe sat uncalled
-        // (sp-6ka75); a row that cannot be created fails "bead filed", naming why.
+        // `content create` only reports a row it could not write, and a rowless bead is never
+        // claimable: a row that cannot be created fails "bead filed", naming why.
         // The store answers late right after an install; create-bead is idempotent, so ask until it does.
         let mut lc = self.h.run(&self.tool("spira-lc").args(["create-bead", &id]));
         self.poll(30, 2, || {
@@ -571,6 +575,22 @@ impl Run<'_> {
             return (None, format!("{id} was created, but spira-lc create-bead rc={}: {}\n{}", lc.rc, lc.text.trim_end(), out.text));
         }
         (Some(id), out.text)
+    }
+
+    /// Whether a builder takes `id`: the claim view offers it to one, or the view no longer
+    /// lists it and it has been claimed. The probe's labels name only the builder's partition.
+    pub(super) fn claimable_by_builder(&self, id: &str) -> bool {
+        self.poll(30, 2, || {
+            let view = self.h.run(&self.tool("spira-lc").arg("claimable"));
+            match (view.rc, claim_view_offer(&view.out, id)) {
+                (0, Some(Offer::ToBuilder)) => return true,
+                (0, Some(Offer::Unlisted)) => {}
+                _ => return false,
+            }
+            let hist = self.h.run(&self.tool("spira-lc").args(["history", id]));
+            hist.rc == 0 && lifecycle_states(&hist.out).iter().any(|s| spira_store::lc_state::is_working(s))
+        })
+        .0
     }
 
     /// Stages 2-5 for a filed bead: called (branch), committed, closed, landed by ancestry
@@ -665,20 +685,23 @@ impl Run<'_> {
     }
 
     fn count_beads(&self) -> Option<usize> {
-        let o = self.h.run(&self.bd(&["list", "--all", "--json"]));
+        let o = self.h.run(&self.content(&["list", "--all", "--limit", "0", "--json"]));
         if o.rc != 0 {
             return None;
         }
-        bd_json(&o.out).map(|v| v.len())
+        listed_json(&o.out).map(|v| v.len())
     }
 
     fn count_memories(&self) -> Option<usize> {
-        let o = self.h.run(&self.bd(&["memories"]));
-        (o.rc == 0).then(|| o.out.lines().filter(|l| !l.is_empty()).count())
+        let o = self.h.run(&self.content(&["memories", "--json"]));
+        if o.rc != 0 {
+            return None;
+        }
+        serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&o.out).ok().map(|m| m.len())
     }
 }
 
-/// A probe bead's description, shaped like real builder work: bead.sh refuses a builder bead
+/// A probe bead's description, shaped like real builder work: the filing contract refuses a builder bead
 /// with no `## Build` section, and so does the builder.
 fn probe_body(why: &str) -> String {
     format!("{why}\n\n## Build\n\nCreate acceptance-probe-<bead-id>.txt at the root of this repository containing the bead id, commit it on the bead's branch, and submit.\n")
@@ -780,7 +803,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
     } else {
         r.ok("positive-control: command -v catches missing tool");
     }
-    for t in ["bd", "dolt", "git", "gh", "python3"] {
+    for t in ["dolt", "git", "gh", "python3"] {
         let name = format!("prereq: {t} on PATH");
         r.check(&name, h.on_path(t), || "not found; install before running acceptance".into());
     }
@@ -935,9 +958,9 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         // Claimability is the discriminating question: a bead the sentinel can see but no
         // predicate matches is indistinguishable from a silent sentinel.
         let sel = format!("{},{}", labels.scope, labels.plan);
-        let ready = h.run(&r.bd(&["ready", "--label", &sel, "--limit", "0", "--json"]));
+        let claimable = r.claimable_by_builder(&id);
         let name = format!("phase A: bead is claimable by builder predicate ({sel})");
-        r.check(&name, ready_has(&ready.out, &id), || format!("bead {id} not found in 'bd ready --label {sel}' — builder predicate does not match bead labels"));
+        r.check(&name, claimable, || format!("bead {id}: `spira-lc claimable` offers it to no builder and none has claimed it — builder predicate does not match bead labels"));
         let landed = format!("phase A stage 5: bead {id} landed on {}:{land_ref}", scratch.display());
         r.follow("phase A", &id, &land_ref, &base, &landed);
         let mode = land_modes.iter().find(|(n, _)| *n == home_repo).map(|(_, m)| m.clone()).unwrap_or_else(|| "push".into());
@@ -1046,7 +1069,11 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
     if r.o.a.file_defects && r.fail > 0 {
         let title = format!("acceptance-run {tag}: {} phase(s) failed", r.fail);
         let desc = format!("release acceptance found {} failure(s) against tag {tag}. See the acceptance log for detail.", r.fail);
-        h.run(&r.bd(&["create", "--title", &title, "--label", "defect,repo:spira,discovered-from:sp-ewwwq", "--type", "bug", "--description", &desc]));
+        let create = r.content(&["create", "--title", &title, "--labels", "defect,discovered-from:sp-ewwwq", "--type", "bug", "--body-file", "-"]).stdin(desc);
+        let filed = h.run(&create);
+        if filed.rc != 0 {
+            println!("warning: the defect was not filed (exit {}): {}", filed.rc, tail(&filed.text, 3));
+        }
     }
     println!("forensics: {}", r.o.forensics.display());
     if r.fail == 0 {
@@ -1158,15 +1185,30 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
     r.without_round_vm_host();
 
     // Seed: an open bead, a closed bead, two statutes.
-    let s1 = h.run(&r.bd(&["create", "--title", "aged-install: open seed bead (pre-upgrade)", "--label", "acceptance-seed", "--type", "task"]));
-    let s2 = h.run(&r.bd(&["create", "--title", "aged-install: closed seed bead (pre-upgrade)", "--label", "acceptance-seed", "--type", "task"]));
-    let seeds: Vec<String> = [&s1, &s2].iter().filter_map(|o| extract_bead_id(&o.text)).collect();
-    if let Some(id) = extract_bead_id(&s2.text) {
-        h.run(&r.bd(&["close", &id, "--reason", "acceptance: closed for aged-install migration test"]));
+    let mut written = Vec::new();
+    let mut seed = |what: &str, c: Cmd| {
+        let o = h.run(&c);
+        let id = extract_bead_id(&o.text);
+        if o.rc != 0 {
+            written.push(format!("{what} exit {}: {}", o.rc, tail(&o.text, 3)));
+        }
+        id
+    };
+    let create = |title: &str| r.content(&["create", "--title", title, "--labels", "acceptance-seed", "--type", "task"]);
+    let open = seed("create the open bead", create("aged-install: open seed bead (pre-upgrade)"));
+    let closed = seed("create the closed bead", create("aged-install: closed seed bead (pre-upgrade)"));
+    if let Some(id) = &closed {
+        // The machine's close: the content door refuses `close`, a bead's state being its row's.
+        seed("close", r.tool("spira-lc").args(["close", id, "--reason", "acceptance: closed for aged-install migration test"]));
     }
     for n in [1, 2] {
-        h.run(&r.bd(&["remember", &format!("aged-install acceptance seed: statute {n} for migration verification"), "--key", &format!("law-acceptance-aged-seed-{n}")]));
+        let key = format!("law-acceptance-aged-seed-{n}");
+        seed("remember", r.content(&["remember", "--key", &key]).stdin(format!("aged-install acceptance seed: statute {n} for migration verification")));
     }
+    let seeds: Vec<String> = [open, closed].into_iter().flatten().collect();
+    r.check("phase D: aged-install seeds written: two beads, one closed, two memories", written.is_empty() && seeds.len() == 2, || {
+        format!("{} bead id(s); {}", seeds.len(), written.join("; "))
+    });
     let pre_beads = r.count_beads();
     let pre_mems = r.count_memories();
 
@@ -1200,9 +1242,10 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
             (a, b) => r.bad("phase D: memory count preserved through migration", &format!("could not count memories: before={a:?} after={b:?}")),
         }
         for id in &seeds {
-            let hist = h.run(&r.tool("spira-lc").args(["history", id]));
-            r.check(&format!("phase D: pre-upgrade bead {id} has lifecycle rows after the aged upgrade"), hist.rc == 0 && !lifecycle_states(&hist.out).is_empty(), || {
-                format!("spira-lc history {id} rc={} — {}", hist.rc, tail(&hist.text, 3))
+            // The row, not its history: a row nothing has moved has none.
+            let row = h.run(&r.tool("spira-lc").args(["show", id]));
+            r.check(&format!("phase D: pre-upgrade bead {id} has lifecycle rows after the aged upgrade"), row.rc == 0, || {
+                format!("spira-lc show {id} rc={} — {}", row.rc, tail(&row.text, 3))
             });
         }
         let doc = h.show(&r.tool("doctor"));
