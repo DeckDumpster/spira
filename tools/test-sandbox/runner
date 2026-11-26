@@ -85,6 +85,12 @@ set -- "$cmd" "$@"
 path="$home/.local/lib/spira-env/bin:${CARGO_HOME:+$CARGO_HOME/bin:}/usr/local/bin:/usr/bin:/bin"
 [ -n "${CARGO:-}" ] && path="${CARGO%/*}:$path"
 path="${1%/*}:$path"
+# A round's spira-env is not under the home, so its broker's store directory is carried over,
+# last and alone: the sandbox's read-only root already holds the store.
+if [ ! -x "$home/.local/lib/spira-env/bin/mosquitto" ] && broker="$(command -v mosquitto)" &&
+    broker="$(readlink -f -- "$broker")" && [[ $broker == /nix/store/* ]]; then
+    path="$path:${broker%/*}"
+fi
 
 here="${BASH_SOURCE[0]}"; case "$here" in */*) here="${here%/*}" ;; *) here=. ;; esac
 physdir "$here" || die "cannot resolve the runner's own directory"

@@ -233,6 +233,11 @@ fn print_args_for_a_command_is_what_the_landing_ref_printed_but_for_the_environm
             }
             args.retain(|a| a != "--clearenv");
         }
+        // The carried-over broker directory is absent from a landing ref's runner that predates it.
+        if let Some(i) = args.windows(3).position(|w| w[0] == "--setenv" && w[1] == "PATH") {
+            let kept: Vec<&str> = args[i + 2].split(':').filter(|d| !(d.starts_with("/nix/store/") && d.contains("-mosquitto-"))).collect();
+            args[i + 2] = kept.join(":");
+        }
         args
     };
     let now = strip(print_args(&["--around", system_paths::USR_BIN_TRUE, "a", "b"]));
@@ -337,6 +342,36 @@ fn a_binary_run_binds_the_declared_cargo_homes_config_back_read_only_and_never_t
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let args: Vec<String> = String::from_utf8(out.stdout).unwrap().lines().map(String::from).collect();
     assert_config_bound_after_shadow_and_credentials_not(&args, &home);
+}
+
+#[test_id(trg288p)]
+#[test]
+fn a_rounds_own_spira_env_keeps_its_mosquitto_on_the_sandbox_path_and_no_other_tool_of_it() {
+    let own = std::env::var_os("PATH").unwrap();
+    let store = std::env::split_paths(&own)
+        .map(|d| d.join("mosquitto"))
+        .find(|p| p.is_file())
+        .map(|p| fs::canonicalize(p).unwrap())
+        .expect("mosquitto is on PATH, which this test requires");
+    let tmp = testkit::TempDir::new("around-round-env");
+    let home = fs::canonicalize(tmp.path()).unwrap().join("home");
+    let env_bin = home.join("spira-env/bin");
+    fs::create_dir_all(&env_bin).unwrap();
+    std::os::unix::fs::symlink(&store, env_bin.join("mosquitto")).unwrap();
+    let out = std::process::Command::new(workspace().join("tools/test-sandbox/runner"))
+        .args(["--print-args", "--around", "bash"])
+        .env_clear()
+        .env("PATH", format!("{}:/usr/bin:/bin", env_bin.display()))
+        .env("HOME", &home)
+        .output()
+        .expect("the runner spawns");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let args: Vec<&str> = stdout.lines().collect();
+    let path = args.windows(3).find(|w| w[0] == "--setenv" && w[1] == "PATH").expect("a PATH is set")[2];
+    let dirs: Vec<&str> = path.split(':').collect();
+    assert_eq!(dirs.last().copied(), store.parent().unwrap().to_str(), "{path}");
+    assert!(!dirs.iter().any(|d| Path::new(d) == env_bin), "{path}");
 }
 
 #[test_id(tj4gn43)]
