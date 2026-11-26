@@ -1,5 +1,5 @@
 //! `unsent_keys` — the slow-tier git-graph block: the unsent-branch backlog across every
-//! registered repository, the landing gate's yield, suite-time totals, the 24h landing
+//! registered repository, the landing gate's yield, the 24h landing
 //! funnel, ACCEPTANCE and the GATE/landing.progress passthrough. Ported from
 //! `spira/cockpit.sh` (DESIGN.md "Design"); this is the single most `git`-call-heavy probe,
 //! so every call here mirrors the bash's own repo/ref resolution through the `lib.sh` bridge
@@ -16,7 +16,6 @@ pub fn unsent_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     branch_backlog_section(&mut out, cfg);
     yield_section(&mut out);
-    suite_times_section(&mut out);
     landing_funnel_section(&mut out, &io::run_dir(), cfg);
     acceptance_section(&mut out, cfg);
     gate_section(&mut out, &io::run_dir());
@@ -430,31 +429,6 @@ fn yield_section(out: &mut Kv) {
     }
     for (src, dst) in MAP {
         push(out, dst, found.get(*src).cloned().unwrap_or_else(|| "?".to_string()));
-    }
-}
-
-fn suite_times_section(out: &mut Kv) {
-    let mut sum = "?".to_string();
-    let mut wall = "?".to_string();
-    if let Some(json) = io::run_tool("tsd-query.sh", &["last-run"], None) {
-        if !json.trim().is_empty() {
-            if let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(json.trim()) {
-                if let Some(row) = rows.first() {
-                    sum = row.get("sum_wall").map(value_to_plain).unwrap_or_else(|| "?".to_string());
-                    wall = row.get("batch_wall").filter(|v| !v.is_null()).map(value_to_plain).unwrap_or_else(|| "?".to_string());
-                }
-            }
-        }
-    }
-    push(out, "SP_SUITE_LAST_SUM", sum);
-    push(out, "SP_SUITE_LAST_WALL", wall);
-}
-
-fn value_to_plain(v: &Value) -> String {
-    match v {
-        Value::String(s) => s.clone(),
-        Value::Number(n) => n.to_string(),
-        _ => "?".to_string(),
     }
 }
 
