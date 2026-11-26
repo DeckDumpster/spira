@@ -701,7 +701,7 @@ pub mod edge {
         let repo = batcher_cut::find_repo(&env, &leg.repo)?;
         let j = batcher::core::Judgement { source: batcher::core::RedSource::Local, suites: vec![] };
         let ids: Vec<String> = leg.members.iter().map(|(id, _)| id.clone()).collect();
-        io::file_judgement(&env, &repo, &j, &ids, &leg.why)
+        io::file_judgement(&env, &repo, &j, &ids, &leg.why, None)
     }
 
     pub fn verdict_write(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {

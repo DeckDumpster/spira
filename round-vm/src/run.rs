@@ -780,6 +780,12 @@ test_phase_bound() {
 nextest_reds() {
     awk '/^ *Summary \[/ { exit } match($0, /^ *(FAIL|TIMEOUT|SIG[A-Z]+|LEAK-FAIL|EXEC-FAIL) +\[[ >]*[0-9.]+s\] +\( *[0-9]+\/[0-9]+\) +[^ ]+ +/) { n = split(substr($0, 1, RLENGTH), head, " "); print $1, substr($0, RLENGTH + 1), head[n] }' "$1"
 }
+# Each red test's block of a nextest log: its status line and the output nextest printed under it.
+nextest_fail_blocks() {
+    awk '/^ *Summary \[/ || /^-+$/ { exit }
+         /^ *(TRY [0-9]+ )?[A-Z][A-Z-]+ +\[[ >]*[0-9.]+s\]/ { keep = ($0 ~ /^ *(TRY [0-9]+ )?(FAIL|TIMEOUT|SIG[A-Z]+|LEAK-FAIL|EXEC-FAIL) +\[/) }
+         keep' "$1"
+}
 # One line per failed test of a plain `cargo test` log: `FAIL dir:<directory> <test>` when cargo printed a
 # path that names the test's directory, else (a path relative to its package) `FAIL test:<target> <test>`,
 # the target read off the `(<exe>-<hash>)` of the `Running` line. A test libtest reported running over its
@@ -844,6 +850,8 @@ test_phase_red() {
         tail -100 "$log"
         [ ! -s "$hung" ] || { echo "round-vm: ${stage^^}: HUNG (test<TAB>binary):"; cat "$hung"; }
     } > "$out"
+    nextest_fail_blocks "$log" | head -4000 > "${out%.out}-failures.out"
+    [ -s "${out%.out}-failures.out" ] || rm -f "${out%.out}-failures.out"
     {
         printf '{"stage":"%s","verdict":"red","ran_before_suites":%s,"cause":"%s","secs":%s,"last_binary":"%s","long_running":[' \
             "$stage" "$before" "$(json_str "$cause")" "$secs" "$(json_str "$last")"
@@ -2329,7 +2337,7 @@ pub const UNIT_TIMINGS: &str = "unit-timings";
 /// each phase's verdict as a record and its failures' output — the unit phase's, before any
 /// suite, and the integration phase's, beside them. They sit outside testenv's leaf, so the host
 /// carries them over by name, as it does [`FENCE_TIMES`].
-pub const TEST_PHASE_FILES: [&str; 4] = ["unit.json", "unit-tests.out", "integration.json", "integration-tests.out"];
+pub const TEST_PHASE_FILES: [&str; 6] = ["unit.json", "unit-tests.out", "unit-tests-failures.out", "integration.json", "integration-tests.out", "integration-tests-failures.out"];
 
 /// The two counts the VM script rewrites while tests run: nextest's unit tests, and the integration binaries.
 pub const PROGRESS_FILES: [&str; 2] = [crate::progress::UNIT_FILE, crate::progress::INTEGRATION_FILE];
@@ -4050,9 +4058,10 @@ mod tests {
         std::fs::write(d.path().join("log"), log).unwrap();
         std::fs::write(d.path().join("hung"), hung).unwrap();
         let script = format!(
-            "set -uo pipefail\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\ncd \"$HOME\"\ntest_phase_red unit-tests log 101 7 hung out.txt unit.json true\ncat out.txt",
+            "set -uo pipefail\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\ncd \"$HOME\"\ntest_phase_red unit-tests log 101 7 hung unit-tests.out unit.json true\ncat unit-tests.out",
             script_fn("last_binary"),
             script_fn("nextest_reds"),
+            script_fn("nextest_fail_blocks"),
             script_fn("cargo_test_reds"),
             script_fn("long_running"),
             script_fn("long_running_end"),
@@ -4063,6 +4072,38 @@ mod tests {
         let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", std::env::var("PATH").unwrap()).output().unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         (String::from_utf8(out.stdout).unwrap(), std::fs::read_to_string(d.path().join("unit.json")).unwrap())
+    }
+
+    fn red_phase_failures(log: &str) -> Option<String> {
+        let d = TempDir::new();
+        std::fs::write(d.path().join("log"), log).unwrap();
+        std::fs::write(d.path().join("hung"), "").unwrap();
+        let fns: Vec<String> = ["last_binary", "nextest_reds", "nextest_fail_blocks", "cargo_test_reds", "long_running", "long_running_end", "test_phase_class", "json_str", "test_phase_red"].iter().map(|f| script_fn(f)).collect();
+        let script = format!("set -uo pipefail\n{}\ncd \"$HOME\"\ntest_phase_red integration-tests log 100 7 hung integration-tests.out integration.json false", fns.join("\n"));
+        let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", system_paths::SYSTEM_PATH_MIN).output().unwrap();
+        assert!(out.status.success() && out.stderr.is_empty(), "{}", String::from_utf8_lossy(&out.stderr));
+        std::fs::read_to_string(d.path().join("integration-tests-failures.out")).ok()
+    }
+
+    #[test_id(tqmq4at)]
+    #[test]
+    fn a_red_phase_keeps_each_failing_tests_nextest_block_and_nothing_of_the_passes() {
+        let log = "    Starting 4 tests across 1 binary\n        PASS [   0.007s] (1/4) fx t::quick\n\
+                   \x20       FAIL [   0.010s] (2/4) fx t::bad\n  stdout \u{2500}\u{2500}\u{2500}\n    running 1 test\n  stderr \u{2500}\u{2500}\u{2500}\n    thread 't::bad' panicked at fx/src/t.rs:9:5:\n    assertion `left == right` failed\n\
+                   \x20       PASS [   0.011s] (3/4) fx t::fine\n\
+                   \x20    TIMEOUT [   4.002s] (4/4) fx t::sleeper\n  stdout \u{2500}\u{2500}\u{2500}\n    waiting on the lock\n\
+                   ------------\n     Summary [   4.005s] 4 tests run: 2 passed, 1 failed, 1 timed out\n        FAIL [   0.010s] (2/4) fx t::bad\n     TIMEOUT [   4.002s] (4/4) fx t::sleeper\n";
+        let kept = red_phase_failures(log).expect("a red nextest phase keeps its failures");
+        assert_eq!(
+            kept,
+            "        FAIL [   0.010s] (2/4) fx t::bad\n  stdout \u{2500}\u{2500}\u{2500}\n    running 1 test\n  stderr \u{2500}\u{2500}\u{2500}\n    thread 't::bad' panicked at fx/src/t.rs:9:5:\n    assertion `left == right` failed\n     TIMEOUT [   4.002s] (4/4) fx t::sleeper\n  stdout \u{2500}\u{2500}\u{2500}\n    waiting on the lock\n"
+        );
+    }
+
+    #[test_id(tp3cxll)]
+    #[test]
+    fn a_red_phase_with_no_failing_nextest_test_keeps_no_failures_file() {
+        assert_eq!(red_phase_failures("error: could not compile `fx`\n"), None);
     }
 
     #[test_id(tba3wga)]
