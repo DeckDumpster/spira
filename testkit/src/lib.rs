@@ -3,6 +3,8 @@
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
+pub mod broker;
+
 use std::ffi::OsStr;
 use std::io::Write;
 use std::ops::Deref;
