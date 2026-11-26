@@ -69,7 +69,7 @@
 //! |---|---|---|---|---|
 //! | `hel.sweep.send` | git | 120 s | `repo:br:tip` | **re-checks the witness mid-send** (`real.rs:230-246`); a path outside `run/worktree` (`reap.rs:342-346`); a failed salvage (`reap.rs:362-364`); CERTIFIED/IN_DELIVERY → `Queued` (`reap.rs:404-406`, another `spira-lc state`); the content fence (`reap.rs:397`). Removes the worktree, the branch, the remote branch (`git.rs:231`) and the `branch:` label (`real.rs:122`, today `bdq` through the seam `seam.rs:84`) |
 //! | `hel.sweep.content_on_base` | store | 5 s | `id:merge-tree:<landsha>` | a terminal row (`sweep.rs:344-347`); today `spira-lc content-on-base` (`real.rs:280-287`) |
-//! | `hel.sweep.close_on_land` | store | 5 s | `id:sha` | a row that is not submitted (store's rule); today `spira-lc close-on-land` via bash (`seam.rs:83`, `real.rs:247`) |
+//! | `hel.sweep.close_on_land` | store | 5 s | `id:sha` | nothing: a row not SUBMITTED, CERTIFIED or IN_DELIVERY is answered ok with no write (`lifecycle_row::landed_record_on`) |
 //! | `hel.sweep.archive` | git | 30 s | `repo:refs/archive/<br>:tip` | a read-back that differs from the tip (`sweep.rs:407-428`); on success it chains `hel.sweep.send` with caller `archived` |
 //! | `hel.sweep.free_worktree` | git | 120 s | `id:path` | the same witness, fence and salvage rules as `send` (`sweep.rs:313-319`, `reap.rs:331`) |
 //! | `hel.sweep.orphan_worktree` | git | 120 s | `id:path` | a branch that still exists, or a held bead (`sweep.rs:256-292`) |
@@ -785,14 +785,26 @@ fn record_content_on_base(lc: &spira_store::lc_call::LcClient, id: &str, land_sh
     spira_store::lifecycle_row::content_on_base_on(lc, id, &format!("merge-tree:{land_sha}"), "hel")
 }
 
-/// The runner of [`CLOSE_ON_LAND`]: close a submitted bead at the land ref's sha.
+fn record_landed(lc: &spira_store::lc_call::LcClient, id: &str, sha: &str) -> Result<String, String> {
+    use spira_store::lifecycle_row::{landed_record_on, LandedRecord};
+    Ok(match landed_record_on(lc, id, sha, "hel")? {
+        LandedRecord::Recorded => "recorded".into(),
+        LandedRecord::Nothing { state } => format!("nothing to record ({state})"),
+    })
+}
+
+/// The runner of [`CLOSE_ON_LAND`]: record the landing of a handed-on bead at the land ref's sha.
 pub fn close_on_land(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
     use hel::ports::World;
     let t: Target = serde_json::from_str(input).map_err(|e| e.to_string())?;
     let root = root_of(real, &t.repo)?;
     let base = real.base(&root).ok_or_else(|| format!("{}: the land ref does not resolve", t.repo))?;
-    let sha = hel::git::Git(&root).rev_parse(&base.landref).unwrap_or(base.landref);
-    lc.answer(&["close-on-land", t.id.as_str(), sha.as_str()]).map_err(String::from)
+    record_landed(lc, &t.id, &land_sha(&root, &base.landref))
+}
+
+/// Empty when neither the ref files nor git can say; git is asked only when the files cannot.
+fn land_sha(root: &std::path::Path, landref: &str) -> String {
+    spira_config::git_refs::sha_of(root, landref).or_else(|| hel::git::Git(root).rev_parse(landref)).unwrap_or_default()
 }
 
 /// The runner of [`ARCHIVE`]: park the tip at `refs/archive/<br>` and read it back; answers
@@ -894,14 +906,14 @@ mod tests {
         assert!(format!("{acts:?}").contains("sp-landed"), "{acts:?}");
     }
 
-    struct Store(std::sync::Mutex<Vec<String>>);
+    struct Store(std::sync::Mutex<Vec<String>>, &'static str);
 
     impl spira_store::lc_call::Transport for Store {
         fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             self.0.lock().unwrap().push(argv.join(" "));
             let (code, out) = match argv[0].as_str() {
-                "content-on-base" => (2, "usage: spira-lc show ...".to_string()),
-                "show" => (0, r#"{"bead":{"state":"SUBMITTED","version":3}}"#.to_string()),
+                "content-on-base" | "close-on-land" => (2, "usage: spira-lc show ...".to_string()),
+                "show" => (0, format!(r#"{{"bead":{{"state":"{}","version":3}}}}"#, self.1)),
                 _ => (0, String::new()),
             };
             Ok(spira_store::lc_call::Reply { code, out, err: String::new(), read_ended: false })
@@ -966,7 +978,7 @@ mod tests {
     #[test_id(t9vjqa9)]
     #[test]
     fn content_on_base_is_sent_as_a_bead_event_the_socket_serves() {
-        let store = std::sync::Arc::new(Store(Default::default()));
+        let store = std::sync::Arc::new(Store(Default::default(), "SUBMITTED"));
         let lc = spira_store::lc_call::LcClient::over(store.clone(), true);
         record_content_on_base(&lc, "sp-a", "abc").unwrap();
         assert_eq!(
@@ -976,5 +988,42 @@ mod tests {
                 r#"event bead sp-a --expect SUBMITTED --version 3 --actor hel --kind {"ContentOnBase":{"proof":"merge-tree:abc"}}"#.to_string()
             ]
         );
+    }
+
+    #[test_id(t9dskua)]
+    #[test]
+    fn a_landing_is_sent_as_a_bead_event_only_for_a_row_that_still_has_one_to_record() {
+        let run = |state| {
+            let store = std::sync::Arc::new(Store(Default::default(), state));
+            let lc = spira_store::lc_call::LcClient::over(store.clone(), true);
+            let answer = record_landed(&lc, "sp-a", "abc");
+            let seen = store.0.lock().unwrap().clone();
+            (answer, seen)
+        };
+        let (answer, seen) = run("SUBMITTED");
+        assert_eq!(
+            seen,
+            vec![
+                "show sp-a".to_string(),
+                r#"event bead sp-a --expect SUBMITTED --version 3 --actor hel --kind {"ContentOnBase":{"proof":"landed:abc"}}"#.to_string()
+            ]
+        );
+        assert_eq!(answer, Ok("recorded".to_string()));
+        for state in ["LANDED", "DONE"] {
+            let (answer, seen) = run(state);
+            assert_eq!(seen, vec!["show sp-a".to_string()], "{state}");
+            assert_eq!(answer, Ok(format!("nothing to record ({state})")));
+        }
+    }
+
+    #[test_id(tcmvgfs)]
+    #[test]
+    fn the_land_sha_is_read_from_the_ref_files_of_a_checkout_git_could_not_read() {
+        let dir = testkit::TempDir::new("hel-sweep-land-sha");
+        let heads = dir.path().join(".git/refs/heads");
+        std::fs::create_dir_all(&heads).unwrap();
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        std::fs::write(heads.join("main"), format!("{sha}\n")).unwrap();
+        assert_eq!(land_sha(dir.path(), "main"), sha);
     }
 }
