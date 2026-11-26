@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 /// One `spira/conf.d/<KEY>` file, parsed.
 #[derive(Debug, Clone, PartialEq)]
@@ -167,28 +167,15 @@ pub fn declares_key(home: &Path, key: &str) -> bool {
     SOURCE_DIRS.iter().any(|d| home.join(d).join(key).is_file())
 }
 
-/// The registry of `home`, read once per home and kept for the life of the process. A refusal
-/// is not remembered: the next call looks again.
-pub fn for_home(home: &Path) -> Result<&'static Registry, String> {
-    static REGISTRIES: Mutex<BTreeMap<PathBuf, &'static Registry>> = Mutex::new(BTreeMap::new());
-    let mut loaded = REGISTRIES.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(r) = loaded.get(home) {
-        return Ok(r);
-    }
-    let r: &'static Registry = Box::leak(Box::new(Registry::load(home)?));
-    loaded.insert(home.to_path_buf(), r);
-    Ok(r)
-}
-
-/// [`for_home`] of the release [`crate::resolve::locate_home_for_process`] finds, pinned by the
-/// first success: a later change to the process environment does not move this process's own.
+/// This process's registry, read once from the release [`crate::resolve::locate_home_for_process`]
+/// finds. A refusal is not remembered: the next call looks again.
 pub fn for_process() -> Result<&'static Registry, String> {
-    static OWN: OnceLock<&'static Registry> = OnceLock::new();
-    if let Some(r) = OWN.get() {
+    static REGISTRY: OnceLock<Registry> = OnceLock::new();
+    if let Some(r) = REGISTRY.get() {
         return Ok(r);
     }
-    let r = for_home(&crate::resolve::locate_home_for_process()?)?;
-    Ok(OWN.get_or_init(|| r))
+    let loaded = Registry::load(&crate::resolve::locate_home_for_process()?)?;
+    Ok(REGISTRY.get_or_init(|| loaded))
 }
 
 /// The registry index a release carries beside `conf.d`: every source file of `conf.d` and
