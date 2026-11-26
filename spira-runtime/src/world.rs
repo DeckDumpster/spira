@@ -878,8 +878,9 @@ impl World {
         work && scoped
     }
 
-    /// Brings `bead-stage` up to the lifecycle log, running its exporter only when the log is ahead
-    /// of it, then fails when the family still trails the log: a stalled export blinds the stage invariants.
+    /// Brings `bead-stage` up to the lifecycle log. A pass that runs the exporter takes its verdict:
+    /// exit 0 means it drained the log, and the store may not yet show those rows. Only a pass with
+    /// nothing to export asks the store whether the family trails the log.
     fn flow_export(&self) -> Result<(), String> {
         let logged = self.lc_json(&["event-seq", "--head"])?["seq"].as_u64().ok_or("event-seq: no seq")?;
         let checkpoint = self.run_dir.join("tsd").join(".bead-stage-checkpoint-lifecycle.json");
@@ -889,7 +890,7 @@ impl World {
             return if logged <= exported { Ok(()) } else { Err("bead-stage is behind the lifecycle log and no exporter is configured".into()) };
         }
         if logged > exported {
-            exporter_run(bin, "lifecycle")?;
+            return exporter_run(bin, "lifecycle");
         }
         let mut lc = spira_store::lc_call::LcClient::socket(&self.lc_socket);
         let mut metrics = spira_otel::query::Store::new(self.metrics_endpoint.as_deref()).map_err(|e| e.to_string())?;
