@@ -446,7 +446,7 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
         }
         "verify" => {
             want(1)?;
-            let p = verify::verify(&cfg, &rest[0], &VerifyOpts { pre_activate: a.pre_activate, system_dirs: system_dirs() }).map_err(fail)?;
+            let p = verify::verify(&cfg, &rest[0], &VerifyOpts { pre_activate: a.pre_activate, system_dirs: system_dirs(), nix: &release::spira_env::RealNix }).map_err(fail)?;
             if !p.is_empty() {
                 return Err((1, format!("release {} FAILS verify:\n  {}", rest[0], p.join("\n  "))));
             }

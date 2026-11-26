@@ -2,13 +2,16 @@
 
 use std::process::Command;
 use crate::config::Config;
+use crate::deps_check::{self, SpiraEnv};
+use crate::spira_env::{self, Nix};
 use crate::fsutil;
 use crate::manifest::Manifest;
 use std::path::{Path, PathBuf};
 
-pub struct VerifyOpts {
+pub struct VerifyOpts<'a> {
     pub pre_activate: bool,
     pub system_dirs: Vec<PathBuf>,
+    pub nix: &'a dyn Nix,
 }
 
 /// The release directory for `sha`, if `sha` is a full sha and it exists.
@@ -60,7 +63,7 @@ pub fn verify(cfg: &Config, sha: &str, o: &VerifyOpts) -> Result<Vec<String>, St
     problems.extend(crate::symbols::problems(&rel));
     if o.pre_activate {
         match pre_activate_env(cfg, &rel) {
-            Ok(envs) => problems.extend(crate::deps_check::problems(&rel, &envs[2].1)),
+            Ok(envs) => problems.extend(deps_problems(&rel, &envs[2].1, o.nix)),
             Err(e) => problems.push(format!("deps: cannot build the release's own PATH: {e}")),
         }
         let pa = rel.join("spira/pre-activate.sh");
@@ -105,6 +108,31 @@ pub fn verify(cfg: &Config, sha: &str, o: &VerifyOpts) -> Result<Vec<String>, St
         }
     }
     Ok(problems)
+}
+
+/// The dependency check, against the env `rel`'s own flake builds. The build is linked in a
+/// scratch dir: the installed env link is activation's to move.
+fn deps_problems(rel: &Path, path: &str, nix: &dyn Nix) -> Vec<String> {
+    if !spira_env::has_flake(rel) {
+        return deps_check::problems(rel, path, SpiraEnv::Installed);
+    }
+    let scratch = match crate::config_delta::scratch_dir() {
+        Ok(d) => d,
+        Err(e) => return cannot_build(rel, path, &e),
+    };
+    let out = scratch.join("spira-env");
+    let problems = match nix.build(&spira_env::target(rel), &out) {
+        Ok(()) => deps_check::problems(rel, path, SpiraEnv::Built(&out.join("bin"))),
+        Err(e) => cannot_build(rel, path, &e),
+    };
+    let _ = std::fs::remove_dir_all(&scratch);
+    problems
+}
+
+fn cannot_build(rel: &Path, path: &str, why: &str) -> Vec<String> {
+    let mut problems = vec![format!("deps: cannot build the release's spira-env: {why}")];
+    problems.extend(deps_check::problems(rel, path, SpiraEnv::Unbuilt));
+    problems
 }
 
 /// The config layers with the release's own delta applied, in a scratch dir, and the
