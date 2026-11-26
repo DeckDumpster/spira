@@ -69,6 +69,14 @@ impl Git<'_> {
             .unwrap_or_default()
     }
 
+    /// [`Git::spira_merged_into`] over every local branch.
+    pub fn branches_merged_into(&self, base: &str) -> std::collections::BTreeSet<String> {
+        let merged = format!("--merged={base}");
+        self.out(&["for-each-ref", merged.as_str(), "--format=%(refname:short)", "refs/heads"])
+            .map(|s| s.lines().filter(|l| !l.is_empty()).map(String::from).collect())
+            .unwrap_or_default()
+    }
+
     /// The tree `merge-tree` writes for merging <br> into <base>; None when the merge conflicts or fails.
     pub fn merged_tree(&self, base: &str, br: &str) -> Option<String> {
         let out = self.out(&["-c", &format!("attr.tree={base}"), "merge-tree", "--write-tree", base, br])?;
