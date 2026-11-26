@@ -3879,6 +3879,62 @@ fn a_flip_with_no_test_id_stays_the_branchs_red_and_writes_no_row() {
     assert!(f.fix_beads.borrow().is_empty() && f.registry_rows.borrow().is_empty());
 }
 
+/// The printed message of a FAIL verdict, apart from the lines said while the trial ran.
+fn verdict_message(f: &Fake) -> String {
+    let said = f.err.borrow();
+    said.iter().find(|l| l.contains("own gate failed")).cloned().unwrap_or_default()
+}
+
+/// A nextest run of `n` distinct tests, `t::t0000001` onward, every one with `status`.
+fn many_reds(status: &str, n: usize) -> String {
+    let mut out: String = (1..=n).map(|i| format!("        {status} [   0.010s] ({i}/{n}) bin/t t::t00000{i}\n")).collect();
+    let (passed, failed) = if status == "PASS" { (n, 0) } else { (0, n) };
+    out.push_str(&format!("     Summary [   0.010s] {n} tests run: {passed} passed, {failed} failed, 0 skipped"));
+    out
+}
+
+#[test_id(t7eja4q)]
+#[test]
+fn as_many_flips_as_the_cap_or_fewer_are_each_recorded_and_the_item_passes() {
+    let f = rerun_fake(&many_reds("FAIL", 2), Some(&many_reds("PASS", 2)));
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.fix_beads.borrow().len(), 2);
+    assert_eq!(f.registry_rows.borrow().len(), 2);
+    assert!(!f.stderr().contains("held back"), "{}", f.stderr());
+}
+
+#[test_id(tu45wjn)]
+#[test]
+fn flips_beyond_the_cap_file_nothing_are_named_as_held_back_and_the_item_goes_back() {
+    let f = rerun_fake(&many_reds("FAIL", 4), Some(&many_reds("PASS", 4)));
+    let status = f.run();
+    assert_eq!((status, f.fix_beads.borrow().len()), (FAIL, 3), "(status, fix beads)");
+    let rows: Vec<String> = f.registry_rows.borrow().iter().map(|r| r.0.clone()).collect();
+    assert_eq!(rows, ["test:t000001", "test:t000002", "test:t000003"]);
+    let verdict = verdict_message(&f);
+    assert!(verdict.contains("\ngate: held back by the flip cap (3): t::t000004 "), "{verdict}");
+    assert!(meter(&f).contains("t::t000003:red/green,t::t000004:red/held"), "{}", meter(&f));
+    assert_eq!(certified(&f, "pass"), 0);
+}
+
+#[test_id(thocb57)]
+#[test]
+fn only_a_recorded_flip_uses_the_cap_and_every_flip_after_the_third_row_is_held() {
+    let names = ["t000001", "noid_a", "t000002", "t000003", "noid_b", "t000004"];
+    let run = |status: &str, tally: &str| {
+        let lines: String = names.iter().map(|n| format!("        {status} [   0.010s] (1/6) bin/t t::{n}\n")).collect();
+        format!("{lines}     Summary [   0.010s] 6 tests run: {tally}, 0 skipped")
+    };
+    let f = rerun_fake(&run("FAIL", "0 passed, 6 failed"), Some(&run("PASS", "6 passed, 0 failed")));
+    assert_eq!(f.run(), FAIL);
+    let rows: Vec<String> = f.registry_rows.borrow().iter().map(|r| r.0.clone()).collect();
+    assert_eq!(rows, ["test:t000001", "test:t000002", "test:t000003"]);
+    let verdict = verdict_message(&f);
+    assert!(verdict.contains("so no registry row can hold it: t::noid_a\n"), "{verdict}");
+    assert!(verdict.contains("flip cap (3): t::noid_b t::t000004 "), "{verdict}");
+    assert!(meter(&f).contains("t::noid_b:red/held,t::t000004:red/held"), "{}", meter(&f));
+}
+
 #[test_id(tpwcbp4)]
 #[test]
 fn a_flip_beside_a_test_red_twice_is_recorded_and_the_item_still_goes_back() {

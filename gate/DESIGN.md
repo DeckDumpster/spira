@@ -500,11 +500,17 @@ Each failing test is judged on the rerun output: **flip** (a `PASS [` / `... ok`
 
 * A flip with a test id (`ports::flip_test_id`) gets what the round gives one
   (`flip.rs`, shared with `batcher-cut`): a fix bead filed `--for batcher`, then a seven-day
-  `test-registry` row naming that bead, actor `gate`. If every failing test flipped the verdict is
+  `test-registry` row naming that bead, actor `gate`. If every failing test flipped, none held back, the verdict is
   PASS and says `gate: flipped — <test> red, then green on a rerun of the same tree; disabled
   until <date>, fix bead <id>` per test. A refused filing or row is NO_VERDICT `flip-unrecorded`:
   a flip is never passed without its record. A flip with no id cannot hold a row and stays the
   branch's red.
+* One gate records at most 3 flips (`MAX_GATE_FLIPS`, law-a-detector-files-a-bounded-batch), the
+  first in first-run order. Every flipped test after the third row gets no bead and no row, the
+  message adds `gate: held back by the flip cap (3): <tests>`, and the item goes back as FAIL:
+  that many flips is the box, not the tests. Held tests are the one exception to
+  law-a-flipping-test-is-disabled-by-a-registry-row. The FAIL and the line are the unattributed
+  `branch-red` path's: the cross-bead PASS and the base-fences-red FAIL keep their own messages.
 * Any red-twice or unproven test sends the item back as FAIL `branch-red`, the message adding
   `gate: red twice on the same tree <T>: <tests>` and/or `gate: not rerun: <tests>`. Rows for
   flips among them are still written. A red the cross-bead detector (`shared_unit_red`) matches
@@ -512,9 +518,9 @@ Each failing test is judged on the rerun output: **flip** (a `PASS [` / `... ok`
 * A fences or suites composition, a red beside a red fence or a failed build, never reruns.
 * `flip.rs` calls `bead.sh` and `test-registry` through the bounded runner (60 s each) for both the gate and the round.
 
-Records: gate.log ends ` reruns=<test>:<red|timeout>/<green|red|timeout|unrun>,…`; the
+Records: gate.log ends ` reruns=<test>:<red|timeout>/<green|red|timeout|unrun|held>,…`; the
 `gate-run` row carries the same text as `reruns`; `spira_gate_test_reruns{repo,result}` counts one
-per rerun test (`result` is `flip|red-twice|unproven`; no test or bead label). `unit_run_secs`
+per rerun test (`result` is `flip|red-twice|unproven|held`; no test or bead label). `unit_run_secs`
 stays the first run's wall; the Grafana panel "Gate test reruns by result (1d)" plots the counter.
 
 ### What it records (for item 7)

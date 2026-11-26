@@ -174,6 +174,11 @@ struct State {
     ran: String,
 }
 
+/// The most flips one gate records: past it the box is the problem, not the tests
+/// (law-a-detector-files-a-bounded-batch). The round's own bound is `MAX_FLIP_TESTS` in
+/// `batcher/src/drive.rs`.
+const MAX_GATE_FLIPS: usize = 3;
+
 /// The one discriminating rerun of a red unit test phase (DESIGN.md "The rerun of a red test"):
 /// the failing tests run once more on the same tree under the same nextest config. A test
 /// green on the rerun is a flip: fix bead filed, registry row written, verdict stands without
@@ -225,7 +230,17 @@ fn rerun_red_tests<W: World>(w: &W, at: RerunScope, name: &str, cmd: &str) -> Re
     }
     let mut notes = String::new();
     let bead = if at.bead.is_empty() { "an unnamed branch".to_string() } else { at.bead.to_string() };
+    let mut held = Vec::new();
     for t in std::mem::take(&mut flipped) {
+        if flipped.len() == MAX_GATE_FLIPS {
+            let first = parse::red_kind(at.out, &t);
+            let green = format!("{t}:{first}/green");
+            for e in at.reruns.iter_mut().filter(|e| **e == green) {
+                *e = format!("{t}:{first}/held");
+            }
+            held.push(t);
+            continue;
+        }
         let Some(id) = crate::ports::flip_test_id(&t) else {
             unrecorded.push(t);
             continue;
@@ -247,7 +262,7 @@ fn rerun_red_tests<W: World>(w: &W, at: RerunScope, name: &str, cmd: &str) -> Re
         notes.push('\n');
         flipped.push(t);
     }
-    if twice.is_empty() && unproven.is_empty() && unrecorded.is_empty() {
+    if twice.is_empty() && unproven.is_empty() && unrecorded.is_empty() && held.is_empty() {
         return Err(v(PASS, "pass", format!("gate: {name}'s own gate failed: {cmd}\n{}\n{notes}", at.out)));
     }
     let spaced = |l: &[String]| l.join(" ");
@@ -261,6 +276,12 @@ fn rerun_red_tests<W: World>(w: &W, at: RerunScope, name: &str, cmd: &str) -> Re
     }
     if !unrecorded.is_empty() {
         tail.push_str(&format!("gate: flipped but carries no test id, so no registry row can hold it: {}\n", spaced(&unrecorded)));
+    }
+    if !held.is_empty() {
+        let line = format!("gate: held back by the flip cap ({MAX_GATE_FLIPS}): {} — more flips than the cap in one gate is the box, not the tests; no row, no bead", spaced(&held));
+        w.eprint(&line);
+        tail.push_str(&line);
+        tail.push('\n');
     }
     Ok(format!("\n{}", tail.trim_end()))
 }
