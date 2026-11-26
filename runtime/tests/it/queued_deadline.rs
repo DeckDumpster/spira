@@ -217,6 +217,7 @@ async fn one_task_fanning_out_leaves_room_in_its_class_for_the_others() {
 
 /// A journal whose every commit costs engine time, as a slow store does. A commit made while
 /// `hold` is set also waits until the `answers` effect's runner has returned, then costs a minute.
+/// Once `stall_after` commits are made, each further commit waits for an effect's runner to start.
 struct SlowJournal {
     inner: Arc<dyn Journal>,
     clock: VirtualClock,
@@ -225,6 +226,8 @@ struct SlowJournal {
     hold: std::sync::atomic::AtomicBool,
     began: std::sync::atomic::AtomicBool,
     answered: Arc<std::sync::atomic::AtomicBool>,
+    stall_after: usize,
+    ran: std::sync::atomic::AtomicBool,
 }
 
 impl Journal for SlowJournal {
@@ -236,7 +239,15 @@ impl Journal for SlowJournal {
     }
     fn commit(&self, turn: &Turn) -> runtime::Result<()> {
         use std::sync::atomic::Ordering::SeqCst;
-        self.commits.fetch_add(1, SeqCst);
+        let made = self.commits.fetch_add(1, SeqCst);
+        if self.stall_after > 0 && made >= self.stall_after {
+            for _ in 0..3000 {
+                if self.ran.load(SeqCst) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10)); // clock-safe: a hang cap; a turn that never hands back holds the effect unlaunched
+            }
+        }
         if self.hold.swap(false, SeqCst) {
             self.began.store(true, SeqCst);
             while !self.answered.load(SeqCst) {
@@ -260,6 +271,10 @@ impl Journal for SlowJournal {
 }
 
 fn slow(per_commit_ms: u64) -> (Arc<SlowJournal>, VirtualClock) {
+    stalling(per_commit_ms, 0)
+}
+
+fn stalling(per_commit_ms: u64, stall_after: usize) -> (Arc<SlowJournal>, VirtualClock) {
     let clock = VirtualClock::new(1_000);
     let j = Arc::new(SlowJournal {
         inner: MemJournal::new(),
@@ -269,6 +284,8 @@ fn slow(per_commit_ms: u64) -> (Arc<SlowJournal>, VirtualClock) {
         hold: Default::default(),
         began: Default::default(),
         answered: Default::default(),
+        stall_after,
+        ran: Default::default(),
     });
     (j, clock)
 }
@@ -291,6 +308,7 @@ impl EffectRunner for Timed {
     fn run(&self, _: &str, spec: &EffectSpec) -> Result<String, String> {
         use std::sync::atomic::Ordering::SeqCst;
         self.start_commits.lock().unwrap().insert(spec.name.clone(), self.j.commits.load(SeqCst));
+        self.j.ran.store(true, SeqCst);
         match spec.name.as_str() {
             "answers" => {
                 while !self.j.began.load(SeqCst) {
@@ -327,7 +345,7 @@ async fn an_effect_that_answered_during_a_long_commit_is_not_timed_out() {
 #[tokio::test]
 async fn a_backlog_of_events_does_not_hold_back_an_effect_the_first_asked_for() {
     use std::sync::atomic::Ordering::SeqCst;
-    let (j, clock) = slow(1_000);
+    let (j, clock) = stalling(1_000, 4);
     let runner = Arc::new(Timed { j: j.clone(), start_commits: Default::default() });
     let mut e = slow_engine(&j, &clock);
     e.submit("e-00", "s-first", EventKind::new("go", "first:30000")).unwrap();
@@ -342,7 +360,7 @@ async fn a_backlog_of_events_does_not_hold_back_an_effect_the_first_asked_for() 
     tokio::time::timeout(Duration::from_secs(60), serving).await.expect("the host drains").unwrap().unwrap();
     let notes: Vec<String> = runtime::conformance::trace(&*j.inner).into_iter().filter(|t| t.2 == "note").map(|t| t.3).collect();
     assert_eq!(notes, (1..20).map(|i| i.to_string()).collect::<Vec<_>>(), "event order is unchanged");
-    assert!(at_start < 20, "the effect must start before the last of the 20 events commits; {at_start} commits had been made");
+    assert!(at_start <= 5, "the effect must be launched within the first turn's slice, not after the backlog of 20 events; {at_start} commits had been made when it started");
     assert!(j.commits.load(SeqCst) >= 20, "each event still commits once");
 }
 
