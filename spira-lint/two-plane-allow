@@ -11,3 +11,4 @@
 # Seeded at authorship (sp-k2cghb) from the tree. spira-lc's dolt reads and the copied columns
 # go with spira-lc on the state-store contract (sp-s6o3wx).
 lifecycle/src/batch.rs:BatchRow.parent kept a round's parent round, not a bead's parent edge
+spira-lc/src/control/bridge/topics.rs:"bead/" kept the broker topic families bead/<id>/state and bead/<id>/sessions of spira/topics.toml: published names, not record keys
