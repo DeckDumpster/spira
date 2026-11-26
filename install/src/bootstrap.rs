@@ -6,6 +6,8 @@
 
 use crate::manifest::{self, Manifest};
 use crate::values::HostValues;
+use spira_config::process::TOML_ENV;
+use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -160,6 +162,101 @@ pub fn host_from(instance: &str, env_map: &std::collections::BTreeMap<String, St
         sccache_dav_addr: dav_addr,
         sccache_dav_root,
     })
+}
+
+/// A root-owned harness would make the proc-starts unit run as root.
+pub fn refuse_root_owner(uid: u32, home: &str) -> Result<(), String> {
+    if uid == 0 {
+        return Err(format!("{home} is owned by root; proc-starts must run as the operator's own user, not root"));
+    }
+    Ok(())
+}
+
+/// A uid's `(user name, home directory)`.
+pub type Passwd<'a> = &'a dyn Fn(u32) -> Result<(String, PathBuf), String>;
+
+/// [`Passwd`] from the host's own user database.
+pub fn getent_passwd(uid: u32) -> Result<(String, PathBuf), String> {
+    let out = spira_config::bounded::bounded("getent").args(["passwd", &uid.to_string()]).output().map_err(|e| format!("cannot run getent: {e}"))?;
+    let line = String::from_utf8_lossy(&out.stdout);
+    let fields: Vec<&str> = line.trim_end().split(':').collect();
+    match (fields.first(), fields.get(5)) {
+        (Some(user), Some(home)) if !user.is_empty() && !home.is_empty() => Ok((user.to_string(), PathBuf::from(home))),
+        _ => Err(format!("getent passwd {uid} names no user with a home directory")),
+    }
+}
+
+/// The environment `spira-install --proc-starts` runs under, and the user its unit runs as,
+/// derived from the path it was invoked by: plain `sudo` hands it nothing else. Each value has
+/// this one source; an inherited one is only checked against it.
+pub fn proc_starts_env(argv0: &Path, env: &BTreeMap<String, String>, passwd: Passwd) -> Result<(BTreeMap<String, String>, String), String> {
+    use std::os::unix::fs::MetadataExt;
+    let release = argv0
+        .parent()
+        .filter(|bin| bin.file_name().is_some_and(|n| n == "bin"))
+        .and_then(Path::parent)
+        .filter(|r| r.join("spira/conf.d").is_dir() && r.join("systemd/spira-proc-starts.service").is_file())
+        .ok_or_else(|| format!("{} is not a release's bin/; run it by its release path: sudo <release>/bin/spira-install --proc-starts", argv0.display()))?;
+    let again = format!("sudo {}/bin/spira-install --proc-starts", release.display());
+
+    let home = release.join("spira");
+    let uid = std::fs::metadata(&home).map_err(|e| format!("cannot stat {}: {e}", home.display()))?.uid();
+    refuse_root_owner(uid, &home.display().to_string()).map_err(|e| format!("{e}; run it from a release the operator owns: sudo <release>/bin/spira-install --proc-starts"))?;
+    let (user, user_home) = passwd(uid).map_err(|e| format!("cannot name the owner of {}: {e}", home.display()))?;
+
+    let toml = installed_spira_toml(&user_home, release)?;
+    let (release_s, user_home_s) = (release.display().to_string(), user_home.display().to_string());
+    for (key, derived) in [(TOML_ENV, &toml), (spira_config::RELEASE_ENV, &release_s)] {
+        if let Some(inherited) = env.get(key).filter(|v| !v.is_empty() && *v != derived) {
+            return Err(format!("{key} is {inherited} in the environment but this release and its installed units say {derived}; run it without: {again}"));
+        }
+    }
+    let mut out = env.clone();
+    out.insert(spira_config::RELEASE_ENV.into(), release_s);
+    out.insert("SPIRA_HOME".into(), home.display().to_string());
+    out.insert(TOML_ENV.into(), toml);
+    out.insert("HOME".into(), user_home_s);
+    Ok((out, user))
+}
+
+fn runs_the_scheduler(line: &str) -> bool {
+    let Some(command) = line.trim().strip_prefix("ExecStart=") else { return false };
+    let mut words = command.split_whitespace();
+    words.next().is_some_and(|exe| Path::new(exe).file_name().is_some_and(|n| n == "spira-runtime")) && words.next() == Some("serve")
+}
+
+/// The one `SPIRA_TOML` the operator's installed `spira-runtime-*.service` units declare. A
+/// unit is the scheduler's by what it runs, not by its file name.
+fn installed_spira_toml(user_home: &Path, release: &Path) -> Result<String, String> {
+    let home = user_home.display().to_string();
+    let dir = crate::orchestrate::default_unit_dir(&|k| (k == "HOME").then(|| home.clone())).ok_or("no unit directory for the operator")?;
+    let mut values = std::collections::BTreeSet::new();
+    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|x| x != "service") || !path.is_file() {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        if !text.lines().any(runs_the_scheduler) {
+            continue;
+        }
+        let declared = text.lines().filter_map(|l| l.trim().strip_prefix("Environment=")?.strip_prefix(TOML_ENV)?.strip_prefix('='));
+        values.extend(declared.filter(|v| !v.is_empty()).map(str::to_string));
+    }
+    let (bin, dir) = (release.join("bin"), dir.display());
+    let mut values = values.into_iter();
+    match (values.next(), values.next()) {
+        (Some(one), None) => Ok(one),
+        (None, _) => Err(format!(
+            "no spira-runtime-*.service naming SPIRA_TOML in {dir}; as the operator run the normal install first ({bin}/spira-install), then sudo {bin}/spira-install --proc-starts",
+            bin = bin.display()
+        )),
+        (Some(a), Some(b)) => Err(format!(
+            "the spira-runtime units in {dir} name different SPIRA_TOML values: {}; as the operator re-render them ({bin}/units-install) or remove the stale unit, then sudo {bin}/spira-install --proc-starts",
+            [a, b].into_iter().chain(values).collect::<Vec<_>>().join(", "),
+            bin = bin.display()
+        )),
+    }
 }
 
 /// `SPIRA_SCCACHE_DAV_ADDR`, a registered key — through the one door, never the bare
@@ -324,7 +421,7 @@ pub fn refuse_if_stale_release(tool: &str) -> Option<String> {
     stale_release_refusal(tool, &std::env::current_exe().ok()?)
 }
 
-pub(crate) fn argv0_path() -> Option<PathBuf> {
+pub fn argv0_path() -> Option<PathBuf> {
     let arg0 = env::args_os().next()?;
     let p = PathBuf::from(&arg0);
     if p.components().count() > 1 {
@@ -575,5 +672,81 @@ mod watch_names_tests {
             assert!(e.contains("malformed") && e.contains("bad row"), "{e}");
             assert_eq!(calls(&r), n);
         }
+    }
+}
+
+#[cfg(test)]
+mod proc_starts_env_tests {
+    use super::*;
+
+    struct Rig {
+        td: testkit::TempDir,
+        release: PathBuf,
+        units: PathBuf,
+    }
+
+    fn rig(runtime_units: &[(&str, &str)]) -> Rig {
+        let td = testkit::TempDir::new("proc-starts-env");
+        let release = td.path().join("release");
+        for d in ["spira/conf.d", "systemd", "bin"] {
+            std::fs::create_dir_all(release.join(d)).unwrap();
+        }
+        std::fs::write(release.join("systemd/spira-proc-starts.service"), "[Service]\n").unwrap();
+        let units = td.path().join("home/.config/systemd/user");
+        std::fs::create_dir_all(&units).unwrap();
+        for (instance, toml) in runtime_units {
+            std::fs::write(units.join(format!("spira-runtime-{instance}.service")), format!("[Service]\nEnvironment=SPIRA_TOML={toml}\nExecStart=rel/bin/spira-runtime serve\n")).unwrap();
+        }
+        Rig { td, release, units }
+    }
+
+    fn derive(r: &Rig, argv0: &Path, env: &[(&str, &str)]) -> Result<(BTreeMap<String, String>, String), String> {
+        let env = env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let home = r.td.path().join("home");
+        proc_starts_env(argv0, &env, &move |_| Ok(("operator".to_string(), home.clone())))
+    }
+
+    #[test_id(tkm5zmi)]
+    #[test]
+    fn a_binary_outside_a_release_bin_is_refused_with_the_command_that_works() {
+        let r = rig(&[("prod", "cfg/a.toml")]);
+        let stray = r.td.path().join("target/debug/spira-install");
+        let e = derive(&r, &stray, &[]).unwrap_err();
+        assert!(e.contains(&stray.display().to_string()) && e.contains("sudo <release>/bin/spira-install --proc-starts"), "{e}");
+    }
+
+    #[test_id(tt6we6a)]
+    #[test]
+    fn with_no_installed_runtime_unit_the_refusal_names_the_unit_directory() {
+        let r = rig(&[]);
+        let e = derive(&r, &r.release.join("bin/spira-install"), &[]).unwrap_err();
+        assert!(e.contains(&r.units.display().to_string()) && e.contains("--proc-starts"), "{e}");
+    }
+
+    #[test_id(tm2w4a0)]
+    #[test]
+    fn runtime_units_that_disagree_on_the_config_are_refused_naming_each() {
+        let r = rig(&[("prod", "cfg/a.toml"), ("two", "cfg/b.toml")]);
+        let e = derive(&r, &r.release.join("bin/spira-install"), &[]).unwrap_err();
+        assert!(e.contains("cfg/a.toml") && e.contains("cfg/b.toml") && e.contains("units-install"), "{e}");
+    }
+
+    #[test_id(t1xmxv8)]
+    #[test]
+    fn an_inherited_value_is_checked_against_the_derived_one_and_never_preferred() {
+        let r = rig(&[("prod", "cfg/a.toml")]);
+        let argv0 = r.release.join("bin/spira-install");
+        // A unit that runs something else has no say in which config is installed.
+        std::fs::write(r.units.join("other.service"), "[Service]\nEnvironment=SPIRA_TOML=cfg/neighbour.toml\nExecStart=rel/bin/other serve\n").unwrap();
+        for key in ["SPIRA_TOML", "SPIRA_RELEASE"] {
+            let e = derive(&r, &argv0, &[(key, "cfg/other")]).unwrap_err();
+            let derived = if key == "SPIRA_TOML" { "cfg/a.toml".to_string() } else { r.release.display().to_string() };
+            assert!(e.contains("cfg/other") && e.contains(&derived), "{e}");
+        }
+        let release = r.release.display().to_string();
+        let (env, user) = derive(&r, &argv0, &[("SPIRA_TOML", "cfg/a.toml"), ("SPIRA_RELEASE", &release), ("HOME", "root-home")]).unwrap();
+        assert_eq!(user, "operator");
+        assert_eq!(env["SPIRA_HOME"], format!("{release}/spira"));
+        assert_eq!(env["HOME"], r.td.path().join("home").display().to_string());
     }
 }

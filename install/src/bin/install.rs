@@ -15,7 +15,7 @@
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
-use install::bootstrap::{self, nonempty_env};
+use install::bootstrap::{self, nonempty_env, refuse_root_owner};
 use install::checks;
 use install::install_units::{self, Ctx};
 use install::systemctl::RealSystemctl;
@@ -780,10 +780,6 @@ fn main() -> ExitCode {
 }
 
 fn run_main() -> ExitCode {
-    if let Err(e) = require_declared_config_and_release() {
-        eprintln!("install: {e}");
-        return ExitCode::from(2);
-    }
     let opts = match parse_args() {
         Ok(o) => o,
         Err(e) => {
@@ -791,6 +787,14 @@ fn run_main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // Ahead of the declared-environment check: under plain sudo this mode derives its own.
+    if opts.proc_starts && !opts.system_user {
+        return standalone_proc_starts(opts.instance.as_deref(), opts.dry);
+    }
+    if let Err(e) = require_declared_config_and_release() {
+        eprintln!("install: {e}");
+        return ExitCode::from(2);
+    }
     let requested = opts.instance.clone().or_else(|| nonempty_env("SPIRA_INSTANCE"));
     let ephemeral = opts.ephemeral && requested.is_none();
     if let Some(p) = nonempty_env("CONFIGURE_PROD") {
@@ -808,9 +812,6 @@ fn run_main() -> ExitCode {
 
     if opts.system_user {
         return standalone_system_user(&instance, opts.dry);
-    }
-    if opts.proc_starts {
-        return standalone_proc_starts(&instance, opts.dry);
     }
     // ---- phase -1: dependencies ----------------------------------------------------------
     // Install provides what its own doctor demands BEFORE the preflight judges the host
@@ -1946,58 +1947,84 @@ fn standalone_system_user(instance: &str, dry: bool) -> ExitCode {
 
 /// The one root step proc-starts needs: its system unit, run as the owner of the harness home,
 /// holding CAP_BPF and CAP_PERFMON and nothing else. Creates no user.
-fn refuse_root_owner(uid: u32, home: &str) -> Result<(), String> {
-    if uid == 0 {
-        return Err(format!("{home} is owned by root; proc-starts must run as the operator's own user, not root"));
-    }
-    Ok(())
-}
-
-fn proc_starts_phase(host: &install::values::HostValues) -> Result<(), String> {
+fn proc_starts_phase(host: &install::values::HostValues, user: &str, dest_dir: &Path, run: RunCmd) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt;
     let uid = std::fs::metadata(&host.home).map_err(|e| format!("cannot stat {}: {e}", host.home))?.uid();
     refuse_root_owner(uid, &host.home)?;
-    let out = spira_config::bounded::bounded("getent").args(["passwd", &uid.to_string()]).output().map_err(|e| format!("cannot run getent: {e}"))?;
-    let user = String::from_utf8_lossy(&out.stdout).split(':').next().map(str::trim).filter(|u| !u.is_empty()).map(str::to_string).ok_or_else(|| format!("no user has uid {uid}, the owner of {}", host.home))?;
-    let host = install::values::HostValues { unit_user: user, ..host.clone() };
+    let host = install::values::HostValues { unit_user: user.to_string(), ..host.clone() };
     let unit = "spira-proc-starts.service";
-    let text = install::values::render_file(&Path::new(&host.home).join("systemd").join(unit), &host, None)?;
-    let dest = format!("{}/{unit}", system_paths::ETC_SYSTEMD_SYSTEM);
+    let templates = bootstrap::templates_dir_from(Some(host.home.clone()), None, None);
+    let text = install::values::render_file(&templates.join(unit), &host, None)?;
+    let dest = dest_dir.join(unit).display().to_string();
     std::fs::write(format!("{dest}.tmp"), text).map_err(|e| e.to_string())?;
-    run_ok("install", &["-m", "0644", &format!("{dest}.tmp"), &dest])?;
+    run("install", &["-m", "0644", &format!("{dest}.tmp"), &dest])?;
     let _ = std::fs::remove_file(format!("{dest}.tmp"));
     info(&format!("install {dest}"));
-    run_ok("systemctl", &["daemon-reload"])?;
+    run("systemctl", &["daemon-reload"])?;
     info("reload systemd");
-    run_ok("systemctl", &["enable", "--now", unit])?;
+    run("systemctl", &["enable", "--now", unit])?;
     info(&format!("enable {unit}"));
     Ok(())
 }
 
-fn standalone_proc_starts(instance: &str, dry: bool) -> ExitCode {
+type RunCmd<'a> = &'a dyn Fn(&str, &[&str]) -> Result<(), String>;
+
+const PROC_STARTS_PHASE_FAILED: &str = "phase proc-starts failed — ";
+
+fn standalone_proc_starts(instance: Option<&str>, dry: bool) -> ExitCode {
     phase("proc-starts: system unit");
-    let host = match bootstrap::host_from_env(instance) {
-        Ok(h) => h,
-        Err(e) => {
-            eprintln!("install: {e}");
-            return ExitCode::from(1);
+    let argv0 = bootstrap::argv0_path().unwrap_or_default();
+    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    // spira-config loads its key registry through the PROCESS environment, which plain sudo
+    // leaves empty. A refusal here is reported by the call below.
+    if let Ok((derived, _)) = bootstrap::proc_starts_env(&argv0, &env, &bootstrap::getent_passwd) {
+        for key in ["SPIRA_HOME", spira_config::process::TOML_ENV, "HOME", spira_config::RELEASE_ENV] {
+            std::env::set_var(key, &derived[key]);
         }
-    };
-    if dry {
-        would("would install and start spira-proc-starts.service");
-        return ExitCode::SUCCESS;
     }
-    if !is_root() {
-        eprintln!("install: --proc-starts requires root and runs only the proc-starts phase");
-        return ExitCode::from(1);
-    }
-    match proc_starts_phase(&host) {
+    match standalone_proc_starts_with(instance, &argv0, &env, &bootstrap::getent_passwd, is_root(), Path::new(system_paths::ETC_SYSTEMD_SYSTEM), &run_ok, dry) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("install: phase proc-starts failed — {e}");
-            ExitCode::from(2)
+            eprintln!("install: {e}");
+            ExitCode::from(if e.starts_with(PROC_STARTS_PHASE_FAILED) { 2 } else { 1 })
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn standalone_proc_starts_with(
+    instance: Option<&str>,
+    argv0: &Path,
+    env: &std::collections::BTreeMap<String, String>,
+    passwd: bootstrap::Passwd,
+    is_root: bool,
+    dest_dir: &Path,
+    run: RunCmd,
+    dry: bool,
+) -> Result<(), String> {
+    let (env, user) = bootstrap::proc_starts_env(argv0, env, passwd)?;
+    let home = PathBuf::from(&env["SPIRA_HOME"]);
+    let instance = match instance {
+        Some(i) => i.to_string(),
+        None => spira_config::resolve::resolve_instance(&env, &home)?,
+    };
+    let resolved = spira_config::resolve::resolve_for_process(&home, &spira_config::resolve::derive_home_repo(&home, &env), &env)?;
+    // Not `resolve_key`: it refuses a declared-empty value, which several host keys may hold.
+    let cfg = |k: &str| resolved.values.get(k).cloned().ok_or_else(|| format!("{k} is not a registered config key — refusing"));
+    let path_tail = cfg("SPIRA_PATH")?;
+    let refusals = spira_config::tail_refusals(&path_tail);
+    if !refusals.is_empty() {
+        return Err(refusals.join("; "));
+    }
+    let host = bootstrap::host_from(&instance, &env, &cfg, env[spira_config::process::TOML_ENV].clone(), path_tail)?;
+    if dry {
+        would("would install and start spira-proc-starts.service");
+        return Ok(());
+    }
+    if !is_root {
+        return Err(format!("--proc-starts requires root and runs only the proc-starts phase: sudo {} --proc-starts", argv0.display()));
+    }
+    proc_starts_phase(&host, &user, dest_dir, run).map_err(|e| format!("{PROC_STARTS_PHASE_FAILED}{e}"))
 }
 
 fn group_gid(group: &str) -> Option<u32> {
@@ -2526,6 +2553,69 @@ mod proc_starts_phase_tests {
     fn a_home_that_cannot_be_read_is_refused() {
         let td = testkit::TempDir::new("proc-starts-phase");
         let host = install::values::HostValues { home: td.path().join("absent").display().to_string(), ..Default::default() };
-        assert!(proc_starts_phase(&host).unwrap_err().contains("cannot stat"));
+        let none = |_: &str, _: &[&str]| Ok(());
+        assert!(proc_starts_phase(&host, "operator", td.path(), &none).unwrap_err().contains("cannot stat"));
+    }
+
+    fn plain_sudo(dry: bool) -> (testkit::TempDir, Vec<String>, String, Result<(), String>) {
+        let td = testkit::TempDir::new("proc-starts-sudo");
+        let release = spira_config::process::fixture_release(td.path(), true);
+        std::fs::create_dir_all(release.join("systemd")).unwrap();
+        let template = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/spira-proc-starts.service");
+        std::fs::copy(template, release.join("systemd/spira-proc-starts.service")).unwrap();
+        let (run_dir, prod) = (td.path().join("run").display().to_string(), release.join("spira").display().to_string());
+        let workspaces = td.path().display().to_string();
+        // An empty cache root is a declared value, not a missing one.
+        let toml = spira_config::process::fixture_toml(
+            td.path(),
+            &[("SPIRA_RUN", &run_dir), ("SPIRA_PROD", &prod), ("SPIRA_WORKSPACES", &workspaces), ("SPIRA_SCCACHE_DAV_ROOT", "")],
+        );
+        let home = td.path().join("operator-home");
+        std::fs::create_dir_all(home.join(".config/systemd/user")).unwrap();
+        std::fs::write(home.join(".config/systemd/user/spira-runtime-prod.service"), format!("[Service]\nEnvironment=SPIRA_TOML={}\nExecStart={}/bin/spira-runtime serve\n", toml.display(), release.display())).unwrap();
+        let dest = td.path().join("etc");
+        std::fs::create_dir_all(&dest).unwrap();
+        let env = std::collections::BTreeMap::from([("PATH".to_string(), format!("{}:{}", system_paths::USR_BIN, system_paths::BIN))]);
+        let passwd = move |_: u32| Ok(("operator".to_string(), home.clone()));
+        let calls = std::cell::RefCell::new(Vec::new());
+        let rendered = std::cell::RefCell::new(String::new());
+        let run = |prog: &str, args: &[&str]| {
+            if prog == "install" {
+                *rendered.borrow_mut() = std::fs::read_to_string(args[2]).unwrap();
+            }
+            calls.borrow_mut().push(format!("{prog} {}", args.join(" ")));
+            Ok(())
+        };
+        let got = standalone_proc_starts_with(None, &release.join("bin/spira-install"), &env, &passwd, true, &dest, &run, dry);
+        (td, calls.into_inner(), rendered.into_inner(), got)
+    }
+
+    #[test_id(t1jlih1)]
+    #[test]
+    fn under_plain_sudo_the_unit_is_rendered_for_the_operator_installed_and_started() {
+        let (td, calls, unit, got) = plain_sudo(false);
+        assert_eq!(got, Ok(()));
+        let at = |p: &str| td.path().join(p).display().to_string();
+        let dest = at("etc/spira-proc-starts.service");
+        assert_eq!(calls, [format!("install -m 0644 {dest}.tmp {dest}"), "systemctl daemon-reload".to_string(), "systemctl enable --now spira-proc-starts.service".to_string()]);
+        let lines: Vec<&str> = unit.lines().map(str::trim).collect();
+        for want in [
+            format!("ExecStart={}/bin/proc-starts", at("release")),
+            format!("Environment=SPIRA_TOML={}", at(spira_config::FILE_NAME)),
+            "User=operator".to_string(),
+            format!("StandardOutput=append:{}/proc-starts.log", at("run")),
+        ] {
+            assert!(lines.contains(&want.as_str()), "{want} missing:\n{unit}");
+        }
+        let path = lines.iter().find(|l| l.starts_with("Environment=PATH=")).unwrap();
+        assert!(path.contains(&at("operator-home/.local/lib/spira-env/bin")) && !path.contains("/root"), "{path}");
+    }
+
+    #[test_id(t4iqu4l)]
+    #[test]
+    fn a_dry_run_says_what_it_would_do_and_runs_nothing() {
+        let (_td, calls, _, got) = plain_sudo(true);
+        assert_eq!(got, Ok(()));
+        assert!(calls.is_empty(), "{calls:?}");
     }
 }
