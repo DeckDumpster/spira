@@ -27,17 +27,24 @@ const SUB_HOUR: [&str; 12] = [
     "unit.start_installed",
 ];
 
-fn unsent_kv(f: &Fixture) -> String {
+fn probe_kv(f: &Fixture, probe: &str) -> String {
     let out: serde_json::Value = serde_json::from_str(&last_output(f, "cockpit-tier-600s.observe")).unwrap_or_default();
-    out["fragments"]["cockpit.unsent"]["kv"].to_string()
+    out["fragments"][probe]["kv"].to_string()
 }
 
 #[test_id(trka3uo)]
 #[test]
 fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only_what_reads_it() {
-    let f = fixture(testkit::env);
+    let mut f = fixture(testkit::env);
+    f.cockpit_input = cockpit_600s_every_probe();
     spira_config::process::with_fresh(|| {
     assert_traps_and_double_are_live(&f);
+    assert_stubs_log(&f);
+    let extra = spira_config::release_env::child_path_env_for_process().unwrap();
+    for program in ["bash", "drift.sh", "tsd-query.sh"] {
+        Command::new(program).args(["-c", "true"]).envs(extra.clone()).output().unwrap();
+        assert_eq!(started(&f, program), 1, "a {program} started the way a probe starts one is counted");
+    }
     Command::new("yield.sh").output().unwrap();
     assert_eq!(started(&f, "yield.sh"), 1, "the yield.sh stub is what PATH resolves, so a started one is seen");
     let records = std::path::PathBuf::from(spira_config::process::cfg("SPIRA_RUN").unwrap()).join("gate-yield");
@@ -47,6 +54,10 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
     let (warm, idle) = (START + HOUR, START + 2 * HOUR);
     let unsent_passes = |f: &Fixture| f.seen.lock().unwrap().iter().filter(|(n, _)| n == "cockpit-tier-600s.observe").count();
     let (mut yields_at_warm, mut yields_at_idle, mut passes_at_warm, mut passes_at_idle) = (0, 0, 0, 0);
+    let shells = |f: &Fixture| ["bash", "drift.sh", "tsd-query.sh"].map(|p| started(f, p));
+    let (mut shells_at_warm, mut shells_at_idle) = ([0; 3], [0; 3]);
+    let (mut at_dirtied, mut at_new_ref) = (0, 0);
+    let mut statute_before = String::new();
     let marks = [warm, idle, idle + 16 * MINUTE, idle + 32 * MINUTE, idle + 43 * MINUTE, idle + 54 * MINUTE];
     let (mut at_warm, mut at_idle) = (0, 0);
     let ensures = |f: &Fixture| f.units.calls().iter().filter(|c| *c == &format!("start {ENSURE_UNIT}")).count();
@@ -59,11 +70,13 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
             (at_warm, ensures_at_warm) = (logged(&f).len(), ensures(&f));
             (yields_at_warm, passes_at_warm) = (started(&f, "yield.sh"), unsent_passes(&f));
             pool_at_warm = vm_pool_publishes(&f);
+            shells_at_warm = shells(&f);
         }
         t if t == idle => {
             (at_idle, ensures_at_idle) = (logged(&f).len(), ensures(&f));
             (yields_at_idle, passes_at_idle) = (started(&f, "yield.sh"), unsent_passes(&f));
             pool_at_idle = vm_pool_publishes(&f);
+            shells_at_idle = shells(&f);
             commit(&f.local, "sp-cccccc landed", LANDED_S + 10);
             git(&f.local, &["branch", "-f", "local/main"], 1);
         }
@@ -82,10 +95,16 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
             let publish = last_output(&f, "publish.observe");
             assert!(publish.contains("\"diverged\":true"), "a forge moved by someone else is diverged once the landing ref moves: {publish}");
             std::fs::write(f.wiki.join("new.md"), "new").unwrap();
+            (at_dirtied, statute_before) = (logged(&f).len(), probe_kv(&f, "cockpit.statute"));
+            std::fs::write(f.local.join("stray"), "stray").unwrap();
+            std::fs::write(f.wiki.join(STATUTE_PAGE), "### law-one\n### law-two\n").unwrap();
+            git(&f.wiki, &["add", STATUTE_PAGE], 2);
+            commit(&f.wiki, "a second statute", LANDED_S + 40);
         }
         t if t == idle + 43 * MINUTE => {
             assert!(last_output(&f, "brain-dirty.observe").contains("new.md"), "{}", last_output(&f, "brain-dirty.observe"));
-            unsent_before = unsent_kv(&f);
+            unsent_before = probe_kv(&f, "cockpit.unsent");
+            at_new_ref = logged(&f).len();
             git(&f.local, &["branch", "spira/sp-x"], 1);
             let client = f.proc_root.join("201");
             std::fs::create_dir_all(&client).unwrap();
@@ -95,6 +114,16 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
     });
     assert_only_the_double_answered(&f);
     let all = logged(&f);
+    let statute_show = format!("-C {} show HEAD:{STATUTE_PAGE}", f.wiki.display());
+    let status_of_local = format!("-C {} status --porcelain", f.local.display());
+    assert!(all[..at_warm].iter().any(|l| l.ends_with(&statute_show)), "warm-up never read the statute page, so the idle hour proves nothing about it");
+    assert_eq!(shells_at_idle, shells_at_warm, "an idle virtual hour started bash, drift.sh or tsd-query.sh");
+    let (before_new_ref, after_dirtied) = (&all[at_dirtied..at_new_ref], &all[at_dirtied..]);
+    assert_eq!(before_new_ref.iter().filter(|l| l.ends_with(&status_of_local)).count(), 1, "a written file in the checkout is one status read: {before_new_ref:?}");
+    assert_eq!(after_dirtied.iter().filter(|l| l.ends_with(&statute_show)).count(), 1, "a wiki commit is one read of the statute page: {after_dirtied:?}");
+    assert!(statute_before.contains(r#""SP_STATUTE_PAGE_N":"1""#), "{statute_before}");
+    assert!(probe_kv(&f, "cockpit.statute").contains(r#""SP_STATUTE_PAGE_N":"2""#), "{}", probe_kv(&f, "cockpit.statute"));
+    assert!(probe_kv(&f, "cockpit.drift").contains(r#""SP_CHECKOUT_DRIFT":"DIRTY:1""#), "{}", probe_kv(&f, "cockpit.drift"));
     for read in [" show local/main:Cargo.toml", "log --format=%ct %s --after=@"] {
         assert!(all[..at_warm].iter().any(|l| l.contains(read)), "warm-up never ran {read:?}, so the idle hour proves nothing about it");
     }
@@ -110,7 +139,7 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
     let idle_publishes = vm_pool_publishes(&f) - pool_at_idle;
     assert!((1..=4).contains(&idle_publishes), "an idle pool publishes VmPool/pool at most once per 15 virtual minutes, got {idle_publishes} in 54");
     assert_eq!(started(&f, "round-vm"), 0, "the VmPool section is published in process, not by starting round-vm");
-    assert_ne!(unsent_kv(&f), unsent_before, "a new spira/* branch changes the unsent section");
+    assert_ne!(probe_kv(&f, "cockpit.unsent"), unsent_before, "a new spira/* branch changes the unsent section");
     assert!(!unsent_before.is_empty());
     })
     .unwrap();
