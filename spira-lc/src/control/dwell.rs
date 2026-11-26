@@ -53,7 +53,7 @@ const PAGE: usize = 1_000;
 pub const WARM_SCANNED: usize = 5 * CHUNK_REVS as usize;
 /// The most revisions a request folds forward; past it the answer is incomplete and the rest
 /// is left to [`Store::warm_dwell`], so a long-idle index cannot rebuild the cut.
-const FORWARD_REVS: u64 = 2_000;
+pub(super) const FORWARD_REVS: u64 = 2_000;
 
 /// The most rounds one dwell answer reads from the `opened_at` index; a full read is an error.
 pub const DWELL_ROUNDS_MAX: usize = 5_000;
@@ -314,7 +314,7 @@ impl<B: Backend> Store<B> {
         Ok(d)
     }
 
-    /// Folds the revisions committed since the index last advanced, at most [`FORWARD_REVS`] of
+    /// Folds the revisions committed since the index last advanced, at most `dwell_forward_revs` of
     /// them, and reports whether the index now covers `window_s` back from `now` up to `head`.
     /// It never reads backward: that is [`Store::warm_dwell`]'s, off the request path.
     fn advance(&self, idx: &mut LastIndex, head: u64, now: i64, window_s: u64, known: &mut BTreeMap<String, Option<String>>, scanned: &mut usize) -> Result<(bool, i64)> {
@@ -322,7 +322,7 @@ impl<B: Backend> Store<B> {
             (idx.low_rev, idx.high_rev, idx.started) = (head, head, true);
         }
         if idx.high_rev < head {
-            self.fold_forward(idx, head, FORWARD_REVS, known, scanned)?;
+            self.fold_forward(idx, head, self.dwell_forward_revs, known, scanned)?;
         }
         Ok(Self::coverage(idx, head, now, window_s))
     }
