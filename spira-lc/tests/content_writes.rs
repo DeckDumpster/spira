@@ -1390,6 +1390,17 @@ fn admin_create_beads_makes_a_store_the_content_verbs_work_on_and_a_second_run_c
     assert!(out.contains("half_made") && out.contains("partial") && out.contains("comments"), "{out}");
     assert_eq!(std::fs::read_to_string(&metadata).unwrap(), wrote);
 
+    // The two calls install makes on a store: its wait, and its bead count.
+    let asks = |args: &[&str], stdin: &str| {
+        let mut child = lc.command().args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().expect("spira-lc runs");
+        std::io::Write::write_all(&mut child.stdin.take().unwrap(), stdin.as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success(), "{args:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    asks(&["admin-store", "ping"], "");
+    assert_eq!(asks(&["admin-store", "sql", "--json"], "SELECT COUNT(*) AS n FROM issues"), r#"[{"n":"0"}]"#);
+
     provision(&lc);
     lc.admin("admin-provision-writer");
     lc.serve();

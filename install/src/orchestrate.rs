@@ -109,11 +109,14 @@ pub fn wait_for_tcp(deps: &dyn Deps, port: u16, max_secs: u64) -> bool {
     }
 }
 
+/// What both waits for the beads store ask `spira-lc`.
+pub const STORE_PING: [&str; 2] = ["admin-store", "ping"];
+
 /// Until the beads store answers `<lc> admin-store ping`, or `max_secs` pass.
 pub fn wait_for_store(deps: &dyn Deps, lc: &str, max_secs: u64) -> bool {
     let start = deps.now_secs();
     loop {
-        if deps.tool(lc, &["admin-store", "ping"], &[]).is_ok() {
+        if deps.tool(lc, &STORE_PING, &[]).is_ok() {
             return true;
         }
         if deps.now_secs().saturating_sub(start) >= max_secs {

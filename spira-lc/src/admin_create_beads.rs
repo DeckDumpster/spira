@@ -73,6 +73,12 @@ fn inspect(server: &dyn Dolt, database: &str, prefix: &str) -> Result<Found, Fai
     if !missing.is_empty() {
         return Err(partial(format!("it lacks {}", missing.join(", "))));
     }
+    // A new database's log holds only its initial commit, so a creation cut before its own
+    // commit shows as one entry.
+    let log = server.rows(&format!("SELECT COUNT(*) AS n FROM `{database}`.dolt_log"))?;
+    if log.first().map(|r| text(r, "n")).unwrap_or_default().parse::<u64>().map_err(|e| Fail::CannotTell(format!("counting the commits of {database}: {e}")))? < 2 {
+        return Err(partial("its creation was never committed".to_string()));
+    }
     let held = server.rows(&format!("SELECT value FROM `{database}`.config WHERE `key` = 'issue_prefix'"))?;
     match held.first().map(|r| text(r, "value")).unwrap_or_default() {
         "" => Err(partial("it has no issue_prefix".to_string())),
@@ -180,12 +186,19 @@ mod tests {
     struct Server {
         tables: Vec<&'static str>,
         prefix: &'static str,
+        commits: &'static str,
         seen: RefCell<Vec<String>>,
     }
 
     impl Dolt for Server {
         fn rows(&self, sql: &str) -> Result<Vec<Value>, String> {
-            Ok(if sql.contains("information_schema") { self.tables.iter().map(|t| json!({ "name": t })).collect() } else { vec![json!({ "value": self.prefix })] })
+            Ok(if sql.contains("information_schema") {
+                self.tables.iter().map(|t| json!({ "name": t })).collect()
+            } else if sql.contains("dolt_log") {
+                vec![json!({ "n": self.commits })]
+            } else {
+                vec![json!({ "value": self.prefix })]
+            })
         }
         fn execute(&self, sql: &str) -> Result<(), String> {
             self.seen.borrow_mut().push(sql.to_string());
@@ -194,7 +207,7 @@ mod tests {
     }
 
     fn server(tables: Vec<&'static str>, prefix: &'static str) -> Server {
-        Server { tables, prefix, seen: RefCell::new(vec![]) }
+        Server { tables, prefix, commits: "2", seen: RefCell::new(vec![]) }
     }
 
     fn run_on(s: &Server, db: &Path) -> (Result<String, Fail>, bool) {
@@ -221,6 +234,18 @@ mod tests {
             let (out, creating) = run_on(&s, d.path());
             assert!(matches!(&out, Err(Fail::Refused(e)) if e.contains("beads") && e.contains(why)), "{why}: {out:?}");
             assert!(!creating && s.seen.borrow().is_empty() && !d.join(".beads").exists(), "{why}");
+        }
+    }
+
+    #[test_id(t4dehj3)]
+    #[test]
+    fn a_store_whose_creation_was_never_committed_is_partial_whatever_prefix_it_holds() {
+        let d = testkit::TempDir::new("lc-create-uncommitted");
+        for held in ["zz", "sp"] {
+            let s = Server { commits: "1", ..server(required().into_iter().collect(), held) };
+            let (out, _) = run_on(&s, d.path());
+            assert!(matches!(&out, Err(Fail::Refused(e)) if e.contains("partial") && e.contains("never committed")), "{held}: {out:?}");
+            assert!(s.seen.borrow().is_empty() && !d.join(".beads").exists());
         }
     }
 

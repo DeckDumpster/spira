@@ -374,7 +374,7 @@ fn db_server_wait(ctx: &Ctx) {
     let mut waited = 0u64;
     let mut printed_waiting = false;
     loop {
-        if spira_config::bounded::bounded(&lc).args(["admin-store", "ping"]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success()) {
+        if spira_config::bounded::bounded(&lc).args(crate::orchestrate::STORE_PING).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success()) {
             if waited > 0 {
                 println!("install: beads database answering after {waited}s");
             }

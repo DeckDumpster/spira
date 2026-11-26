@@ -951,7 +951,7 @@ fn run_declared(opts: Opts) -> ExitCode {
     if Path::new(&db).join(".beads").is_dir() {
         if let Ok(meta) = std::fs::read_to_string(Path::new(&db).join(".beads/metadata.json")) {
             if meta.contains("\"dolt_mode\"") && meta.contains("\"embedded\"") {
-                eprintln!("install: phase database failed — existing store at {db} is embedded (one lock, all clients queue); set SPIRA_DOLT_DATA in spira.conf and re-run install");
+                eprintln!("install: phase database failed — existing store at {db} is embedded (one lock, all clients queue), and install serves server stores only; move {db}/.beads aside (its beads are not migrated) and re-run install to create one");
                 return ExitCode::from(2);
             }
         }
