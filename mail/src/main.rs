@@ -163,15 +163,11 @@ fn run_send(args: &[String]) -> ExitCode {
     let send_args = SendArgs { mailbox: &mailbox, from: from.as_deref(), subject: &subject, kind: &kind, default: &default, class: &class, bead: &bead, urgent, digest, dry_run, requested_by: &requested_by };
     let result = cmds::send_recorded(&bd, &env, &send_args, body);
     match result {
-        Ok(out) if dry_run => {
-            for step in &out.steps {
-                println!("mail send --dry-run: {step}");
-            }
-            ExitCode::SUCCESS
-        }
-        Ok(out) => match cmds::sent_line(&out) {
-            Ok(line) => {
-                println!("{line}");
+        Ok(out) => match cmds::stdout_lines(&out, dry_run) {
+            Ok(lines) => {
+                for line in lines {
+                    println!("{line}");
+                }
                 ExitCode::SUCCESS
             }
             Err(e) => fail(format!("send: {e}")),

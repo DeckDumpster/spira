@@ -66,6 +66,14 @@ pub struct SendOutcome {
     pub ask_bead: Option<String>,
 }
 
+/// What `mail send` prints on stdout; an error is a non-zero exit.
+pub fn stdout_lines(out: &SendOutcome, dry_run: bool) -> Result<Vec<String>, String> {
+    if dry_run {
+        return Ok(out.steps.iter().map(|s| format!("mail send --dry-run: {s}")).collect());
+    }
+    sent_line(out).map(|line| vec![line])
+}
+
 /// The one stdout line of a delivered `mail send`. An outcome naming no message is an error:
 /// success is never reported without an id.
 pub fn sent_line(out: &SendOutcome) -> Result<String, String> {
@@ -1151,6 +1159,15 @@ mod probe_tests {
         let out = send(&FakeBd::new(vec![]), &env(t.path()), &note, "## Note\nx\n".into()).unwrap();
         let line = sent_line(&out).unwrap();
         assert!(line.ends_with(" to concierge"), "{line}");
+    }
+
+    #[test_id(tfhjl3z)]
+    #[test]
+    fn the_cli_prints_the_sent_line_or_the_dry_run_steps_and_fails_when_nothing_was_delivered() {
+        let out = |path: &str| SendOutcome { delivered_path: PathBuf::from(path), x_bead: None, steps: vec!["lint: passed".into()], mailbox: "ops".into(), rerouted: None, ask_bead: None };
+        assert_eq!(stdout_lines(&out("m/ops/new/1.2.3"), false).unwrap(), ["mail send: sent 1.2.3 to ops"]);
+        assert_eq!(stdout_lines(&out(""), true).unwrap(), ["mail send --dry-run: lint: passed"]);
+        assert!(stdout_lines(&out(""), false).is_err());
     }
 
     #[test_id(t8nnyce)]
