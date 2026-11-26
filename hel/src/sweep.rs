@@ -344,6 +344,8 @@ struct Scanned<'a, 'b> {
     cherry: std::cell::OnceCell<bool>,
     by_subject: std::cell::OnceCell<bool>,
     pr: std::cell::OnceCell<Option<String>>,
+    /// Read once, so the memo key names the same answer `judge` saw.
+    landed: std::cell::OnceCell<bool>,
 }
 
 impl Scanned<'_, '_> {
@@ -393,7 +395,7 @@ impl Facts for Scanned<'_, '_> {
         self.pr.get_or_init(|| self.c.w.pr_merged_tip(self.c.repo, self.br)).clone()
     }
     fn landed(&self) -> bool {
-        self.c.w.lc_landed(self.id)
+        *self.landed.get_or_init(|| self.c.w.lc_landed(self.id))
     }
     fn cherry_unapplied(&self) -> bool {
         *self.cherry.get_or_init(|| self.recall(|h| &mut h.cherry, |g| g.try_cherry_unapplied(&self.c.base.landref, self.br)).unwrap_or(false))
@@ -456,19 +458,22 @@ pub fn scan_repo(w: &dyn World, root: &Path, submitted_label: &str, fetch: bool,
         let bead = w.bead(&id);
         let labels_ = bead.as_ref().map(labels).unwrap_or_default();
         let superseded_ = bead.as_ref().is_some_and(superseded);
-        let key = land_sha.as_ref().map(|land| MemoKey {
+        let facts = Scanned { c: &ctx, id: &id, br, tip, merged: merged.contains(br.as_str()), base_tree: base_tree.as_deref(), bead, held: Default::default(), merge: Default::default(), ahead: Default::default(), cherry: Default::default(), by_subject: Default::default(), pr: Default::default(), landed: Default::default() };
+        // A merged branch asks git nothing, so it needs no key and none of the key's store reads.
+        let key = land_sha.as_ref().filter(|_| !facts.merged).map(|land| MemoKey {
             tip: tip.clone(),
             land: land.clone(),
-            has_bead: bead.is_some(),
+            has_bead: facts.has_bead(),
             superseded: superseded_,
             submitted: labels_.iter().any(|l| l == submitted_label),
-            lc_landed: w.lc_landed(&id),
-            lc_terminal: w.lc_terminal(&id),
+            lc_landed: facts.landed(),
+            lc_terminal: facts.terminal(),
             lc_past_builder: w.lc_past_builder(&id),
         });
         let slot = (root.to_path_buf(), br.clone());
-        let reused = memo().get(&slot).filter(|(k, _)| Some(k) == key.as_ref()).map(|(_, f)| f.clone()).unwrap_or_default();
-        let facts = Scanned { c: &ctx, id: &id, br, tip, merged: merged.contains(br.as_str()), base_tree: base_tree.as_deref(), bead, held: RefCell::new(reused), merge: Default::default(), ahead: Default::default(), cherry: Default::default(), by_subject: Default::default(), pr: Default::default() };
+        if let Some((_, held)) = memo().get(&slot).filter(|(k, _)| Some(k) == key.as_ref()) {
+            facts.held.replace(held.clone());
+        }
         let (mut has_own_commit, mut only_stacked_base, mut base_names) = (false, false, false);
         if held.is_none() && !id.starts_with("round-") && judge(&facts) == Disp::SendContentLanded && !facts.landed() {
             let ahead = facts.ahead().unwrap_or(0);
@@ -506,7 +511,9 @@ pub fn scan_repo(w: &dyn World, root: &Path, submitted_label: &str, fetch: bool,
             br: br.clone(),
             id: id.clone(),
         };
-        if let Some(key) = key {
+        // The answers were read by name: a ref that moved since the key was taken may have answered them.
+        let still = |name: &str, sha: &str| spira_config::git_refs::sha_of(root, name).is_none_or(|now| now == sha);
+        if let Some(key) = key.filter(|k| still(br, &k.tip) && still(lr, &k.land)) {
             memo().insert(slot, (key, facts.held.into_inner()));
         }
         branches.push(scanned);

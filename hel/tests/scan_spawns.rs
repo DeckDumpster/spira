@@ -3,7 +3,7 @@
 #[macro_use]
 extern crate spira_test_id;
 use std::cell::RefCell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -26,9 +26,20 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
 }
 
+fn rev_parse(dir: &Path, rev: &str) -> String {
+    let o = Command::new("git").arg("-C").arg(dir).args(["rev-parse", rev]).env_remove("GIT_TRACE2_EVENT").output().unwrap();
+    String::from_utf8(o.stdout).unwrap().trim().to_string()
+}
+
 #[derive(Default)]
 struct Quiet {
     landed: RefCell<BTreeSet<String>>,
+    terminal: RefCell<BTreeSet<String>>,
+    past_builder: RefCell<BTreeSet<String>>,
+    /// Beads that differ from the plain one: another record, or none.
+    beads: RefCell<BTreeMap<String, Option<Value>>>,
+    /// Run once, when the scan reaches its first branch: after the tips are listed, before git is asked about it.
+    mid_scan: RefCell<Option<Box<dyn FnOnce()>>>,
 }
 
 impl World for Quiet {
@@ -36,10 +47,13 @@ impl World for Quiet {
         Some(Base { landref: "main".into(), landrefs: vec!["main".into()], remote: None })
     }
     fn witness(&self, _id: &str) -> Option<String> {
+        if let Some(f) = self.mid_scan.take() {
+            f();
+        }
         None
     }
     fn bead(&self, id: &str) -> Option<Value> {
-        Some(serde_json::json!({"id": id, "labels": []}))
+        self.beads.borrow().get(id).cloned().unwrap_or_else(|| Some(serde_json::json!({"id": id, "labels": []})))
     }
     fn send(&self, _: &str, _: &str, _: &Path, _: &str, _: &str) -> Sent {
         unreachable!()
@@ -49,14 +63,14 @@ impl World for Quiet {
         unreachable!()
     }
     fn prune(&self, _: &Path) {}
-    fn lc_past_builder(&self, _: &str) -> bool {
-        false
+    fn lc_past_builder(&self, id: &str) -> bool {
+        self.past_builder.borrow().contains(id)
     }
     fn lc_landed(&self, id: &str) -> bool {
         self.landed.borrow().contains(id)
     }
-    fn lc_terminal(&self, _: &str) -> bool {
-        false
+    fn lc_terminal(&self, id: &str) -> bool {
+        self.terminal.borrow().contains(id)
     }
     fn content_on_base(&self, _: &str, _: &str) {}
     fn pr_merged_tip(&self, _: &Path, _: &str) -> Option<String> {
@@ -137,7 +151,8 @@ fn rescan(dir: &Path, w: &Quiet, root: &Path, step: &str) -> Vec<&'static str> {
     let trace = std::fs::read_to_string(trace).unwrap();
     let starts: Vec<&str> = trace.lines().filter(|l| l.contains("\"event\":\"start\"")).collect();
     assert!(!starts.is_empty(), "{step}: the trace saw no git at all");
-    ["spira/sp-u0", "spira/sp-u1"].into_iter().filter(|b| starts.iter().any(|l| l.contains(b))).collect()
+    // `base_names` names the bead, not the branch.
+    ["spira/sp-u0", "spira/sp-u1"].into_iter().filter(|b| starts.iter().any(|l| l.contains(b) || l.contains(&format!("--grep={}\"", &b[6..])))).collect()
 }
 
 #[test_id(tltbt7w)]
@@ -185,8 +200,7 @@ fn a_git_read_that_failed_is_asked_again_by_the_next_scan() {
     git(&root, &["add", "f"]);
     git(&root, &["commit", "-q", "-m", "sp-u0"]);
     git(&root, &["checkout", "-q", "main"]);
-    let out = Command::new("git").arg("-C").arg(&root).args(["rev-parse", "spira/sp-u0^{tree}"]).env_remove("GIT_TRACE2_EVENT").output().unwrap();
-    let tree = String::from_utf8(out.stdout).unwrap().trim().to_string();
+    let tree = rev_parse(&root, "spira/sp-u0^{tree}");
     let object = root.join(".git/objects").join(&tree[..2]).join(&tree[2..]);
     let hidden = t.path().join("hidden-tree");
     let w = Quiet::default();
@@ -196,4 +210,108 @@ fn a_git_read_that_failed_is_asked_again_by_the_next_scan() {
     assert!(!scan(&w, &root)[0].merges_clean, "merge-tree cannot read the branch's tree");
     std::fs::rename(&hidden, &object).unwrap();
     assert!(scan(&w, &root)[0].merges_clean, "the failed merge-tree was held as a conflict");
+}
+
+fn commit_file(root: &Path, file: &str, msg: &str) {
+    std::fs::write(root.join(file), "work\n").unwrap();
+    git(root, &["add", file]);
+    git(root, &["commit", "-q", "-m", msg]);
+}
+
+/// `main` and `spira/sp-u0`, `spira/sp-u1`, each one commit of its own file whose subject is `subject(i)`.
+fn two_branches(dir: &Path, subject: impl Fn(usize) -> String) -> PathBuf {
+    let root = dir.join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    git(&root, &["init", "-q", "-b", "main"]);
+    git(&root, &["commit", "-q", "--allow-empty", "-m", "base"]);
+    for i in 0..2 {
+        git(&root, &["checkout", "-q", "-b", &format!("spira/sp-u{i}"), "main"]);
+        commit_file(&root, &format!("f{i}"), &subject(i));
+    }
+    git(&root, &["checkout", "-q", "main"]);
+    root
+}
+
+#[test_id(ty5z6nx)]
+#[test]
+fn every_git_fact_of_an_unmoved_branch_is_reused_as_it_was_read() {
+    let t = testkit::TempDir::new("hel-scan-memo-facts");
+    let root = two_branches(t.path(), |_| "tweak".into());
+    // sp-u1's change reaches main by another route, under its name; sp-u0's never does.
+    commit_file(&root, "f1", "sp-u1: by another route");
+    let w = Quiet::default();
+    w.landed.borrow_mut().insert("sp-u0".into());
+
+    assert_eq!(rescan(t.path(), &w, &root, "first"), ["spira/sp-u0", "spira/sp-u1"]);
+    assert_eq!(rescan(t.path(), &w, &root, "unmoved"), [""; 0]);
+
+    let _guard = testkit::env(&[("GIT_TRACE2_EVENT", None)]);
+    let got = scan(&w, &root);
+    assert!(got[0].cherry_unapplied && !got[0].landed_by_subject, "the LANDED path was reached: {:?}", got[0]);
+    assert!(!got[1].has_own_commit && !got[1].only_stacked_base && got[1].base_names, "the evidence path was walked to its end: {:?}", got[1]);
+}
+
+#[test_id(t5fmsjk)]
+#[test]
+fn each_bead_fact_in_the_key_rereads_only_the_branch_whose_fact_changed() {
+    let t = testkit::TempDir::new("hel-scan-memo-bead");
+    let root = two_branches(t.path(), |i| format!("sp-u{i}"));
+    let w = Quiet::default();
+    rescan(t.path(), &w, &root, "first");
+    let bead = |v: Option<Value>| {
+        w.beads.borrow_mut().insert("sp-u1".into(), v);
+    };
+    let changes: [(&str, &dyn Fn()); 7] = [
+        ("terminal", &|| {
+            w.terminal.borrow_mut().insert("sp-u1".into());
+        }),
+        ("past-builder", &|| {
+            w.past_builder.borrow_mut().insert("sp-u1".into());
+        }),
+        ("submitted", &|| bead(Some(serde_json::json!({"id": "sp-u1", "labels": ["submitted"]})))),
+        ("superseded", &|| bead(Some(serde_json::json!({"id": "sp-u1", "labels": ["submitted"], "dependencies": [{"type": "supersedes"}]})))),
+        // Asks no new fact, so only the key can make this one read again.
+        ("unsuperseded", &|| bead(Some(serde_json::json!({"id": "sp-u1", "labels": ["submitted"]})))),
+        ("plain", &|| bead(Some(serde_json::json!({"id": "sp-u1", "labels": []})))),
+        ("no-bead", &|| bead(None)),
+    ];
+    for (step, change) in changes {
+        change();
+        assert_eq!(rescan(t.path(), &w, &root, step), ["spira/sp-u1"], "{step}");
+    }
+}
+
+#[test_id(ticccb5)]
+#[test]
+fn a_branch_that_left_the_tips_is_forgotten() {
+    let t = testkit::TempDir::new("hel-scan-memo-prune");
+    let root = two_branches(t.path(), |i| format!("sp-u{i}"));
+    let w = Quiet::default();
+    rescan(t.path(), &w, &root, "first");
+    let tip = rev_parse(&root, "spira/sp-u0");
+
+    git(&root, &["branch", "-q", "-D", "spira/sp-u0"]);
+    {
+        let _guard = testkit::env(&[("GIT_TRACE2_EVENT", None)]);
+        assert_eq!(scan(&w, &root).len(), 1);
+    }
+    git(&root, &["branch", "spira/sp-u0", &tip]);
+    assert_eq!(rescan(t.path(), &w, &root, "recreated"), ["spira/sp-u0"]);
+}
+
+#[test_id(tn00d8k)]
+#[test]
+fn answers_read_after_a_branch_moved_mid_scan_are_not_held_for_the_tip_it_left() {
+    let t = testkit::TempDir::new("hel-scan-memo-moved");
+    let root = two_branches(t.path(), |i| format!("sp-u{i}"));
+    let listed = rev_parse(&root, "spira/sp-u0");
+    let w = Quiet::default();
+    let moved = root.clone();
+    *w.mid_scan.borrow_mut() = Some(Box::new(move || git(&moved, &["update-ref", "refs/heads/spira/sp-u0", "main"])));
+    {
+        let _guard = testkit::env(&[("GIT_TRACE2_EVENT", None)]);
+        scan(&w, &root);
+    }
+    git(&root, &["update-ref", "refs/heads/spira/sp-u0", &listed]);
+    assert_eq!(rescan(t.path(), &w, &root, "back"), ["spira/sp-u0"]);
 }
