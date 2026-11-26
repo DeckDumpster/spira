@@ -2547,7 +2547,7 @@ impl Units for WatchingUnits {
 fn ctx_collecting<'a>(w: &'a World, sc: &'a FakeSystemctl, nix: &'a FakeNix, reads: &'a FakeReads, units: &'a dyn Units) -> activate::Ctx<'a> {
     let profile_bin = w._sb.p().join("profile/bin");
     fs::create_dir_all(&profile_bin).unwrap();
-    testkit::write_exe(&profile_bin.join("nix-collect-garbage"), "#!/bin/sh\n");
+    testkit::write_exe(profile_bin.join("nix-collect-garbage"), "#!/bin/sh\n");
     let gc = spira_env::Collector { units, profile_bin, run_dir: w._sb.p().join("run") };
     activate::Ctx { gc: Some(gc), ..ctx_with_nix(w, sc, nix, reads) }
 }
