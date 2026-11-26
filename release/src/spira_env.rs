@@ -61,6 +61,13 @@ pub struct Built {
     pub after: PathBuf,
 }
 
+impl Built {
+    /// The env this build displaced; `None` when there was none or the build left it linked.
+    pub fn replaced(&self) -> Option<&Path> {
+        self.before.as_deref().filter(|before| *before != self.after)
+    }
+}
+
 pub fn has_flake(release_root: &Path) -> bool {
     release_root.join("flake.nix").is_file() && release_root.join("flake.lock").is_file()
 }
@@ -83,17 +90,65 @@ pub fn build(nix: &dyn Nix, release_root: &Path, home: &Path) -> Result<Built, S
     let before = std::fs::canonicalize(&out).ok();
     nix.build(&target(release_root), &out)?;
     let after = std::fs::canonicalize(&out).map_err(|e| format!("the build left no env at {}: {e}", out.display()))?;
-    if let Some(old) = before.as_deref().filter(|old| *old != after) {
+    let built = Built { before, after };
+    if let Some(old) = built.replaced() {
         let prev = home.join(spira_config::SPIRA_ENV_PREV_REL);
         if let Err(e) = nix.add_root(&prev, old) {
-            let left = restore(home, old).err().map(|r| format!("; the env link still names {}: {r}", after.display())).unwrap_or_default();
+            let left = restore(home, old).err().map(|r| format!("; the env link still names {}: {r}", built.after.display())).unwrap_or_default();
             return Err(format!("cannot root the previous spira-env {}: {e}{left}", old.display()));
         }
     }
-    Ok(Built { before, after })
+    Ok(built)
 }
 
 /// Atomically points the env link back at `before`.
 pub fn restore(home: &Path, before: &Path) -> Result<(), String> {
     fsutil::atomic_symlink(&home.join(spira_config::SPIRA_ENV_REL), &before.display().to_string())
+}
+
+/// The task name of the garbage-collection unit an install or a switch starts; no scheduler task
+/// owns it, so every task ignores its `unit.ran`.
+pub const NIX_GC_UNIT_TASK: &str = "nix-gc";
+
+/// What the collection unit needs besides the env: where `nix-collect-garbage` may live, where its
+/// output goes, and the key that makes one release start one unit.
+#[derive(Debug, Clone)]
+pub struct GcPlan {
+    pub profile_bin: PathBuf,
+    pub log: PathBuf,
+    pub key: String,
+}
+
+impl GcPlan {
+    pub fn for_release(profile_bin: &Path, run_dir: &Path, root: &Path) -> GcPlan {
+        GcPlan { profile_bin: profile_bin.to_path_buf(), log: run_dir.join("nix-gc.log"), key: root_key(root) }
+    }
+}
+
+pub fn gc_plan(profile_bin: Result<String, String>, run_dir: Result<String, String>, root: &Path) -> Result<GcPlan, String> {
+    Ok(GcPlan::for_release(Path::new(&profile_bin?), Path::new(&run_dir?), root))
+}
+
+pub fn root_key(root: &Path) -> String {
+    std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+/// What a switch needs to start a collection; its [`GcPlan`] is keyed by the release switched to.
+pub struct Collector<'a> {
+    pub units: &'a dyn runtime::units::Units,
+    pub profile_bin: PathBuf,
+    pub run_dir: PathBuf,
+}
+
+/// Starts `nix-collect-garbage` as a background unit and returns at once. Without `-d` it removes
+/// only store paths no GC root reaches, so the current env, the rooted previous env and every
+/// path a running process holds survive. `Ok` is the started unit's name, `Err` the warning.
+pub fn collect_nix_garbage(units: &dyn runtime::units::Units, gc: &GcPlan, env: &Path) -> Result<String, String> {
+    use runtime::units::{UnitProps, UnitSpec};
+    let Some(bin) = [gc.profile_bin.clone(), env.join("bin")].into_iter().map(|d| d.join("nix-collect-garbage")).find(|p| fsutil::is_executable(p)) else {
+        return Err("nix garbage will not be collected: nix-collect-garbage was found neither in the profile nor in the spira-env".into());
+    };
+    let spec = UnitSpec { task: NIX_GC_UNIT_TASK.into(), key: gc.key.clone(), argv: vec![bin.display().to_string()], env: vec![], cwd: None };
+    let props = UnitProps { cpu_quota_pct: Some(20), nice: Some(10), io_class: Some("idle".into()), runtime_max_ms: Some(1_800_000), output_append: Some(gc.log.clone()), ..UnitProps::default() };
+    units.start_with(&spec, &props).map(|h| h.name).map_err(|e| format!("nix garbage collection did not start: {e}"))
 }

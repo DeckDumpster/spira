@@ -10,6 +10,7 @@ use crate::fsutil;
 use crate::git::Git;
 use crate::install::{self, InstallOpts, Unpack};
 use crate::spira_env;
+use runtime::units::{ScriptedUnits, UnitHandle, UnitProps, UnitSpec, Units};
 use crate::manifest::{Entry, Manifest};
 use crate::systemctl::{Systemctl, UnitState};
 use crate::units;
@@ -510,7 +511,7 @@ fn world_rolling_back_to_a() -> World {
 fn rollback_with(w: &World, sc: &FakeSystemctl) -> Result<String, String> {
     let reads = FakeReads::serving();
     let nix = FakeNix::default();
-    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {} };
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None };
     activate::rollback(&ctx)
 }
 
@@ -572,7 +573,7 @@ fn world_activating_over_a_landed_hotfix() -> World {
 fn activate_as_the_batcher(w: &World, sc: &FakeSystemctl) -> Result<activate::Switched, String> {
     let reads = FakeReads::serving();
     let nix = FakeNix::default();
-    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: Some(w.cfg.releases.clone()), landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(5), report: &|_| {} };
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: Some(w.cfg.releases.clone()), landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(5), report: &|_| {}, gc: None };
     activate::activate(&ctx, A, None)
 }
 
@@ -1236,7 +1237,7 @@ fn activate_reading_within(w: &World, sc: &FakeSystemctl, reads: &FakeReads, ste
 
 fn activate_reporting(w: &World, sc: &FakeSystemctl, reads: &FakeReads, steady: Duration, warm_wait: Duration, report: &dyn Fn(&str)) -> Result<activate::Switched, String> {
     let nix = FakeNix::default();
-    let ctx = activate::Ctx { cfg: &w.cfg, reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady, warm_wait, warm_pause: Duration::from_millis(5), report };
+    let ctx = activate::Ctx { cfg: &w.cfg, reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady, warm_wait, warm_pause: Duration::from_millis(5), report, gc: None };
     activate::activate(&ctx, A, None)
 }
 
@@ -2415,7 +2416,7 @@ fn world_activating_a_flake_release() -> World {
 }
 
 fn ctx_with_nix<'a>(w: &'a World, sc: &'a FakeSystemctl, nix: &'a FakeNix, reads: &'a FakeReads) -> activate::Ctx<'a> {
-    activate::Ctx { cfg: &w.cfg, reads, sc, nix, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {} }
+    activate::Ctx { cfg: &w.cfg, reads, sc, nix, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None }
 }
 
 fn activate_with_nix(w: &World, sc: &FakeSystemctl, nix: &FakeNix) -> Result<activate::Switched, String> {
@@ -2506,6 +2507,146 @@ fn an_env_that_cannot_be_rooted_refuses_activation_and_stays_linked() {
     assert!(e.contains("cannot root the previous spira-env") && e.contains("no root") && e.contains("nothing changed"), "{e}");
     assert!(!w.cfg.releases.join("current").exists());
     assert_eq!(fs::canonicalize(env_link(&w)).unwrap(), before);
+}
+
+/// A scripted unit backend that records what `current` read as each unit started.
+struct WatchingUnits {
+    scripted: ScriptedUnits,
+    current: PathBuf,
+    current_at_start: std::sync::Mutex<Vec<Option<String>>>,
+}
+
+impl WatchingUnits {
+    fn new(w: &World) -> WatchingUnits {
+        let scripted = ScriptedUnits::new(std::sync::Arc::new(runtime::ports::VirtualClock::new(0)));
+        scripted.script(spira_env::NIX_GC_UNIT_TASK, 1_000, runtime::units::Exit::Code(0));
+        WatchingUnits { scripted, current: w.cfg.releases.join("current"), current_at_start: Default::default() }
+    }
+}
+
+impl Units for WatchingUnits {
+    fn start(&self, spec: &UnitSpec) -> runtime::Result<UnitHandle> {
+        self.scripted.start(spec)
+    }
+    fn start_with(&self, spec: &UnitSpec, props: &UnitProps) -> runtime::Result<UnitHandle> {
+        self.current_at_start.lock().unwrap().push(fs::read_link(&self.current).ok().map(|t| t.display().to_string()));
+        self.scripted.start_with(spec, props)
+    }
+    fn stop(&self, h: &UnitHandle) -> runtime::Result<()> {
+        self.scripted.stop(h)
+    }
+    fn restart(&self, h: &UnitHandle) -> runtime::Result<()> {
+        self.scripted.restart(h)
+    }
+    fn facts(&self, h: &UnitHandle) -> runtime::Result<runtime::units::UnitFacts> {
+        self.scripted.facts(h)
+    }
+}
+
+/// `ctx_with_nix` with a collector over `units`, finding `nix-collect-garbage` in a fake profile.
+fn ctx_collecting<'a>(w: &'a World, sc: &'a FakeSystemctl, nix: &'a FakeNix, reads: &'a FakeReads, units: &'a dyn Units) -> activate::Ctx<'a> {
+    let profile_bin = w._sb.p().join("profile/bin");
+    fs::create_dir_all(&profile_bin).unwrap();
+    testkit::write_exe(profile_bin.join("nix-collect-garbage"), "#!/bin/sh\n");
+    let gc = spira_env::Collector { units, profile_bin, run_dir: w._sb.p().join("run") };
+    activate::Ctx { gc: Some(gc), ..ctx_with_nix(w, sc, nix, reads) }
+}
+
+fn activate_collecting(w: &World, sc: &FakeSystemctl, nix: &FakeNix, units: &dyn Units) -> Result<activate::Switched, String> {
+    activate::activate(&ctx_collecting(w, sc, nix, &FakeReads::serving(), units), A, None)
+}
+
+fn gc_unit_for(sha: &str) -> String {
+    UnitHandle::of(spira_env::NIX_GC_UNIT_TASK, sha).unwrap().name
+}
+
+#[test_id(tb1b72s)]
+#[test]
+fn an_activation_that_replaced_the_env_starts_one_idle_collection_once_current_has_moved() {
+    let w = world_activating_a_flake_release();
+    installed_env(&w, "old-env");
+    let units = WatchingUnits::new(&w);
+    activate_collecting(&w, &FakeSystemctl::new(w.cfg.unit_dir.clone()), &FakeNix::watching(&w), &units).unwrap();
+    let name = gc_unit_for(A);
+    assert_eq!(units.scripted.calls(), [format!("start {name}")]);
+    assert_eq!(*units.current_at_start.lock().unwrap(), [Some(A.to_string())]);
+    let p = units.scripted.props(&name);
+    assert_eq!((p.cpu_quota_pct, p.nice, p.io_class.as_deref(), p.runtime_max_ms), (Some(20), Some(10), Some("idle"), Some(1_800_000)));
+    assert_eq!(p.output_append, Some(w._sb.p().join("run/nix-gc.log")));
+}
+
+#[test_id(t31fcrs)]
+#[test]
+fn an_activation_that_left_the_env_as_it_was_starts_no_collection() {
+    let w = world_activating_a_flake_release();
+    let nix = FakeNix::watching(&w);
+    let same = nix.store_path(A);
+    installed_env(&w, same.file_name().unwrap().to_str().unwrap());
+    let units = WatchingUnits::new(&w);
+    activate_collecting(&w, &FakeSystemctl::new(w.cfg.unit_dir.clone()), &nix, &units).unwrap();
+    assert_eq!(fs::read_link(env_link(&w)).unwrap(), same);
+    assert!(units.scripted.calls().is_empty(), "{:?}", units.scripted.calls());
+}
+
+#[test_id(tarbjj5)]
+#[test]
+fn an_activation_undone_after_replacing_the_env_starts_no_collection() {
+    let w = world_activating_a_flake_release();
+    let before = installed_env(&w, "old-env");
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.reload_fails_once.set(true);
+    let units = WatchingUnits::new(&w);
+    activate_collecting(&w, &sc, &FakeNix::watching(&w), &units).unwrap_err();
+    assert_eq!(fs::canonicalize(env_link(&w)).unwrap(), before);
+    assert!(units.scripted.calls().is_empty(), "{:?}", units.scripted.calls());
+}
+
+#[test_id(t1awlgt)]
+#[test]
+fn an_activation_undone_by_a_failed_restart_starts_no_collection() {
+    let w = world_activating_a_flake_release();
+    let before = installed_env(&w, "old-env");
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.restart_fails.insert("spira-tool-prod.service".into());
+    let units = WatchingUnits::new(&w);
+    activate_collecting(&w, &sc, &FakeNix::watching(&w), &units).unwrap_err();
+    assert_eq!(fs::canonicalize(env_link(&w)).unwrap(), before);
+    assert!(units.scripted.calls().is_empty(), "{:?}", units.scripted.calls());
+}
+
+#[test_id(t665nic)]
+#[test]
+fn a_release_with_no_flake_starts_no_collection() {
+    let w = world_activating_a_changed_unit();
+    installed_env(&w, "old-env");
+    let units = WatchingUnits::new(&w);
+    activate_collecting(&w, &FakeSystemctl::new(w.cfg.unit_dir.clone()), &FakeNix::watching(&w), &units).unwrap();
+    assert!(units.scripted.calls().is_empty(), "{:?}", units.scripted.calls());
+}
+
+#[test_id(tr57upk)]
+#[test]
+fn a_collection_that_cannot_start_leaves_the_activation_succeeding() {
+    let w = world_activating_a_flake_release();
+    installed_env(&w, "old-env");
+    let units = WatchingUnits { scripted: ScriptedUnits::new(std::sync::Arc::new(runtime::ports::VirtualClock::new(0))), ..WatchingUnits::new(&w) };
+    activate_collecting(&w, &FakeSystemctl::new(w.cfg.unit_dir.clone()), &FakeNix::watching(&w), &units).unwrap();
+    assert_eq!(units.current_at_start.lock().unwrap().len(), 1, "the start was attempted");
+    assert!(units.scripted.calls().is_empty());
+    assert_eq!(current_of(&w), A);
+}
+
+#[test_id(tif9z6r)]
+#[test]
+fn a_rollback_that_replaced_the_env_collects_under_the_release_it_returns_to() {
+    let w = world_rolling_back_to_a();
+    release_gains(&w, A, &FLAKE);
+    installed_env(&w, "old-env");
+    let units = WatchingUnits::new(&w);
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    let nix = FakeNix::watching(&w);
+    activate::rollback(&ctx_collecting(&w, &sc, &nix, &FakeReads::serving(), &units)).unwrap();
+    assert_eq!(units.scripted.calls(), [format!("start {}", gc_unit_for(A))]);
 }
 
 #[test_id(trczhfq)]
