@@ -17,6 +17,7 @@ mod cells;
 pub const NIX_GC_UNIT_TASK: &str = "nix-gc";
 
 pub mod bootstrap;
+pub mod checkout_drift;
 pub mod checks;
 pub mod decide;
 pub mod ensure;

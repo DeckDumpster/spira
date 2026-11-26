@@ -15,9 +15,9 @@
 //! `livelock`: `strand::detectors::detect_livelocked` and `detect_invalid_closed` with bead lists
 //! from the content verb over `LcClient` and states from the lifecycle projection, `git rev-list`
 //! per ref (git stays a class B child), the allow file `run/invalid-closed.allow`, and the
-//! emptiness positive control, in-process. `drift`: `drift.sh` ported into the task, a git status
-//! of the prod checkout and a compare of the user unit directory against the install manifest
-//! (unverified that `install` exposes one).
+//! emptiness positive control, in-process. `drift`: `install::checkout_drift` (a git status of the
+//! prod checkout, run only when its worktree digest moved) and `install::unit_drift` (the user
+//! unit directory against the install manifest), in-process.
 //!
 //! # Decide
 //!
@@ -40,8 +40,8 @@
 //!
 //! # Replaces
 //!
-//! The `livelock` and `drift` rows and their chain; per 10 min `bash drift.sh` ×2 and its
-//! children, `spira-lc content` ×2–4, the `bd`-via-strand list reads, `git rev-list` per ref.
+//! The `livelock` and `drift` rows and their chain; per 10 min their shell children,
+//! `spira-lc content` ×2–4, the `bd`-via-strand list reads, `git rev-list` per ref.
 //! Pinned config: [`KEYS`]; the strand `Config` resolves from `strand::config::Live`.
 //!
 //! # Reverse

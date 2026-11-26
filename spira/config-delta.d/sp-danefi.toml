@@ -1,0 +1,1 @@
+removed = ["spira.bdi_capped", "spira.bdi_max_ratio", "spira.bdi_sysfs"]

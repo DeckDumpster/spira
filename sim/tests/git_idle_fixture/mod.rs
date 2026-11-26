@@ -409,6 +409,8 @@ pub const COCKPIT_UNSENT: &str = r#"{"probes":[{"name":"cockpit.unsent","timeout
 
 pub const COCKPIT_LIVELOCK: &str = r#"{"probes":[{"name":"cockpit.livelock","timeout_ms":300000}],"config":{}}"#;
 
+pub const COCKPIT_DRIFT: &str = r#"{"probes":[{"name":"cockpit.drift","timeout_ms":300000}],"config":{}}"#;
+
 pub fn doubles(f: &Fixture, names: &[&'static str]) -> Arc<sim::doubles::Doubles> {
     let mut d = sim::doubles::service();
     for name in names.iter().copied() {

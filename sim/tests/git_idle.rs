@@ -213,6 +213,47 @@ fn a_store_with_no_images_file_asks_podman_on_every_pass() {
     assert_eq!(std::fs::read_to_string(&asked).unwrap().lines().count(), 2, "with no images.json there is nothing to key a held count on");
 }
 
+#[test_id(t0ikhij)]
+#[test]
+fn an_idle_hour_of_the_cockpit_drift_probe_starts_no_drift_script_and_reads_a_dirtied_checkout_once() {
+    let mut f = fixture(testkit::env);
+    f.cockpit_input = COCKPIT_DRIFT;
+    spira_config::process::with_fresh(|| {
+    assert_traps_and_double_are_live(&f);
+    assert_stubs_log(&f);
+    let warm = START + 11 * MINUTE;
+    let idle = warm + HOUR;
+    let statuses = |f: &Fixture| logged(f).iter().filter(|l| l.ends_with(&format!("-C {} status --porcelain", f.local.display()))).count();
+    let drift_scripts = |f: &Fixture| std::fs::read_to_string(&f.started).unwrap_or_default().lines().filter(|l| l.starts_with("bash ") && l.contains("drift.sh")).count();
+    let fragment = |f: &Fixture| {
+        let out: serde_json::Value = serde_json::from_str(&last_output(f, "cockpit-tier-600s.observe")).unwrap_or_default();
+        out["fragments"]["cockpit.drift"]["kv"].to_string()
+    };
+    let path = spira_config::release_env::child_path_env_for_process().unwrap();
+    std::process::Command::new("bash").envs(path).args(["drift.sh", "checkout"]).stdout(std::process::Stdio::null()).status().unwrap();
+    assert_eq!(drift_scripts(&f), 1, "a bash start naming drift.sh is seen, so a count of zero means none ran");
+    let (mut statuses_at_warm, mut statuses_at_idle, mut scripts_at_warm, mut scripts_at_idle) = (0, 0, 0, 0);
+    let (mut at_warm, mut at_idle) = (String::new(), String::new());
+    run_hours(&f, &["cockpit-tier-600s.observe"], (&[], 0), &[warm, idle, idle + 11 * MINUTE], &mut |t| {
+        if t == warm {
+            (statuses_at_warm, scripts_at_warm, at_warm) = (statuses(&f), drift_scripts(&f), fragment(&f));
+        } else if t == idle {
+            (statuses_at_idle, scripts_at_idle, at_idle) = (statuses(&f), drift_scripts(&f), fragment(&f));
+            std::fs::write(f.local.join("stray"), "stray").unwrap();
+        }
+    });
+    assert_eq!(scripts_at_idle - scripts_at_warm, 0, "an idle hour started drift.sh");
+    let passes = f.seen.lock().unwrap().len();
+    assert!(passes >= 7, "the drift probe was observed {passes} times, so the idle hour proves nothing");
+    assert_eq!(statuses_at_warm, 1, "the warm-up reads the checkout, so the idle hour proves something: {:?}", logged(&f));
+    assert_eq!(statuses_at_idle, statuses_at_warm, "an idle hour ran git status: {:?}", logged(&f));
+    assert!(at_warm.contains(r#""SP_CHECKOUT_DRIFT":"OK""#) && at_idle == at_warm, "{at_warm} then {at_idle}");
+    assert_eq!(statuses(&f), statuses_at_idle + 1, "a new untracked file is one git status: {:?}", logged(&f));
+    assert!(fragment(&f).contains(r#""SP_CHECKOUT_DRIFT":"DIRTY:1""#), "{}", fragment(&f));
+    })
+    .unwrap();
+}
+
 fn conditions_check_refusal(f: &Fixture) -> String {
     let snap: serde_json::Value = serde_json::from_str(&last_output(f, "sentinel-pass.observe")).unwrap_or_default();
     snap["tower"].as_array().into_iter().flatten().filter_map(|t| t.as_str()).find(|t| t.starts_with("watchtower: conditions-check")).unwrap_or("no conditions-check entry in the last sentinel pass").to_string()
