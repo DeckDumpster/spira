@@ -1037,7 +1037,7 @@ impl<'w, W: World> Trial<'w, W> {
             let rem = deadline.saturating_sub(spent).max(1);
             key::digits(&timeout).map_or(rem, |t| t.min(rem)).to_string()
         };
-        let fkey = self.fences_key(&want_tree);
+        let fkey = self.fences_key(&want_tree, &limits.deny);
         let mut mark_err: Option<String> = None;
         let tiers_file = self.s.tiers_file.clone();
         let (rc, out, ph, tiers) = {
@@ -1378,7 +1378,7 @@ impl<'w, W: World> Trial<'w, W> {
             } else {
                 base_cmd
             };
-            let base_fkey = self.fences_key(&base_tree);
+            let base_fkey = self.fences_key(&base_tree, &limits.deny);
             let (r, o, ph) = run_composed(
                 w,
                 &tree,
@@ -1871,9 +1871,11 @@ impl<'w, W: World> Trial<'w, W> {
             .and_then(|j| compose::parse_metadata(&j))
     }
 
-    fn fences_key(&self, tree: &str) -> Option<crate::fencecache::Key> {
+    fn fences_key(&self, tree: &str, deny: &spira_config::unit_tier::DenyList) -> Option<crate::fencecache::Key> {
+        let owns_a_row = deny.test_rows().iter().any(|(_, _, owner)| *owner == self.s.bead);
+        let exempt = if owns_a_row { self.s.bead.clone() } else { String::new() };
         crate::fencecache::path(&self.s.verdict_dir, &self.s.repo_name, tree)
-            .map(|path| crate::fencecache::Key { path, harness: self.s.harness_h.clone() })
+            .map(|path| crate::fencecache::Key { path, harness: self.s.harness_h.clone(), exempt })
     }
 
     /// `gate_at`: through the port, which proves HEAD == want.
@@ -2893,7 +2895,7 @@ pub fn run_composed<W: World>(
     let mut fences_rc = 0;
     let proved = fences
         .filter(|_| comp.suites_off())
-        .and_then(|k| w.read(&k.path).and_then(|e| crate::fencecache::fresh(&e, &k.harness, &cmd)));
+        .and_then(|k| w.read(&k.path).and_then(|e| crate::fencecache::fresh(&e, &k.harness, &k.exempt, &cmd)));
     let declared = build_phase.is_some();
     let share_key: String = tree
         .file_name()
@@ -2938,7 +2940,7 @@ pub fn run_composed<W: World>(
                 if fence::silent(&fence::expected(cmd), &out).is_empty() {
                     if let (Some(dir), Some(name)) = (k.path.parent(), k.path.file_name().and_then(|n| n.to_str())) {
                         w.mkdir_p(dir);
-                        w.write_atomic(dir, name, &crate::fencecache::render(&k.harness, cmd, &out));
+                        w.write_atomic(dir, name, &crate::fencecache::render(&k.harness, &k.exempt, cmd, &out));
                     }
                 }
             }

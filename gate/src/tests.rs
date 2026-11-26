@@ -4093,7 +4093,7 @@ fn a_gate_on_a_tree_with_a_proved_fences_verdict_runs_no_fences_phase() {
     *f.base_tree_override.borrow_mut() = Some(BASE_TREE_HEX.into());
     f.files.borrow_mut().insert(
         PathBuf::from(format!("run/verdicts/fences/spira/{BASE_TREE_HEX}")),
-        fencecache::render("harness", "bash spira/fence.sh && run-suites", "fence: x checked 3 files"),
+        fencecache::render("harness", "", "bash spira/fence.sh && run-suites", "fence: x checked 3 files"),
     );
     assert_eq!(f.run(), FAIL);
     let cmds = f.cmds.borrow().clone();
@@ -6392,6 +6392,26 @@ fn a_unit_run_cut_at_its_deadline_without_a_summary_is_not_the_missing_report_fa
     f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (124, String::new()));
     f.run();
     assert!(!f.stderr().contains("printed no `Summary [` line"), "{}", f.stderr());
+}
+
+#[test_id(tilaj8r)]
+#[test]
+fn a_fences_pass_that_used_the_own_item_exemption_is_not_reused_for_another_item() {
+    for (owner, reused) in [("sp-a", false), ("sp-z", true)] {
+        let f = fences_fake(&["gate/src/x.rs"]);
+        for rev in [MERGE_SHA, "HEAD"] {
+            f.objects.borrow_mut().insert(format!("{rev}^{{tree}}"), BASE_TREE_HEX.into());
+        }
+        *f.deny.borrow_mut() = Ok(format!("disabled\ttest:t0aaaaa\t{owner}\t-\n"));
+        assert_eq!(f.run(), PASS, "{}", f.stderr());
+        let proved = f.written.borrow().iter().find(|(p, _)| p.starts_with("run/verdicts/fences")).cloned();
+        let (path, entry) = proved.expect("the first gate records its fences PASS");
+        f.files.borrow_mut().insert(path, entry);
+        f.put_var("SPIRA_GATE_BEAD", "sp-b");
+        f.err.borrow_mut().clear();
+        assert_eq!(f.run(), PASS, "{}", f.stderr());
+        assert_eq!(f.stderr().contains("fences reused"), reused, "row owned by {owner}: {}", f.stderr());
+    }
 }
 
 // ------------------------------------------------- the lint step reads the tree's config
