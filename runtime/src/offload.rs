@@ -8,7 +8,7 @@ use std::future::Future;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
+use std::sync::mpsc::{channel, sync_channel, Receiver, SyncSender, TrySendError};
 
 use ports::{Clock, SimFs, VirtualClock};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -104,15 +104,26 @@ impl ThreadJobs {
         let (tx, rx) = sync_channel::<Run>(cap);
         let rx: Arc<Mutex<Receiver<Run>>> = Arc::new(Mutex::new(rx));
         let queued = Arc::new(AtomicUsize::new(0));
+        // std names a thread from inside it, so a spawned worker is not yet a named one.
+        let (started, running) = channel::<()>();
         for i in 0..workers.max(1) {
-            let (rx, queued) = (rx.clone(), queued.clone());
-            std::thread::Builder::new().name(format!("offload-{i}")).spawn(move || loop {
-                let job = rx.lock().unwrap_or_else(|e| e.into_inner()).recv();
-                let Ok(job) = job else { return };
-                queued.fetch_sub(1, Ordering::SeqCst);
-                job()();
+            let (rx, queued, started) = (rx.clone(), queued.clone(), started.clone());
+            std::thread::Builder::new().name(format!("offload-{i}")).spawn(move || {
+                let _ = started.send(());
+                // A kept sender would make `new` wait for ever on a sibling that died unsent.
+                drop(started);
+                loop {
+                    let job = rx.lock().unwrap_or_else(|e| e.into_inner()).recv();
+                    let Ok(job) = job else { return };
+                    queued.fetch_sub(1, Ordering::SeqCst);
+                    job()();
+                }
             })
             .expect("an offload worker thread starts");
+        }
+        drop(started);
+        for _ in 0..workers.max(1) {
+            running.recv().expect("an offload worker thread starts");
         }
         ThreadJobs { tx, queued, cap }
     }
@@ -352,6 +363,18 @@ mod tests {
         assert!(b.held_for() >= Duration::from_millis(15));
         b.exit();
         assert_eq!(b.held_for(), Duration::ZERO);
+    }
+
+    #[test_id(tyzibnt)]
+    #[test]
+    fn a_thread_pool_is_returned_with_every_worker_named() {
+        const POOL: usize = 64;
+        let _jobs = ThreadJobs::new(POOL, 1);
+        let tasks = std::path::Path::new(system_paths::PROC).join("self").join("task");
+        let names: std::collections::BTreeSet<String> =
+            std::fs::read_dir(tasks).unwrap().flatten().filter_map(|t| std::fs::read_to_string(t.path().join("comm")).ok()).map(|n| n.trim().to_string()).collect();
+        let missing: Vec<String> = (0..POOL).map(|i| format!("offload-{i}")).filter(|n| !names.contains(n)).collect();
+        assert!(missing.is_empty(), "workers not named when the pool was returned: {missing:?}");
     }
 
     fn sim(seed: u64) -> (VirtualClock, Arc<SimFs>, Arc<SimJobs>, Arc<Pool>) {

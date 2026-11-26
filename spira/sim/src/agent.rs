@@ -126,7 +126,7 @@ fn exec(worktree: &Path, bead: &str, step: &Step, ordinal: usize) -> Result<(), 
         }
         Step::NoProgress => Ok(()),
         Step::Slain => run(Command::new(spira_store::lifecycle_row::lc_bin()?).args(["disposition", bead, "slain", "slain by operator", "slay"]).current_dir(worktree), CALL_DEADLINE).map(|_| ()),
-        Step::Ask { question, default } => work(worktree, &["blocked", question, "--default", default]).map(|_| ()),
+        Step::Ask { question, default } => work(worktree, &["blocked", question, "--default", default, "--class", "policy", "--class-basis", "a scripted scenario question"]).map(|_| ()),
     }
 }
 

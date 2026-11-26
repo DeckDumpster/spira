@@ -183,6 +183,13 @@ pub fn is_managed_alive(pid: Option<i64>, proc_exists: bool, cmdline: Option<&st
     }
 }
 
+/// The pid to signal for a pidfile's text, and whether it leads its own process group.
+pub fn stop_target(pid_text: &str, pgid_of: impl Fn(i64) -> Option<i64>) -> Option<(i64, bool)> {
+    // `pid_t`, not i64: a wider value truncates in `kill`, and 0, 1 and negatives broadcast.
+    let pid = i64::from(pid_text.trim().parse::<libc::pid_t>().ok().filter(|p| *p > 1)?);
+    Some((pid, pgid_of(pid) == Some(pid)))
+}
+
 /// `unmanaged_gate()`: a `gate.sh` running for this exact branch, found by argv rather than a
 /// pattern over every process on the box. The branch is matched with a leading space, the same
 /// guard the bash used, so a branch name that is a substring of another branch's does not

@@ -1095,20 +1095,24 @@ impl World {
 
     /// Per queue.local repo, how far the forge trails the landing ref, as `spira-lc unpublished` measures it.
     pub fn publish_backlog_snapshot(&self) -> Result<String, String> {
+        let reg = crate::tasks::a::queue_step::edge::registry().ok();
+        self.publish_backlog_through(&|git: &Path, r: &MapRow| reg.iter().for_each(|reg| refresh_forge_tip(git, reg.clone(), r)), &crate::unpublished::measure)
+    }
+
+    fn publish_backlog_through(&self, refresh: &(dyn Fn(&Path, &MapRow) + Sync), measure: &dyn Fn(&Path, &str, u64) -> Result<crate::unpublished::Measurement, String>) -> Result<String, String> {
         let rows = match fs::read_to_string(&self.repo_map) {
             Ok(t) => map_rows(&t),
             Err(e) => return serde_json::to_string(&publish_backlog::Snapshot { repos: vec![(publish_backlog::REPO_MAP_KEY.into(), Read::Blind(format!("the repo map is unreadable: {e}")))] }).map_err(|e| e.to_string()),
         };
         let git = self.git_bin.as_deref().unwrap_or(Path::new("git"));
-        let reg = crate::tasks::a::queue_step::edge::registry().ok();
-        publish_backlog_snapshot_from(&rows, &|r| reg.iter().for_each(|reg| refresh_forge_tip(git, reg.clone(), r)), &|name| self.unpublished(git, name))
+        publish_backlog_snapshot_from(&rows, &|r| refresh(git, r), &|name| self.unpublished(measure, git, name))
     }
 
     /// Measures the repo here and records the measurement for lc-serve; a record that cannot be
     /// written is logged and the snapshot still carries what was read. `Ok(None)` is a repo declared to publish nowhere.
-    fn unpublished(&self, git: &Path, name: &str) -> Result<Option<Read>, String> {
+    fn unpublished(&self, measure: &dyn Fn(&Path, &str, u64) -> Result<crate::unpublished::Measurement, String>, git: &Path, name: &str) -> Result<Option<Read>, String> {
         let now = spira_config::vtime::now_epoch() as u64;
-        let measurement = crate::unpublished::measure(git, name, now)?;
+        let measurement = measure(git, name, now)?;
         if let Err(e) = lc_call(&self.lc_socket, &["git-fact", "put", "unpublished", "--json", &measurement.record(name)]) {
             eprintln!("publish-backlog: the measurement of {name} was not recorded: {}", e.0);
         }
@@ -1871,6 +1875,51 @@ mod publish_backlog_tests {
         let out = publish_backlog_snapshot_from(&rows, &|r| assert_ne!(r.name, "a", "refresh failed"), &|_| Ok(Some(measured(3)))).unwrap();
         let snap: publish_backlog::Snapshot = serde_json::from_str(&out).unwrap();
         assert_eq!(snap.repos, vec![("a".to_string(), measured(3)), ("b".to_string(), measured(3))]);
+    }
+
+    #[test_id(tpr5txo)]
+    #[test]
+    fn the_snapshot_records_the_unpublished_range_it_measured_and_runs_no_verb_that_measures() {
+        let dir = testkit::TempDir::new("world-publish-backlog");
+        let alpha = row(dir.path(), "alpha", "queue.local");
+        let map = dir.path().join("repos");
+        fs::write(&map, format!("alpha|{}|queue.local|local/main||\n", alpha.path)).unwrap();
+
+        let sock = dir.path().join("lc.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+        let asked: std::sync::Arc<Mutex<Vec<Vec<String>>>> = Default::default();
+        let seen = asked.clone();
+        std::thread::spawn(move || {
+            runtime::socket::answer(&listener, &|argv| {
+                seen.lock().unwrap().push(argv.to_vec());
+                match argv.first().map(String::as_str) {
+                    Some("git-fact") => Ok("{}".into()),
+                    _ => Err(runtime::RuntimeError::new("the double has no such verb")),
+                }
+            })
+        });
+
+        let handed = dir.path().join("handed-git");
+        let world = World { lc_socket: sock, repo_map: map, run_dir: dir.path().join("run"), home_repo: "alpha".into(), git_bin: Some(handed.clone()), ..World::default() };
+        let refreshed = Mutex::new(vec![]);
+        let measured_with = Mutex::new(vec![]);
+        let snapshot = world
+            .publish_backlog_through(&|git: &Path, _: &MapRow| refreshed.lock().unwrap().push(git.to_path_buf()), &|git, name, now| {
+                measured_with.lock().unwrap().push((git.to_path_buf(), name.to_string()));
+                Ok(crate::unpublished::Measurement::Measured(crate::unpublished::Measured { landing_tip: "landing".into(), forge_tip: "forge".into(), count: 2, oldest_arrival: Some(1_700_000_000), read_at: now }))
+            })
+            .unwrap();
+
+        assert!(snapshot.contains("\"count\":2"), "{snapshot}");
+        assert_eq!(*refreshed.lock().unwrap(), std::slice::from_ref(&handed), "the forge refresh was handed the world's git");
+        assert_eq!(*measured_with.lock().unwrap(), [(handed, "alpha".to_string())], "the measurement was handed the world's git");
+        let asked = asked.lock().unwrap();
+        assert_eq!(asked.len(), 1, "one call, the record: {asked:?}");
+        assert_eq!(asked[0][..4], ["git-fact", "put", "unpublished", "--json"]);
+        let body: serde_json::Value = serde_json::from_str(&asked[0][4]).unwrap();
+        assert_eq!((body["repo"].as_str(), body["count"].as_u64()), (Some("alpha"), Some(2)));
+        assert_eq!((body["forge_tip"].as_str(), body["landing_tip"].as_str(), body["oldest_arrival"].as_u64()), (Some("forge"), Some("landing"), Some(1_700_000_000)));
+        assert!(body["read_at"].is_u64(), "{body}");
     }
 }
 
