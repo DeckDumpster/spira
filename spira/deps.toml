@@ -104,6 +104,22 @@ version_min = ""
 version_probe = "mosquitto -h 2>/dev/null | sed -n 's/^mosquitto version //p'"
 
 [[dep]]
+name = "mosquitto_pub"
+tier = "dev"
+provider = "spira-env"
+purpose = "testkit::broker reads what the throwaway test broker retains; ships with mosquitto"
+version_min = ""
+version_probe = "mosquitto_pub --help | sed -n 's/^mosquitto_pub version \\([0-9.]*\\).*/\\1/p'"
+
+[[dep]]
+name = "mosquitto_sub"
+tier = "dev"
+provider = "spira-env"
+purpose = "testkit::broker reads what the throwaway test broker retains; ships with mosquitto"
+version_min = ""
+version_probe = "mosquitto_sub --help | sed -n 's/^mosquitto_sub version \\([0-9.]*\\).*/\\1/p'"
+
+[[dep]]
 name = "gh"
 tier = "optional"
 purpose = "opening and landing pull requests (repos whose land mode is 'pr')"

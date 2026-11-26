@@ -16,7 +16,7 @@ pub struct PrTopics {
 }
 
 fn lock(m: &Mutex<Topics>) -> MutexGuard<'_, Topics> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
+    m.lock().unwrap_or_else(|e| e.into_inner()) // loop-safe: taken only by effects on the pool and the publisher thread
 }
 
 impl PrTopics {
