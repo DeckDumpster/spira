@@ -15,6 +15,7 @@ use state_store::{
     Backend, Compare, Contract, Deleted, Error, Fence, Item, Object, Request, Result, Rev, Txn,
 };
 
+use super::bridge;
 use super::keys;
 use super::records::{decode, encode, Audit, LifecycleRecord, Readiness};
 use spira_config::edges::Gate;
@@ -72,6 +73,8 @@ pub struct Store<B: Backend> {
     shipper: Option<spira_otel::vlogs::Shipper>,
     /// A bead's external reference, read when it reaches a terminal state; `None` reads none.
     refs: Option<ExternalRefs>,
+    /// Where every applied transition and claim goes to be published to the broker.
+    bridge: std::sync::OnceLock<bridge::Outbox>,
 }
 
 /// `Ok(None)` when the bead has no reference; `Err` when the content store could not answer.
@@ -257,6 +260,7 @@ impl<B: Backend> Store<B> {
             dwell_chunk_revs: super::dwell::CHUNK_REVS,
             shipper: None,
             refs: None,
+            bridge: Default::default(),
         }
     }
 
@@ -270,6 +274,11 @@ impl<B: Backend> Store<B> {
     pub fn with_shipper(mut self, shipper: spira_otel::vlogs::Shipper) -> Self {
         self.shipper = Some(shipper);
         self
+    }
+
+    /// This store hands each transition and claim it commits to `outbox`; the first one set stays.
+    pub(super) fn set_bridge(&self, outbox: bridge::Outbox) {
+        let _ = self.bridge.set(outbox);
     }
 
     fn ship_transitions(&self, applied: &[Audit]) {
@@ -673,6 +682,9 @@ impl<B: Backend> Store<B> {
         let r = self.contract.txn(&t, &sub)?;
         if r.succeeded && !r.already_applied {
             self.ship_transitions(then);
+            if let Some(bridge) = self.bridge.get() {
+                bridge.transitions(r.rev, then);
+            }
         }
         Ok(r)
     }
@@ -864,6 +876,9 @@ impl<B: Backend> Store<B> {
         if r.succeeded {
             let fence = r.fences.into_iter().next();
             let record = self.record_at(id, r.rev)?.map_or(next, |r| r.value);
+            if let (false, Some(bridge)) = (r.already_applied, self.bridge.get()) {
+                bridge.claim(r.rev, &record.row, ev.at);
+            }
             return Ok((
                 Outcome::Applied {
                     rev: r.rev,

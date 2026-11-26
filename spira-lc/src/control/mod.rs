@@ -1,6 +1,7 @@
 //! The control plane: lifecycle records, readiness and claims on the state-store contract.
 
 pub mod audits;
+pub mod bridge;
 pub mod claimable;
 pub mod dwell;
 pub mod edges;

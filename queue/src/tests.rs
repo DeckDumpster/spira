@@ -1948,6 +1948,7 @@ struct T {
     clock: FClock,
     env: FEnv,
     io: Cap,
+    rounds: crate::round_bus::RoundBus,
 }
 
 const REPO: &str = "repo";
@@ -2055,6 +2056,7 @@ impl T {
             },
             env: FEnv::default(),
             io: Cap::default(),
+            rounds: crate::round_bus::RoundBus::off(),
         }
     }
 
@@ -2075,6 +2077,7 @@ impl T {
             clock: &self.clock,
             env: &self.env,
             io: &self.io,
+            rounds: &self.rounds,
         })
     }
 
@@ -2125,6 +2128,7 @@ impl T {
             clock: &self.clock,
             env: &self.env,
             io: &self.io,
+            rounds: &self.rounds,
         };
         crate::dispatch(&w, &cmd)
     }

@@ -49,20 +49,24 @@ pub fn shape<W: World>(
             why: "no-diff".into(),
         };
     };
-    // The launcher's PATH from SPIRA_RELEASE, plus the box's own tool tail (sp-c7b85,
-    // amending sp-31gtu, which omitted it): cargo for `cargo metadata` lives there, not in
-    // the release. A bad tail (inside a release or a checkout) falls back to no members
-    // rather than a panic — `compose::compose` already handles that as "unknown".
-    let members = match spira_config::release_path_with_tail(ctx.var(spira_config::RELEASE_ENV), ctx.var("SPIRA_PATH")) {
-        Ok(path) => w.cargo_metadata(tree, &path, ctx.var("HOME")).and_then(|j| compose::parse_metadata(&j)),
-        Err(e) => Err(e),
-    };
     compose::compose(
         GateMode::Unit,
         &Forces::default(),
         &changed,
-        members.as_deref().map_err(String::as_str),
+        members(w, ctx, tree).as_deref().map_err(String::as_str),
     )
+}
+
+/// The workspace members of `tree`.
+pub fn members<W: World>(w: &W, ctx: &Ctx, tree: &Path) -> Result<Vec<compose::Member>, String> {
+    // The launcher's PATH from SPIRA_RELEASE, plus the box's own tool tail (sp-c7b85,
+    // amending sp-31gtu, which omitted it): cargo for `cargo metadata` lives there, not in
+    // the release. A bad tail (inside a release or a checkout) falls back to no members
+    // rather than a panic — `compose::compose` already handles that as "unknown".
+    match spira_config::release_path_with_tail(ctx.var(spira_config::RELEASE_ENV), ctx.var("SPIRA_PATH")) {
+        Ok(path) => w.cargo_metadata(tree, &path, ctx.var("HOME")).and_then(|j| compose::parse_metadata(&j)),
+        Err(e) => Err(e),
+    }
 }
 
 /// One trial, as the row records it.
