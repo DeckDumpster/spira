@@ -285,6 +285,7 @@ pub fn run(ctx: &Ctx) -> Report {
     active_names.dedup();
     let active_all: BTreeMap<&String, bool> = active_names.iter().zip(ctx.systemctl.is_active_many(&active_names)).collect();
 
+    let mut deferred = read_deferred(ctx.unit_dir);
     for u in &ordered {
         if masked.contains(u) {
             r.enabled_actions.push((u.clone(), Action::Masked));
@@ -292,35 +293,44 @@ pub fn run(ctx: &Ctx) -> Report {
         }
         let subject = ctrl_subject(u, &ctx.host.instance);
         let suspended = (ctx.suspended)(&subject);
-        let disabled = enabled_all[u].as_deref() == Some("disabled") && !new_by_inst.contains(u) && !is_convergence_root(u, &ctx.host.instance);
+        let was_deferred = deferred.contains(u);
+        let disabled = enabled_all[u].as_deref() == Some("disabled") && !new_by_inst.contains(u) && !was_deferred && !is_convergence_root(u, &ctx.host.instance);
         // A changed template (spira-watch@.service) counts as a change to every instance.
         let tmpl_of_u = rendered.iter().find(|(inst, _, _)| inst == u).map(|(_, t, _)| t.clone());
         let changed = tmpl_of_u.as_deref().map(|t| changed_templates.contains(t)).unwrap_or(false);
         let action = decide(State { changed, masked: false, suspended, disabled, halted: ctx.world_halted, active: active_all[u] });
-        apply(ctx, u, action, &active_all);
+        // A deferred unit someone started by hand reads unchanged and active, and is still not enabled.
+        let action = if was_deferred && action == Action::Skip { Action::EnableNow } else { action };
+        let applied = apply(ctx, u, action, &active_all);
+        if matches!(action, Action::Enable | Action::Restart | Action::EnableNow) && applied.is_ok() {
+            deferred.remove(u);
+        }
         r.enabled_actions.push((u.clone(), action));
         if u == "dolt-beads.service" && !ctx.world_halted {
             db_server_wait(ctx);
         }
     }
+    if let Err(e) = write_deferred(ctx.unit_dir, &deferred) {
+        r.errors.push(format!("{DEFERRED_LEDGER}: {e}"));
+    }
 
     r
 }
 
-fn apply(ctx: &Ctx, unit: &str, action: Action, was_active: &BTreeMap<&String, bool>) {
+/// `Err` when systemd refused to enable the unit.
+fn apply(ctx: &Ctx, unit: &str, action: Action, was_active: &BTreeMap<&String, bool>) -> Result<(), String> {
     match action {
-        Action::Masked | Action::Suspended | Action::OperatorDisabled | Action::Skip => {}
-        Action::Enable => {
-            let _ = ctx.systemctl.enable(unit);
-        }
+        Action::Masked | Action::Suspended | Action::OperatorDisabled | Action::Skip => Ok(()),
+        Action::Enable => ctx.systemctl.enable(unit),
         Action::Restart => {
             drain_oneshot(ctx, unit, was_active);
-            let _ = ctx.systemctl.enable(unit);
+            let enabled = ctx.systemctl.enable(unit);
             restart_active(ctx, unit);
+            enabled
         }
         Action::EnableNow => {
             drain_oneshot(ctx, unit, was_active);
-            let _ = ctx.systemctl.enable_now(unit);
+            ctx.systemctl.enable_now(unit)
         }
     }
 }
@@ -422,6 +432,25 @@ const RENAMED_OUT_OF_WATCHER_NAMESPACE: [&str; 2] = ["refresh", "notify"];
 /// predates per-instance suffixes. Enumerated from the manifest's own templates, so a
 /// template added here is automatically covered without a second edit.
 const LEDGER: &str = ".spira-installed-units";
+
+/// Installed ENABLE units not yet enabled because their `ExecStart=` target was missing. Their
+/// "disabled" is the harness's own doing; once enabled a unit leaves the list, so a later
+/// `disable` is the operator's and stands.
+const DEFERRED_LEDGER: &str = ".spira-deferred-enable";
+
+pub(crate) fn read_deferred(unit_dir: &Path) -> std::collections::BTreeSet<String> {
+    let text = fs::read_to_string(unit_dir.join(DEFERRED_LEDGER)).unwrap_or_default();
+    text.lines().map(str::trim).filter(|u| !u.is_empty()).map(str::to_string).collect()
+}
+
+pub(crate) fn write_deferred(unit_dir: &Path, units: &std::collections::BTreeSet<String>) -> io::Result<()> {
+    let path = unit_dir.join(DEFERRED_LEDGER);
+    let body: String = units.iter().map(|u| format!("{u}\n")).collect();
+    if fs::read_to_string(&path).unwrap_or_default() == body {
+        return Ok(());
+    }
+    fs::write(&path, body)
+}
 
 /// Units a previous run installed and this release no longer ships. The ledger, not a name
 /// pattern, decides what is Spira's to remove.
@@ -773,6 +802,29 @@ mod tests {
         assert!(run(&ctx).errors.is_empty());
         assert!(conf(&moved).contains(&format!("listener 0 {}\n", moved.broker_socket)), "a differing file is rewritten: {}", conf(&moved));
         assert_eq!(sc.restarts.borrow().as_slice(), [unit], "a changed config restarts the broker, its unit text unchanged");
+    }
+
+    #[test_id(ttoei3p)]
+    #[test]
+    fn units_install_enables_a_unit_unit_ensure_deferred_even_one_started_by_hand() {
+        let unit = "spira-example-prod.service";
+        for started_by_hand in [false, true] {
+            let (base, manifest) = crate::ensure::tests::deferred_fixture();
+            let (unit_dir, tmpl_dir) = (base.join("units"), base.join("templates"));
+            let (h, sc, no_suspend) = (host(), FakeSystemctl::default(), |_: &str| false);
+            let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+            crate::ensure::run(&ctx, false);
+            sc.set(unit, FakeUnit { active: started_by_hand, enabled: Some("disabled".into()), ..Default::default() });
+            testkit::write_exe(&base.join("tool"), "");
+
+            let r = run(&ctx);
+
+            assert!(r.errors.is_empty(), "{:?}", r.errors);
+            assert_eq!(r.enabled_actions, [(unit.to_string(), Action::EnableNow)], "started by hand: {started_by_hand}");
+            assert_eq!(sc.enabled_now.borrow().as_slice(), [unit]);
+            let ledger = fs::read_to_string(unit_dir.join(".spira-deferred-enable")).unwrap_or_default();
+            assert!(!ledger.contains(unit), "{ledger}");
+        }
     }
 
     fn tiny_manifest() -> Manifest {
