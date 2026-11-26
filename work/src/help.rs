@@ -257,13 +257,13 @@ pub static ENTRIES: &[Entry] = &[
         verb: "crates",
         group: Group::Verify,
         does: "Prints the `-p` words for your diff: touched crates plus their direct dependents.",
-        when: "Before `cargo test`/`build`/`check`: `cargo test $(work crates)` runs unit tests only; add `--features integration` to run the integration targets under `tests/`. Empty output means nothing buildable changed. Never use `--workspace`.",
+        when: "Before `cargo test`/`build`/`check`: `tools/test-sandbox/runner --around cargo test $(work crates)` runs unit tests only; add `--features integration` to run the integration targets under `tests/`. Empty output means nothing buildable changed. Never use `--workspace`.",
         args: &["[<base>]   (default local/main)"],
         checks: &["run it inside your worktree, where git and cargo can see the diff"],
         refusals: &[
             Refusal { id: R::CratesGit, text: "git diff {base}...HEAD failed", fix: "check the base ref exists (`local/main` by default) and that you are in your worktree" },
             Refusal { id: R::CratesCargo, text: "cargo metadata failed", fix: "run it from inside the workspace" },
-            Refusal { id: R::CratesSelect, text: "{err}", fix: "the diff could not be mapped to crates; test the crate you edited by name with `cargo test -p <crate>`" },
+            Refusal { id: R::CratesSelect, text: "{err}", fix: "the diff could not be mapped to crates; test the crate you edited by name with `tools/test-sandbox/runner --around cargo test -p <crate>`" },
         ],
     },
     Entry {
