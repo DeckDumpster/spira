@@ -583,7 +583,7 @@ impl Run<'_> {
                 return true;
             }
             let hist = self.h.run(&self.tool("spira-lc").args(["history", id]));
-            hist.rc == 0 && lifecycle_states(&hist.out).iter().any(|s| s == "WORKING")
+            hist.rc == 0 && lifecycle_states(&hist.out).iter().any(|s| spira_store::lc_state::is_working(s))
         })
         .0
     }
