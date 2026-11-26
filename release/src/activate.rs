@@ -351,7 +351,7 @@ fn build_env(ctx: &Ctx, rel: &Path, sha: &str) -> Result<Option<spira_env::Built
 
 /// Starts the background collection when the switch replaced the env. Never fails the switch.
 fn collect_superseded_env(ctx: &Ctx, env: Option<&spira_env::Built>, rel: &Path) {
-    let replaced = env.is_some_and(|b| b.before.as_ref().is_some_and(|before| *before != b.after));
+    let replaced = env.and_then(spira_env::Built::replaced).is_some();
     let (true, Some(gc)) = (replaced, ctx.gc.as_ref()) else { return };
     let home = match ctx.cfg.home() {
         Ok(h) => h,
@@ -892,7 +892,7 @@ fn restore_files(changes: &[Change]) -> Vec<String> {
 
 /// Points the env link back at what it held before this switch built over it.
 fn restore_env(ctx: &Ctx, env: Option<&spira_env::Built>) -> Result<(), String> {
-    match env.and_then(|b| b.before.as_deref().filter(|before| *before != b.after)) {
+    match env.and_then(spira_env::Built::replaced) {
         Some(before) => spira_env::restore(&ctx.cfg.home()?, before),
         None => Ok(()),
     }

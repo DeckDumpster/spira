@@ -283,7 +283,7 @@ fn build_spira_env_with(dry: bool, home: &str, root: &Path, run: Runner, units: 
         run(prog, args).map_err(|e| if prog == "nix" { format!("cannot build spira-env (is nix installed?): {e}") } else { e })
     };
     let built = release::spira_env::build(&release::spira_env::Argv(&run), root, Path::new(home))?;
-    if let Some(old) = built.before.filter(|old| *old != built.after) {
+    if let Some(old) = built.replaced() {
         let prev = Path::new(home).join(spira_config::SPIRA_ENV_PREV_REL);
         info(&format!("kept previous spira-env {} as a GC root at {}", old.display(), prev.display()));
     }

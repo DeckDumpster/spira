@@ -61,6 +61,13 @@ pub struct Built {
     pub after: PathBuf,
 }
 
+impl Built {
+    /// The env this build displaced; `None` when there was none or the build left it linked.
+    pub fn replaced(&self) -> Option<&Path> {
+        self.before.as_deref().filter(|before| *before != self.after)
+    }
+}
+
 pub fn has_flake(release_root: &Path) -> bool {
     release_root.join("flake.nix").is_file() && release_root.join("flake.lock").is_file()
 }
@@ -83,14 +90,15 @@ pub fn build(nix: &dyn Nix, release_root: &Path, home: &Path) -> Result<Built, S
     let before = std::fs::canonicalize(&out).ok();
     nix.build(&target(release_root), &out)?;
     let after = std::fs::canonicalize(&out).map_err(|e| format!("the build left no env at {}: {e}", out.display()))?;
-    if let Some(old) = before.as_deref().filter(|old| *old != after) {
+    let built = Built { before, after };
+    if let Some(old) = built.replaced() {
         let prev = home.join(spira_config::SPIRA_ENV_PREV_REL);
         if let Err(e) = nix.add_root(&prev, old) {
-            let left = restore(home, old).err().map(|r| format!("; the env link still names {}: {r}", after.display())).unwrap_or_default();
+            let left = restore(home, old).err().map(|r| format!("; the env link still names {}: {r}", built.after.display())).unwrap_or_default();
             return Err(format!("cannot root the previous spira-env {}: {e}{left}", old.display()));
         }
     }
-    Ok(Built { before, after })
+    Ok(built)
 }
 
 /// Atomically points the env link back at `before`.

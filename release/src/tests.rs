@@ -2601,6 +2601,19 @@ fn an_activation_undone_after_replacing_the_env_starts_no_collection() {
     assert!(units.scripted.calls().is_empty(), "{:?}", units.scripted.calls());
 }
 
+#[test_id(t1awlgt)]
+#[test]
+fn an_activation_undone_by_a_failed_restart_starts_no_collection() {
+    let w = world_activating_a_flake_release();
+    let before = installed_env(&w, "old-env");
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.restart_fails.insert("spira-tool-prod.service".into());
+    let units = WatchingUnits::new(&w);
+    activate_collecting(&w, &sc, &FakeNix::watching(&w), &units).unwrap_err();
+    assert_eq!(fs::canonicalize(env_link(&w)).unwrap(), before);
+    assert!(units.scripted.calls().is_empty(), "{:?}", units.scripted.calls());
+}
+
 #[test_id(t665nic)]
 #[test]
 fn a_release_with_no_flake_starts_no_collection() {
