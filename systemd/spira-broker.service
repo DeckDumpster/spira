@@ -1,0 +1,18 @@
+[Unit]
+Description=Mosquitto — the harness's MQTT broker, on a Unix socket only
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+# mosquitto reports ready once its listener accepts.
+Type=notify
+# The program is the flake's spira-env one. An activation restarts this unit only when this text
+# or that binary changes, so subscribers stay connected across releases.
+ExecStart=@SPIRA_ENV_PATH@/mosquitto -c @SPIRA_RUN@/mosquitto.conf
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

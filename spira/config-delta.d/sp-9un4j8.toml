@@ -1,0 +1,2 @@
+[spira]
+broker_socket = "broker.sock"

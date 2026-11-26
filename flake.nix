@@ -58,6 +58,7 @@
             beads         # 1.3.1 — bd, from gastownhall/beads (the official upstream)
             duckdb        # the query layer over run/tsd
             gh
+            mosquitto     # 2.1.2 — the harness's MQTT broker (systemd/spira-broker.service)
             jq
             zstd
             sccache

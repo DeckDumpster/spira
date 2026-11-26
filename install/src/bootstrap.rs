@@ -159,6 +159,7 @@ pub fn host_from(instance: &str, env_map: &std::collections::BTreeMap<String, St
         env_bin,
         sccache_dav_addr: dav_addr,
         sccache_dav_root,
+        broker_socket: cfg("SPIRA_BROKER_SOCKET")?,
     })
 }
 

@@ -46,6 +46,8 @@ pub struct HostValues {
     pub toml: String,
     /// `SPIRA_WATCHDOG_EVERY_SECS`: seconds between the watchdog's passes on its timer.
     pub watchdog_every_s: String,
+    /// `SPIRA_BROKER_SOCKET`: the MQTT broker's Unix socket, its only listener.
+    pub broker_socket: String,
     /// The Unix user a SYSTEM unit runs as (`@SPIRA_UNIT_USER@`); set only by the phase that installs one.
     pub unit_user: String,
 }
@@ -68,6 +70,7 @@ impl HostValues {
         m.insert("SPIRA_DOLT_DATA".into(), self.dolt_data.clone());
         m.insert("SPIRA_SCCACHE_DAV_ADDR".into(), self.sccache_dav_addr.clone());
         m.insert("SPIRA_SCCACHE_DAV_ROOT".into(), self.sccache_dav_root.clone());
+        m.insert("SPIRA_BROKER_SOCKET".into(), self.broker_socket.clone());
         m.insert("DOLT".into(), self.dolt.clone());
         m.insert("SPIRA_PROD".into(), prod.clone());
         m.insert("SPIRA_INSTANCE".into(), self.instance.clone());
@@ -162,7 +165,41 @@ mod tests {
             repo_map: "".into(),
             watchdog_every_s: "60".into(),
             unit_user: String::new(),
+            broker_socket: "run/fixture-broker.sock".into(),
         }
+    }
+
+    fn repo_template(name: &str) -> String {
+        let path = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd").join(name);
+        render_file(&path, &hv(), None).unwrap()
+    }
+
+    fn directives(text: &str) -> Vec<&str> {
+        text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).collect()
+    }
+
+    #[test_id(t74h6zj)]
+    #[test]
+    fn the_broker_listens_on_the_configured_unix_socket_only_and_keeps_nothing() {
+        let conf = repo_template("mosquitto.conf");
+        let lines = directives(&conf);
+        let listeners: Vec<&&str> = lines.iter().filter(|l| l.starts_with("listener ")).collect();
+        assert_eq!(listeners, [&"listener 0 run/fixture-broker.sock"], "one listener, port 0 (a Unix socket, no TCP port): {conf}");
+        assert!(!lines.iter().any(|l| l.starts_with("port ")), "{conf}");
+        for want in ["persistence false", "sys_interval 0", "max_keepalive 0", "allow_anonymous true", "connection_messages false"] {
+            assert!(lines.contains(&want), "{want}: {conf}");
+        }
+        let logs: Vec<&&str> = lines.iter().filter(|l| l.starts_with("log_")).collect();
+        assert_eq!(logs, [&"log_dest stderr", &"log_type error", &"log_type warning"], "{conf}");
+        assert!(!conf.contains('@'), "{conf}");
+    }
+
+    #[test_id(tu6jr9f)]
+    #[test]
+    fn the_broker_unit_runs_mosquitto_from_spira_env_on_the_rendered_config() {
+        let unit = repo_template("spira-broker.service");
+        assert!(directives(&unit).contains(&"ExecStart=h/.local/lib/spira-env/bin/mosquitto -c run/mosquitto.conf"), "{unit}");
+        assert!(!unit.contains('@'), "{unit}");
     }
 
     #[test_id(th6sc9u)]

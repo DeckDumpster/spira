@@ -87,6 +87,7 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("lc-backup-drill.timer", true));
     m.units.push(t("spira-exec-census.service", true));
     m.units.push(t("spira-runtime.service", true));
+    m.units.push(t(crate::broker::UNIT, true));
     // The one timer outside the scheduler (S15): it restarts and pages when the scheduler is
     // wedged or absent. Rendered from watchdog::render, not from a template file.
     m.units.push(t("spira-watchdog.service", false));
