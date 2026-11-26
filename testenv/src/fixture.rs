@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 /// start: a CPUQuota on its unit used to keep it `active` long enough to pass install's
 /// is-active check; with quotas retired (sp-b4oct) it is seen in `activating` (auto-restart)
 /// and install refuses, so it is suspended like the other Rust-backed units.
-pub const SUSPENDED_UNITS: [(&str, &str); 4] = [
+pub const SUSPENDED_UNITS: [(&str, &str); 3] = [
     ("spira-loom", "container is configured without a Dolt data directory, so it has no backing store"),
     (
         "spira-watch-queue-watch",
@@ -29,10 +29,6 @@ pub const SUSPENDED_UNITS: [(&str, &str); 4] = [
     (
         "spira-call",
         "polls bd ready every 15s, which a batch's bd-meter must not count",
-    ),
-    (
-        "spira-broker",
-        "runs mosquitto from the user's spira-env, which the image does not carry (its mosquitto is on PATH, for tests that start their own)",
     ),
 ];
 
@@ -1675,11 +1671,11 @@ mod tests {
         let rt = FakeRuntime::new();
         let s = session(&rt);
         run_setup(&s, Provision::Install, &[]).unwrap();
-        // stage first, then configure, four suspends, install, then the template
+        // stage first, then configure, three suspends, install, then the template
         let mut argv = rt.exec_argv();
         assert_eq!(argv.remove(0)[..3], ["bash", "-c", STAGE_SCRIPT]);
-        assert_eq!(argv.len(), 7);
-        assert_eq!(argv[6][1..3], ["testdb", "template"]);
+        assert_eq!(argv.len(), 6);
+        assert_eq!(argv[5][1..3], ["testdb", "template"]);
         rt.execs.lock().unwrap().remove(0);
         assert_eq!(argv[0], vec!["bash", "-c", CONFIGURE_SCRIPT]);
         assert_eq!(
@@ -1688,13 +1684,12 @@ mod tests {
         );
         assert_eq!(argv[2][5], "spira-watch-queue-watch");
         assert_eq!(argv[3][5], "spira-call");
-        assert_eq!(argv[4][5], "spira-broker");
         assert_eq!(
-            argv[5],
+            argv[4],
             vec![format!("{}/bin/units-install", rel()).as_str(), "abc123"]
         );
         let execs = rt.execs.lock().unwrap();
-        for r in execs.iter().take(6) {
+        for r in execs.iter().take(5) {
             assert_eq!(r.user.as_deref(), Some("spirauser"));
             assert_eq!(r.env_value("SPIRA_RELEASE"), Some(rel().as_str()));
             assert_eq!(
@@ -1710,14 +1705,14 @@ mod tests {
             Some(format!("{}/spira", rel()).as_str())
         );
         assert_eq!(
-            execs[5].env_value("SPIRA_PROD"),
+            execs[4].env_value("SPIRA_PROD"),
             Some(format!("{}/spira", rel()).as_str()),
             "units render against the staged release's root, which has bin/"
         );
         assert_eq!(execs[0].env_value("CONFIGURE_DOLT_DATA"), Some(""));
-        assert_eq!(execs[5].env_value("SPIRA_INSTALL_FORCE"), Some("1"));
+        assert_eq!(execs[4].env_value("SPIRA_INSTALL_FORCE"), Some("1"));
         assert_eq!(
-            execs[5].env_value("SPIRA_RUN"),
+            execs[4].env_value("SPIRA_RUN"),
             Some(run().as_str())
         );
     }
@@ -1807,7 +1802,7 @@ mod tests {
         s.setup_deadline = Some(cut);
         let got = run_setup(&s, Provision::Install, &["jq", "dolt"]).unwrap();
         assert_eq!(*rt.plans.lock().unwrap(), 1, "one podman exec for every setup step");
-        assert_eq!(rt.exec_argv().len(), 10, "stage, configure, 4 suspends, install, 2 checks, template");
+        assert_eq!(rt.exec_argv().len(), 9, "stage, configure, 3 suspends, install, 2 checks, template");
         for r in rt.execs.lock().unwrap().iter() {
             assert_eq!(r.user.as_deref(), Some(SPIRA_USER));
             assert_eq!(r.deadline, Some(cut));
