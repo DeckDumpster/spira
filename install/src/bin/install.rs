@@ -8,8 +8,9 @@
 //! them are this bead's scope.
 //!
 //! usage: spira-install [<instance>] [--dry-run] [--ephemeral] [--laptop] [--skip-build]
-//!                       [--no-session-hook] [--system-user]
+//!                       [--no-session-hook] [--system-user] [--proc-starts]
 //!   --system-user is standalone: root, phase 6.5 only.
+//!   --proc-starts is standalone: root, installs and starts spira-proc-starts.service only.
 
 #[cfg(test)]
 #[macro_use]
@@ -31,10 +32,11 @@ struct Opts {
     skip_build: bool,
     no_session_hook: bool,
     system_user: bool,
+    proc_starts: bool,
 }
 
 fn parse_args() -> Result<Opts, String> {
-    let mut o = Opts { instance: None, dry: false, ephemeral: false, laptop: false, skip_build: false, no_session_hook: false, system_user: false };
+    let mut o = Opts { instance: None, dry: false, ephemeral: false, laptop: false, skip_build: false, no_session_hook: false, system_user: false, proc_starts: false };
     for a in std::env::args().skip(1) {
         match a.as_str() {
             "--dry-run" => o.dry = true,
@@ -43,6 +45,7 @@ fn parse_args() -> Result<Opts, String> {
             "--skip-build" => o.skip_build = true,
             "--no-session-hook" => o.no_session_hook = true,
             "--system-user" => o.system_user = true,
+            "--proc-starts" => o.proc_starts = true,
             s if s.starts_with("--") => return Err(format!("unknown flag: {s}")),
             s if o.instance.is_none() => o.instance = Some(s.to_string()),
             s => return Err(format!("extra argument: {s}")),
@@ -805,6 +808,9 @@ fn run_main() -> ExitCode {
 
     if opts.system_user {
         return standalone_system_user(&instance, opts.dry);
+    }
+    if opts.proc_starts {
+        return standalone_proc_starts(&instance, opts.dry);
     }
     // ---- phase -1: dependencies ----------------------------------------------------------
     // Install provides what its own doctor demands BEFORE the preflight judges the host
@@ -1938,6 +1944,62 @@ fn standalone_system_user(instance: &str, dry: bool) -> ExitCode {
     }
 }
 
+/// The one root step proc-starts needs: its system unit, run as the owner of the harness home,
+/// holding CAP_BPF and CAP_PERFMON and nothing else. Creates no user.
+fn refuse_root_owner(uid: u32, home: &str) -> Result<(), String> {
+    if uid == 0 {
+        return Err(format!("{home} is owned by root; proc-starts must run as the operator's own user, not root"));
+    }
+    Ok(())
+}
+
+fn proc_starts_phase(host: &install::values::HostValues) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    let uid = std::fs::metadata(&host.home).map_err(|e| format!("cannot stat {}: {e}", host.home))?.uid();
+    refuse_root_owner(uid, &host.home)?;
+    let out = spira_config::bounded::bounded("getent").args(["passwd", &uid.to_string()]).output().map_err(|e| format!("cannot run getent: {e}"))?;
+    let user = String::from_utf8_lossy(&out.stdout).split(':').next().map(str::trim).filter(|u| !u.is_empty()).map(str::to_string).ok_or_else(|| format!("no user has uid {uid}, the owner of {}", host.home))?;
+    let host = install::values::HostValues { unit_user: user, ..host.clone() };
+    let unit = "spira-proc-starts.service";
+    let text = install::values::render_file(&Path::new(&host.home).join("systemd").join(unit), &host, None)?;
+    let dest = format!("{}/{unit}", system_paths::ETC_SYSTEMD_SYSTEM);
+    std::fs::write(format!("{dest}.tmp"), text).map_err(|e| e.to_string())?;
+    run_ok("install", &["-m", "0644", &format!("{dest}.tmp"), &dest])?;
+    let _ = std::fs::remove_file(format!("{dest}.tmp"));
+    info(&format!("install {dest}"));
+    run_ok("systemctl", &["daemon-reload"])?;
+    info("reload systemd");
+    run_ok("systemctl", &["enable", "--now", unit])?;
+    info(&format!("enable {unit}"));
+    Ok(())
+}
+
+fn standalone_proc_starts(instance: &str, dry: bool) -> ExitCode {
+    phase("proc-starts: system unit");
+    let host = match bootstrap::host_from_env(instance) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("install: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    if dry {
+        would("would install and start spira-proc-starts.service");
+        return ExitCode::SUCCESS;
+    }
+    if !is_root() {
+        eprintln!("install: --proc-starts requires root and runs only the proc-starts phase");
+        return ExitCode::from(1);
+    }
+    match proc_starts_phase(&host) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("install: phase proc-starts failed — {e}");
+            ExitCode::from(2)
+        }
+    }
+}
+
 fn group_gid(group: &str) -> Option<u32> {
     let out = spira_config::bounded::bounded("getent").args(["group", group]).output().ok()?;
     String::from_utf8_lossy(&out.stdout).trim().split(':').nth(2)?.parse().ok()
@@ -2445,5 +2507,25 @@ mod nix_gc_tests {
         gc.profile_bin = f.td.path().join("nowhere");
         build_spira_env_with(false, &home, &f.root, &runner(&f, "new", &calls, false), Some(&*f.units as &dyn Units), Some(&gc)).unwrap();
         assert!(f.units.calls().is_empty(), "no binary, no unit");
+    }
+}
+
+#[cfg(test)]
+mod proc_starts_phase_tests {
+    use super::*;
+
+        #[test_id(trkxi50)]
+        #[test]
+    fn a_harness_home_owned_by_root_is_refused_and_one_owned_by_a_user_is_not() {
+        assert!(refuse_root_owner(0, "h").unwrap_err().contains("owned by root"));
+        assert_eq!(refuse_root_owner(1000, "h"), Ok(()));
+    }
+
+    #[test_id(t318uqy)]
+    #[test]
+    fn a_home_that_cannot_be_read_is_refused() {
+        let td = testkit::TempDir::new("proc-starts-phase");
+        let host = install::values::HostValues { home: td.path().join("absent").display().to_string(), ..Default::default() };
+        assert!(proc_starts_phase(&host).unwrap_err().contains("cannot stat"));
     }
 }

@@ -46,6 +46,8 @@ pub struct HostValues {
     pub toml: String,
     /// `SPIRA_WATCHDOG_EVERY_SECS`: seconds between the watchdog's passes on its timer.
     pub watchdog_every_s: String,
+    /// The Unix user a SYSTEM unit runs as (`@SPIRA_UNIT_USER@`); set only by the phase that installs one.
+    pub unit_user: String,
 }
 
 impl HostValues {
@@ -75,6 +77,7 @@ impl HostValues {
         m.insert("SPIRA_ENV_PATH".into(), self.env_bin.clone());
         m.insert("SPIRA_PROD_COCK".into(), format!("{prod_root}/cockpit"));
         m.insert("SPIRA_PROD_ROOT".into(), prod_root.clone());
+        m.insert("SPIRA_UNIT_USER".into(), self.unit_user.clone());
         m.insert("SPIRA_RELEASE".into(), prod_root);
         m
     }
@@ -158,7 +161,22 @@ mod tests {
             sccache_dav_addr: "".into(), sccache_dav_root: "run/sccache-dav".into(),
             repo_map: "".into(),
             watchdog_every_s: "60".into(),
+            unit_user: String::new(),
         }
+    }
+
+    #[test_id(th6sc9u)]
+    #[test]
+    fn proc_starts_unit_renders_with_exactly_two_capabilities_and_a_non_root_user() {
+        let path = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/spira-proc-starts.service");
+        let text = render_file(&path, &HostValues { unit_user: "operator".into(), ..hv() }, None).unwrap();
+        let lines: Vec<&str> = text.lines().map(str::trim).collect();
+        assert!(lines.contains(&"CapabilityBoundingSet=CAP_BPF CAP_PERFMON"), "{text}");
+        assert!(lines.contains(&"AmbientCapabilities=CAP_BPF CAP_PERFMON"), "{text}");
+        assert!(lines.contains(&"NoNewPrivileges=yes"), "{text}");
+        assert!(lines.contains(&"User=operator"), "{text}");
+        assert!(!text.contains('@'), "{text}");
+        assert_eq!(lines.iter().filter(|l| l.starts_with("CapabilityBoundingSet=") || l.starts_with("AmbientCapabilities=")).count(), 2);
     }
 
     #[test_id(tbcdl03)]
