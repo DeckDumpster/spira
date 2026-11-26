@@ -17,7 +17,6 @@ members = [
     "spira-config",
     "spira-store",
     "perf-watch",
-    "exec-census",
     "proc-starts",
     "spira-runtime",
     "tsd",
