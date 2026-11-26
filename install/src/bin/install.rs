@@ -19,6 +19,7 @@ use install::bootstrap::{self, nonempty_env, refuse_root_owner};
 use install::checks;
 use install::install_units::{self, Ctx};
 use install::systemctl::RealSystemctl;
+use install::telemetry::Endpoint;
 use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -730,25 +731,32 @@ fn require_declared_config_and_release() -> Result<(), String> {
 }
 
 fn main() -> ExitCode {
-    install::telemetry::metered_exit("install", run_main)
+    install::telemetry::metered_exit_to("install", run_main)
 }
 
-fn run_main() -> ExitCode {
+fn run_main() -> (ExitCode, Endpoint) {
     let opts = match parse_args() {
         Ok(o) => o,
         Err(e) => {
             eprintln!("install: {e}");
-            return ExitCode::from(2);
+            return (ExitCode::from(2), Endpoint::Process);
         }
     };
     match proc_starts_or_declared(opts.proc_starts, opts.system_user, require_declared_config_and_release) {
-        Ok(true) => return standalone_proc_starts(opts.instance.as_deref(), opts.dry),
-        Ok(false) => {}
+        Ok(true) => {
+            let (code, endpoint) = standalone_proc_starts(opts.instance.as_deref(), opts.dry);
+            (code, Endpoint::Derived(endpoint))
+        }
+        Ok(false) => (run_declared(opts), Endpoint::Process),
         Err(e) => {
             eprintln!("install: {e}");
-            return ExitCode::from(2);
+            (ExitCode::from(2), Endpoint::Process)
         }
     }
+}
+
+/// Every mode that runs in the declared environment.
+fn run_declared(opts: Opts) -> ExitCode {
     let requested = opts.instance.clone().or_else(|| nonempty_env("SPIRA_INSTANCE"));
     let ephemeral = opts.ephemeral && requested.is_none();
     if let Some(p) = nonempty_env("CONFIGURE_PROD") {
@@ -1933,19 +1941,21 @@ type RunCmd<'a> = &'a dyn Fn(&str, &[&str]) -> Result<(), String>;
 
 const PROC_STARTS_PHASE_FAILED: &str = "phase proc-starts failed — ";
 
-fn standalone_proc_starts(instance: Option<&str>, dry: bool) -> ExitCode {
+fn standalone_proc_starts(instance: Option<&str>, dry: bool) -> (ExitCode, Option<String>) {
     phase("proc-starts: system unit");
     let argv0 = bootstrap::argv0_path().unwrap_or_default();
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
     let pin = |home: &Path| spira_config::registry::pin_for_process(home).map(|_| ());
     let dest = Path::new(system_paths::ETC_SYSTEMD_SYSTEM);
-    match standalone_proc_starts_with(instance, &argv0, &env, &bootstrap::stat_owner, &bootstrap::getent_passwd, &pin, is_root(), dest, &run_ok, dry) {
+    let (got, endpoint) = standalone_proc_starts_with(instance, &argv0, &env, &bootstrap::stat_owner, &bootstrap::getent_passwd, &pin, is_root(), dest, &run_ok, dry);
+    let code = match got {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("install: {e}");
             ExitCode::from(proc_starts_exit(&e))
         }
-    }
+    };
+    (code, endpoint)
 }
 
 /// 2 for a phase that failed, 1 for a refusal before it.
@@ -1957,6 +1967,8 @@ fn proc_starts_exit(error: &str) -> u8 {
     }
 }
 
+/// The second value is the run's metrics endpoint: `None` only when the run refused before
+/// its config resolved.
 #[allow(clippy::too_many_arguments)]
 fn standalone_proc_starts_with(
     instance: Option<&str>,
@@ -1969,27 +1981,38 @@ fn standalone_proc_starts_with(
     dest_dir: &Path,
     run: RunCmd,
     dry: bool,
-) -> Result<(), String> {
-    let (env, user) = bootstrap::proc_starts_env(argv0, env, owner, passwd)?;
-    pin(Path::new(&env["SPIRA_HOME"]))?;
-    let host = proc_starts_host(instance, &env).map_err(|e| {
-        let release = &env[spira_config::RELEASE_ENV];
-        let toml = &env[spira_config::process::TOML_ENV];
-        format!(
-            "{e}; the config is {toml}, named by the installed spira-runtime unit: as the operator fix it or re-render the units (SPIRA_TOML={toml} SPIRA_RELEASE={release} {release}/bin/units-install), then run: sudo {release}/bin/spira-install --proc-starts"
-        )
-    })?;
-    if dry {
-        would("would install and start spira-proc-starts.service");
-        return Ok(());
-    }
-    if !is_root {
-        return Err(format!("--proc-starts requires root and runs only the proc-starts phase: sudo {} --proc-starts", argv0.display()));
-    }
-    proc_starts_phase(&host, &user, owner, dest_dir, run).map_err(|e| format!("{PROC_STARTS_PHASE_FAILED}{e}"))
+) -> (Result<(), String>, Option<String>) {
+    let resolve = || {
+        let (env, user) = bootstrap::proc_starts_env(argv0, env, owner, passwd)?;
+        pin(Path::new(&env["SPIRA_HOME"]))?;
+        let (host, endpoint) = proc_starts_host(instance, &env).map_err(|e| {
+            let release = &env[spira_config::RELEASE_ENV];
+            let toml = &env[spira_config::process::TOML_ENV];
+            format!(
+                "{e}; the config is {toml}, named by the installed spira-runtime unit: as the operator fix it or re-render the units (SPIRA_TOML={toml} SPIRA_RELEASE={release} {release}/bin/units-install), then run: sudo {release}/bin/spira-install --proc-starts"
+            )
+        })?;
+        Ok::<_, String>((host, user, endpoint))
+    };
+    let (host, user, endpoint) = match resolve() {
+        Ok(resolved) => resolved,
+        Err(e) => return (Err(e), None),
+    };
+    let apply = || {
+        if dry {
+            would("would install and start spira-proc-starts.service");
+            return Ok(());
+        }
+        if !is_root {
+            return Err(format!("--proc-starts requires root and runs only the proc-starts phase: sudo {} --proc-starts", argv0.display()));
+        }
+        proc_starts_phase(&host, &user, owner, dest_dir, run).map_err(|e| format!("{PROC_STARTS_PHASE_FAILED}{e}"))
+    };
+    (apply(), Some(endpoint))
 }
 
-fn proc_starts_host(instance: Option<&str>, env: &std::collections::BTreeMap<String, String>) -> Result<install::values::HostValues, String> {
+/// The host values and the metrics endpoint, both from the config `env` names.
+fn proc_starts_host(instance: Option<&str>, env: &std::collections::BTreeMap<String, String>) -> Result<(install::values::HostValues, String), String> {
     let home = PathBuf::from(&env["SPIRA_HOME"]);
     let instance = match instance {
         Some(i) => i.to_string(),
@@ -1999,7 +2022,8 @@ fn proc_starts_host(instance: Option<&str>, env: &std::collections::BTreeMap<Str
     // Not `resolve_key`: it refuses a declared-empty value, which several host keys may hold.
     let cfg = |k: &str| resolved.values.get(k).cloned().ok_or_else(|| format!("{k} is not a registered config key — refusing"));
     let path_tail = install::orchestrate::checked_tail(cfg("SPIRA_PATH")?)?;
-    bootstrap::host_from(&instance, env, &cfg, env[spira_config::process::TOML_ENV].clone(), path_tail)
+    let host = bootstrap::host_from(&instance, env, &cfg, env[spira_config::process::TOML_ENV].clone(), path_tail)?;
+    Ok((host, cfg("SPIRA_METRICS_ENDPOINT")?))
 }
 
 fn group_gid(group: &str) -> Option<u32> {
@@ -2537,9 +2561,15 @@ mod proc_starts_phase_tests {
         dry: bool,
         not_root: bool,
         failing_program: Option<&'static str>,
+        metrics_endpoint: Option<String>,
     }
 
     fn plain_sudo(case: Case) -> (testkit::TempDir, Vec<String>, String, Result<(), String>) {
+        let (td, calls, unit, (got, _)) = plain_sudo_metered(case);
+        (td, calls, unit, got)
+    }
+
+    fn plain_sudo_metered(case: Case) -> (testkit::TempDir, Vec<String>, String, (Result<(), String>, Option<String>)) {
         let td = testkit::TempDir::new("proc-starts-sudo");
         let release = spira_config::process::fixture_release(td.path(), true);
         std::fs::create_dir_all(release.join("systemd")).unwrap();
@@ -2548,10 +2578,9 @@ mod proc_starts_phase_tests {
         let (run_dir, prod) = (td.path().join("run").display().to_string(), release.join("spira").display().to_string());
         let workspaces = td.path().display().to_string();
         // An empty cache root is a declared value, not a missing one.
-        let toml = spira_config::process::fixture_toml(
-            td.path(),
-            &[("SPIRA_RUN", &run_dir), ("SPIRA_PROD", &prod), ("SPIRA_WORKSPACES", &workspaces), ("SPIRA_SCCACHE_DAV_ROOT", "")],
-        );
+        let mut declare = vec![("SPIRA_RUN", run_dir.as_str()), ("SPIRA_PROD", &prod), ("SPIRA_WORKSPACES", &workspaces), ("SPIRA_SCCACHE_DAV_ROOT", "")];
+        declare.extend(case.metrics_endpoint.as_deref().map(|e| ("SPIRA_METRICS_ENDPOINT", e)));
+        let toml = spira_config::process::fixture_toml(td.path(), &declare);
         let home = td.path().join("operator-home");
         std::fs::create_dir_all(home.join(".config/systemd/user")).unwrap();
         std::fs::write(home.join(".config/systemd/user/spira-runtime-prod.service"), format!("[Service]\nEnvironment=SPIRA_TOML={}\nExecStart={}/bin/spira-runtime serve\n", toml.display(), release.display())).unwrap();
@@ -2580,6 +2609,33 @@ mod proc_starts_phase_tests {
         let got = standalone_proc_starts_with(None, &release.join("bin/spira-install"), &env, &owner, &passwd, &pin, !case.not_root, &dest, &run, case.dry);
         assert_eq!(pinned.into_inner(), Some(release.join("spira")));
         (td, calls.into_inner(), rendered.into_inner(), got)
+    }
+
+    /// The push of one plain-sudo run, metered as `main` meters it.
+    fn metered_plain_sudo(case: Case) -> String {
+        let (addr, sink) = spira_otel::metrics::run::fixture_sink_within(std::time::Duration::from_secs(2));
+        install::telemetry::metered_exit_to("install", || {
+            let (_td, _, _, (got, endpoint)) = plain_sudo_metered(Case { metrics_endpoint: Some(addr), ..case });
+            let code = got.map_or_else(|e| ExitCode::from(proc_starts_exit(&e)), |()| ExitCode::SUCCESS);
+            (code, Endpoint::Derived(endpoint))
+        });
+        let body = sink.join().unwrap().expect("no push reached the fixture sink");
+        for want in ["spira_component_invocations", "spira_component_duration_seconds", "install"] {
+            assert!(body.contains(want), "{want} missing from the push");
+        }
+        body
+    }
+
+    #[test_id(ttyki5d)]
+    #[test]
+    fn under_plain_sudo_the_run_is_metered_to_the_endpoint_of_the_derived_config() {
+        assert!(metered_plain_sudo(Case { dry: true, ..Case::default() }).contains("ok"));
+    }
+
+    #[test_id(tttj7jo)]
+    #[test]
+    fn a_refusal_after_the_config_resolved_is_metered_as_an_error() {
+        assert!(metered_plain_sudo(Case { not_root: true, ..Case::default() }).contains("error"));
     }
 
     #[test_id(t1jlih1)]

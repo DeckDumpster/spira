@@ -7,6 +7,31 @@ pub fn endpoint() -> Option<String> {
     spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok()
 }
 
+/// Where one run's metrics go.
+pub enum Endpoint {
+    Process,
+    /// The endpoint of a config the run derived itself; never falls back to the process config.
+    Derived(Option<String>),
+}
+
+impl Endpoint {
+    fn resolve(self) -> Option<String> {
+        match self {
+            Endpoint::Process => endpoint(),
+            Endpoint::Derived(e) => e,
+        }
+    }
+}
+
+/// [`metered_exit`] for a run that names its endpoint when it ends.
+pub fn metered_exit_to(operation: &str, f: impl FnOnce() -> (ExitCode, Endpoint)) -> ExitCode {
+    let operation = spira_otel::metrics::run::operation_label(Some(operation), OPERATIONS);
+    let m = spira_otel::metrics::run::RunMeter::start(COMPONENT, operation);
+    let (code, to) = f();
+    m.finish(|| to.resolve(), spira_otel::metrics::outcome_of_exit(code), &[]);
+    code
+}
+
 /// `operation` is one of [`OPERATIONS`]: the binary that ran.
 pub fn metered_exit(operation: &str, f: impl FnOnce() -> ExitCode) -> ExitCode {
     let operation = spira_otel::metrics::run::operation_label(Some(operation), OPERATIONS);
@@ -26,6 +51,18 @@ mod tests {
         let body = h.join().unwrap();
         for want in ["spira_component_invocations", "spira_component_duration_seconds", "install", "units-install", "error"] {
             assert!(body.contains(want), "{want} missing from the push");
+        }
+    }
+
+    #[test_id(tdj5lus)]
+    #[test]
+    fn a_derived_endpoint_is_the_only_one_a_run_pushes_to() {
+        use std::time::Duration;
+        for (named, deadline) in [(true, Duration::from_secs(2)), (false, Duration::from_millis(50))] {
+            let (addr, sink) = spira_otel::metrics::run::fixture_sink_within(deadline);
+            metered_exit_to("install", || (ExitCode::SUCCESS, Endpoint::Derived(named.then_some(addr))));
+            let body = sink.join().unwrap();
+            assert_eq!(body.is_some_and(|b| b.contains("spira_component_invocations")), named);
         }
     }
 
