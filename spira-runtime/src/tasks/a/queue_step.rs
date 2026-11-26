@@ -799,9 +799,14 @@ pub mod edge {
 
     /// [`git`] through the given git program.
     pub fn git_with(prog: &Path, dir: &Path, args: &[&str], deadline: Duration) -> Result<String, String> {
+        git_through(&SysProc, prog, dir, args, deadline)
+    }
+
+    /// [`git_with`] through the given Proc port.
+    pub fn git_through(proc: &dyn Proc, prog: &Path, dir: &Path, args: &[&str], deadline: Duration) -> Result<String, String> {
         let mut all = vec!["-C".to_string(), dir.display().to_string()];
         all.extend(args.iter().map(|a| a.to_string()));
-        let out = SysProc.run(&ProcSpec { prog: prog.display().to_string(), args: all, stdin: vec![], deadline })?;
+        let out = proc.run(&ProcSpec { prog: prog.display().to_string(), args: all, stdin: vec![], deadline })?;
         if out.code == Some(0) {
             Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
         } else {
