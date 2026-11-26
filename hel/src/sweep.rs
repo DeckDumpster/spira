@@ -1,7 +1,10 @@
 //! The Hel (DESIGN.md §2): every `spira/*` branch gets exactly one disposition, and
 //! only a branch whose every change the base already holds is ever deleted.
 
-use std::path::Path;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -290,6 +293,41 @@ fn judged_ids(w: &dyn World, worktrees: &[(std::path::PathBuf, Option<String>)],
     ids
 }
 
+/// What a branch's git facts depend on: the two commits, and every store fact that picks
+/// which of them a scan asks for.
+#[derive(Clone, PartialEq, Eq)]
+struct MemoKey {
+    tip: String,
+    land: String,
+    has_bead: bool,
+    superseded: bool,
+    submitted: bool,
+    lc_landed: bool,
+    lc_terminal: bool,
+    lc_past_builder: bool,
+}
+
+/// A branch's git answers under one [`MemoKey`]. `None` is unasked: a fact never reached, or
+/// one git did not answer, so a failed read is never held.
+#[derive(Clone, Default)]
+struct GitFacts {
+    merge: Option<Option<String>>,
+    ahead: Option<u64>,
+    cherry: Option<bool>,
+    by_subject: Option<bool>,
+    has_own_commit: Option<bool>,
+    only_stacked_base: Option<bool>,
+    base_names: Option<bool>,
+}
+
+/// By (repository root, branch), for the life of the process; each scan prunes its
+/// repository's dead branches.
+static MEMO: Mutex<BTreeMap<(PathBuf, String), (MemoKey, GitFacts)>> = Mutex::new(BTreeMap::new());
+
+fn memo() -> MutexGuard<'static, BTreeMap<(PathBuf, String), (MemoKey, GitFacts)>> {
+    MEMO.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// A branch's facts, each read on first ask and only for a branch that was not merged: the
 /// ancestors come from one batched read, and judge stops at the first fact that settles it.
 struct Scanned<'a, 'b> {
@@ -300,6 +338,7 @@ struct Scanned<'a, 'b> {
     merged: bool,
     base_tree: Option<&'a str>,
     bead: Option<Value>,
+    held: RefCell<GitFacts>,
     merge: std::cell::OnceCell<Option<String>>,
     ahead: std::cell::OnceCell<Option<u64>>,
     cherry: std::cell::OnceCell<bool>,
@@ -311,8 +350,17 @@ impl Scanned<'_, '_> {
     fn g(&self) -> Git<'_> {
         Git(self.c.repo)
     }
+    /// The held answer, else git's, which is then held.
+    fn recall<T: Clone>(&self, slot: fn(&mut GitFacts) -> &mut Option<T>, read: impl FnOnce(Git) -> Option<T>) -> Option<T> {
+        if let Some(v) = slot(&mut self.held.borrow_mut()).clone() {
+            return Some(v);
+        }
+        let v = read(self.g());
+        slot(&mut self.held.borrow_mut()).clone_from(&v);
+        v
+    }
     fn merge(&self) -> &Option<String> {
-        self.merge.get_or_init(|| self.g().merged_tree(&self.c.base.landref, self.br))
+        self.merge.get_or_init(|| self.recall(|h| &mut h.merge, |g| g.try_merged_tree(&self.c.base.landref, self.br)).flatten())
     }
 }
 
@@ -327,7 +375,7 @@ impl Facts for Scanned<'_, '_> {
         self.bead.as_ref().is_some_and(superseded)
     }
     fn ahead(&self) -> Option<u64> {
-        *self.ahead.get_or_init(|| if self.merged { Some(0) } else { self.g().ahead(&self.c.base.landref, self.br) })
+        *self.ahead.get_or_init(|| if self.merged { Some(0) } else { self.recall(|h| &mut h.ahead, |g| g.ahead(&self.c.base.landref, self.br)) })
     }
     fn merges_clean(&self) -> bool {
         self.merged || self.merge().is_some()
@@ -348,10 +396,10 @@ impl Facts for Scanned<'_, '_> {
         self.c.w.lc_landed(self.id)
     }
     fn cherry_unapplied(&self) -> bool {
-        *self.cherry.get_or_init(|| self.g().cherry_unapplied(&self.c.base.landref, self.br))
+        *self.cherry.get_or_init(|| self.recall(|h| &mut h.cherry, |g| g.try_cherry_unapplied(&self.c.base.landref, self.br)).unwrap_or(false))
     }
     fn landed_by_subject(&self) -> bool {
-        *self.by_subject.get_or_init(|| self.g().landed_by_subject(&self.c.base.landref, self.br, self.id, 2000))
+        *self.by_subject.get_or_init(|| self.recall(|h| &mut h.by_subject, |g| g.try_landed_by_subject(&self.c.base.landref, self.br, self.id, 2000)).unwrap_or(false))
     }
 }
 
@@ -367,7 +415,8 @@ pub struct Scan {
 /// One repository's reads for a pass: its base, the facts of each `spira/*` branch after
 /// `after` (after the fetch of the base's own remote, only when there is a branch), and its
 /// orphaned worktrees. Branches merged into the land ref are judged from batched reads; the
-/// rest ask git lazily, and none is started once `slice` has passed (`Scan::cut`).
+/// rest ask git lazily, reusing what an earlier scan in this process read under the same
+/// [`MemoKey`], and none is started once `slice` has passed (`Scan::cut`).
 /// `Err` names why the repository is skipped, or that the store did not answer.
 pub fn scan_repo(w: &dyn World, root: &Path, submitted_label: &str, fetch: bool, after: Option<&str>, slice: Duration) -> Result<Scan, ScanError> {
     let began = w.now();
@@ -376,6 +425,7 @@ pub fn scan_repo(w: &dyn World, root: &Path, submitted_label: &str, fetch: bool,
     }
     let g = Git(root);
     let tips = g.spira_branch_tips();
+    memo().retain(|(r, br), _| r != root || tips.iter().any(|(b, _)| b == br));
     let base = w.base(root).ok_or_else(|| ScanError::Skip("cannot resolve the ref it lands on — configure its `base`".into()))?;
     if let Some(rem) = base.remote.as_deref() {
         if fetch && !tips.is_empty() {
@@ -389,6 +439,7 @@ pub fn scan_repo(w: &dyn World, root: &Path, submitted_label: &str, fetch: bool,
         w.prefetch(&judged_ids(w, &worktrees, &names)).map_err(ScanError::Store)?;
     }
     let lr = base.landref.as_str();
+    let land_sha = spira_config::git_refs::sha_of(root, lr).or_else(|| g.rev_parse(lr));
     let merged = g.spira_merged_into(lr);
     let by_branch: std::collections::BTreeMap<&str, &Path> = worktrees.iter().filter_map(|(p, b)| Some((b.as_deref()?, p.as_path()))).collect();
     let base_tree = g.rev_parse(&format!("{lr}^{{tree}}"));
@@ -405,27 +456,39 @@ pub fn scan_repo(w: &dyn World, root: &Path, submitted_label: &str, fetch: bool,
         let bead = w.bead(&id);
         let labels_ = bead.as_ref().map(labels).unwrap_or_default();
         let superseded_ = bead.as_ref().is_some_and(superseded);
-        let facts = Scanned { c: &ctx, id: &id, br, tip, merged: merged.contains(br.as_str()), base_tree: base_tree.as_deref(), bead, merge: Default::default(), ahead: Default::default(), cherry: Default::default(), by_subject: Default::default(), pr: Default::default() };
+        let key = land_sha.as_ref().map(|land| MemoKey {
+            tip: tip.clone(),
+            land: land.clone(),
+            has_bead: bead.is_some(),
+            superseded: superseded_,
+            submitted: labels_.iter().any(|l| l == submitted_label),
+            lc_landed: w.lc_landed(&id),
+            lc_terminal: w.lc_terminal(&id),
+            lc_past_builder: w.lc_past_builder(&id),
+        });
+        let slot = (root.to_path_buf(), br.clone());
+        let reused = memo().get(&slot).filter(|(k, _)| Some(k) == key.as_ref()).map(|(_, f)| f.clone()).unwrap_or_default();
+        let facts = Scanned { c: &ctx, id: &id, br, tip, merged: merged.contains(br.as_str()), base_tree: base_tree.as_deref(), bead, held: RefCell::new(reused), merge: Default::default(), ahead: Default::default(), cherry: Default::default(), by_subject: Default::default(), pr: Default::default() };
         let (mut has_own_commit, mut only_stacked_base, mut base_names) = (false, false, false);
         if held.is_none() && !id.starts_with("round-") && judge(&facts) == Disp::SendContentLanded && !facts.landed() {
             let ahead = facts.ahead().unwrap_or(0);
             needs_evidence(
                 ahead,
                 || {
-                    has_own_commit = g.has_own_commit(lr, br, &id);
+                    has_own_commit = facts.recall(|h| &mut h.has_own_commit, |g| g.try_has_own_commit(lr, br, &id)).unwrap_or(false);
                     has_own_commit
                 },
                 || {
-                    only_stacked_base = g.only_stacked_base(lr, br);
+                    only_stacked_base = facts.recall(|h| &mut h.only_stacked_base, |g| g.try_only_stacked_base(lr, br)).unwrap_or(false);
                     only_stacked_base
                 },
                 || {
-                    base_names = g.base_names(lr, &id, 2000);
+                    base_names = facts.recall(|h| &mut h.base_names, |g| g.try_base_names(lr, &id, 2000)).unwrap_or(false);
                     base_names
                 },
             );
         }
-        branches.push(BranchScan {
+        let scanned = BranchScan {
             tip: tip.clone(),
             ahead: facts.ahead.get().copied().flatten(),
             content_on_base: facts.content_on_base(),
@@ -441,8 +504,12 @@ pub fn scan_repo(w: &dyn World, root: &Path, submitted_label: &str, fetch: bool,
             pr_merged_tip: facts.pr.get().cloned().flatten(),
             held,
             br: br.clone(),
-            id,
-        });
+            id: id.clone(),
+        };
+        if let Some(key) = key {
+            memo().insert(slot, (key, facts.held.into_inner()));
+        }
+        branches.push(scanned);
     }
     let wts = w.worktrees();
     let mut orphans = vec![];
