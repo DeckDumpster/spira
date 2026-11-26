@@ -1415,8 +1415,9 @@ fn drop_record(w: &World, c: &Ctx, b: &Batch) {
     }
 }
 
-/// Abandon the batch on spira-lc, which requeues every member to CERTIFIED. Reported, never
-/// fatal: the PR and the record are going either way.
+/// Abandon the batch on spira-lc, which requeues every member: CERTIFIED if certified at an
+/// unchanged tip, otherwise SUBMITTED. Reported, never fatal: the PR and the record are going
+/// either way.
 fn lc_requeue(w: &World, c: &Ctx, b: &Batch, reason: &str) {
     let Some(id) = b.kv.get("batch_id") else {
         return;
@@ -1430,7 +1431,8 @@ fn lc_requeue(w: &World, c: &Ctx, b: &Batch, reason: &str) {
     super::round::retire_menders(w, c, id, reason);
 }
 
-/// Close the PR and hand every member back CERTIFIED; the record goes.
+/// Close the PR and requeue every member (CERTIFIED if certified at an unchanged tip,
+/// otherwise SUBMITTED); the record goes.
 fn close_and_certify(w: &World, c: &Ctx, b: &Batch) {
     w.lib.cancel_runs(&c.s.forge, b.path, &b.branch);
     w.forge.pr_close(&c.s.forge, b.path, &b.pr);
@@ -1473,7 +1475,7 @@ fn capacity_fault(w: &World, c: &Ctx, b: &Batch, marker: &str) -> i32 {
     if failures == 1 {
         w.scripts.mail_operator(
             &format!("Merge queue: {name} waiting on capacity"),
-            &format!("## Note\nMerge queue batch for {name} failed in provision on capacity ({marker}). PR {pr} closed, members returned to CERTIFIED.\n\nThe repo is not re-cut until capacity changes: backing off {wait}s, doubling per consecutive capacity failure up to {max}s. Reported once; further failures are silent.\n"),
+            &format!("## Note\nMerge queue batch for {name} failed in provision on capacity ({marker}). PR {pr} closed, members requeued.\n\nThe repo is not re-cut until capacity changes: backing off {wait}s, doubling per consecutive capacity failure up to {max}s. Reported once; further failures are silent.\n"),
         );
     }
     OK
@@ -1558,14 +1560,14 @@ fn harness_fault(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
     if lost.is_some() {
         w.scripts.mail_operator(
             &format!("Merge queue: {name} runner lost twice on one tip (environment fault)"),
-            &format!("## Environment fault\nMerge queue batch for {name}: the CI runner vanished on {} consecutive runs of PR {pr} (head {}). No test failed and no member was ejected. Members returned to CERTIFIED.\n", retries + 1, b.head),
+            &format!("## Environment fault\nMerge queue batch for {name}: the CI runner vanished on {} consecutive runs of PR {pr} (head {}). No test failed and no member was ejected. Members requeued.\n", retries + 1, b.head),
         );
         return OK;
     }
     w.scripts.mail_operator(
         &format!("Merge queue: {name} CI fault after {} attempts", retries + 1),
         &format!(
-            "## Note\nMerge queue batch for {name} closed after {} failed CI run attempts.\n\nPR {pr} (head {}) has been closed. Members returned to CERTIFIED.\n",
+            "## Note\nMerge queue batch for {name} closed after {} failed CI run attempts.\n\nPR {pr} (head {}) has been closed. Members requeued.\n",
             retries + 1,
             b.head
         ),
@@ -1593,7 +1595,7 @@ fn green(w: &World, c: &Ctx, b: &Batch, base: &str, out: &str) -> i32 {
             w.scripts.mail_operator(
                 &format!("Merge queue: {name} CI head unverifiable (missing head-sha)"),
                 &format!(
-                    "## Note\nMerge queue batch for {name}: CI reported green but named no head-sha, so its result cannot be tied to the sealed batch head.\n\nSealed batch head: {}\n\nTreated the same as a head mismatch. Members returned to CERTIFIED.\n",
+                    "## Note\nMerge queue batch for {name}: CI reported green but named no head-sha, so its result cannot be tied to the sealed batch head.\n\nSealed batch head: {}\n\nTreated the same as a head mismatch. Members requeued.\n",
                     b.head
                 ),
             );
@@ -1602,7 +1604,7 @@ fn green(w: &World, c: &Ctx, b: &Batch, base: &str, out: &str) -> i32 {
             w.scripts.mail_operator(
                 &format!("Merge queue: {name} CI head mismatch"),
                 &format!(
-                    "## Note\nMerge queue batch for {name}: CI result belongs to a different commit.\n\nCI-reported PR head: {ci_head}\nSealed batch head: {}\n\nSomething pushed to the batch branch after sealing. Members returned to CERTIFIED.\n",
+                    "## Note\nMerge queue batch for {name}: CI result belongs to a different commit.\n\nCI-reported PR head: {ci_head}\nSealed batch head: {}\n\nSomething pushed to the batch branch after sealing. Members requeued.\n",
                     b.head
                 ),
             );
@@ -1965,7 +1967,8 @@ fn call_forge_mender(w: &World, c: &Ctx, b: &Batch, faulty: &[(Member, Vec<Strin
 }
 
 /// Eject the members the red names (with the lines), record their tips so no re-cut re-admits
-/// them, and abandon the batch so the survivors return to CERTIFIED.
+/// them, and abandon the batch so the survivors are requeued: CERTIFIED if certified at an
+/// unchanged tip, otherwise SUBMITTED.
 fn eject_red_members(
     w: &World,
     c: &Ctx,
@@ -2126,7 +2129,7 @@ fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
     w.scripts.mail_operator(
         &format!("Merge queue: {name} PR {pr} red in setup, abandoned"),
         &format!(
-            "## Batch abandoned\nBatch PR {pr} for {name} (head {}) is red with no suite annotations ({same}); members are back to CERTIFIED and the next batch is cut.\n\nFailed step: {shown}\nFirst failed step: {}\n\nLog tail:\n{log}\n",
+            "## Batch abandoned\nBatch PR {pr} for {name} (head {}) is red with no suite annotations ({same}); members are requeued and the next batch is cut.\n\nFailed step: {shown}\nFirst failed step: {}\n\nLog tail:\n{log}\n",
             b.head,
             if first.is_empty() { "unknown" } else { &first }
         ),

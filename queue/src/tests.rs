@@ -1141,6 +1141,8 @@ struct FLc {
     rows: RefCell<Result<Vec<LcBeadRow>, String>>,
     /// A bead's row as a fresh read sees it, when it moved since the pool was listed.
     moved_rows: RefCell<std::collections::HashMap<String, LcBeadRow>>,
+    /// The rows an applied `abandon-batch` leaves behind; they become `moved_rows`.
+    requeue_on_abandon: RefCell<std::collections::HashMap<String, LcBeadRow>>,
     certify_refused: Cell<bool>,
     land_refused: Cell<Option<&'static str>>,
     /// Another landing records the batch first: the next record writes LANDED and is refused.
@@ -1212,6 +1214,7 @@ impl Default for FLc {
     fn default() -> Self {
         FLc {
             moved_rows: Default::default(),
+            requeue_on_abandon: Default::default(),
             fresh_refused: RefCell::default(),
             available: Cell::new(false),
             bead_rows: RefCell::default(),
@@ -1500,6 +1503,9 @@ impl Lc for FLc {
             return Err((3, why.into()));
         }
         self.store_step(id, "ABANDONED");
+        self.moved_rows
+            .borrow_mut()
+            .extend(self.requeue_on_abandon.borrow_mut().drain());
         if self.deadline_after_write.get() == Some("abandon-batch") {
             self.deadline_after_write.set(None);
             self.batch_states
@@ -2156,6 +2162,16 @@ impl T {
         self.lc_row(id, "SUBMITTED", tip, since);
         let mut rows = self.lc.rows.borrow_mut();
         rows.as_mut().unwrap().last_mut().unwrap().reason = Some("gate-certifies-nothing".into());
+    }
+    /// `id` is IN_DELIVERY, and the abandon requeues it to `state`.
+    fn lc_requeues_to(&self, id: &str, tip: &str, reason: Option<&str>, state: &str) {
+        self.lc_row(id, "IN_DELIVERY", tip, 1);
+        let mut rows = self.lc.rows.borrow_mut();
+        let row = rows.as_mut().unwrap().last_mut().unwrap();
+        row.reason = reason.map(Into::into);
+        let mut after = row.clone();
+        after.state = state.into();
+        self.lc.requeue_on_abandon.borrow_mut().insert(id.into(), after);
     }
     fn open_record(&self, text: &str) {
         fs::write(self.qfile("open"), text).unwrap();
@@ -2995,12 +3011,19 @@ fn a_forge_harness_fault_eject_leaves_the_member_certified() {
 fn eject_leaving_a_member_abandons_the_batch_row_so_the_survivor_is_not_stranded() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
+    t.lc_requeues_to("sp-b", "tb", Some("delivered-from-submitted"), "SUBMITTED");
     assert_eq!(
         t.run(&["eject", "sp-a", "--reason", "bad"]),
         0,
         "{}",
         t.err()
     );
+    let out = t.out();
+    assert!(out.contains("queue.sh eject: sp-b returned to SUBMITTED"), "{out}");
+    assert!(!out.contains("CERTIFIED"), "{out}");
+    let mails = format!("{:?}", t.lib.mails.borrow());
+    assert!(mails.contains("Survivors requeued: sp-b:SUBMITTED"), "{mails}");
+    assert!(!mails.contains("CERTIFIED"), "{mails}");
     let calls = t.lc.calls.borrow().clone();
     let e = calls
         .iter()
@@ -3249,6 +3272,8 @@ fn abandon_dry_run_prints_the_audit_line_and_changes_nothing() {
     assert!(t
         .out()
         .contains("dry-run: audit line (landing.log): QUEUE ABANDON"));
+    assert!(t.out().contains("dry-run: sp-a: requeue at ta"), "{}", t.out());
+    assert!(t.out().contains("members=sp-a:REQUEUED,sp-b:REQUEUED"), "{}", t.out());
     assert!(t.qfile("open").exists());
     assert!(t.landing_log().is_empty());
 }
@@ -5325,6 +5350,7 @@ fn eject_dry_run_writes_nothing() {
     assert!(t
         .out()
         .contains("dry-run: would return bead sp-a to spira-lc via a Returned event"));
+    assert!(t.out().contains("dry-run: would requeue survivors: sp-b"), "{}", t.out());
     assert!(!t.lc.has("event") && !t.lc.has("eject-member"));
     assert!(t.qfile("open").exists());
     assert!(t.lib.calls.borrow().is_empty());
@@ -5342,7 +5368,7 @@ fn abandon_keeps_reworked_members_archives_and_audits() {
     assert!(t.out().contains("queue.sh abandon: sp-a: left as REWORK"));
     assert!(t
         .out()
-        .contains("queue.sh abandon: sp-b: returned to CERTIFIED"));
+        .contains("queue.sh abandon: sp-b: state unknown (spira-lc could not say)"));
     assert!(t.lib.has("cancel_runs spira/queue/x"));
     assert!(t
         .forge
@@ -5354,10 +5380,33 @@ fn abandon_keeps_reworked_members_archives_and_audits() {
     let a = fs::read_to_string(&archive).unwrap();
     assert!(a.ends_with("reason=dirty PR\nactor=op\n"), "{a}");
     assert!(!t.qfile("open").exists());
-    assert!(t.landing_log().contains("QUEUE ABANDON 1000 repo=spira pr=12 actor=op members=sp-a:REWORK,sp-b:CERTIFIED reason=dirty PR"));
+    assert!(t.landing_log().contains("QUEUE ABANDON 1000 repo=spira pr=12 actor=op members=sp-a:REWORK,sp-b:UNKNOWN reason=dirty PR"));
     assert!(t
         .lib
         .has("event queue.abandoned abandoned PR 12 for spira (actor=op)"));
+}
+
+#[test_id(tzwrw5a)]
+#[test]
+fn abandon_reports_each_member_in_the_state_spira_lc_requeued_it_to() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta sp-b:tb sp-c:tc sp-d:td\nbatch_id=spira-1\nversion=3\nbranch=spira/queue/x\nowner=batcher\n");
+    t.lc_row("sp-a", "REWORK", "ta", 5);
+    t.lc_requeues_to("sp-b", "tb", None, "CERTIFIED");
+    t.lc_requeues_to("sp-c", "tc", Some("delivered-from-submitted"), "SUBMITTED");
+    // REWORK only once requeued: it was returned there, not left there.
+    t.lc_requeues_to("sp-d", "td", None, "REWORK");
+    t.var("SPIRA_QUEUE_ACTOR", "op");
+    assert_eq!(t.run(&["abandon", "--reason", "x"]), 0, "{}", t.err());
+    let (out, log) = (t.out(), t.landing_log());
+    assert!(out.contains("sp-b: returned to CERTIFIED"), "{out}");
+    assert!(out.contains("sp-c: returned to SUBMITTED"), "{out}");
+    assert!(out.contains("sp-d: returned to REWORK"), "{out}");
+    assert!(log.contains("members=sp-a:REWORK,sp-b:CERTIFIED,sp-c:SUBMITTED,sp-d:REWORK"), "{log}");
+    for text in [&out, &log] {
+        assert!(!text.contains("sp-c:CERTIFIED"), "{text}");
+        assert!(!text.contains("sp-c: returned to CERTIFIED"), "{text}");
+    }
 }
 
 #[test_id(tnac5da)]
