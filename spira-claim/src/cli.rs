@@ -1252,16 +1252,24 @@ fn cmd_rune_ready(a: &Args, env: &mut Env) -> Outcome {
     Outcome::ok(mine.len().to_string())
 }
 
-/// `bulk-ready-by-rune`: `bulk_ready_by_rune` (lib.sh:734) plus the former ready-bucket script's own
-/// bucketing ([`ready::bucket`]) over the machine's claimable set ([`machine_claimable`]).
-fn cmd_bulk_ready_by_rune(a: &Args, env: &mut Env) -> Outcome {
-    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
-        return Outcome::usage(e);
-    }
-    let home = match rune_home() {
-        Ok(h) => h,
-        Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-rune: {e}")),
-    };
+/// `bulk-ready-by-rune`'s answer.
+#[derive(Debug, Default)]
+pub struct ReadyByRune {
+    /// `<rune> <n>` lines, empty when no rune has a claim partition.
+    pub lines: String,
+    pub warnings: Vec<String>,
+}
+
+/// `bulk-ready-by-rune` over this process's own config, for a caller that links this crate.
+pub fn bulk_ready_by_rune() -> Result<ReadyByRune, String> {
+    let config = store::load_config().map_err(|e| format!("config: {e}"))?;
+    let env = Env { stdin: &mut std::io::empty(), config, lookup: &|k| std::env::var(k).ok() };
+    ready_by_rune(&Args::parse(&[])?, &env)
+}
+
+/// The former ready-bucket script's bucketing ([`ready::bucket_taken`]) over the claim view.
+fn ready_by_rune(a: &Args, env: &Env) -> Result<ReadyByRune, String> {
+    let home = rune_home()?;
     let mut parts = Vec::new();
     let mut warnings = Vec::new();
     for f in roster(&home, &env.config.runes) {
@@ -1289,27 +1297,29 @@ fn cmd_bulk_ready_by_rune(a: &Args, env: &mut Env) -> Outcome {
         parts.push(ready::RunePart { name: f, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&exc) });
     }
     if parts.is_empty() {
-        return Outcome { code: 0, out: String::new(), err: warnings.join("\n") };
+        return Ok(ReadyByRune { lines: String::new(), warnings });
     }
-    let st = match store(a) {
-        Ok(st) => st,
-        Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-rune: {}", first_line(&e))),
-    };
-    let view = match viewed(a, env, &st) {
-        Ok(v) => v,
-        Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-rune: {}", first_line(&e))),
-    };
+    let st = store(a).map_err(|e| first_line(&e).to_string())?;
+    let view = viewed(a, env, &st).map_err(|e| first_line(&e).to_string())?;
     if let Err(e) = machine_judged(a, env, &st, true) {
         warnings.push(format!("readiness not published: {}", first_line(&e)));
     }
     let counts = ready::bucket_taken(&view.rows, &view.runes, &parts);
-    Outcome {
-        code: 0,
-        out: counts.into_iter().fold(String::new(), |mut s, (name, n)| {
-            s.push_str(&format!("{name} {n}\n"));
-            s
-        }),
-        err: warnings.join("\n"),
+    let lines = counts.into_iter().fold(String::new(), |mut s, (name, n)| {
+        s.push_str(&format!("{name} {n}\n"));
+        s
+    });
+    Ok(ReadyByRune { lines, warnings })
+}
+
+/// `bulk-ready-by-rune`: [`bulk_ready_by_rune`] (lib.sh:734) under the CLI's own flags.
+fn cmd_bulk_ready_by_rune(a: &Args, env: &mut Env) -> Outcome {
+    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
+        return Outcome::usage(e);
+    }
+    match ready_by_rune(a, env) {
+        Ok(r) => Outcome { code: 0, out: r.lines, err: r.warnings.join("\n") },
+        Err(e) => Outcome::cannot_tell(format!("bulk-ready-by-rune: {e}")),
     }
 }
 

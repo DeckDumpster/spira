@@ -1,11 +1,4 @@
-//! Fixed `bash -c` seams into libraries this bead does not own (DESIGN.md §3). Every script text here is
-//! a constant — nothing is ever interpolated into it; the only data that crosses the
-//! boundary travels as argv to the fixed script or as NUL/tab-delimited stdout, the same
-//! discipline `sentinel/src/seams.rs` documents for its own lib.sh seams. `repo_root`
-//! (family U) is no longer one of these seams (sp-k6lku, "wave 4.13") — [`registry`] reads
-//! it in-process through `spira_config::repos`.
-
-use std::process::Command;
+//! What the sweep asks of libraries it does not own (DESIGN.md §3), all in process.
 
 /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave 4.13"),
 /// resolved once, in-process — no `bash -c '. lib.sh; repo_root ...'` subprocess, and no
@@ -44,16 +37,9 @@ pub fn pipeline_probe(_lib_sh_dir: &str, ledger_path: Option<&str>) -> Option<Pi
     Some(probe_from(&roster, &count, ready.as_deref()))
 }
 
-/// `spira-claim bulk-ready-by-rune`'s `<rune> <n>` lines; `None` when it did not answer.
+/// `bulk-ready-by-rune`'s `<rune> <n>` lines; `None` when it could not answer.
 fn bulk_ready_by_rune() -> Option<String> {
-    let claim = spira_config::release_env::tool("spira-claim").ok()?;
-    let out = crate::deadline::output(
-        "dwarves alive / ready (bd)",
-        // FORK-EDGE: needs spira_claim::bulk_ready_by_rune as a library fn (it lives in spira-claim's cli.rs)
-        Command::new(claim).arg("bulk-ready-by-rune").envs(spira_config::release_env::child_path_env_for_process().ok()?),
-    )
-    .ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    spira_claim::cli::bulk_ready_by_rune().ok().map(|r| r.lines)
 }
 
 /// The probe from the roster (space separated, priority order), a per-rune count, and the

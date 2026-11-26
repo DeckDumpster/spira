@@ -3338,6 +3338,7 @@ dependencies = [
  "install",
  "libc",
  "reconciler-engine",
+ "release",
  "runtime",
  "serde",
  "serde_json",

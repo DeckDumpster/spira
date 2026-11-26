@@ -55,11 +55,15 @@ bash's `[ -r "$X" ] || { log …; exit 0; }` guards).
 
 ## 3. What moved, and what stayed bash
 
-`incident.sh`, `ctrl.sh`, `world.sh`, `testenv`, `branch-guard.sh`,
-`release`, `cockpit/moot-sweep.sh` are **not in this bead's scope** (other rewrite waves, or
+`incident.sh`, `ctrl.sh`, `world.sh`, `testenv`,
+`cockpit/moot-sweep.sh` are **not in this bead's scope** (other rewrite waves, or
 not yet scheduled) and stay bash/binary dependencies called exactly as the bash called them:
 by bare name (or `SPIRA_*_SH` override) on the release PATH, same argv, same env, same
 stdin/stdout contract. Repointing those is each script's own wave.
+
+The sweep starts none of these on an idle pass: the branch-guard audit is `branch_guard`
+(`branch-guard.sh` keeps the git-hook verbs), release status and the ready-by-rune count are
+the `release` and `spira-claim` libraries, and a unit's cgroup is read through the units port.
 
 `world.sh`'s `TIMER_PRIORITY` array and `ctrl.sh`'s suspension map (`ctrl_load_suspended`)
 are bash-library state with no CLI form; `--disabled-timer-check` gets them through a fixed

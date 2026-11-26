@@ -133,7 +133,6 @@ pub fn sweep_cfg() -> Result<sweep::Cfg, String> {
         closed_stranded_warn_h: getenv_i64("SPIRA_CLOSED_STRANDED_WARN_H", 48),
         drain_warn_mins: getenv_i64("SPIRA_DRAIN_WARN_MINS", 15),
         idle_while_ready_n: getenv_i64("SPIRA_IDLE_WHILE_READY_N", 5).max(0) as usize,
-        systemctl: getenv("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()),
         units: runtime::units::host(getenv("SPIRA_SYSTEMCTL").as_deref()),
         prompt_file: getenv("SPIRA_WATCH_PROMPT_FILE").map(PathBuf::from),
         lapsed_dir: getenv("SPIRA_LAPSED_DIR").map(PathBuf::from),
@@ -149,7 +148,6 @@ pub fn sweep_cfg() -> Result<sweep::Cfg, String> {
             None => spira_config::release_env::tool("resolve")?,
         },
         lc: spira_store::lc_call::LcClient::configured()?,
-        branch_guard_sh: getenv("SPIRA_BRANCH_GUARD_SH"),
         lc_bin: spira_store::lifecycle_row::lc_bin()?,
     })
 }

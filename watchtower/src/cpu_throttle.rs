@@ -7,6 +7,9 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
+
+use runtime::units::{UnitHandle, Units};
 
 pub struct Cfg {
     pub units: Vec<String>,
@@ -14,7 +17,7 @@ pub struct Cfg {
     pub warn_pct: i64,
     pub min_periods: i64,
     pub cgroup_root: String,
-    pub systemctl: String,
+    pub manager: Arc<dyn Units>,
 }
 
 pub fn units_of(configured: &str) -> Vec<String> {
@@ -104,15 +107,7 @@ pub fn render_state(m: &BTreeMap<String, Sample>) -> String {
 }
 
 fn unit_sample(cfg: &Cfg, unit: &str) -> Option<Sample> {
-    // FORK-EDGE: needs UnitFacts.control_group (systemctl show -p ControlGroup)
-    let out = spira_config::bounded::bounded(&cfg.systemctl)
-        .args(["--user", "show", "-p", "ControlGroup", "--value", unit])
-        .output()
-        .ok()?;
-    let cg = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if !out.status.success() || cg.is_empty() {
-        return None;
-    }
+    let cg = cfg.manager.detail(&UnitHandle::named(unit)).ok()?.control_group.filter(|c| !c.is_empty())?;
     let path = Path::new(&cfg.cgroup_root).join(cg.trim_start_matches('/')).join("cpu.stat");
     parse_cpu_stat(&std::fs::read_to_string(path).ok()?)
 }

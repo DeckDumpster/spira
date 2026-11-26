@@ -213,6 +213,9 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
     let trap = format!("#!/bin/sh\necho \"spira-lc $*\" >> {}\nexit 1\n", programs.display());
     testkit::write_exe(release.join("bin/spira-lc"), &trap);
     testkit::write_exe(bin.join("spira-lc"), &trap);
+    testkit::write_exe(bin.join("branch-guard.sh"), "#!/bin/sh\n");
+    testkit::write_exe(release.join("bin/resolve"), "#!/bin/sh\n");
+    std::fs::write(run_dir.join("dwarf-ledger.log"), "").unwrap();
     let incident = dir.join("incident.sh");
     testkit::write_exe(&incident, "#!/bin/sh\nexit 0\n");
     let psi = dir.join("psi");
@@ -515,6 +518,20 @@ pub fn touch(path: &Path, secs_after_epoch: u64) {
     let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
     f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs_after_epoch)).unwrap();
 }
+pub const SWEEP_PROGRAMS: [&str; 5] = ["bash", "release", "spira-claim", "systemctl", "spira-config"];
+
+pub fn started_by_the_sweep(f: &Fixture) -> Vec<String> {
+    let all = std::fs::read_to_string(&f.started).unwrap_or_default();
+    all.lines().filter(|l| SWEEP_PROGRAMS.iter().any(|p| l.split_whitespace().next() == Some(*p))).map(str::to_string).collect()
+}
+
+pub const GUARD_TIP_READ: &str = "log -1 --format=%ae%x00%P%x00%h%x00%s";
+
+pub fn guard_reads(lines: &[String], repo: &Path) -> usize {
+    let tip = format!("-C {} {GUARD_TIP_READ}", repo.display());
+    lines.iter().filter(|l| l.contains(&tip)).count()
+}
+
 pub const WATCHTOWER_PROGRAMS: [&str; 5] = ["systemctl", "spira-config", "target-reap", "timeout", "watchd"];
 
 pub fn started_by_the_watchtower_checks(f: &Fixture) -> Vec<String> {
