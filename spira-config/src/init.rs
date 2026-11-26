@@ -363,7 +363,7 @@ mod tests {
         parse_answers(
             concat!(
                 "# a box\ninstance = acc\nid_prefix = sp\nhome_repo = scratch\ndb = b/db\nrun = b/run\nreleases = \"b/rel\"\nspira.dolt_data = b/dolt\noperated = 0\n",
-                "bd = b/bin/bd\nspira.metrics_flush_minutes = 60\n",
+                "bd = b/bin/bd\nspira.metrics_flush_minutes = 60\nspira.gate_target_cap_mib = 81920\n",
             ),
         )
         .unwrap()

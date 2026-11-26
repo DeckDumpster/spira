@@ -228,6 +228,7 @@ fn ctx() -> Ctx {
         ("SPIRA_GATE_BUILD_STALL", "300"),
         ("SPIRA_GATE_UNIT_MAX_CRATES", "7"),
         ("SPIRA_GATE_BUILDER_DIR_WAIT_SECS", "120"),
+        ("SPIRA_GATE_TARGET_CAP_MIB", "12288"),
         ("SPIRA_UNIT_TEST_DEADLINE_SECS", "60"),
         ("SPIRA_UNIT_TEST_DEADLINE_PERIODS", "2"),
     ] {
@@ -1098,6 +1099,18 @@ fn a_path_tail_entry_inside_a_release_is_no_verdict_naming_it_and_nothing_runs()
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=release-unset"), "{}", f.verdict_line());
     assert!(f.stderr().contains("spira-releases"), "{}", f.stderr());
+    assert!(f.ran.borrow().is_empty(), "no gate command ran");
+}
+
+#[test_id(tek2k23)]
+#[test]
+fn an_unset_target_cap_is_no_verdict_naming_it_and_nothing_runs() {
+    let f = Fake::new();
+    f.ancestor.set(true);
+    f.put_var("SPIRA_GATE_TARGET_CAP_MIB", "");
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=target-cap-unset"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("SPIRA_GATE_TARGET_CAP_MIB"), "{}", f.stderr());
     assert!(f.ran.borrow().is_empty(), "no gate command ran");
 }
 

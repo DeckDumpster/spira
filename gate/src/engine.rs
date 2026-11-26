@@ -359,7 +359,10 @@ impl<'w, W: World> Trial<'w, W> {
         self.s.repo = repo.clone();
         self.s.run = ctx.var("SPIRA_RUN").to_string();
         self.s.target_root = ctx.var("SPIRA_GATE_TARGET_ROOT").to_string();
-        self.s.target_cap_mib = Self::target_limits(&ctx).cap_mib;
+        match Self::target_limits(&ctx) {
+            Ok(lim) => self.s.target_cap_mib = lim.cap_mib,
+            Err(e) => return v(NOVERDICT, "target-cap-unset", format!("gate: {e} — refusing to judge")),
+        }
         self.s.gate_log = PathBuf::from(
             ctx.var_or("SPIRA_GATE_LOG", &format!("{}/gate.log", self.s.run))
                 .to_string(),
@@ -2022,7 +2025,7 @@ impl<'w, W: World> Trial<'w, W> {
         format!("gate: {what}\n{}", self.w.target_room(&self.s.target_root, &self.s.run))
     }
 
-    fn target_limits(ctx: &Ctx) -> crate::target::Limits {
+    fn target_limits(ctx: &Ctx) -> Result<crate::target::Limits, String> {
         crate::target::Limits::from_vars(
             ctx.var("SPIRA_GATE_TARGET_CAP_MIB"),
             ctx.var("SPIRA_TMPFS_SHED_FREE_MIB"),
@@ -2045,7 +2048,10 @@ impl<'w, W: World> Trial<'w, W> {
         if let Some(e) = &self.s.cache_refusal {
             return Err(v(NOVERDICT, "no-build-cache", format!("gate: {e} — refusing to judge")));
         }
-        let lim = Self::target_limits(ctx);
+        let lim = match Self::target_limits(ctx) {
+            Ok(l) => l,
+            Err(e) => return Err(v(NOVERDICT, "target-cap-unset", format!("gate: {e} — refusing to judge"))),
+        };
         let short = |e: String| Err(v(NOVERDICT, "scratch-short", format!("{e}\ngate: the scratch target could not be prepared on the host, not a fault in the branch.")));
         let builder = if in_builders_dir { self.builders_dir(ctx) } else { None };
         match w.target_on_tmpfs(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim, builder.as_ref(), &self.s.repo_name) {

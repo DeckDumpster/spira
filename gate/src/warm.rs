@@ -45,6 +45,25 @@ pub fn shed(root: &Path) {
     let _ = fs::remove_dir_all(root.join(POOL));
 }
 
+/// Every repository's unclaimed pooled entries except those under `skip`, oldest first.
+fn pooled_oldest_first(root: &Path, skip: Option<&Path>) -> Vec<PathBuf> {
+    let mut v: Vec<(SystemTime, PathBuf)> = fs::read_dir(root.join(POOL))
+        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| Some(p.as_path()) != skip && p.is_dir()).collect::<Vec<_>>())
+        .unwrap_or_default()
+        .into_iter()
+        .flat_map(|d| fs::read_dir(d).map(|rd| rd.flatten().map(|e| e.path()).collect::<Vec<_>>()).unwrap_or_default())
+        .filter(|p| !p.file_name().is_some_and(|n| n.to_string_lossy().contains(".claimed")))
+        .map(|p| (fs::metadata(&p).and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH), p))
+        .collect();
+    v.sort();
+    v.into_iter().map(|(_, p)| p).collect()
+}
+
+/// Remove the oldest unclaimed pooled entry of any repository; false when there is none.
+pub fn evict_oldest(root: &Path) -> bool {
+    pooled_oldest_first(root, None).first().is_some_and(|p| fs::remove_dir_all(p).is_ok())
+}
+
 /// Move `dest` (a gate tree's finished `debug` directory) into the pool, recorded as built from
 /// `commit` in `tree`. A directory with no compiled dependencies, or no commit, is not worth keeping.
 pub fn donate(root: &Path, repo: &str, dest: &Path, commit: &str, tree: &Path) -> bool {
@@ -227,19 +246,7 @@ pub fn bound(root: &Path, repo: &str, cap_bytes: u64) -> String {
     if let Some(newest) = entries(root, repo).pop() {
         spira_config::build_dir::trim(&newest, now, now);
     }
-    let others = || {
-        let mine = repo_pool(root, repo);
-        let mut v: Vec<(SystemTime, PathBuf)> = fs::read_dir(root.join(POOL))
-            .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| *p != mine && p.is_dir()).collect::<Vec<_>>())
-            .unwrap_or_default()
-            .into_iter()
-            .flat_map(|d| fs::read_dir(d).map(|rd| rd.flatten().map(|e| e.path()).collect::<Vec<_>>()).unwrap_or_default())
-            .filter(|p| !p.to_string_lossy().contains(".claimed"))
-            .map(|p| (fs::metadata(&p).and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH), p))
-            .collect();
-        v.sort();
-        v.into_iter().map(|(_, p)| p).collect::<Vec<_>>()
-    };
+    let others = || pooled_oldest_first(root, Some(&repo_pool(root, repo)));
     let mut older: Vec<PathBuf> = entries(root, repo).into_iter().rev().skip(1).collect();
     older.extend(others());
     for old in older {
@@ -283,6 +290,25 @@ mod tests {
     fn built(dir: &Path) {
         fs::create_dir_all(dir.join("deps")).unwrap();
         fs::write(dir.join("deps/libx.rlib"), "x").unwrap();
+    }
+
+    #[test_id(tytg7je)]
+    #[test]
+    fn evict_oldest_removes_one_unclaimed_entry_of_any_repository_oldest_first() {
+        let t = testkit::TempDir::new("gate-warm-evict");
+        let root = t.path();
+        assert!(!evict_oldest(root), "an absent pool has nothing to evict");
+        for (i, repo) in ["a", "b"].into_iter().enumerate() {
+            let d = root.join(format!("t{i}/debug"));
+            built(&d);
+            assert!(donate(root, repo, &d, "c", Path::new("t")));
+        }
+        let (ea, eb) = (entries(root, "a")[0].clone(), entries(root, "b")[0].clone());
+        let claimed = PathBuf::from(format!("{}.claimed-1", ea.display()));
+        fs::rename(&ea, &claimed).unwrap();
+        assert!(evict_oldest(root));
+        assert!(!eb.exists() && claimed.is_dir(), "the claimed entry is never evicted");
+        assert!(!evict_oldest(root));
     }
 
     #[test_id(tco6vnu)]
