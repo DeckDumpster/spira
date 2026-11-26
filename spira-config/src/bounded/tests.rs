@@ -31,7 +31,7 @@
     #[test_id(tzihn38)]
     #[test]
     fn expiry_kills_the_process_group() {
-        let pid = expire_when_ready("sleep 30 & echo $!; wait", false);
+        let pid = expire_when_ready("sleep 300 & echo $!; wait", false);
         let gone = (0..3000).any(|_| {
             let alive = std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC))
                 .map(|s| !s.rsplit(") ").next().unwrap_or("").starts_with('Z'))
@@ -95,7 +95,8 @@
     /// Runs `script`, waits for the pid it prints once its processes are in place, then expires it.
     fn expire_when_ready(script: &str, tree: bool) -> String {
         let mut child = bounded_for("sh", "0").args(["-c", script]).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
-        // One line only: the sleepers hold the pipe open, so EOF is 30 s away.
+        // One line only: the sleepers hold the pipe open, so reading to EOF would wait for them.
+        // Each sleeps 300 s to outlast the 30 s poll caps, so only a kill can end it in time.
         let mut line = String::new();
         BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
         let pid = line.trim().to_string();
@@ -108,7 +109,7 @@
     // These tests spawn `sh` because a session and group kill is only provable on real processes
     // (law-a-unit-test-calls-no-binary's written exception).
     fn setsid_grandchild(kill_tree: bool) -> (String, bool) {
-        let pid = expire_when_ready("setsid sh -c 'echo $$; exec sleep 30' & sleep 30", kill_tree);
+        let pid = expire_when_ready("setsid sh -c 'echo $$; exec sleep 300' & sleep 300", kill_tree);
         let gone = if kill_tree {
             (0..3000).any(|_| {
                 let a = alive(&pid);
