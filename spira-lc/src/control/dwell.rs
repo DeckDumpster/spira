@@ -45,7 +45,7 @@ pub const WAITING: [BeadState; 6] = [
 pub const KINDS: [&str; 4] = ["Claim", "Submit", "Deliver", "Delivered"];
 
 /// Revisions read per chunk of the newest-first audit scan, while the chunks hold audits.
-const CHUNK_REVS: u64 = 500;
+pub(super) const CHUNK_REVS: u64 = 500;
 /// Items per range read inside a chunk.
 const PAGE: usize = 1_000;
 /// The most audit keys one sweep's [`Store::warm_dwell`] reads: a few chunks, so the index
@@ -366,7 +366,7 @@ impl<B: Backend> Store<B> {
     }
 
     /// Advances the index off the request path: forward to the head, then back in
-    /// [`CHUNK_REVS`] chunks until it reaches `now - window_s`, the start of the log, or
+    /// `dwell_chunk_revs` chunks until it reaches `now - window_s`, the start of the log, or
     /// `max_scanned` audit keys are read in this call. Whether the index now covers the window,
     /// and the keys read.
     pub fn warm_dwell(&self, now: i64, window_s: u64, max_scanned: usize) -> Result<(bool, usize)> {
@@ -382,7 +382,8 @@ impl<B: Backend> Store<B> {
             self.fold_forward(&mut idx, head, FORWARD_REVS, &mut known, &mut scanned)?;
         }
         let mut repo = |id: &str| self.repo_at(&mut known, head, id);
-        let mut span = CHUNK_REVS;
+        let chunk = self.dwell_chunk_revs;
+        let mut span = chunk;
         while idx.high_rev >= head && idx.horizon > floor && idx.low_rev > 0 && scanned < max_scanned {
             let hi = idx.low_rev;
             let lo = hi.saturating_sub(span);
@@ -391,7 +392,7 @@ impl<B: Backend> Store<B> {
             idx.reached(oldest);
             // Revisions with no audit (lock renewals, a reopen's jump, the import's baseline)
             // are crossed in doubling strides, so a gap costs a few reads, not one per chunk.
-            span = if oldest.is_some() { CHUNK_REVS } else { (span * 2).min(CHUNK_REVS * 64) };
+            span = if oldest.is_some() { chunk } else { (span * 2).min(chunk * 64) };
         }
         let (complete, _) = Self::coverage(&mut idx, head, now, window_s);
         Ok((complete, scanned))

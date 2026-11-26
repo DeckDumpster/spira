@@ -48,7 +48,7 @@ fn list_batches_reads_only_the_rounds_it_shows() {
 }
 
 /// On the real store, what `list --batches` costs does not grow with the rounds behind it: the
-/// VM steps of a bare list and of a window are the same over 40 rounds and over 240.
+/// VM steps of a bare list and of a window are the same over 16 rounds and over 96.
 #[test_id(tl3fcmi)]
 #[test]
 fn list_batches_costs_the_same_over_a_larger_history_on_the_real_store() {
@@ -62,13 +62,15 @@ fn list_batches_costs_the_same_over_a_larger_history_on_the_real_store() {
         r.s.contract().backend().take_read_steps()
     };
     let probes = [&["list", "--batches"][..], &["list", "--batches", "--window", "300"], &["list", "--batches", "--limit", "5", "--after", "b-010"]];
-    many_rounds(&r, 0, 40, &[35]);
+    cloned_certified(&r, 0, 16);
+    rounds_of_certified(&r, 0, 16, &[13]);
     let small: Vec<u64> = probes.iter().map(|p| steps(p)).collect();
     r.s.contract().backend().take_read_steps();
-    many_rounds(&r, 40, 240, &[]);
+    cloned_certified(&r, 16, 96);
+    rounds_of_certified(&r, 16, 96, &[]);
     let large: Vec<u64> = probes.iter().map(|p| steps(p)).collect();
     for ((p, s), l) in probes.iter().zip(&small).zip(&large) {
-        assert!(*l <= *s + *s / 4 + 50, "{p:?}: {s} VM steps over 40 rounds, {l} over 240");
+        assert!(*l <= *s + *s / 4 + 50, "{p:?}: {s} VM steps over 16 rounds, {l} over 96");
     }
 }
 

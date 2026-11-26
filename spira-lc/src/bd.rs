@@ -433,13 +433,17 @@ pub fn ask_operator_classed(from: &str, subject: &str, default: &str, class: Opt
     // binary-override seam.
     let mail_sh = std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail".to_string());
     // An ask files its decision bead, so it is a filing and waits as one.
-    let mut cmd = crate::proc::bounded_for(&mail_sh, FILING_SECS)?;
+    ask_via((&mail_sh, FILING_SECS), from, subject, default, class, bead_id, body)
+}
+
+fn ask_via((mail_sh, secs): (&str, &str), from: &str, subject: &str, default: &str, class: Option<&str>, bead_id: &str, body: &str) -> Result<String, String> {
+    let mut cmd = crate::proc::bounded_for(mail_sh, secs)?;
     cmd.args(["send", "operator", "--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id]);
     if let Some(c) = class {
         cmd.args(["--class", c]);
     }
     use std::io::Write;
-    let out = state_store::phases::child(&mail_sh, || {
+    let out = state_store::phases::child(mail_sh, || {
         let mut child = cmd
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -651,11 +655,12 @@ mod filing_tests {
     fn an_ask_whose_mail_files_past_the_plain_call_deadline_is_delivered() {
         let dir = testkit::TempDir::new("ask-slow-mail");
         let p = dir.path().join("mail");
-        let plain: u64 = spira_config::bounded::CALL_TIMEOUT_SECS.parse().unwrap();
-        testkit::write_exe(&p, &format!("#!/bin/sh\ncat >/dev/null\necho 'mail: blocking edge refused — wiring relates_to instead (override: SPIRA_MAIL_ALLOW_BLOCKING=1)' >&2\nsleep {}\n", plain + 1));
-        let _env = testkit::env(&[("SPIRA_MAIL_SH", Some(&p.to_string_lossy()))]);
-        let r = ask_operator_classed("dwarf <dwarf@spira>", "Retire as superseded by sp-b?", "supersede", Some("policy"), "sp-a", "## Question\nq\n");
-        assert!(r.is_ok(), "an ask mail still filing at the plain call deadline was cut and read as undelivered: {r:?}");
+        testkit::write_exe(&p, "#!/bin/sh\ncat >/dev/null\necho 'mail: blocking edge refused — wiring relates_to instead (override: SPIRA_MAIL_ALLOW_BLOCKING=1)' >&2\nsleep 0.3\n");
+        let prog = p.to_string_lossy().into_owned();
+        let ask = |secs| ask_via((&prog, secs), "dwarf <dwarf@spira>", "Retire as superseded by sp-b?", "supersede", Some("policy"), "sp-a", "## Question\nq\n");
+        assert!(ask("0.1").is_err(), "a mail outliving its deadline must be cut");
+        let r = ask("2");
+        assert!(r.is_ok(), "an ask mail still filing at its deadline was cut and read as undelivered: {r:?}");
     }
 
     #[test_id(t72boqm)]

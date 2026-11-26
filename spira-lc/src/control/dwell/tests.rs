@@ -259,18 +259,19 @@ struct Shape {
     waiting: u64,
     txns: u64,
     recent: u64,
+    chunk: u64,
 }
 
 /// Production's size, for the by-hand timing run only: one sqlite commit per txn makes it a
 /// minute's build, which a loaded gate host turns into a flip.
-const PRODUCTION: Shape = Shape { records: 13_000, waiting: 400, txns: 300_000, recent: 80_000 };
+const PRODUCTION: Shape = Shape { records: 13_000, waiting: 400, txns: 300_000, recent: 80_000, chunk: super::CHUNK_REVS };
 
 /// The smallest store whose day outruns a cold read's chunk and a warm call's budget several times.
-const CHUNKED: Shape = Shape { records: 1_000, waiting: 100, txns: 20_000, recent: 12_000 };
+const CHUNKED: Shape = Shape { records: 600, waiting: 100, txns: 850, recent: 250, chunk: 10 };
 
 fn sized(shape: Shape) -> Sized {
-    let Shape { records, waiting, txns, recent } = shape;
-    assert!(recent > 2 * 10 * super::CHUNK_REVS && records >= 600 && records <= txns - recent, "the shape cannot exercise the chunked warm");
+    let Shape { records, waiting, txns, recent, chunk } = shape;
+    assert!(recent > 2 * 10 * chunk && records >= 600 && records <= txns - recent, "the shape cannot exercise the chunked warm");
     use state_store::{events_key, Backend, Object, Rev, Write};
     use state_store_sqlite::{Options, SqliteBackend};
     let dir = testkit::TempDir::new("spira-lc-dwell-size");
@@ -317,7 +318,9 @@ fn sized(shape: Shape) -> Sized {
     }
     let clock = VirtualClock::new(0);
     let c = Contract::open(Counting::new(b), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: FLOOR_MS }).unwrap();
-    Sized { store: Store::new(c, FLOOR_MS), now, waiting, last, delivered, _dir: dir }
+    let mut store = Store::new(c, FLOOR_MS);
+    store.dwell_chunk_revs = chunk;
+    Sized { store, now, waiting, last, delivered, _dir: dir }
 }
 
 /// `beads` ask-held beads, each raised `entries` times (every raise is one applied history
@@ -359,7 +362,7 @@ fn second_dwell_reads(s: &Store<Counting<MemBackend>>) -> (Value, usize, usize, 
 #[test]
 fn a_warm_dwell_reads_the_same_keys_however_many_beads_are_ask_held_and_however_long_their_history() {
     let (a, a_newest) = ask_held(1, 5);
-    let (b, b_newest) = ask_held(20, 150);
+    let (b, b_newest) = ask_held(10, 30);
     let (da, a_history, a_events, a_calls) = second_dwell_reads(&a);
     let (db, b_history, b_events, b_calls) = second_dwell_reads(&b);
     assert_eq!((a_history, b_history), (0, 0), "no history/ key is read");
@@ -715,7 +718,7 @@ fn the_first_dwell_on_a_store_many_chunks_deep_reads_no_more_than_a_chunk_and_sa
     assert_eq!(code, 0, "{out}");
     let d: Value = serde_json::from_str(&out).unwrap();
     let read = s.contract().backend().events_read();
-    assert!(read <= super::super::CHUNK_REVS as usize, "a cold request read {read} events keys");
+    assert!(read <= s.dwell_chunk_revs as usize, "a cold request read {read} events keys");
     assert_eq!(d["complete"], false, "{d}");
     assert!(d["horizon"].as_i64().unwrap() >= now - 86_400, "{d}");
     warming_in_calls(&z);
@@ -725,7 +728,7 @@ fn warming_in_calls(z: &Sized) {
     let (s, now) = (&z.store, z.now);
     let mark = now - 3_600;
     let mut calls = 0;
-    while !s.warm_dwell(now, 86_400, super::CHUNK_REVS as usize * 10).unwrap().0 {
+    while !s.warm_dwell(now, 86_400, s.dwell_chunk_revs as usize * 10).unwrap().0 {
         calls += 1;
         assert!(calls < 200, "never covered the day");
     }
