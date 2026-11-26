@@ -700,7 +700,7 @@ pub const NEXTEST_CONFIG: &str = "target/gate-unit-nextest.toml";
 /// Where the trial's deny list is written, relative to the trial tree.
 pub const DENY_LIST: &str = "target/gate-deny-list";
 
-/// The unit nextest run's prefix: one sandbox for the whole run, so each test's own runner finds
+/// Prefixes every test command: one sandbox for the whole run, so each test's own runner finds
 /// itself held instead of building a bubblewrap of its own.
 const AROUND: &str = "tools/test-sandbox/runner --around";
 
@@ -721,7 +721,7 @@ fn labelled_test_commands(crates: &[String], targets: Targets, _deny: &tier::Den
         cmds.push(("unit", format!("{AROUND} cargo {}", tier::unit_words(NEXTEST_CONFIG, None, sel, filter))));
     }
     if targets.test {
-        cmds.push(("integration", format!("cargo {}", tier::integration_words(NEXTEST_CONFIG, None, sel))));
+        cmds.push(("integration", format!("{AROUND} cargo {}", tier::integration_words(NEXTEST_CONFIG, None, sel))));
     }
     cmds
 }
@@ -774,7 +774,7 @@ pub fn unit_build_argvs(crates: &[String], test_bins: &[String]) -> Vec<Vec<Stri
 }
 
 fn rerun_command(rerun: &str) -> String {
-    format!("cargo {}", spira_config::unit_tier::rerun_words(None, rerun))
+    format!("{AROUND} cargo {}", spira_config::unit_tier::rerun_words(None, rerun))
 }
 
 fn sh_quote(v: &str) -> String {
@@ -1555,7 +1555,7 @@ mod tests {
         let [unit, integ] = two(&unit_test_commands(&sel, ALL, &Default::default()));
         let w = |c: &str| c.replace("-p gate -p queue", "--workspace");
         assert_eq!(w(&unit), format!("{AROUND} cargo {}", t::unit_words(NEXTEST_CONFIG, None, "--workspace", t::LIB_BINS)));
-        assert_eq!(w(&integ), format!("cargo {}", t::integration_words(NEXTEST_CONFIG, None, "--workspace")));
+        assert_eq!(w(&integ), format!("{AROUND} cargo {}", t::integration_words(NEXTEST_CONFIG, None, "--workspace")));
     }
 
     #[test_id(tdtqizl)]
@@ -1578,14 +1578,25 @@ mod tests {
         assert!(!t.1.contains(" -j ") && !t.1.contains("-j4"), "{}", t.1);
     }
 
-    #[test_id(t82z1cw)]
+    #[test_id(tiy42j5)]
     #[test]
-    fn only_the_unit_nextest_run_goes_through_one_sandbox() {
+    fn every_nextest_run_goes_through_one_sandbox_each() {
         let [_, t] = unit_commands(&["gate".into()], ALL, 4, &Default::default());
         let cmds: Vec<&str> = t.1.split("; ").collect();
         let run = |needle: &str| *cmds.iter().find(|c| c.contains(needle) && !c.contains(SUBSTEP_MARK)).unwrap();
         assert!(run("nextest run").contains("tools/test-sandbox/runner --around cargo nextest run"), "{}", t.1);
-        assert!(!run("--test '*'").contains("test-sandbox/runner"), "{}", t.1);
+        assert!(run("--test '*'").contains("tools/test-sandbox/runner --around cargo nextest run"), "{}", t.1);
+    }
+
+    #[test_id(tq1fjip)]
+    #[test]
+    fn the_integration_command_and_every_rerun_enter_the_test_sandbox_once() {
+        let cmds = unit_test_commands(&["gate".into()], ALL, &Default::default());
+        let integ = cmds.iter().find(|c| c.contains("--test '*'")).unwrap();
+        assert!(integ.starts_with("tools/test-sandbox/runner --around cargo"), "{integ}");
+        let sel = ["gate".to_string()];
+        let rerun = unit_rerun_command(&sel, ALL, &[], &["-p gate --lib".into()], &["t::x".into()]);
+        assert!(rerun.starts_with("tools/test-sandbox/runner --around cargo"), "{rerun}");
     }
 
     #[test_id(t9yar3b)]
@@ -1756,7 +1767,7 @@ mod tests {
         assert_eq!(b.1, "CARGO_BUILD_JOBS=4 cargo test --no-run --timings --features integration --config profile.dev.incremental=false -p gate -p queue");
         assert_eq!(t.0, "test");
         assert!(t.1.contains("; _g_t=$SECONDS; tools/test-sandbox/runner --around cargo nextest run --config-file target/gate-unit-nextest.toml --no-fail-fast --features integration --config profile.dev.incremental=false -p gate -p queue --lib --bins; _g_r=$?; echo \"gate-substep unit secs=$((SECONDS-_g_t))\"; "), "{}", t.1);
-        assert!(t.1.contains("; _g_t=$SECONDS; cargo nextest run --config-file target/gate-unit-nextest.toml --no-fail-fast --features integration --config profile.dev.incremental=false -p gate -p queue --test '*'; _g_r=$?; echo \"gate-substep integration secs=$((SECONDS-_g_t))\"; [ \"$_g_rc\" -ne 0 ] || _g_rc=$_g_r; exit $_g_rc"), "{}", t.1);
+        assert!(t.1.contains("; _g_t=$SECONDS; tools/test-sandbox/runner --around cargo nextest run --config-file target/gate-unit-nextest.toml --no-fail-fast --features integration --config profile.dev.incremental=false -p gate -p queue --test '*'; _g_r=$?; echo \"gate-substep integration secs=$((SECONDS-_g_t))\"; [ \"$_g_rc\" -ne 0 ] || _g_rc=$_g_r; exit $_g_rc"), "{}", t.1);
     }
 
     #[test_id(tsffy7m)]
@@ -1766,7 +1777,7 @@ mod tests {
         let line = reproduce_line(&env, "-p gate --lib");
         assert_eq!(
             line,
-            "env -i A='x y'\\''z' PATH='bin' cargo test --no-fail-fast --features integration --config profile.dev.incremental=false -p gate --lib"
+            "env -i A='x y'\\''z' PATH='bin' tools/test-sandbox/runner --around cargo test --no-fail-fast --features integration --config profile.dev.incremental=false -p gate --lib"
         );
     }
 
