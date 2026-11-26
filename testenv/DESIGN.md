@@ -844,7 +844,7 @@ commit, readers spin on the PENDING byte while a writer commits) and the storage
 Sampled while trials ran: `podman exec <idle container> true` 0.3–0.8 s quiet, **24–73 s**
 loaded, `podman ps` up to 130 s; an strace of one 67 s exec shows 37 `fdatasync`s on
 `db.sql` (7.5 s) and a 53 s blocking wait on `layers.lock`. The setup paid that toll once per
-step: stage, configure, four suspends, install, one `command -v` per requirement token and
+step: stage, configure, three suspends, install, one `command -v` per requirement token and
 the testdb template — 7 + k execs.
 
 **Contract.** The setup is **one** `podman exec`: the host links its own executable into
