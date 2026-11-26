@@ -6,17 +6,36 @@ extern crate spira_test_id;
 use std::path::Path;
 use std::process::Command;
 
-fn run(dir: &Path, prog: &str, args: &[&str]) -> String {
-    let o = Command::new(prog)
-        .current_dir(dir)
-        .env_remove("CARGO_TARGET_DIR")
-        .args(args)
-        .env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t")
-        .env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t")
-        .output()
-        .unwrap();
-    assert!(o.status.success(), "{prog} {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+fn checked(c: &mut Command) -> String {
+    let o = c.output().unwrap();
+    assert!(o.status.success(), "{c:?}: {}", String::from_utf8_lossy(&o.stderr));
     format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))
+}
+
+fn run(dir: &Path, prog: &str, args: &[&str]) -> String {
+    checked(
+        Command::new(prog)
+            .current_dir(dir)
+            .env_remove("CARGO_TARGET_DIR")
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t"),
+    )
+}
+
+// Empty, not removed: removing lets a cargo config's wrapper apply.
+fn pinned(c: &mut Command) -> &mut Command {
+    c.env("RUSTC_WRAPPER", "").env("RUSTC_WORKSPACE_WRAPPER", "")
+}
+
+fn cargo(dir: &Path) -> Command {
+    let mut c = Command::new("cargo");
+    pinned(c.current_dir(dir).env_remove("CARGO_TARGET_DIR"));
+    c
+}
+
+fn cargo_build(dir: &Path) -> String {
+    checked(cargo(dir).args(["build", "--color", "never"]))
 }
 
 fn compiled(out: &str) -> Vec<String> {
@@ -41,10 +60,7 @@ fn seeded(t: &testkit::TempDir, change: &str, contents: &str) -> Vec<String> {
     std::fs::create_dir_all(a.join("target")).unwrap();
     std::fs::create_dir_all(&dest).unwrap();
     std::os::unix::fs::symlink(&dest, a.join("target/debug")).unwrap();
-    let build = |tree: &Path| {
-        let o = run(tree, "cargo", &["build", "--color", "never"]);
-        compiled(&o)
-    };
+    let build = |tree: &Path| compiled(&cargo_build(tree));
     assert_eq!(build(&a).len(), 2);
     assert!(gate::warm::donate_tree(&a, "r", 1 << 20).is_some());
 
@@ -96,14 +112,14 @@ fn an_adopted_build_directory_never_serves_a_binary_with_the_donors_path_baked_i
         dest
     };
     link(&a, "tree-a");
-    run(&a, "cargo", &["build", "--color", "never"]);
+    cargo_build(&a);
     assert_eq!(run(&a, a.join("target/debug/pin").to_str().unwrap(), &[]), a.join("pin").to_str().unwrap());
     assert!(gate::warm::donate_tree(&a, "r", 1 << 20).is_some());
 
     run(t.path(), "git", &["clone", "-q", a.to_str().unwrap(), b.to_str().unwrap()]);
     let bdest = link(&b, "tree-b");
     gate::warm::warm_start(&root, "r", &bdest, &b).unwrap();
-    run(&b, "cargo", &["build", "--color", "never"]);
+    cargo_build(&b);
     assert_eq!(run(&b, b.join("target/debug/pin").to_str().unwrap(), &[]), b.join("pin").to_str().unwrap());
 }
 
@@ -145,4 +161,16 @@ fn a_unit_cached_by_sccache_in_one_tree_is_recompiled_in_another() {
     let _ = Command::new(sc).arg("--stop-server").envs(env.iter().cloned()).output();
     assert_eq!(from_a, a.join("lib").to_str().unwrap());
     assert_eq!(from_b, b.join("lib").to_str().unwrap());
+}
+
+#[test_id(tkstl5q)]
+#[test]
+fn a_scratch_build_runs_no_compiler_wrapper_the_parent_names() {
+    let t = testkit::TempDir::new("gate-warm-wrapper");
+    std::fs::create_dir_all(t.path().join("src")).unwrap();
+    std::fs::write(t.path().join("Cargo.toml"), "[package]\nname = \"one\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[workspace]\n").unwrap();
+    std::fs::write(t.path().join("src/lib.rs"), "").unwrap();
+    let mut c = cargo(t.path());
+    c.env("RUSTC_WRAPPER", "false");
+    checked(pinned(&mut c).args(["build", "--color", "never"]));
 }
