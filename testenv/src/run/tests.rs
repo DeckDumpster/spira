@@ -864,3 +864,21 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert!(lines[1].contains("test-b.sh") && lines[1].contains("SKIPPED"), "{lines:?}");
     }
 }
+
+#[test_id(t6ij5vg)]
+#[test]
+fn a_sandbox_run_stopped_from_outside_names_its_sender_in_the_red_verdict_and_a_plain_red_does_not() {
+    let stopped = crate::sandbox::Stopped { sig: 15, by_pid: Some(4242), cmd: "kill -TERM 9".into(), cgroup: "/user.slice/user-1000.slice/user@1000.service/app.slice/x.service".into() }; // not a path: a cgroup name
+    let ran = crate::sandbox::Ran { rc: Some(143), secs: 424, timed_out: false, stopped: Some(stopped) };
+    assert_eq!(
+        sandbox_red("unit-tests.sh", &ran).verdict_line(),
+        "VERDICT RED ran=1 red=1 first=unit-tests.sh: exit 143 stopped=outside sig=15 by=4242:kill cgroup=x.service"
+    );
+    assert_eq!(
+        sandbox_metrics(&ran, 320),
+        "sandbox-metrics runner=sandbox secs=424 compiled=320 rc=143 timed_out=false stopped=outside sig=15 by=4242:kill"
+    );
+    let plain = crate::sandbox::Ran { stopped: None, ..ran };
+    assert_eq!(sandbox_metrics(&plain, 320), "sandbox-metrics runner=sandbox secs=424 compiled=320 rc=143 timed_out=false");
+    assert_eq!(sandbox_red("unit-tests.sh", &plain).verdict_line(), "VERDICT RED ran=1 red=1 first=unit-tests.sh: exit 143");
+}

@@ -161,10 +161,27 @@ pub fn admin_dolt_ship(args: &[String]) -> (i32, String) {
         let put = Uploader { dest, creds, deadline: TABLE_PUT_DEADLINE };
         dolt::ship(&put, Path::new(sync), Path::new(state), db, stamp, head)
     };
-    match run() {
+    let (start, began, before) = (std::time::SystemTime::now(), std::time::Instant::now(), spira_otel::cgroup::Mark::own());
+    let (code, line) = match run() {
         Ok(s) => (0, format!("admin-dolt-ship: {db}: {} table file(s) and manifest {}, {} bytes", s.uploaded.len(), s.key, s.bytes)),
         Err(e) => (1, format!("admin-dolt-ship: {db}: {e}")),
+    };
+    let cost = before.zip(spira_otel::cgroup::Mark::own()).map(|(b, a)| a.cost_since(&b));
+    if let (Some(op), Ok(run)) = (ship_op(db, start, began.elapsed(), code, cost), spira_config::process::cfg("SPIRA_RUN")) {
+        if !run.is_empty() {
+            spira_otel::ops::emit(Path::new(&run), "spira-lc", &op);
+        }
     }
+    (code, line)
+}
+
+fn ship_op(db: &str, start: std::time::SystemTime, duration: Duration, exit: i32, cost: Option<spira_otel::ops::Cost>) -> Option<spira_otel::ops::Op> {
+    let result = match exit {
+        0 => "ok",
+        1 => "failed",
+        _ => return None,
+    };
+    Some(spira_otel::ops::Op { operation: "store-backup".into(), phase: None, subject: db.into(), repo: None, start, duration, result: result.into(), cost, tests: None, place: None })
 }
 
 const ARCHIVE_PUT_USAGE: &str = "usage: spira-lc admin-archive-put --file <path> --key <name>";
@@ -250,6 +267,17 @@ mod tests {
     use testkit::TempDir;
 
     const PUT_DEADLINE: Duration = Duration::from_secs(300);
+
+    #[test_id(tfundoe)]
+    #[test]
+    fn a_dolt_ship_exit_of_zero_or_one_is_a_store_backup_op_and_a_usage_exit_is_none() {
+        let at = std::time::UNIX_EPOCH;
+        let op = |exit| ship_op("spira_x", at, Duration::from_secs(3), exit, None);
+        let ok = op(0).expect("exit 0");
+        assert_eq!((ok.operation.as_str(), ok.subject.as_str(), ok.result.as_str()), ("store-backup", "spira_x", "ok"));
+        assert_eq!(op(1).expect("exit 1").result, "failed");
+        assert!(op(2).is_none());
+    }
 
     fn s(xs: &[&str]) -> Vec<String> {
         xs.iter().map(|x| x.to_string()).collect()

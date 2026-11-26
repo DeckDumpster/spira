@@ -461,6 +461,9 @@ mod tests {
         fn gate_status(&self, _: &str, _: &str) -> Option<String> {
             None
         }
+        fn gate_cancel(&self, _: &str, _: &str) -> (i32, String) {
+            (0, String::new())
+        }
         fn confine(&self, _: &str, _: &str, _: &Path, _: &str, _: &str) -> (i32, String) {
             (self.confine.get(), "confine says no\n".into())
         }

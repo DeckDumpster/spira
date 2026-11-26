@@ -657,10 +657,10 @@ impl<'a> Pass<'a> {
         }
     }
 
-    /// A member cut into a round before its gate ran: queue the gate beside the round. A red
-    /// verdict is taken once and recorded on the member's row (a mark the batcher preempts on);
-    /// a green one stays on file.
-    fn gate_provisional(&self, w: &Walk, br: &str, id: &str, bead: &BeadRow) {
+    /// A member a round holds has no gate of its own: the round's pass on the merged tree is its
+    /// test verdict. A red already on file is marked once; a cancelled run is taken and charges
+    /// nothing; a queued job is dropped and a claimed one cancelled. Nothing is ever queued.
+    fn gate_provisional(&self, w: &Walk, br: &str, id: &str, _bead: &BeadRow) {
         let name = &w.repo.name;
         let tip = self.git.rev_parse(&w.repo.path, br).unwrap_or_default();
         if tip.is_empty() || self.files.gated(br, &tip) {
@@ -682,16 +682,23 @@ impl<'a> Pass<'a> {
             let _ = self.lc_certify_red(id, &tip, &reason, &d.run);
             return;
         }
-        if q.find(name, br, &tip).is_some() {
+        let withdrawn = |what: &str| self.log(&format!("CHECK6 {id}: {br} is held by a round — its gate is withdrawn ({what})"));
+        if q.peek_done(name, br, &tip).is_some_and(|d| d.run.outcome == GateOutcome::NoVerdict && d.run.reason.as_deref() == Some("cancelled")) {
+            drop(q.take_done(name, br, &tip));
+            withdrawn("cancelled run taken, nothing charged");
             return;
         }
-        if self.files.backing_off(br, &tip, self.clock.now()) {
-            return;
-        }
-        let fix = is_base_fix(bead.external_ref.as_deref(), name);
-        match q.enqueue(&GateJob::new(name, br, id, &tip, fix).with_priority(bead.priority).with_express(bead.express)) {
-            Ok(_) => self.log(&format!("CHECK6 {id}: {br} is a provisional member of a round — gate queued at {tip}")),
-            Err(e) => self.log(&format!("CHECK6 {id}: could not queue the gate for provisional {br} ({e})")),
+        if q.withdraw(name, br, &tip) {
+            withdrawn("dropped queued job");
+        } else if q.find(name, br, &tip) == Some(crate::gateq::Where::Claimed) {
+            let (rc, out) = self.tools.gate_cancel(id, &format!("a round holds {id}: the round's pass is its test verdict"));
+            if rc == 0 {
+                withdrawn("cancel requested");
+            } else {
+                self.log(&format!("CHECK6 {id}: {br} is held by a round — cancel refused ({}), asking again next pass", out.trim()));
+            }
+        } else {
+            withdrawn("nothing queued");
         }
     }
 

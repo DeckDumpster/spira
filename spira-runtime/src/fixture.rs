@@ -7,8 +7,7 @@ pub fn fixture() -> Settings {
     Settings::from_lookup(&lookup("7")).expect("fixture settings")
 }
 
-/// Resolves this test process's config door (`$SPIRA_TOML`, `$SPIRA_HOME`) over the complete
-/// fixture, once, before anything reads it: a ported row whose `build` pins its keys through
+/// Resolves this test process's config door over the complete fixture, by value, once, before anything reads it: a ported row whose `build` pins its keys through
 /// `spira_config::process::cfg` (family A's `kit::pin`) then builds under `from_lookup` in a
 /// test as it does in the service.
 pub fn fixture_config_door() {
@@ -19,10 +18,10 @@ pub fn fixture_config_door() {
         std::fs::create_dir_all(&run).expect("the fixture run directory");
         let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_LC_SOCKET", "d/sock"), ("SPIRA_RUN", &run.to_string_lossy())]);
         let home = spira_config::resolve::locate_home_for_process().unwrap();
-        // The door resolves once per process and keeps what it read, so the environment
-        // needs to name the fixture only while it does.
-        let _env = testkit::env(&[("SPIRA_TOML", Some(&toml.to_string_lossy())), ("SPIRA_HOME", Some(&home.to_string_lossy()))]);
-        spira_config::process::config().expect("the complete fixture resolves");
+        let mut env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        env.insert(spira_config::process::TOML_ENV.into(), toml.to_string_lossy().into());
+        env.insert("SPIRA_HOME".into(), home.to_string_lossy().into());
+        spira_config::process::config_with(&env).expect("the complete fixture resolves");
         dir
     });
 }

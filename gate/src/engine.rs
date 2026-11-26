@@ -126,6 +126,7 @@ struct State {
     build_timing: Option<(crate::buildtiming::Build, String)>,
     /// The test phase's nextest timings, once a unit test phase ran.
     unit_timings: Option<spira_config::unit_tier::UnitTimings>,
+    op_marks: OpMarks,
     /// The unit test phase failed and its nextest run named no test and printed no summary.
     nextest_unreported: bool,
     /// Declared test binaries the trial found absent from its target directory.
@@ -140,6 +141,7 @@ struct State {
     /// `release` or `tree`: where the branch trial's tools came from; empty when it needs none.
     tools_from: String,
     build_dir: String,
+    cold_reason: String,
     /// The tree certificate (cert.rs) a PASS writes: the merged tree judged, the revision
     /// that carries it, where verdicts live, the harness hash and the suites covered.
     merged_tree: String,
@@ -357,7 +359,10 @@ impl<'w, W: World> Trial<'w, W> {
         self.s.repo = repo.clone();
         self.s.run = ctx.var("SPIRA_RUN").to_string();
         self.s.target_root = ctx.var("SPIRA_GATE_TARGET_ROOT").to_string();
-        self.s.target_cap_mib = Self::target_limits(&ctx).cap_mib;
+        match Self::target_limits(&ctx) {
+            Ok(lim) => self.s.target_cap_mib = lim.cap_mib,
+            Err(e) => return v(NOVERDICT, "target-cap-unset", format!("gate: {e} — refusing to judge")),
+        }
         self.s.gate_log = PathBuf::from(
             ctx.var_or("SPIRA_GATE_LOG", &format!("{}/gate.log", self.s.run))
                 .to_string(),
@@ -827,7 +832,10 @@ impl<'w, W: World> Trial<'w, W> {
         // A cached PASS keeps its verdict, but --release-bins still needs the judged tree's binaries.
         if let Some(hit) = cached {
             match self.prepare_build_tree(&ctx, &tree, false) {
-                Ok(field) => self.s.build_dir = field,
+                Ok(bd) => {
+                    self.s.build_dir = bd.field();
+                    self.s.cold_reason = bd.cold_reason();
+                }
                 Err(e) => return e,
             }
             return hit;
@@ -984,7 +992,10 @@ impl<'w, W: World> Trial<'w, W> {
             || self.a.release_bins;
         if builds {
             match self.prepare_build_tree(&ctx, &tree, matches!(comp, Composition::Unit { .. })) {
-                Ok(field) => self.s.build_dir = field,
+                Ok(bd) => {
+                    self.s.build_dir = bd.field();
+                    self.s.cold_reason = bd.cold_reason();
+                }
                 Err(e) => return e,
             }
         }
@@ -1023,8 +1034,9 @@ impl<'w, W: World> Trial<'w, W> {
         let mut mark_err: Option<String> = None;
         let tiers_file = self.s.tiers_file.clone();
         let (rc, out, ph, tiers) = {
-            let (run_dir, machine) = (Path::new(&self.s.run), &mut self.s.machine);
+            let (run_dir, machine, op_marks) = (Path::new(&self.s.run), &mut self.s.machine, &mut self.s.op_marks);
             let mut mark = |to: GateState, why: &str| {
+                op_marks.phase_started(w, why);
                 let Some(r) = machine.as_mut() else { return };
                 let moved = r.enter(to, why, w.now()).and_then(|m| if m { w.machine_save(run_dir, r) } else { Ok(()) });
                 if let Err(e) = moved {
@@ -1069,6 +1081,7 @@ impl<'w, W: World> Trial<'w, W> {
                 (first.0, first.1, first.2, first_tiers)
             }
         };
+        self.s.op_marks.end = w.cgroup_mark();
         let phase_end = w.now();
         if let Some(text) = self.s.steps_file.as_ref().and_then(|f| w.read(f)) {
             let (steps, skipped) = parse::step_secs(&text, phase_end);
@@ -2012,7 +2025,7 @@ impl<'w, W: World> Trial<'w, W> {
         format!("gate: {what}\n{}", self.w.target_room(&self.s.target_root, &self.s.run))
     }
 
-    fn target_limits(ctx: &Ctx) -> crate::target::Limits {
+    fn target_limits(ctx: &Ctx) -> Result<crate::target::Limits, String> {
         crate::target::Limits::from_vars(
             ctx.var("SPIRA_GATE_TARGET_CAP_MIB"),
             ctx.var("SPIRA_TMPFS_SHED_FREE_MIB"),
@@ -2030,18 +2043,21 @@ impl<'w, W: World> Trial<'w, W> {
     }
 
     /// The refusals a tree build meets before it starts: no build cache, a target that cannot be prepared.
-    fn prepare_build_tree(&self, ctx: &Ctx, tree: &Path, in_builders_dir: bool) -> Result<String, Verdict> {
+    fn prepare_build_tree(&self, ctx: &Ctx, tree: &Path, in_builders_dir: bool) -> Result<crate::telemetry::BuildDir, Verdict> {
         let w = self.w;
         if let Some(e) = &self.s.cache_refusal {
             return Err(v(NOVERDICT, "no-build-cache", format!("gate: {e} — refusing to judge")));
         }
-        let lim = Self::target_limits(ctx);
+        let lim = match Self::target_limits(ctx) {
+            Ok(l) => l,
+            Err(e) => return Err(v(NOVERDICT, "target-cap-unset", format!("gate: {e} — refusing to judge"))),
+        };
         let short = |e: String| Err(v(NOVERDICT, "scratch-short", format!("{e}\ngate: the scratch target could not be prepared on the host, not a fault in the branch.")));
         let builder = if in_builders_dir { self.builders_dir(ctx) } else { None };
         match w.target_on_tmpfs(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim, builder.as_ref(), &self.s.repo_name) {
-            Ok(line) => {
-                w.eprint(&line);
-                Ok(crate::telemetry::build_dir_field(&line))
+            Ok(out) => {
+                w.eprint(&out.line);
+                Ok(out.build_dir)
             }
             Err(e) => short(e),
         }
@@ -2090,6 +2106,34 @@ impl<'w, W: World> Trial<'w, W> {
                 tail.into_iter().rev().collect::<Vec<_>>().join("\n"),
                 if full { " writing to a full disk or an exhausted quota (EDQUOT/ENOSPC)" } else { "" }
             ));
+        }
+    }
+
+    fn emit_ops(&self, run: &crate::telemetry::GateRun) {
+        let w = self.w;
+        let at = |secs: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+        let marks = &self.s.op_marks;
+        let op = |phase: Option<&str>, start: u64, secs: u64, cost, tests| spira_otel::ops::Op {
+            operation: "gate".into(),
+            phase: phase.map(String::from),
+            subject: if run.bead.is_empty() { run.branch.clone() } else { run.bead.clone() },
+            repo: Some(run.repo.clone()).filter(|r| !r.is_empty()),
+            start: at(start),
+            duration: std::time::Duration::from_secs(secs),
+            result: run.status.clone(),
+            cost,
+            tests,
+            place: None,
+        };
+        let between = |a: Option<&spira_otel::cgroup::Mark>, b: Option<&spira_otel::cgroup::Mark>| Some(b?.cost_since(a?));
+        match (&marks.build, &marks.test, &self.s.unit_timings) {
+            (build, Some(test), Some(t)) => {
+                if let Some(b) = build {
+                    w.emit_op(&op(Some("build"), b.0, run.unit_build_secs, between(b.1.as_ref(), test.1.as_ref()), None));
+                }
+                w.emit_op(&op(Some("tests"), test.0, run.unit_run_secs, between(test.1.as_ref(), marks.end.as_ref()), Some(t.tests)));
+            }
+            _ => w.emit_op(&op(None, self.s.start, run.ran_secs, None, None)),
         }
     }
 
@@ -2245,6 +2289,7 @@ impl<'w, W: World> Trial<'w, W> {
                 fresh: self.s.build_timing.as_ref().map_or(0, |(b, _)| b.fresh),
                 slowest: self.s.build_timing.as_ref().map_or(String::new(), |(b, _)| b.slowest_field()),
                 build_dir: self.s.build_dir.clone(),
+                cold_reason: self.s.cold_reason.clone(),
                 unit_build_secs: self.unit_phase_secs("build"),
                 unit_run_secs: self.unit_phase_secs("test"),
                 unit_tests: self.s.unit_timings.as_ref().map_or(0, |t| t.tests),
@@ -2260,6 +2305,7 @@ impl<'w, W: World> Trial<'w, W> {
             }
             crate::telemetry::append(w, &self.s.run, &ts, &run);
             w.push_metrics(&run);
+            self.emit_ops(&run);
             if let Some(y) = w.which("yield.sh") {
                 if vd.status == PASS {
                     w.yield_sh(
@@ -2723,6 +2769,27 @@ pub fn with_bins(
         }
     }
     env
+}
+
+/// Where the unit trial's build and test phases began (clock secs, cgroup reading) and where the test phase ended.
+#[derive(Default)]
+struct OpMarks {
+    build: Option<(u64, Option<spira_otel::cgroup::Mark>)>,
+    test: Option<(u64, Option<spira_otel::cgroup::Mark>)>,
+    end: Option<spira_otel::cgroup::Mark>,
+}
+
+impl OpMarks {
+    fn phase_started<W: World>(&mut self, w: &W, name: &str) {
+        let slot = match name {
+            "build" => &mut self.build,
+            "test" => &mut self.test,
+            _ => return,
+        };
+        if slot.is_none() {
+            *slot = Some((w.now(), w.cgroup_mark()));
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

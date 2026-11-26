@@ -8280,6 +8280,35 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Unconverged { .. }), "{end:?}");
     }
 
+    const TIMEOUT_UNIT: &str = "TIMEOUT test:git_idle sim::git_idle::t0facta";
+
+    #[test_id(thx11xq)]
+    #[test]
+    fn a_unit_test_killed_past_the_slow_threshold_that_is_green_on_the_rerun_is_disabled_and_the_round_lands() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(red_once_on_the_whole_tree(flip_red(&[TIMEOUT_UNIT])));
+        f.bisects = true;
+        f.rerun_green = true;
+        let mut ops = Ops::default();
+        let end = flip_round(&mut f, &mut ops);
+        assert_eq!(ops.disabled, vec![vec!["test:t0facta".to_string()]]);
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert_eq!(f.main_kind.len(), 2, "the round certifies again: {:?}", f.main_kind);
+        assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
+    }
+
+    #[test_id(ti4myfd)]
+    #[test]
+    fn a_unit_test_killed_past_the_slow_threshold_that_is_red_on_the_rerun_is_not_disabled() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(Box::new(|tree| (tree.contains("m1") && tree.contains("m2") && tree.contains("m3")).then(|| flip_red(&[TIMEOUT_UNIT]))));
+        f.bisects = true;
+        let mut ops = Ops::default();
+        let end = flip_round(&mut f, &mut ops);
+        assert!(ops.disabled.is_empty());
+        assert!(!matches!(end, RoundEnd::Land { .. }), "{end:?}");
+    }
+
     fn one_member_round(f: &mut Fake, ops: &mut Ops) -> RoundEnd {
         attribute_round(f, ops, &corpus(4), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap()
     }

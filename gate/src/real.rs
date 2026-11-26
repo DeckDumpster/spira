@@ -1,7 +1,8 @@
 //! The production [`World`]: git, the helper scripts, lib.sh, flock, the filesystem.
 
 use crate::compose::{self, Changed};
-use crate::ports::{Ctx, Merge, World};
+use crate::ports::{Ctx, Merge, TargetOutcome, World};
+use crate::telemetry::{BuildDir, BuilderMiss, PoolMiss};
 use spira_config::GateMode;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -299,15 +300,21 @@ impl Real {
 
     /// Lease the builder's directory, clean and age for this tree, and link `debug` into it. Any
     /// failure releases the lease and leaves the tree's own directory.
-    fn build_in(&self, tree: &Path, b: &crate::ports::Builder) -> Result<String, String> {
+    fn build_in(&self, tree: &Path, b: &crate::ports::Builder) -> Result<String, (BuilderMiss, String)> {
         self.build_in_bases(tree, b, &spira_config::build_dir::configured_bases())
     }
 
-    fn build_in_bases(&self, tree: &Path, b: &crate::ports::Builder, bases: &[PathBuf]) -> Result<String, String> {
+    fn build_in_bases(&self, tree: &Path, b: &crate::ports::Builder, bases: &[PathBuf]) -> Result<String, (BuilderMiss, String)> {
         use spira_config::build_dir as bd;
-        let lease = bd::lease_dir(bases, &b.dir, &format!("gate {}", b.bead), b.wait)
-            .map_err(|e| format!("cannot lease it: {e}"))?
-            .ok_or("it is gone, held, or not a pool directory")?;
+        let lease = match bd::lease_dir(bases, &b.dir, &format!("gate {}", b.bead), b.wait).map_err(|e| (BuilderMiss::Unusable, format!("cannot lease it: {e}")))? {
+            Ok(l) => l,
+            Err(bd::Refused::Held { holder }) => {
+                let miss = if holder == b.bead { BuilderMiss::Held } else { BuilderMiss::Taken };
+                return Err((miss, format!("it is held by {holder}")));
+            }
+            Err(bd::Refused::Gone) => return Err((BuilderMiss::Gone, "it is gone".into())),
+            Err(bd::Refused::NotASlot) => return Err((BuilderMiss::Gone, "it is not a pool directory".into())),
+        };
         let linked = (|| -> Result<(), String> {
             bd::clean(&self.home.join(bd::CLEAN_SCRIPT), tree, lease.dir(), &b.path, false)?;
             crate::warm::normalize_mtimes(tree, &b.tip)?;
@@ -328,7 +335,7 @@ impl Real {
         })();
         if let Err(e) = linked {
             lease.release();
-            return Err(e);
+            return Err((BuilderMiss::Unusable, e));
         }
         let line = format!("{}{} (leased from {}'s builder at {})", crate::warm::BUILDER_IN, lease.dir().display(), b.bead, b.tip);
         self.leases.borrow_mut().insert(tree.to_path_buf(), (lease, b.path.clone()));
@@ -803,6 +810,14 @@ impl World for Real {
     fn push_metrics(&self, run: &crate::telemetry::GateRun) {
         crate::telemetry::push_metrics(&crate::telemetry::metrics_sink(), run);
     }
+    fn cgroup_mark(&self) -> Option<spira_otel::cgroup::Mark> {
+        spira_otel::cgroup::Mark::own()
+    }
+    fn emit_op(&self, op: &spira_otel::ops::Op) {
+        if let Ok(run) = spira_config::process::cfg("SPIRA_RUN") {
+            spira_otel::ops::emit(Path::new(&run), "spira-gate", op);
+        }
+    }
     fn yield_sh(&self, y: &Path, run: &str, args: &[&str]) {
         let _ = Command::new("timeout")
             .arg(YIELD_DEADLINE_SECS)
@@ -1048,34 +1063,48 @@ impl World for Real {
     fn build_wrapper(&self, path: &str, setting: &str) -> Result<spira_config::build::Wrapper, String> {
         spira_config::build::wrapper(path, Some(setting))
     }
-    fn target_on_tmpfs(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits, builder: Option<&crate::ports::Builder>, repo: &str) -> Result<String, String> {
+    fn target_on_tmpfs(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits, builder: Option<&crate::ports::Builder>, repo: &str) -> Result<TargetOutcome, String> {
         use crate::target;
         let Some(root) = target::root(explicit_root, run, target::on_tmpfs(Path::new(system_paths::TMP))) else {
-            return Ok(format!("gate: no tmpfs for the build (/tmp is not one and SPIRA_GATE_TARGET_ROOT is unset) — {} builds in the tree", tree.display()));
+            return Ok(TargetOutcome {
+                line: format!("gate: no tmpfs for the build (/tmp is not one and SPIRA_GATE_TARGET_ROOT is unset) — {} builds in the tree", tree.display()),
+                build_dir: BuildDir::Cold { builder: BuilderMiss::None, pool: PoolMiss::NoTmpfs },
+            });
         };
         let trees = tree.parent().unwrap_or(Path::new("/"));
         let held = |name: &str| target::held_by_gate(Path::new(run), name);
         let p = target::prepare(&root, trees, tree, lim, &target::free_mib, &held)?;
         let mut line = format!("gate: build on {}", p.dir.display());
-        let built_in = builder.map(|b| self.build_in(tree, b));
-        match built_in {
-            Some(Ok(l)) => line.push_str(&format!("\n{l}")),
-            other => {
-                if let (Some(Err(why)), Some(b)) = (other, builder) {
+        let mut miss = BuilderMiss::None;
+        let build_dir = match builder.map(|b| self.build_in(tree, b)) {
+            Some(Ok(l)) => {
+                line.push_str(&format!("\n{l}"));
+                BuildDir::Builder
+            }
+            tried => {
+                if let (Some(Err((m, why))), Some(b)) = (tried, builder) {
+                    miss = m;
                     line.push_str(&format!("\ngate: builder directory {} not used ({why}) — building as without one", b.dir.display()));
                 }
-                if let Some(warm) = crate::warm::warm_start(&root, repo, &p.dir.join("debug"), tree) {
-                    line.push_str(&format!("\n{warm}"));
+                match crate::warm::warm_start(&root, repo, &p.dir.join("debug"), tree) {
+                    Some((adopted, warm)) => {
+                        line.push_str(&format!("\n{warm}"));
+                        match adopted {
+                            crate::warm::Adopted::From(from) => BuildDir::Warm { from },
+                            crate::warm::Adopted::Discarded => BuildDir::Cold { builder: miss, pool: PoolMiss::Discarded },
+                        }
+                    }
+                    None => BuildDir::Cold { builder: miss, pool: if p.pool_shed { PoolMiss::Shed } else { PoolMiss::Empty } },
                 }
             }
-        }
+        };
         if p.disk_freed_mib > 0 {
             line.push_str(&format!(" ({} MiB of build output moved off the disk)", p.disk_freed_mib));
         }
         if !p.orphans.is_empty() || !p.evicted.is_empty() {
             line.push_str(&format!("; removed {} orphaned and evicted {} least recently used target(s)", p.orphans.len(), p.evicted.len()));
         }
-        Ok(line)
+        Ok(TargetOutcome { line, build_dir })
     }
     fn target_room(&self, explicit_root: &str, run: &str) -> String {
         use crate::target;
@@ -1316,6 +1345,7 @@ fn end_group(pgid: i32) {
 #[cfg(test)]
 mod tests {
     use crate::ports::World;
+    use crate::telemetry::{BuildDir, BuilderMiss, PoolMiss};
 
     #[test_id(tywtqsg)]
     #[test]
@@ -1382,7 +1412,7 @@ mod tests {
     }
 
     fn lockable(p: &Pool) -> bool {
-        spira_config::build_dir::lease_dir(&p.bases, &p.slot, "probe", std::time::Duration::ZERO).unwrap().is_some()
+        spira_config::build_dir::lease_dir(&p.bases, &p.slot, "probe", std::time::Duration::ZERO).unwrap().is_ok()
     }
 
     #[test_id(t1jwthh)]
@@ -1402,11 +1432,30 @@ mod tests {
         let _ = &p.t;
     }
 
+    #[test_id(ty70twa)]
+    #[test]
+    fn a_builder_directory_another_lease_holds_is_taken_and_one_the_bead_holds_is_held() {
+        let other = pool("exit 0\n");
+        let _held = spira_config::build_dir::lease_dir(&other.bases, &other.slot, "sp-other", std::time::Duration::ZERO).unwrap().ok().unwrap();
+        let (miss, why) = other.real.build_in_bases(&other.tree, &builder(&other), &other.bases).unwrap_err();
+        assert_eq!(miss, BuilderMiss::Taken, "{why}");
+
+        let own = pool("exit 0\n");
+        let _held = spira_config::build_dir::lease_dir(&own.bases, &own.slot, "sp-a", std::time::Duration::ZERO).unwrap().ok().unwrap();
+        let (miss, why) = own.real.build_in_bases(&own.tree, &builder(&own), &own.bases).unwrap_err();
+        assert_eq!(miss, BuilderMiss::Held, "{why}");
+
+        let gone = pool("exit 0\n");
+        let b = crate::ports::Builder { dir: gone.t.path().join("pool/dir.99"), ..builder(&gone) };
+        assert_eq!(gone.real.build_in_bases(&gone.tree, &b, &gone.bases).unwrap_err().0, BuilderMiss::Gone);
+    }
+
     #[test_id(tpf4epi)]
     #[test]
     fn a_failed_clean_or_aging_or_lease_keeps_the_gates_own_link_and_frees_the_slot() {
         let bad_clean = pool("exit 3\n");
-        let e = bad_clean.real.build_in_bases(&bad_clean.tree, &builder(&bad_clean), &bad_clean.bases).unwrap_err();
+        let (miss, e) = bad_clean.real.build_in_bases(&bad_clean.tree, &builder(&bad_clean), &bad_clean.bases).unwrap_err();
+        assert_eq!(miss, BuilderMiss::Unusable);
         assert!(e.contains("exited"), "{e}");
         assert_eq!(std::fs::read_link(bad_clean.tree.join("target/debug")).unwrap(), bad_clean.own);
         assert!(lockable(&bad_clean));
@@ -1460,7 +1509,8 @@ mod tests {
         let lim = crate::target::Limits { cap_mib: 1024, shed_free_mib: 0 };
         let line = super::super::Real::new(t.path().to_path_buf())
             .target_on_tmpfs(&tree, root.to_str().unwrap(), t.path().to_str().unwrap(), &lim, None, "r")
-            .unwrap();
+            .unwrap()
+            .line;
         assert!(line.starts_with(&format!("gate: build on {}", root.display())), "{line}");
         assert!(root.join(".gate.r.b").is_dir());
     }
@@ -1536,10 +1586,28 @@ mod tests {
         fs::write(a.join("target/debug/deps/libx.rlib"), "x").unwrap();
         r.release_target(&a, false, true, 1 << 20, "r");
         let other = r.target_on_tmpfs(&c, root.to_str().unwrap(), run, &lim, None, "other").unwrap();
-        assert!(!other.contains("warm from"), "{other}");
-        let line = r.target_on_tmpfs(&b, root.to_str().unwrap(), run, &lim, None, "r").unwrap();
-        assert!(line.contains("warm from"), "{line}");
+        assert!(!other.line.contains("warm from"), "{}", other.line);
+        assert_eq!(other.build_dir, BuildDir::Cold { builder: BuilderMiss::None, pool: PoolMiss::Empty });
+        let out = r.target_on_tmpfs(&b, root.to_str().unwrap(), run, &lim, None, "r").unwrap();
+        assert!(out.line.contains("warm from"), "{}", out.line);
+        assert!(matches!(out.build_dir, BuildDir::Warm { .. }), "{:?}", out.build_dir);
         assert!(b.join("target/debug/deps/libx.rlib").is_file());
+    }
+
+    #[test_id(toit7cm)]
+    #[test]
+    fn a_gate_whose_prepare_shed_the_pool_builds_cold_with_the_pool_shed() {
+        use crate::ports::World;
+        let t = testkit::TempDir::new("gate-world-shed");
+        let (root, trees) = (t.path().join("root"), t.path().join("worktree"));
+        let tree = trees.join(".gate.h.a");
+        std::fs::create_dir_all(&tree).unwrap();
+        let stale = root.join(crate::warm::POOL).join("e1/debug/deps");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join("libz.rlib"), vec![1u8; 1 << 20]).unwrap();
+        let lim = crate::target::Limits { cap_mib: 0, shed_free_mib: 0 };
+        let out = super::super::Real::new(t.path().to_path_buf()).target_on_tmpfs(&tree, root.to_str().unwrap(), t.path().to_str().unwrap(), &lim, None, "r").unwrap();
+        assert_eq!(out.build_dir, BuildDir::Cold { builder: BuilderMiss::None, pool: PoolMiss::Shed });
     }
 
     #[test_id(t9zif9w)]

@@ -2483,6 +2483,7 @@ dependencies = [
  "tokio-rustls",
  "toml",
  "tsd",
+ "tsd-lifecycle-export",
  "unit-run",
  "ureq",
  "watchd",
@@ -2630,6 +2631,7 @@ name = "store-persist"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "serde_json",
  "spira-config",
  "spira-otel",
  "spira-test-id",

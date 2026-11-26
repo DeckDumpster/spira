@@ -15,7 +15,10 @@
 //! starts it as a unit. Before each probe the doubles play it over the store: a SUBMITTED bead
 //! whose tip has no filed verdict is queued; a filed verdict for its tip is taken and applied
 //! (PASS certifies, FAIL is `gate-red`, NO_VERDICT is `infra` and the bead stays SUBMITTED to be
-//! queued again). That mapping is the landing pass's own and is covered there:
+//! queued again). A SUBMITTED bead the open round holds has no gate of its own: nothing is queued,
+//! its inbox job is dropped, a running gate leg is stopped and ends NO_VERDICT `cancelled`, and
+//! that filed result is taken and charges nothing (`a_member_a_round_holds_has_no_gate_queued`,
+//! `a_cancelled_gate_charges_its_round_held_member_nothing`). That mapping is the landing pass's own and is covered there:
 //! `a_red_gate_reopens_with_the_gates_own_words_and_marks_red`,
 //! `no_verdict_is_counted_by_the_seam_and_never_reopens` and
 //! `a_filed_no_verdict_is_nobodys_and_charges_nothing` (`landing-pass/src/tests.rs`).
@@ -25,9 +28,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use lifecycle::bead::{BeadEventKind, BeadState};
 use lifecycle::reason::GateRedReason;
-use runtime::units::{self, Exit, StartSpec, UnitHandle, UnitState, Units, UNIT_START};
+use runtime::units::{self, Exit, ScopeSpec, StartSpec, UnitSpec, UNIT_RUN_SCOPE, UnitHandle, UnitState, Units, UNIT_START};
 use sim::doubles::Doubles;
 use spira_runtime::tasks::a::gate_worker::{self as gw, Carry, Filing, Job, Leg, SlotJob, Snapshot, State};
+use spira_runtime::tasks::a::batcher_local as bl;
 use spira_sim::loopworld::{self, Bead, Run, Script, World, MIN, REPO};
 
 const GATE_MS: u64 = 90_000;
@@ -80,8 +84,25 @@ fn landing_pass(w: &World, s: &Shared) {
     let mut lc = w.lc();
     let mut g = gate(s);
     let submitted: Vec<(String, String)> = lc.rows.values().filter(|r| r.state == BeadState::Submitted).map(|r| (r.bead_id.clone(), r.tip.clone().unwrap_or_default())).collect();
+    let held: Vec<String> = lc.round.as_ref().map(|(_, m)| m.iter().map(|(i, _)| i.clone()).collect()).unwrap_or_default();
     for (id, tip) in submitted {
         let job = Job { repo: REPO.into(), branch: branch(&id), tip: tip.clone(), bead: id.clone(), fix: false, express: false, priority: 2, enqueued_ms: now };
+        if held.contains(&id) {
+            g.inbox.retain(|j| j.key() != job.key());
+            let cancelled = g.done.iter().position(|(j, v, why)| j.key() == job.key() && v == "NO_VERDICT" && why.as_deref() == Some("cancelled"));
+            if let Some(at) = cancelled {
+                g.done.remove(at);
+            }
+            let running: Vec<(usize, Job)> = g.claimed.iter().flat_map(|(slot, js)| js.iter().filter(|j| j.key() == job.key()).map(|j| (*slot, j.clone()))).collect();
+            for (slot, j) in running {
+                let key = leg_key(slot, "gate", &j);
+                if let Ok(h) = UnitHandle::of(gw::NAME, &key) {
+                    let _ = w.units.stop(&h);
+                }
+                g.legs.insert(key, (75, "gate: VERDICT=NO_VERDICT reason=cancelled".into()));
+            }
+            continue;
+        }
         if let Some(at) = g.done.iter().position(|(j, ..)| j.key() == job.key()) {
             let (_, verdict, _) = g.done.remove(at);
             let kind = match verdict.as_str() {
@@ -219,9 +240,13 @@ fn doubles(d: Doubles, w: &Arc<World>, s: &Shared) -> Doubles {
 }
 
 fn run(seed: u64, script: Script, answers: &[(&str, &[(i32, &str)])]) -> (Run, Shared) {
+    run_with_doubles(seed, script, answers, |d, _| d)
+}
+
+fn run_with_doubles(seed: u64, script: Script, answers: &[(&str, &[(i32, &str)])], more: impl FnOnce(Doubles, &Arc<World>) -> Doubles) -> (Run, Shared) {
     let s: Shared = Arc::default();
     gate(&s).answers = answers.iter().map(|(b, a)| (b.to_string(), a.iter().map(|(rc, o)| (*rc, o.to_string())).collect())).collect();
-    let r = loopworld::run_with(seed, script, |d, w| doubles(d, w, &s)).unwrap_or_else(|e| panic!("the loop ran: {e}"));
+    let r = loopworld::run_with(seed, script, |d, w| more(doubles(d, w, &s), w)).unwrap_or_else(|e| panic!("the loop ran: {e}"));
     (r, s)
 }
 
@@ -284,6 +309,72 @@ fn gate_verdict_silent_a_gate_without_a_verdict_leaves_the_bead_submitted_and_th
     assert!(g.retained.iter().all(|(_, v)| v != "PASS"), "{:?}", g.retained);
     let landed: Vec<String> = r.lands.iter().flatten().map(|(id, _)| id.clone()).collect();
     assert_eq!(landed.len(), 2, "both landed: {}", dump(&r, &g));
+    assert!(r.refused.is_empty(), "{:?}", r.refused);
+    assert_no_process(&r);
+}
+
+/// A SUBMITTED item rides the next cut and its gate runs no test: every gate leg for a member
+/// either never started after the round took it or ended NO_VERDICT `cancelled`, no gate PASS is
+/// judged, and the round's pass certifies both.
+#[test_id(tvz2qox)]
+#[test]
+fn a_submitted_item_rides_the_next_cut_and_its_gate_runs_no_test() {
+    let script = Script { beads: vec![Bead { submits: vec![MIN], ..Bead::new("sp-gh01", 30_000) }, Bead { submits: vec![MIN], ..Bead::new("sp-gh02", 30_000) }], max_concurrent: 2, until: 40 * MIN, ..Script::default() };
+    let (r, s) = run(43, script, &[("sp-gh01", &[PASS]), ("sp-gh02", &[PASS])]);
+    let g = gate(&s);
+    assert_eq!(r.lands.len(), 1, "both land in one round: {}", dump(&r, &g));
+    assert_eq!(r.lands[0].len(), 2, "{}", dump(&r, &g));
+    assert!(g.judged.iter().all(|(_, v, _)| v != "PASS"), "no gate PASS is judged for a round member: {}", dump(&r, &g));
+    assert!(g.filed.iter().all(|(_, v, why)| v == "NO_VERDICT" && why.as_deref() == Some("cancelled")), "a gate leg that ran beside the round was cancelled: {}", dump(&r, &g));
+    for bead in ["sp-gh01", "sp-gh02"] {
+        assert_eq!(r.lifecycle_of(bead), ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"], "{bead}: {}", dump(&r, &g));
+    }
+    assert!(r.refused.is_empty(), "{:?}", r.refused);
+    assert_no_process(&r);
+}
+
+/// A bad member is ejected on the round's attribution, not on a gate verdict: the pass is red on
+/// a suite the member owns, `batcher.local.eject` carries that suite and returns the member to
+/// REWORK, no gate PASS or FAIL is ever filed for it, and the other member lands.
+#[test_id(t31dm5q)]
+#[test]
+fn a_bad_member_is_ejected_on_the_rounds_attribution_and_returns_to_rework() {
+    let script = Script { beads: vec![Bead { submits: vec![MIN], ..Bead::new("sp-gh03", 30_000) }, Bead { submits: vec![MIN], ..Bead::new("sp-gh04", 30_000) }], max_concurrent: 2, until: 40 * MIN, ..Script::default() };
+    let ejects: Arc<Mutex<Vec<bl::Leg>>> = Arc::default();
+    let seen = ejects.clone();
+    let reds = Arc::new(Mutex::new(1));
+    let (r, s) = run_with_doubles(44, script, &[("sp-gh03", &[PASS]), ("sp-gh04", &[PASS])], move |d, w| {
+        let (wc, we) = (w.clone(), w.clone());
+        d.double(bl::CERTIFY, move |input| {
+            let l: bl::Leg = parse(bl::CERTIFY, input)?;
+            let spec = UnitSpec { task: bl::NAME.into(), key: l.unit.clone(), argv: vec!["queue".into(), "round".into(), "certify".into(), l.batch, REPO.into()], env: vec![], cwd: None };
+            let red = std::mem::take(&mut *reds.lock().unwrap_or_else(|e| e.into_inner())) > 0;
+            wc.units.script(bl::NAME, MIN, Exit::Code(i32::from(red)));
+            let said: &[u8] = if red { b"red=test-bad.sh\nred-output=sim/run/test-bad.sh.out\n" } else { b"certified\n" };
+            wc.units.script_output(bl::NAME, said, b"");
+            units::effect(&*wc.units, UNIT_RUN_SCOPE, &serde_json::to_string(&ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None }).map_err(|e| e.to_string())?)
+        })
+        .double(bl::EJECT, move |input| {
+            let l: bl::Leg = parse(bl::EJECT, input)?;
+            seen.lock().unwrap_or_else(|e| e.into_inner()).push(l.clone());
+            let now = we.now();
+            let mut lc = we.lc();
+            if let Some((_, members)) = &mut lc.round {
+                members.retain(|(id, _)| id != "sp-gh04");
+            }
+            lc.apply(now, "sp-gh04", bl::NAME, BeadEventKind::Deliver)?;
+            lc.apply(now, "sp-gh04", bl::NAME, BeadEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BatchEjectedRed })?;
+            Ok("{}".into())
+        })
+    });
+    let g = gate(&s);
+    let ejects = ejects.lock().unwrap_or_else(|e| e.into_inner());
+    assert_eq!(ejects.len(), 1, "{}", dump(&r, &g));
+    assert!(ejects[0].why.contains("test-bad.sh"), "the eject carries the round's red suite: {:?}", ejects[0].why);
+    assert!(g.judged.is_empty(), "no gate verdict was ever applied: {}", dump(&r, &g));
+    assert!(g.filed.iter().all(|(_, v, why)| v == "NO_VERDICT" && why.as_deref() == Some("cancelled")), "{}", dump(&r, &g));
+    assert!(r.lifecycle_of("sp-gh04").contains(&"REWORK".to_string()), "{}", dump(&r, &g));
+    assert_eq!(r.lifecycle_of("sp-gh03").last().map(String::as_str), Some("LANDED"), "{}", dump(&r, &g));
     assert!(r.refused.is_empty(), "{:?}", r.refused);
     assert_no_process(&r);
 }

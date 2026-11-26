@@ -119,6 +119,7 @@ gate_budget
 gate_lock_wait
 gate_select_cap
 gate_suites
+gate_target_cap_mib
 gate_timeout
 gate_worker
 gh

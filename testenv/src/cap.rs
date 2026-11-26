@@ -22,7 +22,7 @@ pub const GRACE: u64 = 60;
 const UNWIND: Duration = Duration::from_secs(30);
 
 pub const SUBCOMMANDS: &[&str] = &[
-    "lint", "preflight", "status", "testdb", "wait", "container", "plan", "warm", "test-bins",
+    "lint", "preflight", "status", "testdb", "wait", "container", "plan", "warm", "test-bins", "sandbox-supervise",
 ];
 
 static TRIPPED: AtomicBool = AtomicBool::new(false);
@@ -437,7 +437,7 @@ fn start_ticks(pid: u32) -> Option<u64> {
     stat.rsplit_once(')')?.1.split_whitespace().nth(19)?.parse().ok()
 }
 
-fn argv_of(pid: u32) -> Option<Vec<String>> {
+pub(crate) fn argv_of(pid: u32) -> Option<Vec<String>> {
     let raw = std::fs::read(format!("{}/{pid}/cmdline", system_paths::PROC)).ok()?;
     Some(raw.split(|b| *b == 0).filter(|s| !s.is_empty()).map(|s| String::from_utf8_lossy(s).into_owned()).collect())
 }
@@ -661,6 +661,7 @@ mod tests {
     fn a_dash_dash_branch_named_like_a_subcommand_is_still_a_run() {
         assert!(is_run(&["testenv".into(), "--".into(), "lint".into()]));
         assert!(!is_run(&["testenv".into(), "lint".into()]));
+        assert!(!is_run(&["testenv".into(), "sandbox-supervise".into(), "rec".into(), "bwrap".into()]));
     }
 
     #[test_id(tmpkug3)]

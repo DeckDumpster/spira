@@ -331,6 +331,12 @@ fn bounded_fixture() -> Fixture {
 }
 
 impl Fixture {
+    /// A stream test is about bytes, not silence: a starved watcher on a loaded box outlasts one period.
+    fn streaming(self) -> Self {
+        fs::write(self.root.join(".config/nextest.toml"), "[profile.default]\nslow-timeout = { period = \"60s\", terminate-after = 1 }\n").unwrap();
+        self
+    }
+
     fn run(&self, name: &str, script: &str, nextest: bool) -> std::process::Output {
         let bin = self.root.join(name);
         testkit::write_exe(&bin, &format!("#!/bin/bash\n{script}\n"));
@@ -388,10 +394,36 @@ fn under_nextest_a_silent_binary_is_not_killed() {
 #[test_id(txpbx5s)]
 #[test]
 fn a_burst_of_output_on_both_streams_arrives_whole_and_separate() {
-    let f = bounded_fixture();
+    let f = bounded_fixture().streaming();
     let out = f.run("burst", "for i in $(seq 1 3000); do echo \"o$i\"; echo \"e$i\" >&2; done", false);
     let lines = |b: &[u8], p: char| String::from_utf8_lossy(b).lines().map(String::from).collect::<Vec<_>>().eq(&(1..=3000).map(|i| format!("{p}{i}")).collect::<Vec<_>>());
     assert!(lines(&out.stdout, 'o') && lines(&out.stderr, 'e'), "streams arrive whole and in order");
+}
+
+/// uutils tee dies mid-stream when the kernel sizes its private pipe down; a stream must not
+/// depend on a `tee` on the caller's PATH.
+#[test_id(tppacx1)]
+#[test]
+fn a_tee_that_dies_mid_stream_cannot_cut_a_stream() {
+    let f = bounded_fixture().streaming();
+    let shim = f.root.join("shim");
+    fs::create_dir_all(&shim).unwrap();
+    testkit::write_exe(shim.join("tee"), "#!/bin/bash\nexec 3>\"$1\"\nfor _ in 1 2; do IFS= read -r l && printf '%s\\n' \"$l\" && printf '%s\\n' \"$l\" >&3; done\nexit 101\n");
+    let bin = f.root.join("burst");
+    testkit::write_exe(&bin, "#!/bin/bash\nfor i in $(seq 1 50); do echo \"o$i\"; echo \"e$i\" >&2; done\n");
+    let path = format!("{}:{}", shim.display(), std::env::var("PATH").unwrap_or_default());
+    let out = std::process::Command::new("bash")
+        .arg(f.root.join("tools/test-sandbox/runner"))
+        .arg(&bin)
+        .env_remove("NEXTEST")
+        .env("PATH", path)
+        .output()
+        .expect("the runner spawns");
+    let want = |p: char| (1..=50).map(|i| format!("{p}{i}\n")).collect::<String>();
+    assert_eq!(
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned()),
+        (Some(0), want('o'), want('e'))
+    );
 }
 
 #[test_id(tztmwrt)]
@@ -418,4 +450,29 @@ fn print_args_prints_the_command_line_and_never_runs_the_binary() {
         .unwrap();
     assert!(out.status.success() && String::from_utf8_lossy(&out.stdout).contains("bwrap"));
     assert!(!marker.exists());
+}
+
+#[test_id(tkt2rbj)]
+#[test]
+fn the_built_testenv_supervisor_records_who_signalled_it_and_passes_the_signal_on() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    let dir = testkit::TempDir::new("supervise-record");
+    let record = dir.path().join("rec");
+    let mut sup = Command::new(testkit::bin_exe("testenv"))
+        .args(["sandbox-supervise"])
+        .arg(&record)
+        .args(["sh", "-c", "echo ready; exec sleep 29.5"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut ready = String::new();
+    BufReader::new(sup.stdout.take().unwrap()).read_line(&mut ready).unwrap();
+    assert_eq!(ready.trim(), "ready");
+    let mut killer = Command::new("kill").args(["-TERM", &sup.id().to_string()]).spawn().unwrap();
+    let status = sup.wait().unwrap();
+    let text = fs::read_to_string(&record).unwrap();
+    assert!(text.starts_with(&format!("testenv: stopped from outside: sig=15 from pid={} cmd=", killer.id())), "{text}");
+    assert_eq!(status.code(), Some(143));
+    killer.wait().unwrap();
 }

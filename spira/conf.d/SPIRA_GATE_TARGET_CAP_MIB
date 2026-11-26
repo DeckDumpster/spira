@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=gate
+DOC=The MiB every gate tree's build directories and the warm pool may hold together on the target root before idle trees and pooled entries are evicted. Size it as (gates at once + the warm pool's KEEP) times one gate build directory (14.7 GiB at most measured).
+SCHEMA=REQUIRED: The MiB every gate tree's build directories and the warm pool may hold together on the target root before idle trees and pooled entries are evicted. Declared in spira.toml as gate_target_cap_mib; nothing defaults it, and the gate refuses to build without it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
+SPIRA_CONF_DEFAULT_EOF

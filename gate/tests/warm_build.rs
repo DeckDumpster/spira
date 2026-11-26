@@ -55,7 +55,7 @@ fn seeded(t: &testkit::TempDir, change: &str, contents: &str) -> Vec<String> {
     std::fs::create_dir_all(&bdest).unwrap();
     std::fs::create_dir_all(b.join("target")).unwrap();
     std::os::unix::fs::symlink(&bdest, b.join("target/debug")).unwrap();
-    let line = gate::warm::warm_start(&root, "r", &bdest, &b).unwrap();
+    let (_, line) = gate::warm::warm_start(&root, "r", &bdest, &b).unwrap();
     assert!(line.contains("warm from"), "{line}");
 
     build(&b)

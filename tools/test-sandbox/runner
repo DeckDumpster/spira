@@ -71,7 +71,7 @@ held() {
 
 # RUST_TEST_THREADS=1 prints no hung line, so silence is bounded too.
 bounded() {
-    local w1 w2 tmp pid rc=0 limit="" period="" periods="" line name="" why="" now last start tee_out tee_err
+    local w1 w2 tmp pid rc=0 limit="" period="" periods="" line name="" why="" now last act start
     tmp="$(mktemp -d)" || die "cannot make a scratch directory"
     mkfifo "$tmp/tick" && exec 9<>"$tmp/tick" || die "cannot make a wait fifo"
     if [ -r "$workspace/.config/nextest.toml" ]; then
@@ -82,19 +82,19 @@ bounded() {
         [ -n "$period" ] && [ -n "$periods" ] && limit=$((period * periods * 1000000))
     fi
     printf '%s' "${EPOCHREALTIME/./}" > "$tmp/act"
-    local watch='while IFS= read -r l || [ -n "$l" ]; do
+    # Each watcher forwards its stream itself: uutils tee asserts a full tee(2) into a pipe the
+    # kernel sizes down when the user nears pipe-user-pages-soft, and dies mid-stream.
+    local watch='eol=$'"'"'\n'"'"'
+    while IFS= read -r l || { [ -n "$l" ] && eol=""; }; do
+        printf "%s%s" "$l" "$eol"
         [[ $l =~ ^test\ (.*)\ has\ been\ running\ for\ over\ [0-9]+\ seconds$ ]] && printf "%s" "${BASH_REMATCH[1]}" > "$2/hung"
         printf "%s" "${EPOCHREALTIME/./}" > "$2/act"
     done'
-    mkfifo "$tmp/out" "$tmp/err" "$tmp/w1" "$tmp/w2" || die "cannot make the stream fifos"
-    bash -c "$watch" _ x "$tmp" < "$tmp/w1" &
+    mkfifo "$tmp/out" "$tmp/err" || die "cannot make the stream fifos"
+    bash -c "$watch" _ x "$tmp" < "$tmp/out" &
     w1=$!
-    bash -c "$watch" _ x "$tmp" < "$tmp/w2" &
+    bash -c "$watch" _ x "$tmp" < "$tmp/err" >&2 &
     w2=$!
-    tee "$tmp/w1" < "$tmp/out" &
-    tee_out=$!
-    tee "$tmp/w2" < "$tmp/err" >&2 &
-    tee_err=$!
     setsid "$@" <&0 > "$tmp/out" 2> "$tmp/err" &
     pid=$!
     kill_tree() {
@@ -107,12 +107,14 @@ bounded() {
     }
     trap 'kill_tree; rm -rf "$tmp"; exit 143' TERM INT HUP
     start=${EPOCHREALTIME/./}
+    last=$start
     while kill -0 "$pid" 2>/dev/null; do
         if [ -s "$tmp/hung" ]; then why=libtest; name="$(<"$tmp/hung")"; break; fi
         if [ -n "$limit" ]; then
             now=${EPOCHREALTIME/./}
-            last="$(<"$tmp/act")"
-            [ "$last" -ge "$start" ] 2>/dev/null || last=$start
+            # A read between a watcher's truncate and its write is empty: keep the newest stamp.
+            act="$(<"$tmp/act")"
+            [ "$act" -gt "$last" ] 2>/dev/null && last=$act
             if [ $((now - last)) -ge "$limit" ]; then why=silent; name=-; break; fi
         fi
         read -r -t 0.05 -u 9 _ || true
@@ -125,7 +127,7 @@ bounded() {
     else
         wait "$pid"; rc=$?
     fi
-    wait "$tee_out" "$tee_err" "$w1" "$w2" 2>/dev/null
+    wait "$w1" "$w2" 2>/dev/null
     trap - TERM INT HUP
     rm -rf "$tmp"
     exit "$rc"

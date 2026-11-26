@@ -12,6 +12,7 @@ pub mod fixture;
 pub mod logs;
 pub mod metrics;
 pub mod oneshot;
+pub mod ops;
 pub mod query;
 pub mod rounds;
 pub mod run;

@@ -20,7 +20,7 @@ thread_local! {
 /// Runs `f` with every [`cfg`] on this thread answered from a resolution read from the files
 /// now, not from what the process pinned. The pin is untouched: only `f` sees the fresh read.
 pub fn with_fresh<T>(f: impl FnOnce() -> T) -> Result<T, String> {
-    let resolved = resolve_now()?;
+    let resolved = resolve_now(&std::env::vars().collect())?;
     FRESH.with(|c| *c.borrow_mut() = Some(resolved));
     let out = f();
     FRESH.with(|c| *c.borrow_mut() = None);
@@ -30,10 +30,16 @@ pub fn with_fresh<T>(f: impl FnOnce() -> T) -> Result<T, String> {
 /// This process's resolved config: `$SPIRA_TOML`, read until one resolution succeeds and then
 /// pinned. A refusal is returned, never kept: the next call reads again.
 pub fn config() -> Result<&'static Resolved, String> {
+    config_with(&std::env::vars().collect())
+}
+
+/// [`config`], resolving from `env` as handed in when nothing is pinned yet: a caller that names
+/// its config by value never edits the process environment. A pinned config wins over `env`.
+pub fn config_with(env: &BTreeMap<String, String>) -> Result<&'static Resolved, String> {
     if let Some(kept) = CONFIG.get() {
         return Ok(kept);
     }
-    let resolved = resolve_now()?;
+    let resolved = resolve_now(env)?;
     Ok(CONFIG.get_or_init(|| resolved))
 }
 
@@ -48,17 +54,16 @@ pub fn instance() -> Result<String, String> {
     crate::resolve::instance_of(config().map_err(|e| format!("cannot resolve spira.instance: {e}"))?)
 }
 
-fn resolve_now() -> Result<Resolved, String> {
-    let env: BTreeMap<String, String> = std::env::vars().collect();
-    let home = crate::resolve::locate_home_for_process()?;
-    let repo = crate::resolve::derive_home_repo(&home, &env);
-    crate::resolve::resolve_for_process(&home, &repo, &env)
+fn resolve_now(env: &BTreeMap<String, String>) -> Result<Resolved, String> {
+    let home = crate::resolve::locate_home(env, &std::env::current_exe().unwrap_or_default())?;
+    let repo = crate::resolve::derive_home_repo(&home, env);
+    crate::resolve::resolve_for_process(&home, &repo, env)
 }
 
 /// What `keys` resolve to now, read from the files again: the one way past the value this process pinned.
 /// A caller that re-pins takes exactly the keys it names; everything else stays as it was read.
 pub fn fresh(keys: &[String]) -> Result<BTreeMap<String, String>, String> {
-    let resolved = resolve_now()?;
+    let resolved = resolve_now(&std::env::vars().collect())?;
     keys.iter().map(|k| resolved.values.get(k).map(|v| (k.clone(), v.clone())).ok_or_else(|| format!("{k} is not a registered config key — refusing"))).collect()
 }
 

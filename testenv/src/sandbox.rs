@@ -11,7 +11,8 @@
 //! testenv.
 
 use std::fs;
-use std::io::Read;
+use std::io::{BufRead, Read};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -336,6 +337,201 @@ pub struct Ran {
     pub rc: Option<i32>,
     pub secs: u64,
     pub timed_out: bool,
+    /// The signal that stopped the run from outside, and who sent it; `None` for a run that
+    /// ended by itself or at its own deadline.
+    pub stopped: Option<Stopped>,
+}
+
+/// A signal that stopped a run from outside, as the supervisor read its sender the moment it arrived.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stopped {
+    pub sig: i32,
+    pub by_pid: Option<u32>,
+    pub cmd: String,
+    pub cgroup: String,
+}
+
+const STOPPED_PREFIX: &str = "testenv: stopped from outside: sig=";
+const PID_UNRESOLVED: &str = "? (outside the sandbox's namespace)";
+
+impl Stopped {
+    fn line(&self) -> String {
+        let pid = self.by_pid.map_or_else(|| PID_UNRESOLVED.to_string(), |p| p.to_string());
+        format!("{STOPPED_PREFIX}{} from pid={pid} cmd={} cgroup={}", self.sig, self.cmd, self.cgroup)
+    }
+
+    fn parse(line: &str) -> Option<Stopped> {
+        let rest = line.strip_prefix(STOPPED_PREFIX)?;
+        let (sig, rest) = rest.split_once(" from pid=")?;
+        let (pid, rest) = rest.split_once(" cmd=")?;
+        let (cmd, cgroup) = rest.rsplit_once(" cgroup=")?;
+        Some(Stopped { sig: sig.parse().ok()?, by_pid: pid.parse().ok(), cmd: cmd.into(), cgroup: cgroup.into() })
+    }
+
+    /// The sender's program name: the basename of its command's first word.
+    pub fn comm(&self) -> &str {
+        let first = self.cmd.split_whitespace().next().unwrap_or("?");
+        let first = first.strip_prefix('[').and_then(|f| f.strip_suffix(']')).unwrap_or(first);
+        first.rsplit('/').next().unwrap_or(first)
+    }
+
+    /// The systemd unit or scope the sender ran in: the cgroup path's last component.
+    pub fn unit(&self) -> &str {
+        self.cgroup.trim_end_matches('/').rsplit('/').next().unwrap_or("?")
+    }
+
+    fn by(&self) -> String {
+        format!("{}:{}", self.by_pid.map_or_else(|| "?".to_string(), |p| p.to_string()), self.comm())
+    }
+
+    /// The `sandbox-metrics` line's field.
+    pub fn metrics_field(&self) -> String {
+        format!("stopped=outside sig={} by={}", self.sig, self.by())
+    }
+
+    /// The `VERDICT RED` line's field.
+    pub fn verdict_field(&self) -> String {
+        format!("{} cgroup={}", self.metrics_field(), self.unit())
+    }
+}
+
+/// Where the supervisor records a stop for the run whose output is `out`: a file the sandbox
+/// cannot write, so nothing the tests print passes for a sender.
+fn stop_file(out: &Path) -> PathBuf {
+    let mut p = out.as_os_str().to_owned();
+    p.push(".stopped");
+    PathBuf::from(p)
+}
+
+/// The first stop the supervisor recorded.
+fn stopped_in(stop_file: &Path) -> Option<Stopped> {
+    let file = fs::File::open(stop_file).ok()?;
+    std::io::BufReader::new(file).split(b'\n').flatten().find_map(|l| Stopped::parse(&String::from_utf8_lossy(&l)))
+}
+
+/// The first argument of the hidden subcommand that runs [`supervise`].
+pub const SUPERVISE_ARG: &str = "sandbox-supervise";
+
+fn proc_path(pid: u32, file: &str) -> PathBuf {
+    Path::new(system_paths::PROC).join(pid.to_string()).join(file)
+}
+
+fn proc_text(pid: u32, file: &str) -> Option<String> {
+    let raw = fs::read(proc_path(pid, file)).ok()?;
+    let text = String::from_utf8_lossy(&raw).replace(['\0', '\n'], " ");
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+fn sender(sig: i32, pid: u32) -> Stopped {
+    if pid == 0 {
+        return Stopped { sig, by_pid: None, cmd: "?".into(), cgroup: "?".into() };
+    }
+    let cmd = crate::cap::argv_of(pid).map(|a| a.join(" ")).filter(|c| !c.is_empty()).map(|c| c.replace('\n', " ")).or_else(|| proc_text(pid, "comm").map(|c| format!("[{c}]"))).unwrap_or_else(|| "?".into());
+    let cgroup = fs::read_to_string(proc_path(pid, "cgroup"))
+        .ok()
+        .and_then(|t| t.lines().find_map(|l| l.strip_prefix("0::")).map(|p| p.trim().to_string()))
+        .unwrap_or_else(|| "?".into());
+    Stopped { sig, by_pid: Some(pid), cmd, cgroup }
+}
+
+/// The supervisor: runs `argv` as its child and sits on the host as the head of the run's process
+/// group. A TERM, INT or HUP is read with its sender (`si_pid`, which only a process on the
+/// sender's own side of the sandbox's PID namespace can name), written to stderr as one
+/// [`Stopped`] line (also appended to the record file `argv[0]`), and passed on to the child. Returns the child's exit code, 128+n for a signal.
+pub fn supervise(argv: &[String]) -> i32 {
+    use std::os::unix::process::ExitStatusExt;
+    let [record, program, args @ ..] = argv else {
+        eprintln!("testenv: {SUPERVISE_ARG} needs a record file and a command");
+        return 2;
+    };
+    let wanted = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP, libc::SIGCHLD];
+    // SAFETY: plain libc calls on a locally owned set, before any thread exists.
+    let set = unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        wanted.iter().for_each(|s| {
+            libc::sigaddset(&mut set, *s);
+        });
+        libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+        set
+    };
+    // batch-job: the sandbox itself, bounded by its caller's deadline, which kills this supervisor
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    // SAFETY: only sigprocmask, which is async-signal-safe, between fork and exec.
+    unsafe {
+        cmd.pre_exec(move || {
+            libc::sigprocmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
+            Ok(())
+        });
+    }
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("testenv: cannot start {program}: {e}");
+            return 127;
+        }
+    };
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => return st.code().unwrap_or_else(|| 128 + st.signal().unwrap_or(0)),
+            Ok(None) => {}
+            Err(_) => return 1,
+        }
+        // SAFETY: `info` is written by the kernel; the set is the one blocked above.
+        let sig = unsafe {
+            let mut info: libc::siginfo_t = std::mem::zeroed();
+            let got = libc::sigwaitinfo(&set, &mut info);
+            (got > 0 && got != libc::SIGCHLD).then(|| (got, info.si_pid() as u32))
+        };
+        if let Some((sig, pid)) = sig {
+            use std::io::Write;
+            let line = sender(sig, pid).line();
+            let _ = writeln!(std::io::stderr(), "{line}");
+            if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(record) {
+                let _ = writeln!(f, "{line}");
+            }
+            // SAFETY: signals the child this function spawned.
+            unsafe { libc::kill(child.id() as i32, sig) };
+        }
+    }
+}
+
+/// The command that runs [`supervise`]: this executable's hidden subcommand. A unit test's
+/// executable is the test binary, which serves it before `main` (`supervise_at_load`).
+#[cfg(test)]
+const SUPERVISE_AT_LOAD: &str = "TESTENV_SUPERVISE_AT_LOAD";
+#[cfg(not(test))]
+const SUPERVISE_AT_LOAD: &str = "";
+
+/// In a unit-test binary, runs [`supervise`] before libtest starts any thread: a signal sent to
+/// the process must reach the one thread that blocks it.
+#[cfg(test)]
+#[used]
+#[link_section = ".init_array"]
+static SUPERVISE_ON_LOAD: extern "C" fn() = {
+    extern "C" fn supervise_at_load() {
+        if std::env::var_os(SUPERVISE_AT_LOAD).is_none() {
+            return;
+        }
+        let raw = fs::read(Path::new(system_paths::PROC).join("self/cmdline")).unwrap_or_default();
+        let argv: Vec<String> = raw.split(|b| *b == 0).skip_while(|a| *a != b"--").skip(1).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+        // SAFETY: leaves the process without running libtest's startup.
+        unsafe { libc::_exit(supervise(&argv)) }
+    }
+    supervise_at_load
+};
+
+fn supervisor_command() -> Result<Command, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("cannot find this executable: {e}"))?;
+    let mut c = Command::new(exe);
+    if cfg!(test) {
+        c.arg("--").env(SUPERVISE_AT_LOAD, "1");
+    } else {
+        c.arg(SUPERVISE_ARG);
+    }
+    Ok(c)
 }
 
 /// Runs `script` in `profile` with `bwrap`, writing its output to `out`, cut at `deadline`.
@@ -350,24 +546,33 @@ pub fn run(bwrap: &str, profile: &Profile, script: &Path, out: &Path, deadline: 
     let err = log.try_clone().map_err(|e| e.to_string())?;
     let started = Instant::now();
     // batch-job: the unit tier of a testenv trial, cut at the trial's deadline below
-    let mut child = Command::new(bwrap)
-        .args(profile.bwrap_args())
-        .arg("--")
-        .arg("bash")
-        .arg(script)
-        .stdin(Stdio::null())
-        .stdout(log)
-        .stderr(err)
-        .spawn()
-        .map_err(|e| format!("cannot start {bwrap}: {e}"))?;
+    let record = stop_file(out);
+    let _ = fs::remove_file(&record);
+    let mut cmd = supervisor_command()?;
+    cmd.arg(&record).arg(bwrap).args(profile.bwrap_args()).arg("--").arg("bash").arg(script).stdin(Stdio::null()).stdout(log).stderr(err).process_group(0);
+    // SAFETY: only prctl, which is async-signal-safe, between fork and exec: the supervisor
+    // dies with testenv, and the sandbox with it.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+            Ok(())
+        });
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("cannot start {bwrap}: {e}"))?;
     loop {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-            return Ok(Ran { rc: status.code(), secs: started.elapsed().as_secs(), timed_out: false });
+            let stopped = if status.code() == Some(0) { None } else { stopped_in(&record) };
+            return Ok(Ran { rc: status.code(), secs: started.elapsed().as_secs(), timed_out: false, stopped });
+        }
+        if crate::runtime::cancelled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(Ran { rc: None, secs: started.elapsed().as_secs(), timed_out: false, stopped: None });
         }
         if deadline.is_some_and(|d| started.elapsed() >= d) {
             let _ = child.kill();
             let _ = child.wait();
-            return Ok(Ran { rc: None, secs: started.elapsed().as_secs(), timed_out: true });
+            return Ok(Ran { rc: None, secs: started.elapsed().as_secs(), timed_out: true, stopped: None });
         }
         std::thread::sleep(Duration::from_millis(200)); // clock-safe: poll interval under the deadline above
     }
@@ -645,5 +850,61 @@ mod tests {
         assert_eq!(ran.rc, Some(0), "{text}");
         let store = root.path().join(CACHE_DIR_NAME).display().to_string();
         assert!(text.contains(&format!("{}|{store}|{TARGET_MOUNT}|0", system_paths::USR_BIN_TRUE)), "{text}");
+    }
+
+    fn proc_field(pid: &str, file: &str) -> String {
+        fs::read(Path::new(system_paths::PROC).join(pid).join(file)).map(|b| String::from_utf8_lossy(&b).replace('\0', " ")).unwrap_or_default()
+    }
+
+    #[test_id(tdw7zyc)]
+    #[test]
+    fn a_run_stopped_by_another_process_names_the_signal_and_its_sender() {
+        if usable("bwrap").is_err() {
+            return;
+        }
+        let tree = testkit::TempDir::new("sandbox-stop-tree");
+        let root = testkit::TempDir::new("sandbox-stop-root");
+        let home = testkit::TempDir::new("sandbox-stop-home");
+        fs::write(tree.path().join("stop.sh"), "sleep 29.731\n").unwrap();
+        let p = Profile::for_run(tree.path(), &root.path().join("t"), root.path(), home.path(), 1);
+        let out = root.path().join("out");
+        let runner = {
+            let out = out.clone();
+            std::thread::spawn(move || run("bwrap", &p, &Path::new(TREE_MOUNT).join("stop.sh"), &out, Some(Duration::from_secs(60))))
+        };
+        let supervisor = loop {
+            let all: Vec<String> = fs::read_dir(system_paths::PROC).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.chars().all(|c| c.is_ascii_digit())).collect();
+            let sleeping = all.iter().any(|p| proc_field(p, "cmdline").trim() == "sleep 29.731");
+            let head = all.iter().find(|p| {
+                let stat = proc_field(p, "stat");
+                let pgrp = stat.rsplit_once(')').and_then(|(_, r)| r.split_whitespace().nth(2).map(str::to_string));
+                sleeping && pgrp.as_deref() == Some(p.as_str()) && proc_field(p, "cmdline").split(' ').skip(1).step_by(2).take(2).collect::<Vec<_>>() == ["--", "bwrap"]
+            });
+            if let Some(h) = head {
+                break h.clone();
+            }
+            assert!(!runner.is_finished(), "the run ended before it was stopped");
+            std::thread::yield_now();
+        };
+        let mut killer = Command::new("kill").args(["-TERM", &supervisor]).spawn().unwrap();
+        let ran = runner.join().unwrap().unwrap();
+        let stopped = ran.stopped.clone().unwrap_or_else(|| panic!("no stop recorded: {ran:?} {:?}", fs::read_to_string(&out)));
+        let text = fs::read_to_string(&out).unwrap();
+        assert_eq!((stopped.sig, stopped.by_pid), (15, Some(killer.id())), "{ran:?}\n{text}");
+        assert_eq!(stopped.comm(), "kill");
+        assert!(!ran.timed_out && stopped.cgroup.starts_with('/'), "{ran:?}");
+        assert!(text.contains("testenv: stopped from outside: sig=15 from pid="), "{text}");
+        killer.wait().unwrap();
+    }
+
+    #[test_id(ti8m5k5)]
+    #[test]
+    fn a_stopped_line_reads_back_whatever_the_sender_command_contains() {
+        let s = Stopped { sig: 15, by_pid: Some(77), cmd: "kill -TERM 5 cgroup=x".into(), cgroup: "/user.slice/a.service".into() }; // not a path: a cgroup name
+        assert_eq!(Stopped::parse(&s.line()), Some(s.clone()));
+        assert_eq!((s.comm(), s.unit()), ("kill", "a.service"));
+        let unresolved = Stopped { by_pid: None, ..s };
+        assert!(unresolved.line().contains("pid=? (outside the sandbox's namespace)"));
+        assert_eq!(Stopped::parse(&unresolved.line()), Some(unresolved));
     }
 }

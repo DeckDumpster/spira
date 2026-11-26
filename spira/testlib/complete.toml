@@ -461,6 +461,7 @@ flow_window_hours = "0.5"
 forge = "forge"
 forge_repo = ""
 gate_budget = "140"
+gate_target_cap_mib = 55555
 gate_deadline = 300
 gate_build_stall = 300
 gate_unit_max_crates = 120
