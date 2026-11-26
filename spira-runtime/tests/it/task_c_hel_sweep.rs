@@ -360,3 +360,104 @@ fn a_resumed_repo_with_nothing_to_act_on_clears_its_cursor_and_one_with_work_kee
     task::clear_cursor_when_idle(&real, "submitted", &keep()).unwrap();
     assert_eq!(real.resume_after("spira"), None);
 }
+
+/// One pass over `sp-a` and `sp-b`, both planning `effect`, in which `result` answers `sp-b`'s.
+fn second_of_two_fails(world: Snapshot, effect: &str, result: Input<Snapshot>) {
+    let (c, acts) = pass(&Carry::default(), world);
+    assert_eq!(names(&acts), [effect, effect]);
+    let (c, _) = step(&c, result);
+    assert_eq!(c.refused.keys().collect::<Vec<_>>(), ["spira:spira/sp-b"], "{effect}: {c:?}");
+    assert!(c.jobs.keys().all(|k| k.contains("sp-a")), "{effect}: {c:?}");
+}
+
+fn with_second(mut world: Snapshot) -> Snapshot {
+    let b = Branch { id: "sp-b".into(), br: "spira/sp-b".into(), worktree: world.branches[0].worktree.as_ref().map(|_| "run/worktree/sp-b".into()), ..world.branches[0].clone() };
+    world.branches.push(b);
+    if let Some(row) = world.rows.get("sp-a").cloned() {
+        world.rows.insert("sp-b".into(), row);
+    }
+    if let Some(bead) = world.beads.get("sp-a").cloned() {
+        world.beads.insert("sp-b".into(), bead);
+    }
+    world
+}
+
+#[test_id(tc9kd78)]
+#[test]
+fn a_failure_is_recorded_against_the_job_its_text_names() {
+    for (world, effect, job) in [(same(), task::SEND, "spira:spira/sp-b:abc123".to_string()), (unbeaded(), task::ARCHIVE, format!("{}:spira:sp-b", task::ARCHIVE)), (superseded_unsafe(), task::FREE_WORKTREE, format!("{}:spira:sp-b", task::FREE_WORKTREE))] {
+        second_of_two_fails(with_second(world), effect, answer(effect, false, &task::naming_job("sp-b: refused".into(), &job)));
+    }
+}
+
+#[test_id(t203xra)]
+#[test]
+fn a_failure_that_names_none_of_two_jobs_is_recorded_against_neither() {
+    for (world, effect) in [(same(), task::SEND), (unbeaded(), task::ARCHIVE)] {
+        let (c, _) = pass(&Carry::default(), with_second(world));
+        let (c, _) = step(&c, answer(effect, false, ""));
+        assert!(c.refused.is_empty(), "{effect}: {c:?}");
+        assert_eq!((c.jobs.len(), c.tally.failed), (1, 1), "the pass still counts it and waits on one less");
+    }
+}
+
+#[test_id(tfhywgc)]
+#[test]
+fn a_failed_runner_names_its_job() {
+    let dir = testkit::TempDir::new("hel-sweep-named");
+    let target = r#"{"repo":"nowhere","id":"sp-a","br":"spira/sp-a","tip":"abc123","path":""}"#;
+    let e = task::archive(&real_in(dir.path()), target).unwrap_err();
+    assert!(e.ends_with("[hel.sweep.archive:nowhere:sp-a]"), "{e}");
+    let e = task::destroy_worktree(&real_in(dir.path()), task::FREE_WORKTREE, target).unwrap_err();
+    assert!(e.ends_with("[hel.sweep.free_worktree:nowhere:sp-a]"), "{e}");
+}
+
+#[test_id(t2tlhk4)]
+#[test]
+fn a_failure_that_answers_past_the_budget_is_recorded_and_issues_nothing() {
+    for late in [901_000, 1_801_000] {
+        let (c, _) = pass(&Carry::default(), same());
+        let (c, acts) = task::decide(&t::handler::<H>(SET).cfg, &c, &Input::Ran(leg_ran(1)), AT_35 + late).unwrap();
+        assert!(acts.is_empty(), "{late}: {acts:?}");
+        let (c, acts) = pass(&c, same());
+        assert!(acts.is_empty(), "{late}: {acts:?}");
+        assert_eq!(c.tally.refused, 1, "{late}");
+    }
+}
+
+#[test_id(tj9dl8m)]
+#[test]
+fn a_leg_that_fails_after_the_budget_closed_the_pass_is_still_recorded() {
+    let cfg = t::handler::<H>(SET).cfg;
+    let (c, _) = pass(&Carry::default(), same());
+    let (c, _) = task::decide(&cfg, &c, &answer(task::SEND, true, "started"), AT_35 + 901_000).unwrap();
+    assert_eq!(c.phase, Phase::BudgetSpent);
+    let (c, acts) = task::decide(&cfg, &c, &Input::Ran(leg_ran(1)), AT_35 + 950_000).unwrap();
+    assert!(acts.is_empty(), "{acts:?}");
+    assert!(c.refused.contains_key("spira:spira/sp-a"), "{c:?}");
+}
+
+#[test_id(tevkajf)]
+#[test]
+fn the_observed_base_carries_the_land_refs_commit_and_moves_with_it() {
+    let dir = testkit::TempDir::new("hel-sweep-base");
+    let git = |args: &[&str]| testkit::git(dir.path(), args);
+    git(&["init", "-q", "-b", "main"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "one"]);
+    let observed = || task::observed_base(dir.path(), hel::ports::Base { landref: "main".into(), landrefs: vec![], remote: None }).sha;
+    let first = observed();
+    assert_eq!(first, git(&["rev-parse", "main"]));
+    git(&["commit", "-q", "--allow-empty", "-m", "two"]);
+    assert_eq!(observed(), git(&["rev-parse", "main"]));
+    assert_ne!(observed(), first);
+}
+
+#[test_id(twr6ep2)]
+#[test]
+fn an_observes_window_is_what_it_resumed_after_and_where_it_was_cut() {
+    let mut s = Snapshot::default();
+    s.set_window(Some("spira/sp-b"), true, Some("spira/sp-d"));
+    assert_eq!((s.resumed_after.as_str(), s.cut_at.as_str()), ("spira/sp-b", "spira/sp-d"));
+    s.set_window(None, false, Some("spira/sp-d"));
+    assert_eq!((s.resumed_after.as_str(), s.cut_at.as_str()), ("", ""));
+}
