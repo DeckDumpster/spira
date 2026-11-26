@@ -11,7 +11,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ports::{SeededRng, VirtualClock};
-use rumqttc::{Client, Connection, Event, MqttOptions, Packet, Publish, QoS, Transport};
 use serde_json::{json, Value};
 use spira_pub::{Class, Options, PubError, Publisher};
 use testkit::broker::{Broker, Subscriber};
