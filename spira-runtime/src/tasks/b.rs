@@ -29,6 +29,12 @@ macro_rules! hosted {
         $crate::tasks::b::hosted!($ty, catch_up = $catch_up, off_journal = false);
     };
     ($ty:ident, catch_up = $catch_up:path, off_journal = $off:expr) => {
+        $crate::tasks::b::hosted!($ty, catch_up = $catch_up, off_journal = $off, failure = $crate::tasks::b::kit::plain_failure);
+    };
+    ($ty:ident, catch_up = $catch_up:path, failure = $failure:path) => {
+        $crate::tasks::b::hosted!($ty, catch_up = $catch_up, off_journal = false, failure = $failure);
+    };
+    ($ty:ident, catch_up = $catch_up:path, off_journal = $off:expr, failure = $failure:path) => {
         impl $crate::tasks::b::kit::Stub for $ty {
             type Snapshot = Snapshot;
             type Carry = Carry;
@@ -55,6 +61,10 @@ macro_rules! hosted {
 
             fn catch_up(carry: &Carry, now_ms: u64, cadence: &$crate::tasks::b::kit::Cadence) -> Option<String> {
                 $catch_up(carry, now_ms, cadence)
+            }
+
+            fn failure_body(request: &runtime::event::EffectSpec, body: &str) -> String {
+                $failure(request, body)
             }
         }
 
@@ -260,7 +270,7 @@ pub mod kit {
     use serde::de::DeserializeOwned;
     use serde::{Deserialize, Serialize};
 
-    use crate::watchers::{answered_effect, carried};
+    use crate::watchers::{answered_effect, answered_spec, carried};
     use crate::{Effects, Settings};
 
     /// A task's configured values, by key: every key of its row, read once at build.
@@ -389,6 +399,10 @@ pub mod kit {
         /// lost a slot or a pass, or `None`. The timer that held the slot lives in memory only.
         /// A resumed pass is stamped by `Input::Fire`, as a slot's is.
         fn catch_up(carry: &Self::Carry, now_ms: u64, cadence: &Cadence) -> Option<String>;
+        /// The body `decide` is handed for a failed or timed-out effect, given what was asked.
+        fn failure_body(request: &EffectSpec, body: &str) -> String {
+            plain_failure(request, body)
+        }
 
         fn registration(self) -> Registration {
             Registration::new(Self::SPEC.name, self).with_rows(runtime::row_codec!(Self::SPEC.stream, Self::SPEC.state, Self::ROWS))
@@ -441,6 +455,11 @@ pub mod kit {
         None
     }
 
+    /// [`Stub::failure_body`] for a task that needs only the outcome's own text.
+    pub fn plain_failure(_: &EffectSpec, body: &str) -> String {
+        body.to_string()
+    }
+
     /// The runner of an effect whose task is not ported yet.
     pub fn not_ported<T: Stub>(_: &Effects, _: &str, _: &EffectSpec) -> Result<String, String> {
         unimplemented!("{}: not ported yet", T::SPEC.name)
@@ -487,7 +506,8 @@ pub mod kit {
             return vec![];
         }
         let ok = ev.kind.tag == EFFECT_SUCCEEDED;
-        run(t, ctx, view, &stream, Input::Outcome { effect: asked, ok, body: ev.kind.body.clone() }, ev.at)
+        let body = answered_spec(view, ev).filter(|_| !ok).map_or_else(|| ev.kind.body.clone(), |request| T::failure_body(&request, &ev.kind.body));
+        run(t, ctx, view, &stream, Input::Outcome { effect: asked, ok, body }, ev.at)
     }
 
     fn run<T: Stub>(t: &T, ctx: &Ctx, view: &Projection, stream: &StreamKey, input: Input<T::Snapshot>, now: u64) -> Vec<Command> {

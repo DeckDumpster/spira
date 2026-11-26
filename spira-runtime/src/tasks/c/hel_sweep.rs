@@ -56,7 +56,9 @@
 //!
 //! `hel::sweep::disposition` (`sweep.rs:89-144`) and `act` (`sweep.rs:298-372`), refactored to read
 //! the snapshot rather than call `World`. Pure: `(Carry, Snapshot) -> (Carry, Vec<Effect>)`.
-//! - **Carry:** `{last_fired, pass: Option<{started, repos_left, cursor}>, tally:{sent, failed}}`.
+//! - **Carry:** `{last_fired, pass: Option<{started, repos_left, cursor}>, tally:{sent, failed, refused}, refused}`.
+//! - **Refused:** a failed send, archive or free is not planned again while the branch's tip, row
+//!   state and land ref sha stand; each skip counts in `tally.refused`. Orphans are not held back.
 //! - **Dispositions:** SendContentLanded, SendOtherPr, ReapSupersededSafe, ReapSquashMerged,
 //!   KeepSupersededUnsafe, KeepUnlanded, OrphanNoBead, ArchiveTerminal (`sweep.rs:37-48`). Round
 //!   branches and held beads are skipped (`sweep.rs:244-251`).
@@ -105,7 +107,7 @@
 
 use std::collections::BTreeMap;
 
-use runtime::event::EventKindTag;
+use runtime::event::{EffectSpec, EventKindTag};
 use serde::{Deserialize, Serialize};
 
 use crate::tasks::b::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
@@ -148,6 +150,7 @@ pub struct Base {
     pub landref: String,
     pub landrefs: Vec<String>,
     pub remote: String,
+    pub sha: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,6 +204,37 @@ pub struct Snapshot {
     /// The repositories still to observe after this one, in registry order: the next probe's
     /// input is the first of them.
     pub repos: Vec<String>,
+    /// The branch this observe resumed after, empty from the start.
+    pub resumed_after: String,
+    /// The last branch judged by an observe its time slice cut, empty when it walked to the end.
+    pub cut_at: String,
+    /// The repository's branches could not be read.
+    pub unread: bool,
+    /// The row states or the land ref's sha could not be read: no input can be seen to move.
+    pub inputs_unread: bool,
+}
+
+impl Snapshot {
+    /// The facts a refusal is later judged against: the base and its commit, the row states,
+    /// and what a scan resumed after `cursor`, and cut after its `last` branch or not, listed.
+    pub fn read_inputs(&mut self, root: &std::path::Path, base: hel::ports::Base, cursor: Option<&str>, cut: bool, last: Option<&str>, rows: Result<BTreeMap<String, String>, String>) {
+        let sha = spira_config::git_refs::sha_of(root, &base.landref).or_else(|| hel::git::Git(root).rev_parse(&base.landref)).unwrap_or_default();
+        self.inputs_unread = rows.is_err() || sha.is_empty();
+        self.rows = rows.unwrap_or_default();
+        self.base = Base { landref: base.landref, landrefs: base.landrefs, remote: base.remote.unwrap_or_default(), sha };
+        self.resumed_after = cursor.unwrap_or_default().to_string();
+        self.cut_at = last.filter(|_| cut).unwrap_or_default().to_string();
+    }
+
+    /// Whether `b` stands as it did when `recorded` failed; an input that could not be read has not moved.
+    fn unmoved(&self, recorded: &str, b: &Branch) -> bool {
+        self.inputs_unread || recorded == inputs_of(self, &b.id, &b.tip)
+    }
+
+    /// Whether this observe would have listed `br` had it existed: only then is its absence "gone".
+    fn covers(&self, br: &str) -> bool {
+        !self.unread && br > self.resumed_after.as_str() && (self.cut_at.is_empty() || br <= self.cut_at.as_str())
+    }
 }
 
 /// `sweep.rs:37-48`.
@@ -256,6 +290,7 @@ pub struct Pass {
 pub struct Tally {
     pub sent: u32,
     pub failed: u32,
+    pub refused: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -268,6 +303,8 @@ pub struct Carry {
     /// The pass's acts still without an answer, by key: a send leg by `repo:br:tip` (answered
     /// by its unit's `unit.ran`), every other act by `<kind>:<repo>:<id>` (answered by its outcome).
     pub jobs: BTreeMap<String, Job>,
+    /// `repo:br` to the [`Job::inputs`] of that branch's last failed act.
+    pub refused: BTreeMap<String, String>,
 }
 
 /// One act of a pass, kept until it answers.
@@ -282,6 +319,8 @@ pub struct Job {
     pub tip: String,
     /// Close the bead at the land ref's sha once the send leg ends clean.
     pub close: bool,
+    /// `tip|row state|land ref sha` as planned.
+    pub inputs: String,
 }
 
 /// The [`SEND`] effect's input: one branch's send leg.
@@ -382,28 +421,60 @@ fn leg_key(repo: &str, br: &str, tip: &str) -> String {
     format!("{repo}:{br}:{tip}")
 }
 
-fn send_leg(jobs: &mut BTreeMap<String, Job>, s: &Snapshot, b: &Branch, caller: &str, proof: bool, close: bool) -> Result<Act, String> {
-    jobs.insert(leg_key(&s.repo, &b.br, &b.tip), Job { effect: SEND.into(), repo: s.repo.clone(), id: b.id.clone(), br: b.br.clone(), tip: b.tip.clone(), close });
+fn job_key(kind: &str, repo: &str, id: &str) -> String {
+    format!("{kind}:{repo}:{id}")
+}
+
+/// A failure names the job its request was for, a timeout included, so it is never charged to
+/// another branch.
+fn name_job(request: &EffectSpec, body: &str) -> String {
+    let key = if request.name == SEND {
+        serde_json::from_str::<Send>(&request.input).ok().map(|s| leg_key(&s.repo, &s.br, &s.tip))
+    } else {
+        serde_json::from_str::<Target>(&request.input).ok().map(|t| job_key(&request.name, &t.repo, &t.id))
+    };
+    key.map_or_else(|| body.to_string(), |k| format!("{body} [{k}]"))
+}
+
+fn refusal_key(repo: &str, br: &str) -> String {
+    format!("{repo}:{br}")
+}
+
+/// What an act on a branch is judged from: a retry needs one of these to have moved.
+fn inputs_of(s: &Snapshot, id: &str, tip: &str) -> String {
+    format!("{tip}|{}|{}", s.rows.get(id).map_or("-", String::as_str), s.base.sha)
+}
+
+fn record_failure(refused: &mut BTreeMap<String, String>, j: &Job) {
+    if j.effect != ORPHAN_WORKTREE {
+        refused.insert(refusal_key(&j.repo, &j.br), j.inputs.clone());
+    }
+}
+
+fn send_leg(jobs: &mut BTreeMap<String, Job>, s: &Snapshot, b: &Branch, caller: &str, proof: bool, close: bool, inputs: String) -> Result<Act, String> {
+    jobs.insert(leg_key(&s.repo, &b.br, &b.tip), Job { effect: SEND.into(), repo: s.repo.clone(), id: b.id.clone(), br: b.br.clone(), tip: b.tip.clone(), close, inputs });
     let why = if caller == "archived" { "archived".to_string() } else { format!("landed in {}", s.base.landref) };
     effect(SEND, format!("{}:{}:{}", s.repo, b.br, b.tip), &Send { repo: s.repo.clone(), id: b.id.clone(), br: b.br.clone(), tip: b.tip.clone(), why, caller: caller.into(), proof }, 120_000)
 }
 
-fn job(jobs: &mut BTreeMap<String, Job>, kind: &str, t: &Target) -> Result<Act, String> {
-    jobs.insert(format!("{kind}:{}:{}", t.repo, t.id), Job { effect: kind.into(), repo: t.repo.clone(), id: t.id.clone(), br: t.br.clone(), tip: t.tip.clone(), close: false });
+fn job(jobs: &mut BTreeMap<String, Job>, kind: &str, t: &Target, inputs: String) -> Result<Act, String> {
+    jobs.insert(job_key(kind, &t.repo, &t.id), Job { effect: kind.into(), repo: t.repo.clone(), id: t.id.clone(), br: t.br.clone(), tip: t.tip.clone(), close: false, inputs });
     effect(kind, format!("{}:{}:{}:{}:{}:{kind}", t.repo, t.id, t.br, t.tip, t.path), t, if kind == ARCHIVE { 30_000 } else { 120_000 })
 }
 
 /// One repository's acts: `hel::sweep::judge` per branch (round branches and held beads
-/// skipped), then the orphaned worktrees.
-pub fn plan(cfg: &Cfg, s: &Snapshot, jobs: &mut BTreeMap<String, Job>) -> Result<Vec<Act>, String> {
-    plan_labelled(cfg.get("SPIRA_SUBMITTED_LABEL").map_or("", String::as_str), s, jobs)
-}
-
-fn plan_labelled(label: &str, s: &Snapshot, jobs: &mut BTreeMap<String, Job>) -> Result<Vec<Act>, String> {
+/// skipped), then the orphaned worktrees. Also answers how many branches `refused` held back.
+fn plan_labelled(label: &str, s: &Snapshot, refused: &BTreeMap<String, String>, jobs: &mut BTreeMap<String, Job>) -> Result<(Vec<Act>, u64), String> {
     use hel::sweep::Disp;
     let mut acts = vec![];
+    let mut held_back = 0;
     for b in &s.branches {
         if b.id.starts_with("round-") || s.holders.contains_key(&b.id) {
+            continue;
+        }
+        let inputs = inputs_of(s, &b.id, &b.tip);
+        if refused.get(&refusal_key(&s.repo, &b.br)).is_some_and(|r| s.unmoved(r, b)) {
+            held_back += 1;
             continue;
         }
         let target = Target { repo: s.repo.clone(), id: b.id.clone(), br: b.br.clone(), tip: b.tip.clone(), path: b.worktree.clone().unwrap_or_default() };
@@ -413,28 +484,28 @@ fn plan_labelled(label: &str, s: &Snapshot, jobs: &mut BTreeMap<String, Job>) ->
             Disp::KeepUnlanded => {}
             Disp::KeepSupersededUnsafe => {
                 if b.worktree.is_some() {
-                    acts.push(job(jobs, FREE_WORKTREE, &target)?);
+                    acts.push(job(jobs, FREE_WORKTREE, &target, inputs)?);
                 }
             }
-            Disp::OrphanNoBead | Disp::ArchiveTerminal => acts.push(job(jobs, ARCHIVE, &target)?),
+            Disp::OrphanNoBead | Disp::ArchiveTerminal => acts.push(job(jobs, ARCHIVE, &target, inputs)?),
             Disp::SendContentLanded => {
                 let ahead = u64::from(b.ahead);
                 if !landed && hel::sweep::needs_evidence(ahead, || b.has_own_commit, || b.only_stacked_base, || !b.base_names.is_empty()) {
                     continue;
                 }
-                acts.push(send_leg(jobs, s, b, "hel", ahead > 0 && !terminal, true)?);
+                acts.push(send_leg(jobs, s, b, "hel", ahead > 0 && !terminal, true, inputs)?);
             }
-            Disp::SendOtherPr | Disp::ReapSquashMerged => acts.push(send_leg(jobs, s, b, "hel", false, true)?),
-            Disp::ReapSupersededSafe => acts.push(send_leg(jobs, s, b, "hel", false, false)?),
+            Disp::SendOtherPr | Disp::ReapSquashMerged => acts.push(send_leg(jobs, s, b, "hel", false, true, inputs)?),
+            Disp::ReapSupersededSafe => acts.push(send_leg(jobs, s, b, "hel", false, false, inputs)?),
         }
     }
     for o in &s.orphans {
         if s.holders.contains_key(&o.id) {
             continue;
         }
-        acts.push(job(jobs, ORPHAN_WORKTREE, &Target { repo: s.repo.clone(), id: o.id.clone(), br: o.br.clone(), tip: String::new(), path: o.path.clone() })?);
+        acts.push(job(jobs, ORPHAN_WORKTREE, &Target { repo: s.repo.clone(), id: o.id.clone(), br: o.br.clone(), tip: String::new(), path: o.path.clone() }, String::new())?);
     }
-    Ok(acts)
+    Ok((acts, held_back))
 }
 
 fn observe_next(repo: &str) -> Act {
@@ -466,10 +537,36 @@ fn settle(mut next: Carry, repo: &str, mut acts: Vec<Act>) -> Result<(Carry, Vec
     Ok((next, acts))
 }
 
-/// The job an outcome answers: the one its body names, else the first of that effect.
-fn answered_job(carry: &Carry, effect: &str, body: &str) -> Option<String> {
-    let body = body.trim();
-    carry.jobs.get(body).filter(|j| j.effect == effect).map(|_| body.to_string()).or_else(|| carry.jobs.iter().find(|(_, j)| j.effect == effect).map(|(k, _)| k.clone()))
+/// The job an outcome of `effect` answers, and whether that is certain: the one `body` names, or
+/// the only one in flight. Otherwise the first, which ends a wait but is recorded against nothing.
+/// A body naming a job no longer carried answers none.
+fn answered_job(jobs: &BTreeMap<String, Job>, effect: &str, body: &str) -> Option<(String, bool)> {
+    let of_effect = || jobs.iter().filter(|(_, j)| j.effect == effect).map(|(k, _)| k);
+    if let Some(k) = of_effect().find(|k| body.trim() == k.as_str() || body.contains(&format!("[{k}]"))) {
+        return Some((k.clone(), true));
+    }
+    if body.trim_end().ends_with(']') {
+        return None;
+    }
+    let first = of_effect().next()?;
+    Some((first.clone(), of_effect().nth(1).is_none()))
+}
+
+/// An answer to a pass past its budget issues nothing, but a failure is still counted and recorded.
+fn drain(carry: &mut Carry, input: &Input<Snapshot>) {
+    let (key, failed) = match input {
+        Input::Ran(r) => (r.key_for(NAME), !matches!(r.exit, runtime::units::Exit::Code(0 | 2))),
+        // A send's good outcome is only its leg starting.
+        Input::Outcome { effect, ok, body } if !(*ok && effect == SEND) => match answered_job(&carry.jobs, effect, body) {
+            Some((k, certain)) => (Some(k), certain && !ok),
+            None => (None, false),
+        },
+        _ => (None, false),
+    };
+    if let Some(j) = key.and_then(|k| carry.jobs.remove(&k)).filter(|_| failed) {
+        carry.tally.failed += 1;
+        record_failure(&mut carry.refused, &j);
+    }
 }
 
 /// `disposition` and `act` over the snapshot rather than `World`.
@@ -480,10 +577,20 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         let budget = budget_ms(cfg)?;
         if now_ms >= started + budget {
             // A pass far past its budget whose answers never came is forgotten, not waited on.
-            let next = if now_ms >= started + 2 * budget { Carry { last_fired: carry.last_fired, tally: carry.tally.clone(), ..Carry::default() } } else { Carry { phase: Phase::BudgetSpent, pass: None, jobs: BTreeMap::new(), ..carry.clone() } };
+            let mut spent = Carry { phase: Phase::BudgetSpent, pass: None, ..carry.clone() };
+            drain(&mut spent, input);
+            let next = if now_ms >= started + 2 * budget { Carry { phase: Phase::Idle, ..spent } } else { spent };
             if matches!(input, Input::Observed(_)) && next.phase == Phase::Idle {
                 return decide(cfg, &next, input, now_ms);
             }
+            return Ok((next, vec![]));
+        }
+    }
+    // With no pass open, a job still carried is one the budget left behind, whichever tick came since.
+    if carry.pass.is_none() && carry.phase != Phase::Acting && matches!(input, Input::Ran(_) | Input::Outcome { .. }) {
+        let mut next = carry.clone();
+        drain(&mut next, input);
+        if next != *carry {
             return Ok((next, vec![]));
         }
     }
@@ -499,8 +606,16 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                 next.phase = Phase::Idle;
             }
             let continuing = next.phase == Phase::Observing && next.pass.is_some();
+            if !continuing {
+                next.jobs.clear();
+            }
+            next.refused.retain(|key, inputs| match key.split_once(':').filter(|(repo, _)| *repo == s.repo) {
+                Some((_, br)) => s.branches.iter().find(|b| b.br == br).map_or(!s.covers(br), |b| s.unmoved(inputs, b)),
+                None => true,
+            });
             let mut jobs = BTreeMap::new();
-            let acts = plan(cfg, s, &mut jobs)?;
+            let (acts, held_back) = plan_labelled(cfg.get("SPIRA_SUBMITTED_LABEL").map_or("", String::as_str), s, &next.refused, &mut jobs)?;
+            next.tally.refused += held_back;
             if acts.is_empty() {
                 if continuing {
                     return settle(next, "", vec![]);
@@ -533,28 +648,34 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             match r.exit {
                 runtime::units::Exit::Code(0) => {
                     next.tally.sent += 1;
+                    next.refused.remove(&refusal_key(&j.repo, &j.br));
                     if j.close {
                         acts.push(effect(CLOSE_ON_LAND, format!("{}:{}", j.id, j.tip), &Target { repo: j.repo.clone(), id: j.id.clone(), br: j.br.clone(), tip: j.tip.clone(), path: String::new() }, 5_000)?);
                     }
                 }
                 // Queued behind a certification: neither sent nor failed.
                 runtime::units::Exit::Code(2) => {}
-                _ => next.tally.failed += 1,
+                _ => {
+                    next.tally.failed += 1;
+                    record_failure(&mut next.refused, &j);
+                }
             }
             settle(next, &j.repo, acts)
         }
         // A send's outcome is its leg starting; the leg answers by `unit.ran`.
         Input::Outcome { effect: e, ok: true, .. } if e == SEND => Ok((carry.clone(), vec![])),
         Input::Outcome { effect: e, ok: false, body } if e == SEND => {
-            let key = carry.jobs.iter().find(|(k, j)| j.effect == SEND && body.contains(k.as_str())).or_else(|| carry.jobs.iter().find(|(_, j)| j.effect == SEND)).map(|(k, _)| k.clone());
-            let Some(key) = key else { return Ok((carry.clone(), vec![])) };
+            let Some((key, certain)) = answered_job(&carry.jobs, SEND, body) else { return Ok((carry.clone(), vec![])) };
             let mut next = carry.clone();
-            let repo = next.jobs.remove(&key).map(|j| j.repo).unwrap_or_default();
+            let j = next.jobs.remove(&key).unwrap_or_default();
             next.tally.failed += 1;
-            settle(next, &repo, vec![])
+            if certain {
+                record_failure(&mut next.refused, &j);
+            }
+            settle(next, &j.repo, vec![])
         }
         Input::Outcome { effect: e, ok, body } if [ARCHIVE, FREE_WORKTREE, ORPHAN_WORKTREE].contains(&e.as_str()) => {
-            let Some(key) = answered_job(carry, e, body) else {
+            let Some((key, certain)) = answered_job(&carry.jobs, e, body) else {
                 return match carry.phase {
                     Phase::Acting => Err(format!("{NAME}: in state acting no {e} is in flight")),
                     _ => Ok((carry.clone(), vec![])),
@@ -563,15 +684,23 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             let mut next = carry.clone();
             let j = next.jobs.remove(&key).unwrap_or_default();
             let mut acts = vec![];
+            if *ok {
+                next.refused.remove(&refusal_key(&j.repo, &j.br));
+            }
             match (*ok, e.as_str()) {
                 (true, ARCHIVE) => {
                     // Parked and read back: only now is the branch reaped.
                     let b = Branch { id: j.id.clone(), br: j.br.clone(), tip: j.tip.clone(), ..Branch::default() };
                     let s = Snapshot { repo: j.repo.clone(), ..Snapshot::default() };
-                    acts.push(send_leg(&mut next.jobs, &s, &b, "archived", false, false)?);
+                    acts.push(send_leg(&mut next.jobs, &s, &b, "archived", false, false, j.inputs.clone())?);
                 }
                 (true, _) => next.tally.sent += 1,
-                (false, _) => next.tally.failed += 1,
+                (false, _) => {
+                    next.tally.failed += 1;
+                    if certain {
+                        record_failure(&mut next.refused, &j);
+                    }
+                }
             }
             settle(next, &j.repo, acts)
         }
@@ -634,18 +763,24 @@ pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, p: &
     let Some(r) = names.get(at) else { return serde_json::to_string(&snap).map_err(|e| e.to_string()) };
     snap.repo = r.name.clone();
     snap.repos = names.iter().skip(at + 1).map(|r| r.name.clone()).collect();
-    let Some(root) = r.root.as_deref() else { return serde_json::to_string(&snap).map_err(|e| e.to_string()) };
+    let Some(root) = r.root.as_deref() else {
+        snap.unread = true;
+        return serde_json::to_string(&snap).map_err(|e| e.to_string());
+    };
     // A repository the pass cannot read is skipped, as today: its snapshot carries nothing.
     let cursor = real.resume_after(&r.name);
     let hel::sweep::Scan { base, branches, orphans, cut } = match hel::sweep::scan_repo(real, root, &p.submitted_label, true, cursor.as_deref(), OBSERVE_SLICE) {
         Ok(scan) => scan,
-        Err(hel::sweep::ScanError::Skip(_)) => return serde_json::to_string(&snap).map_err(|e| e.to_string()),
+        Err(hel::sweep::ScanError::Skip(_)) => {
+            snap.unread = true;
+            return serde_json::to_string(&snap).map_err(|e| e.to_string());
+        }
         Err(hel::sweep::ScanError::Store(e)) => return Err(store_failure(&r.name, &e)),
     };
     park_cursor(real, &r.name, cut, branches.last().map(|b| b.br.as_str()));
-    snap.base = Base { landref: base.landref, landrefs: base.landrefs, remote: base.remote.unwrap_or_default() };
     let ids: Vec<String> = branches.iter().map(|b| b.id.clone()).chain(orphans.iter().map(|o| o.id.clone())).collect();
-    snap.rows = spira_store::lc_state::list_ids_on(lc, &ids).map(|rs| rs.into_iter().map(|r| (r.bead_id, r.state)).collect()).unwrap_or_default();
+    let rows = spira_store::lc_state::list_ids_on(lc, &ids).map(|rs| rs.into_iter().map(|r| (r.bead_id, r.state)).collect()).map_err(|e| e.to_string());
+    snap.read_inputs(root, base, cursor.as_deref(), cut, branches.last().map(|b| b.br.as_str()), rows);
     for b in branches {
         if let Some(why) = &b.held {
             snap.holders.insert(b.id.clone(), why.clone());
@@ -708,7 +843,8 @@ pub fn past_cursor(br: &str, cursor: Option<&str>) -> bool {
 /// A resumed repository with nothing left to act on will issue no prune, so the cursor is cleared here.
 pub fn clear_cursor_when_idle(real: &hel::real::Real, label: &str, snap: &Snapshot) -> Result<(), String> {
     use hel::ports::World;
-    if plan_labelled(label, snap, &mut BTreeMap::new())?.is_empty() {
+    // The observe holds no carry: a repository with only refused acts left clears on its next observe.
+    if plan_labelled(label, snap, &BTreeMap::new(), &mut BTreeMap::new())?.0.is_empty() {
         real.set_resume_after(&snap.repo, None);
     }
     Ok(())
@@ -845,9 +981,9 @@ pub fn prune(real: &hel::real::Real, input: &str) -> Result<String, String> {
     Ok(format!("pruned {}", t.repo))
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("last_fired"), runtime::rows::Part::Field("pass"), runtime::rows::Part::Field("tally"), runtime::rows::Part::Map { name: "jobs", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("last_fired"), runtime::rows::Part::Field("pass"), runtime::rows::Part::Field("tally"), runtime::rows::Part::Map { name: "jobs", drop: &[] }, runtime::rows::Part::Map { name: "refused", drop: &[] }];
 
-crate::tasks::b::hosted!(HelSweep, catch_up = catch_up);
+crate::tasks::b::hosted!(HelSweep, catch_up = catch_up, failure = name_job);
 
 #[cfg(test)]
 mod tests {
@@ -901,7 +1037,7 @@ mod tests {
             rows: [("sp-landed".to_string(), "LANDED".to_string()), ("sp-live".to_string(), "CERTIFIED".to_string())].into(),
             ..Default::default()
         };
-        let acts = plan_labelled("submitted", &s, &mut BTreeMap::new()).unwrap();
+        let (acts, _) = plan_labelled("submitted", &s, &BTreeMap::new(), &mut BTreeMap::new()).unwrap();
         assert_eq!(acts.len(), 1, "{acts:?}");
         assert!(format!("{acts:?}").contains("sp-landed"), "{acts:?}");
     }
