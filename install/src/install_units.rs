@@ -736,6 +736,51 @@ mod tests {
         HostValues { toml: "h/cfg.toml".into(), home: "h".into(), repo: "h".into(), run: "run".into(), db: "db".into(), cockpit: "h/cockpit".into(), dolt_data: "".into(), dolt: "usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), sccache_dav_root: "run/sccache-dav".into(), repo_map: "".into(), lc_password_file: "h/lc.credential".into(), watchdog_every_s: "60".into(), unit_user: String::new(), broker_socket: "run/broker.sock".into() }
     }
 
+    #[test_id(ts0atet)]
+    #[test]
+    fn both_installers_place_the_broker_config_before_enabling_and_only_a_changed_one_restarts_it() {
+        let td = tempdir();
+        let tmpl_dir = td.join("templates");
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        let shipped = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd").join(crate::broker::CONF_FILE);
+        fs::copy(shipped, tmpl_dir.join(crate::broker::CONF_FILE)).unwrap();
+        fs::write(tmpl_dir.join(crate::broker::UNIT), "[Service]\nExecStart=/bin/true\n").unwrap();
+        let mut manifest = build(&Inputs { instance: "prod".into(), ..Default::default() }).unwrap();
+        manifest.units.retain(|u| u.name == crate::broker::UNIT);
+        let unit = "spira-broker-prod.service";
+        assert_eq!(manifest.enable("prod"), [unit], "the manifest installs and enables the broker");
+        let no_suspend = |_: &str| false;
+        let host_in = |name: &str, socket: &str| HostValues { run: td.join(name).display().to_string(), broker_socket: td.join(name).join(socket).display().to_string(), ..host() };
+        let conf = |h: &HostValues| fs::read_to_string(Path::new(&h.run).join(crate::broker::CONF_FILE)).unwrap();
+
+        // unit-ensure, which activation runs.
+        let (h, sc, unit_dir) = (host_in("ensure", "s"), FakeSystemctl::default(), td.join("ensure-units"));
+        fs::create_dir_all(&unit_dir).unwrap();
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let r = crate::ensure::run(&ctx, false);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert_eq!(r.enabled_started, [unit]);
+        assert!(conf(&h).contains(&format!("listener 0 {}\n", h.broker_socket)), "{}", conf(&h));
+
+        // units-install.
+        let (h, sc, unit_dir) = (host_in("install", "s"), FakeSystemctl::default(), td.join("install-units"));
+        fs::create_dir_all(&unit_dir).unwrap();
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let r = run(&ctx);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(conf(&h).contains(&format!("listener 0 {}\n", h.broker_socket)), "{}", conf(&h));
+        sc.set(unit, FakeUnit { active: true, enabled: Some("enabled".into()), kind: "notify".into(), file_listed: true });
+
+        assert!(run(&ctx).errors.is_empty());
+        assert!(sc.restarts.borrow().is_empty(), "an unchanged install leaves the broker running: {:?}", sc.restarts.borrow());
+
+        let moved = host_in("install", "moved");
+        let ctx = Ctx { host: &moved, ..ctx };
+        assert!(run(&ctx).errors.is_empty());
+        assert!(conf(&moved).contains(&format!("listener 0 {}\n", moved.broker_socket)), "a differing file is rewritten: {}", conf(&moved));
+        assert_eq!(sc.restarts.borrow().as_slice(), [unit], "a changed config restarts the broker, its unit text unchanged");
+    }
+
     fn tiny_manifest() -> Manifest {
         crate::manifest::Manifest { units: vec![crate::manifest::Template { name: "spira-example.service".into(), enable: false }, crate::manifest::Template { name: "spira-example.timer".into(), enable: true }], ..Default::default() }
     }
