@@ -138,6 +138,7 @@ pub fn host_from(instance: &str, env_map: &std::collections::BTreeMap<String, St
         return Err("SPIRA_RUN is unset and spira.run resolved empty — refusing to render units that would log to the filesystem root".to_string());
     }
     let sccache_dav_root = Some(cfg("SPIRA_SCCACHE_DAV_ROOT")?).filter(|r| !r.is_empty()).unwrap_or_else(|| format!("{run}/sccache-dav"));
+    let broker_socket = spira_config::broker::socket_path(&run, cfg)?;
     Ok(HostValues {
         home,
         lc_password_file,
@@ -159,7 +160,7 @@ pub fn host_from(instance: &str, env_map: &std::collections::BTreeMap<String, St
         env_bin,
         sccache_dav_addr: dav_addr,
         sccache_dav_root,
-        broker_socket: cfg("SPIRA_BROKER_SOCKET")?,
+        broker_socket,
     })
 }
 
@@ -474,15 +475,25 @@ mod stale_release_tests {
         assert_eq!(stale_release_refusal("unit-ensure", &d.join("missing/bin/unit-ensure")), None);
     }
 
-    fn rendered_cache_root(configured: &str) -> String {
+    fn host_over_fixture(cfg: &dyn Fn(&str) -> Result<String, String>) -> Result<HostValues, String> {
         let t = testkit::TempDir::new("host-from-root");
         let toml = spira_config::resolve::locate_home_for_process().unwrap().join("testlib/complete.toml");
         let env: std::collections::BTreeMap<String, String> = [("SPIRA_HOME", t.path().join("h")), ("SPIRA_REPO", t.path().join("h")), ("SPIRA_TOML", toml)]
             .into_iter()
             .map(|(k, v)| (k.to_string(), v.display().to_string()))
             .collect();
-        let cfg = |k: &str| Ok(if k == "SPIRA_SCCACHE_DAV_ROOT" { configured.to_string() } else { String::new() });
-        let host = host_from("prod", &env, &cfg, "t/cfg".into(), String::new()).expect("host values");
+        host_from("prod", &env, cfg, "t/cfg".into(), String::new())
+    }
+
+    fn rendered_cache_root(configured: &str) -> String {
+        let cfg = |k: &str| {
+            Ok(match k {
+                "SPIRA_SCCACHE_DAV_ROOT" => configured.to_string(),
+                "SPIRA_BROKER_SOCKET" => "broker.sock".to_string(),
+                _ => String::new(),
+            })
+        };
+        let host = host_over_fixture(&cfg).expect("host values");
         let tmpl = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/sccache-dav.service");
         let unit = crate::values::render_file(&tmpl, &host, None).expect("render");
         let line = unit.lines().find(|l| l.starts_with("Environment=SCCACHE_DAV_ROOT=")).expect("root line").to_string();
@@ -494,6 +505,21 @@ mod stale_release_tests {
     fn the_cache_root_in_the_unit_is_the_configured_key_or_the_run_directory() {
         assert_eq!(rendered_cache_root("mnt/other-disk/store"), "mnt/other-disk/store");
         assert_eq!(rendered_cache_root(""), std::path::Path::new(std::path::MAIN_SEPARATOR_STR).join("fixture/userhome/spira/run/sccache-dav").display().to_string());
+    }
+
+    #[test_id(t9ig6fu)]
+    #[test]
+    fn the_broker_socket_install_renders_is_under_the_run_dir_unless_absolute() {
+        let socket = |configured: &str| {
+            let cfg = |k: &str| Ok(if k == "SPIRA_BROKER_SOCKET" { configured.to_string() } else { String::new() });
+            host_over_fixture(&cfg).map(|h| (h.run, h.broker_socket))
+        };
+        let (run, relative) = socket("nested/b.sock").expect("host values");
+        assert_eq!(relative, format!("{run}/nested/b.sock"));
+        let absolute = format!("{}b.sock", std::path::MAIN_SEPARATOR);
+        assert_eq!(socket(&absolute).expect("host values").1, absolute);
+        let err = socket("").expect_err("an empty socket must refuse");
+        assert!(err.contains("SPIRA_BROKER_SOCKET"), "{err}");
     }
 
     #[test_id(thfj3gy)]

@@ -1068,14 +1068,6 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
         set!(key.as_str(), value);
     }
 
-    // A relative broker socket is a path under the run dir. It edits only what the registry
-    // pass resolved: a registry without the key (the landing ref's) must not require it.
-    if let Some(sock) = values.get_mut("SPIRA_BROKER_SOCKET") {
-        if !sock.is_empty() && Path::new(sock.as_str()).is_relative() {
-            *sock = format!("{run}/{sock}");
-        }
-    }
-
     Ok(Resolved { values, warnings })
 }
 

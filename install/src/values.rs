@@ -46,7 +46,7 @@ pub struct HostValues {
     pub toml: String,
     /// `SPIRA_WATCHDOG_EVERY_SECS`: seconds between the watchdog's passes on its timer.
     pub watchdog_every_s: String,
-    /// `SPIRA_BROKER_SOCKET`: the MQTT broker's Unix socket, its only listener.
+    /// The MQTT broker's Unix socket, its only listener (`spira_config::broker::socket_path`).
     pub broker_socket: String,
     /// The Unix user a SYSTEM unit runs as (`@SPIRA_UNIT_USER@`); set only by the phase that installs one.
     pub unit_user: String,

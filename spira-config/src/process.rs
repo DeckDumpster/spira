@@ -82,7 +82,7 @@ pub fn spec() -> Result<String, String> {
 }
 
 /// Keys whose resolved value is not simply what the file declares.
-const COMPUTED_KEYS: &[&str] = &["SPIRA_RELEASE_REPO", "SPIRA_AGENT", "SPIRA_RUNES_DIR", "SPIRA_BROKER_SOCKET"];
+const COMPUTED_KEYS: &[&str] = &["SPIRA_RELEASE_REPO", "SPIRA_AGENT", "SPIRA_RUNES_DIR"];
 
 /// `key` as the merged `[spira]` table declares it, when that is the whole answer: a declared,
 /// plainly-valued key of a `prod` instance. It does not check the file's schema (the cost this path
