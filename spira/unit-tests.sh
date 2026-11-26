@@ -64,3 +64,8 @@ env -u SPIRA_RELEASE -u SPIRA_TOML -u SPIRA_HOME PATH="$unit_path" CARGO_BUILD_J
     "${build[@]}" || exit 1
 env -u SPIRA_RELEASE -u SPIRA_TOML -u SPIRA_HOME PATH="$unit_path" \
     "$ROOT/tools/test-sandbox/runner" --around cargo test "${words[@]}" --no-fail-fast --features integration -j "$jobs" -- --test-threads="$threads" "${filters[@]}" "${skips[@]}"
+rc=$?
+# What this run built came from the tree it recorded. A run killed before here keeps the old
+# stamp, so the next one rebuilds what it built.
+bash "$HERE/target-clean.sh" --stamp "$ROOT" || exit 2
+exit "$rc"
