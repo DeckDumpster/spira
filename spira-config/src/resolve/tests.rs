@@ -56,6 +56,8 @@
     fn a_relative_broker_socket_is_placed_under_the_run_dir_and_is_never_defaulted() {
         let ws = testkit::TempDir::new("spira-config-resolve-broker");
         let (home, repo) = fixture_home_repo(&ws);
+        let registered = locate_home_for_process().unwrap().join("conf.d/SPIRA_BROKER_SOCKET");
+        std::fs::copy(registered, home.join("conf.d/SPIRA_BROKER_SOCKET")).unwrap();
         let e = env(&[("HOME", "h")]);
         let go = |doc: &crate::SpiraToml| resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(doc), conf_d: &home.join("conf.d") });
         let doc = crate::fixture_doc(&e);
@@ -69,6 +71,18 @@
 
         let err = go(&crate::unset_path(&doc, "spira.broker_socket").unwrap()).expect_err("an undeclared socket must refuse").to_string();
         assert!(err.contains("spira.broker_socket"), "{err}");
+    }
+
+    #[test_id(tqm9z9i)]
+    #[test]
+    fn a_registry_without_the_broker_socket_does_not_ask_the_config_for_it() {
+        let ws = testkit::TempDir::new("spira-config-resolve-no-broker");
+        let (home, repo) = fixture_home_repo(&ws);
+        let e = env(&[("HOME", "h")]);
+        let doc = crate::unset_path(&crate::fixture_doc(&e), "spira.broker_socket").unwrap();
+        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&doc), conf_d: &home.join("conf.d") })
+            .expect("the landing ref's registry does not know the key, so nothing requires it");
+        assert_eq!(r.get("SPIRA_BROKER_SOCKET"), "");
     }
 
     #[test_id(t00tz2g)]

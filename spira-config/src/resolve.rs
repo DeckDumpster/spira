@@ -850,15 +850,6 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
     .map_err(ResolveError::Registry)?;
     set!("SPIRA_RUN", run.clone());
 
-    // The broker socket: a relative declared value is a path under the run dir, so the one
-    // shipped value names the right socket on every box.
-    let mut sock = resolve_colon("SPIRA_BROKER_SOCKET", env, &toml_map, ok_str!("broker.sock"))
-        .map_err(ResolveError::Registry)?;
-    if !sock.is_empty() && Path::new(&sock).is_relative() {
-        sock = format!("{run}/{sock}");
-    }
-    set!("SPIRA_BROKER_SOCKET", sock);
-
     // 5. SPIRA_MEMORIES_CACHE (preserve-empty; not exported — see EXPORT_KEYS)
     let mc = resolve_eq("SPIRA_MEMORIES_CACHE", env, &toml_map, || {
         Ok(format!("{run}/memories-cache.json"))
@@ -1075,6 +1066,14 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
             resolve_colon(key, env, &toml_map, ok_str!("")).map_err(ResolveError::Registry)?
         };
         set!(key.as_str(), value);
+    }
+
+    // A relative broker socket is a path under the run dir. It edits only what the registry
+    // pass resolved: a registry without the key (the landing ref's) must not require it.
+    if let Some(sock) = values.get_mut("SPIRA_BROKER_SOCKET") {
+        if !sock.is_empty() && Path::new(sock.as_str()).is_relative() {
+            *sock = format!("{run}/{sock}");
+        }
     }
 
     Ok(Resolved { values, warnings })
