@@ -163,6 +163,57 @@ fn build_in(
     deadline: Option<Instant>,
     warm: Option<PathBuf>,
 ) -> Result<Duration, BuildError> {
+    let (start, before) = (std::time::SystemTime::now(), spira_otel::cgroup::Mark::own());
+    let t0 = Instant::now();
+    let built = run_build(worktree, profile, deadline, warm);
+    let cost = before.zip(spira_otel::cgroup::Mark::own()).map(|(b, a)| a.cost_since(&b));
+    if let Some(run) = spira_config::process::cfg("SPIRA_RUN").ok().filter(|r| !r.is_empty()) {
+        spira_otel::ops::emit(Path::new(&run), "testenv", &build_op(worktree, start, t0.elapsed(), built.as_ref().err(), cost));
+    }
+    built
+}
+
+fn kebab(variant: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in variant.chars().enumerate() {
+        if c.is_ascii_uppercase() {
+            if i > 0 {
+                out.push('-');
+            }
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn error_name(e: &BuildError) -> String {
+    let debug = format!("{e:?}");
+    kebab(debug.split(['(', ' ']).next().unwrap_or(&debug))
+}
+
+fn build_op(worktree: &Path, start: std::time::SystemTime, duration: Duration, err: Option<&BuildError>, cost: Option<spira_otel::ops::Cost>) -> spira_otel::ops::Op {
+    spira_otel::ops::Op {
+        operation: "worktree-build".into(),
+        phase: None,
+        subject: worktree.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+        repo: None,
+        start,
+        duration,
+        result: err.map_or_else(|| "ok".to_string(), error_name),
+        cost,
+        tests: None,
+        place: None,
+    }
+}
+
+fn run_build(
+    worktree: &Path,
+    profile: &str,
+    deadline: Option<Instant>,
+    warm: Option<PathBuf>,
+) -> Result<Duration, BuildError> {
     let t0 = Instant::now();
     // THE BUILD CACHE (sp-z61hj; spira-config/DESIGN-build-cache.md): every dependency
     // is a cache read after its first build on this box; absent sccache refuses.
@@ -282,6 +333,20 @@ mod tests {
     /// (sp-tcarr). Without that check, this either returns `Ok` after the full 10s sleep
     /// (never `Cancelled`) or simply takes ~10s instead of under 5 — either is the
     /// regression this guards: a signalled build sitting until cargo finishes on its own.
+
+    #[test_id(tazf66y)]
+    #[test]
+    fn a_build_error_is_the_result_in_kebab_case_and_success_is_ok() {
+        let at = std::time::UNIX_EPOCH;
+        let op = |e: Option<BuildError>| build_op(Path::new("w/sp-abc"), at, Duration::from_secs(1), e.as_ref(), None);
+        assert_eq!(op(None).result, "ok");
+        assert_eq!(op(None).subject, "sp-abc");
+        assert_eq!(op(Some(BuildError::NoCargo)).result, "no-cargo");
+        assert_eq!(op(Some(BuildError::Failed(101))).result, "failed");
+        assert_eq!(op(Some(BuildError::NoSpace(PathBuf::from("x")))).result, "no-space");
+        assert_eq!(op(Some(BuildError::NoCache("c".into()))).result, "no-cache");
+        assert_eq!(op(Some(BuildError::Oom)).result, "oom");
+    }
 
     #[test_id(tmi73wq)]
     #[test]
