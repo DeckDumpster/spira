@@ -171,6 +171,9 @@ fn a_scratch_build_runs_no_compiler_wrapper_the_parent_names() {
     std::fs::write(t.path().join("Cargo.toml"), "[package]\nname = \"one\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[workspace]\n").unwrap();
     std::fs::write(t.path().join("src/lib.rs"), "").unwrap();
     let mut c = cargo(t.path());
+    for pin in ["RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER"] {
+        assert!(c.get_envs().any(|(k, v)| k == pin && v.is_some_and(|v| v.is_empty())), "cargo() leaves {pin} inherited");
+    }
     c.env("RUSTC_WRAPPER", "false");
     checked(pinned(&mut c).args(["build", "--color", "never"]));
 }

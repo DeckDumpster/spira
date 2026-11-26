@@ -785,6 +785,19 @@ mod tests {
         assert!(!gate_path(&bases[0], 1).exists());
     }
 
+    #[test_id(tkjsqrr)]
+    #[test]
+    fn an_empty_unreserved_slot_is_leased_before_a_warm_reserved_one() {
+        let d = testkit::TempDir::new("bdir-reserved-empty");
+        let bases = vec![d.path().join("base")];
+        let (one, two) = (lease(&bases, "a").unwrap(), lease(&bases, "b").unwrap());
+        let (d1, d2) = (one.dir().to_path_buf(), two.dir().to_path_buf());
+        fill(&d1.join("x"), 8);
+        two.release();
+        one.release_reserved("sp-a");
+        assert_eq!(lease(&bases, "c").unwrap().dir(), d2);
+    }
+
     #[test_id(tplace2)]
     #[test]
     fn lease_dir_refuses_a_slot_held_by_another_session_at_once() {
