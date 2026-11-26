@@ -1,6 +1,7 @@
 //! A throwaway MQTT broker: the PATH `mosquitto`, running the shipped config on a socket in its
 //! own [`TempDir`]. A missing `mosquitto` panics; a test that needs one never skips.
 
+use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixDatagram;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -13,6 +14,8 @@ const TEMPLATE: &str = include_str!("../../systemd/mosquitto.conf");
 const SOCKET_SLOT: &str = "@SPIRA_BROKER_SOCKET@";
 /// Bounds each wait on the broker, so a broken one fails the test instead of hanging it.
 const FAILSAFE: Duration = Duration::from_secs(30);
+/// Marks the end of what [`Broker::retained`] reads.
+const END_TOPIC: &str = "testkit/end";
 
 /// One `mosquitto` process running a config the caller placed; killed when dropped.
 pub struct Process(ChildGuard);
@@ -64,6 +67,30 @@ impl Broker {
     /// The socket it listens on, the same one across [`restart`](Broker::restart).
     pub fn socket(&self) -> &Path {
         &self.socket
+    }
+
+    /// What a subscriber arriving now is handed for `filter`: each retained `(topic, payload)`.
+    pub fn retained(&self, filter: &str) -> Vec<(String, String)> {
+        let mut publish = Command::new("mosquitto_pub");
+        publish.arg("--unix").arg(&self.socket).args(["-t", END_TOPIC, "-m", "end", "-r", "-q", "1"]);
+        assert!(publish.status().expect("run mosquitto_pub").success(), "mosquitto_pub failed");
+        // The broker sends retained values in the order of the subscription's filters, so
+        // the end marker follows everything `filter` holds.
+        let mut subscribe = Command::new("mosquitto_sub");
+        subscribe.arg("--unix").arg(&self.socket).args(["-v", "-q", "1", "-t", filter, "-t", END_TOPIC]);
+        subscribe.args(["-W", &FAILSAFE.as_secs().to_string()]).stdin(Stdio::null()).stdout(Stdio::piped());
+        let mut child = ChildGuard::spawn(&mut subscribe);
+        let out = BufReader::new((child.0).stdout.take().expect("piped stdout"));
+        let mut held = Vec::new();
+        for line in out.lines() {
+            let line = line.expect("read mosquitto_sub");
+            let (topic, payload) = line.split_once(' ').expect("mosquitto_sub -v prints topic then payload");
+            if topic == END_TOPIC {
+                return held;
+            }
+            held.push((topic.to_string(), payload.to_string()));
+        }
+        panic!("mosquitto_sub ended before the end marker");
     }
 
     fn start(&mut self) {

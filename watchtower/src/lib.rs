@@ -28,6 +28,7 @@ pub mod load_fence;
 pub mod lock_holders;
 pub mod log;
 pub mod pr_stall;
+pub mod pressure_topic;
 pub mod probes;
 pub mod release_skew;
 pub mod sccache_wedge;

@@ -14,6 +14,7 @@ pub mod inbox_keeper;
 pub mod margin_comments;
 pub mod overrides;
 pub mod pr_notify;
+pub mod pr_topics;
 pub mod publish_backlog;
 pub mod readiness_dependents;
 pub mod reconciler_flow;

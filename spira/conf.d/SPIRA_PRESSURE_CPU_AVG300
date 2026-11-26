@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=watchtower
+DOC=PSI cpu full avg300 (percent) at or above which host/pressure publishes cpu_over.
+SCHEMA=REQUIRED: PSI cpu full avg300 (percent) at or above which host/pressure publishes cpu_over.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Written by spira-config init only: a reader refuses a config that does not declare the key.
+    : "${SPIRA_PRESSURE_CPU_AVG300:=10.0}"
+SPIRA_CONF_DEFAULT_EOF

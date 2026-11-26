@@ -24,6 +24,12 @@ use testkit::TempDir;
 
 const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+/// The activation of a box with no broker, which is every activation here that is not about
+/// what it publishes.
+fn no_broker() -> Result<spira_pub::Publisher, spira_pub::PubError> {
+    Err(spira_pub::PubError::Config("this test has no broker".into()))
+}
+
 /// A scratch root whose read-only releases are made writable before `TempDir` removes it.
 struct Sandbox(TempDir);
 impl Drop for Sandbox {
@@ -512,7 +518,7 @@ fn world_rolling_back_to_a() -> World {
 fn rollback_with(w: &World, sc: &FakeSystemctl) -> Result<String, String> {
     let reads = FakeReads::serving();
     let nix = FakeNix::default();
-    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None };
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None, publisher: &no_broker };
     activate::rollback(&ctx)
 }
 
@@ -603,7 +609,7 @@ fn broker_running(w: &World) -> FakeSystemctl {
 fn activate_sha(w: &World, sc: &FakeSystemctl, sha: &str) -> Result<activate::Switched, String> {
     let reads = FakeReads::serving();
     let nix = FakeNix::default();
-    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None };
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None, publisher: &no_broker };
     activate::activate(&ctx, sha, None)
 }
 
@@ -645,7 +651,7 @@ fn the_broker_is_restarted_though_the_new_releases_unit_ensure_writes_the_same_c
     };
     let reads = FakeReads::serving();
     let nix = FakeNix::default();
-    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc: &sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &unit_ensure, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None };
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc: &sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &unit_ensure, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None, publisher: &no_broker };
     assert_eq!(activate::activate(&ctx, B, None).unwrap().restarted, [BROKER]);
 }
 
@@ -710,6 +716,55 @@ fn a_box_without_the_broker_unit_gets_no_broker_config_from_activation() {
     assert!(placed_broker_conf(&w).starts_with("# first\n"));
 }
 
+// ---------------------------------------------------------------- release/active
+
+/// [`activate_sha`] publishing to the broker at `socket`.
+#[cfg(feature = "integration")]
+fn activate_publishing(w: &World, sc: &FakeSystemctl, sha: &str, socket: &Path) -> Result<activate::Switched, String> {
+    let reads = FakeReads::serving();
+    let nix = FakeNix::default();
+    let publisher = || {
+        let clock = std::sync::Arc::new(runtime::ports::VirtualClock::new(0));
+        spira_pub::Publisher::with("release", spira_pub::Options::new(socket, clock, Box::new(runtime::ports::SeededRng::new(1))))
+    };
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None, publisher: &publisher };
+    activate::activate(&ctx, sha, None)
+}
+
+#[cfg(feature = "integration")]
+#[test_id(tv9496a)]
+#[test]
+fn a_completed_activation_publishes_release_active_with_its_sha() {
+    let broker = testkit::broker::Broker::up();
+    let w = world_with_a_broker_on_a("sock/b.sock");
+    let out = activate_publishing(&w, &broker_running(&w), B, broker.socket()).unwrap();
+    let held = broker.retained("release/active");
+    let said: serde_json::Value = serde_json::from_str(&held[0].1).unwrap();
+    assert_eq!((said["sha"].as_str(), &said["restarted"]), (Some(B), &serde_json::json!(out.restarted)), "{said}");
+    assert!(said["at"].as_u64().is_some_and(|at| at > 0), "{said}");
+}
+
+#[cfg(feature = "integration")]
+#[test_id(tfgt1xj)]
+#[test]
+fn a_failed_activation_publishes_nothing() {
+    let broker = testkit::broker::Broker::up();
+    let w = world_with_a_broker_on_a("");
+    activate_publishing(&w, &broker_running(&w), B, broker.socket()).unwrap_err();
+    assert!(broker.retained("release/active").is_empty());
+}
+
+#[cfg(feature = "integration")]
+#[test_id(tngsm9n)]
+#[test]
+fn with_the_broker_stopped_an_activation_succeeds_as_before() {
+    let mut broker = testkit::broker::Broker::up();
+    broker.stop();
+    let w = world_with_a_broker_on_a("sock/b.sock");
+    let out = activate_publishing(&w, &broker_running(&w), B, broker.socket()).unwrap();
+    assert_eq!((out.restarted, current_of(&w)), (vec![BROKER.to_string()], B.to_string()));
+}
+
 // ---------------------------------------------------------------- hotfix
 
 const STANDING_HOTFIX: &str = "sha cccccccccccccccccccccccccccccccccccccccc\nreason r\nat t\n";
@@ -727,7 +782,7 @@ fn world_activating_over_a_landed_hotfix() -> World {
 fn activate_as_the_batcher(w: &World, sc: &FakeSystemctl) -> Result<activate::Switched, String> {
     let reads = FakeReads::serving();
     let nix = FakeNix::default();
-    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: Some(w.cfg.releases.clone()), landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(5), report: &|_| {}, gc: None };
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: Some(w.cfg.releases.clone()), landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(5), report: &|_| {}, gc: None, publisher: &no_broker };
     activate::activate(&ctx, A, None)
 }
 
@@ -1350,7 +1405,7 @@ fn activate_reading_within(w: &World, sc: &FakeSystemctl, reads: &FakeReads, ste
 
 fn activate_reporting(w: &World, sc: &FakeSystemctl, reads: &FakeReads, steady: Duration, warm_wait: Duration, report: &dyn Fn(&str)) -> Result<activate::Switched, String> {
     let nix = FakeNix::default();
-    let ctx = activate::Ctx { cfg: &w.cfg, reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady, warm_wait, warm_pause: Duration::from_millis(5), report, gc: None };
+    let ctx = activate::Ctx { cfg: &w.cfg, reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady, warm_wait, warm_pause: Duration::from_millis(5), report, gc: None, publisher: &no_broker };
     activate::activate(&ctx, A, None)
 }
 
@@ -2642,7 +2697,7 @@ fn world_activating_a_flake_release() -> World {
 }
 
 fn ctx_with_nix<'a>(w: &'a World, sc: &'a FakeSystemctl, nix: &'a FakeNix, reads: &'a FakeReads) -> activate::Ctx<'a> {
-    activate::Ctx { cfg: &w.cfg, reads, sc, nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None }
+    activate::Ctx { cfg: &w.cfg, reads, sc, nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None, publisher: &no_broker }
 }
 
 fn activate_with_nix(w: &World, sc: &FakeSystemctl, nix: &FakeNix) -> Result<activate::Switched, String> {

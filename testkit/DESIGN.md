@@ -62,7 +62,8 @@ Programs it runs: `sh` and `cat`, both on deps-lint's system allowlist.
 (`systemd/mosquitto.conf`) on a socket in a fresh `TempDir`, and returns once its listener
 accepts (`sd_notify`). `stop()` kills it and `restart()` starts a new one on the same socket;
 neither keeps any state. `broker::Process::start(dir, conf)` is the one launcher under it, for a
-test that places its own config; `stop_clean()` ends it with SIGTERM and requires a clean exit. A missing `mosquitto` panics: a test of the broker never skips.
+test that places its own config; `stop_clean()` ends it with SIGTERM and requires a clean exit. `retained(filter)` returns each retained `(topic, payload)` a new
+subscriber would be handed. A missing `mosquitto` panics: a test of the broker never skips.
 
 **The rule that holds every crate to it:** spira-lint's `tmp-leak` refuses a call to
 `temp_dir()` in test code anywhere outside testkit (see spira-lint/DESIGN.md). Test code
