@@ -19,6 +19,7 @@ use crate::ports::{s, Bd, Env, Exec, Git, Seam};
 use crate::restrict;
 use crate::seam::Snapshot;
 use crate::session::{self, Beat, Heartbeat, Launcher, SessionSpec, Stop};
+use crate::session_feed::{Renewal, SessionFeed};
 use crate::stack;
 use crate::trace;
 use crate::util::{self, Out, Sink};
@@ -136,6 +137,8 @@ pub struct State {
     pub stack: std::collections::BTreeMap<String, String>,
     /// The owned build directory this run leased (sp-ke0uk8), held until teardown ends.
     pub build_dir: Option<spira_config::build_dir::Lease>,
+    /// What this run publishes about its session; shared with the heartbeat.
+    pub feed: Option<Arc<SessionFeed>>,
 }
 
 /// `spira-lc phase`'s exit for a move the machine refused (not WORKING, not the holder, not forward).
@@ -501,7 +504,7 @@ impl<'a> Run<'a> {
         if let Err(code) = self.claim() { return code }
         spira_otel::run::event("call", &[("rune", self.f())]);
         // ---- armed: every exit from here runs the teardown ----
-        std::thread::scope(|sc| {
+        let rc = std::thread::scope(|sc| {
             let rc = match self.work(sc) {
                 Ok(()) => 0,
                 Err(Abort::Die(m)) => {
@@ -519,7 +522,11 @@ impl<'a> Run<'a> {
             let rc = self.teardown(rc);
             self.release_build_dir();
             rc
-        })
+        });
+        // The heartbeat has joined, so this drops the last handle, which delivers what is queued
+        // before the process exits.
+        self.s.feed = None;
+        rc
     }
 
     /// The capacity / halted / draining / paused declines: Some(exit code) to stop.
@@ -1004,6 +1011,7 @@ impl<'a> Run<'a> {
         self.d.env.set("BEAD_ID", &bead);
         self.d.env.set("SPIRA_MAIL", &mail);
         self.d.env.set("SPIRA_MAIL_FROM", &self.rune.mail_from());
+        self.s.feed = self.open_session_feed();
         self.start_heartbeat(sc);
         self.phase("building");
         self.check_stop()?;
@@ -1572,12 +1580,21 @@ impl<'a> Run<'a> {
             }
             return Err(Abort::Die(format!("{}: {bead}: {why}", self.f())));
         }
+        // The row's builder claim count numbers this session among the bead's.
+        let sessions = self.s.feed.as_ref().and_then(|_| self.lc_bead(&bead)?.builder_claims);
         let launched = self.now();
+        if let Some(feed) = &self.s.feed {
+            feed.started(launched, sessions);
+        }
         let rc = self.d.launcher.run(&spec, &self.stop);
+        let exited = self.now();
+        // Before any teardown: the heartbeat is still beating, and nothing may follow the exit.
+        if let Some(feed) = &self.s.feed {
+            feed.ended(exited, rc, (exited - launched).max(0));
+        }
         if let Some((sim, world)) = &pilgrim {
             pilgrim_world::down(self.d.exec, sim, world);
         }
-        let exited = self.now();
         self.s.session_exited_at = Some(exited);
         self.s.session_wall_s = Some((exited - launched).max(0));
         // Interrupted: bash's trap ran before `SESSION_RC=$rc`, so SESSION_RC stays 0.
@@ -1722,6 +1739,18 @@ impl<'a> Run<'a> {
         true
     }
 
+    fn open_session_feed(&self) -> Option<Arc<SessionFeed>> {
+        let cfg = |k: &str| self.conf.v.get(k).cloned().ok_or_else(|| format!("{k} is not declared"));
+        let linger_s = self.conf.i("SPIRA_SESSION_LINGER_SECS");
+        match SessionFeed::over_broker(&self.s.bead, self.f(), linger_s, &cfg) {
+            Ok(feed) => Some(Arc::new(feed)),
+            Err(e) => {
+                self.log(&format!("{}: this session is not published: {e}", self.s.bead));
+                None
+            }
+        }
+    }
+
     fn start_heartbeat<'s>(&self, sc: &'s std::thread::Scope<'s, '_>)
     where
         'a: 's,
@@ -1750,6 +1779,7 @@ impl<'a> Run<'a> {
             sink: self.d.sink,
             clock: self.d.clock,
             repos: self.conf.repos.clone(),
+            feed: self.s.feed.clone(),
         };
         let stop = Arc::clone(&self.stop);
         let shutdown = Arc::clone(&self.hb_shutdown);
@@ -1785,6 +1815,7 @@ pub struct RealBeat<'a> {
     /// borrowed: the heartbeat thread outlives `start_heartbeat`'s own `&self`, and
     /// `Registry` is cheap to clone (a repo-map's rows, a handful of strings).
     pub repos: spira_config::repos::Registry,
+    pub feed: Option<Arc<SessionFeed>>,
 }
 
 impl Beat for RealBeat<'_> {
@@ -1832,6 +1863,17 @@ impl Beat for RealBeat<'_> {
         }
         let row = claim::ask_row(self.exec, &self.bead, 1, Duration::ZERO, &|_| {}).ok().flatten();
         decide::sent_back(row.as_ref(), refused)
+    }
+    fn renewal_outcome(&self) -> Renewal {
+        // Only 1 says the row left this holder's WORKING; 3 refuses an event on a row still read as it.
+        match *self.renew_rc.lock().unwrap_or_else(|e| e.into_inner()) {
+            claim::LC_APPLIED => Renewal::Applied,
+            1 => Renewal::Refused,
+            _ => Renewal::Unjudged,
+        }
+    }
+    fn feed(&self) -> Option<&SessionFeed> {
+        self.feed.as_deref()
     }
     fn disposition(&self, status: &str, note: &str) {
         let o = self.exec.exec("spira-lc", &s(&["disposition", &self.bead, status, note, &self.holder]), None, None);

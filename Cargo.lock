@@ -497,6 +497,7 @@ dependencies = [
  "spira-claim",
  "spira-config",
  "spira-otel",
+ "spira-pub",
  "spira-store",
  "spira-test-id",
  "strand",

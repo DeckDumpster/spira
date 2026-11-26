@@ -34,13 +34,13 @@ fields = ["status", "rc", "reason", "over_cap", "killed_by"]
 family = "session/<bead>/state"
 class = "state"
 publisher = "dwarf"
-fields = ["state"]
+fields = ["state", "bead", "rune", "started_at", "sessions", "rc", "wall_s", "at"]
 
 [[topic]]
 family = "session/<bead>/age/<15m|30m|60m>"
 class = "state"
 publisher = "dwarf"
-fields = ["sessions"]
+fields = ["at", "sessions"]
 
 [[topic]]
 family = "test/<id>/red"

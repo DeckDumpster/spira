@@ -239,6 +239,7 @@ mod tests {
             reason: None,
             since: None,
             ask_since: None,
+            builder_claims: None,
         }
     }
 

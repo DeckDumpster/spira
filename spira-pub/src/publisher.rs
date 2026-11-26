@@ -148,13 +148,17 @@ impl Publisher {
     /// The publisher called `name`, on the broker the configuration names. Nothing is connected
     /// until the first [`publish`](Publisher::publish) or [`connect`](Publisher::connect).
     pub fn new(name: &str) -> Result<Publisher, PubError> {
-        let cfg = spira_config::process::cfg;
-        let socket = configured_socket(&cfg)?;
+        Publisher::from_config(name, &spira_config::process::cfg)
+    }
+
+    /// [`new`](Publisher::new) for a caller that already holds its resolved configuration.
+    pub fn from_config(name: &str, cfg: &dyn Fn(&str) -> Result<String, String>) -> Result<Publisher, PubError> {
+        let socket = configured_socket(cfg)?;
         let clock: Arc<dyn Clock> = match spira_config::vtime::override_epoch() {
             Some(secs) => Arc::new(VirtualClock::new(secs.saturating_mul(1000))),
             None => Arc::new(WallClock),
         };
-        let seed = configured_seed(&cfg, clock.now_ms())?;
+        let seed = configured_seed(cfg, clock.now_ms())?;
         let mut options = Options::new(socket, clock, Box::new(SeededRng::new(seed)));
         // Metrics are not worth refusing a publish over: an unreadable endpoint is logged.
         let endpoint = cfg("SPIRA_METRICS_ENDPOINT")
