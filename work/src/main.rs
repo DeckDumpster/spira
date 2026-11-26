@@ -805,16 +805,24 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
                 }
             },
             None => {
-                let found = work::trusted::resolve(prog, &dirs);
-                if let Some(p) = &found {
-                    println!("resolved: {}", p.display());
-                } else if let Some(s) = shell {
-                    println!("-- {}: FAIL ({prog} is not supplied by the flake dev shell of {} ({}))", row.name, root.join("flake.nix").display(), s.key);
-                    failed.push(row.name.clone());
-                    log.row(row, None, started.elapsed().as_secs(), &record_file);
-                    continue;
+                // A relative program path is the row's, so it is read from the root the row runs in.
+                let target = if prog.contains('/') { root.join(prog).to_string_lossy().into_owned() } else { prog.clone() };
+                let found = work::resolve_row_program(&target, &dirs).map_err(|why| match shell {
+                    Some(s) => format!("{prog} is not supplied by the flake dev shell of {} ({})", root.join("flake.nix").display(), s.key),
+                    None => why,
+                });
+                match found {
+                    Ok(p) => {
+                        println!("resolved: {}", p.display());
+                        p
+                    }
+                    Err(why) => {
+                        println!("-- {}: FAIL ({why})", row.name);
+                        failed.push(row.name.clone());
+                        log.row(row, None, started.elapsed().as_secs(), &record_file);
+                        continue;
+                    }
                 }
-                found.unwrap_or_else(|| std::path::PathBuf::from(prog))
             }
         };
         let ran_from = std::time::Instant::now();
