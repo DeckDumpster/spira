@@ -178,7 +178,7 @@ pub(crate) mod verdict_run {
                 ("spira-claim", Some("stack")) => Out::ok(self.proposal),
                 ("spira-claim", Some("rejections")) => Out::ok(self.rejections),
                 ("spira-lc", Some("list")) => Out::ok("[]"),
-                ("spira-lc", Some("show")) => Out::ok(serde_json::json!({"bead": {"bead_id": "sp-x", "state": self.left.lock().unwrap().unwrap_or("WORKING"), "holder": *self.holder.lock().unwrap(), "holds": self.holds, "ask_since": *self.ask_since.lock().unwrap()}}).to_string()),
+                ("spira-lc", Some("show")) => Out::ok(serde_json::json!({"bead": {"bead_id": "sp-x", "state": self.left.lock().unwrap().unwrap_or("WORKING"), "holder": *self.holder.lock().unwrap(), "holds": self.holds, "ask_since": self.ask_since.lock().unwrap().to_string()}}).to_string()),
                 _ => Out::ok(""),
             }
         }

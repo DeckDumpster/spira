@@ -819,7 +819,7 @@ impl<'a> Run<'a> {
             claim::Holds::Known(held) if !held.is_empty() && matches!(self.mode, Mode::Directed(_)) => {
                 self.log(&format!("{who}: directed claim of {} keeps its {} hold(s)", c.id, held.join(",")));
                 if held.iter().any(|h| h == "ask") {
-                    self.s.inherited_ask = self.ask_raised(&c.id);
+                    self.s.inherited_ask = self.lc_bead(&c.id).and_then(|r| r.ask_since);
                 }
             }
             claim::Holds::Known(held) if !held.is_empty() => {

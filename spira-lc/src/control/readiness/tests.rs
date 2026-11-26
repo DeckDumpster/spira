@@ -482,6 +482,17 @@ fn a_directed_claim_compares_no_blocker_gate_even_for_a_stacked_prerequisite_tha
     assert_eq!(r.state("sp-a"), "WORKING");
 }
 
+#[test_id(t4bqooj)]
+#[test]
+fn show_prints_when_the_ask_was_raised_in_the_shape_the_row_reader_parses() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    let read = |r: &Rig| spira_store::lc_state::parse_show(&r.ok(&["show", "sp-a"])).unwrap().unwrap().ask_since;
+    assert_eq!(read(&r), None);
+    r.applied("sp-a", json!({ "Hold": { "kind": "Ask", "cause": "operator-question" } }));
+    assert_eq!(read(&r), Some(r.now()));
+}
+
 #[test_id(t6jw9jk)]
 #[test]
 fn a_refusal_with_no_blockers_names_the_verdict_the_record_was_judged_with() {

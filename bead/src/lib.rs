@@ -1965,6 +1965,7 @@ mod tests {
                         version: None,
                         reason: None,
                         since: None,
+                        ask_since: None,
                     };
                     (id.clone(), row)
                 })

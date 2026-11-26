@@ -51,13 +51,6 @@ impl Run<'_> {
         spira_store::lc_state::parse_show(&o.stdout).ok().flatten()
     }
 
-    /// When the row's ask hold was last raised; every raise restamps it.
-    pub(crate) fn ask_raised(&self, id: &str) -> Option<i64> {
-        let o = self.d.exec.exec("spira-lc", &s(&["show", id]), None, None); // BDQ_READ_CONSIDERED="the spira-lc lifecycle door, not a bd read"
-        let v: serde_json::Value = o.success().then(|| serde_json::from_str(o.stdout.trim()).ok()).flatten()?;
-        v["bead"]["ask_since"].as_i64()
-    }
-
     /// `spira-lc hold` unless the row is already terminal: the machine refuses a Hold from a
     /// terminal state, and the refusal is noise this caller cannot act on. `None` = skipped.
     pub(crate) fn hold_unless_terminal(&self, id: &str, kind: &str, reason: &str, actor: &str) -> Option<crate::util::Out> {

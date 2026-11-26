@@ -326,7 +326,7 @@ impl Run<'_> {
         // blocking_holds), so its ask hold was placed during this session, or raced the claim
         // unseen when the store could not tell (sp-druc64). One a directed claim inherited
         // counts only once it is raised again.
-        let asked = lc.as_ref().is_some_and(|r| r.held("ask")) && self.s.inherited_ask.is_none_or(|at| self.ask_raised(&id) != Some(at));
+        let asked = lc.as_ref().is_some_and(|r| r.held("ask") && self.s.inherited_ask.is_none_or(|at| r.ask_since != Some(at)));
         let disposition = lc.as_ref().and_then(|r| r.disposition.as_deref());
         let disposition_note = lc.as_ref().and_then(|r| r.disposition_note.clone()).unwrap_or_default();
         let logf = self.s.logf.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
@@ -565,7 +565,7 @@ impl Run<'_> {
                     return rc;
                 }
                 if self.lc_bead(&id).is_some_and(|r| r.held("ask")) {
-                    self.note(&format!("Harness red (rc={rc}): the dwarf could not start its session — {why}. NO attempt was charged. Already parked with an ask hold by rapid-recur."));
+                    self.note(&format!("Harness red (rc={rc}): the dwarf could not start its session — {why}. NO attempt was charged. The row already carries an ask hold, so no further ask was filed."));
                     return rc;
                 }
                 let first: String = why.lines().next().unwrap_or("").trim().chars().take(200).collect();
