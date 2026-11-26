@@ -4,6 +4,7 @@
 //! files, so it carries its own trait rather than widening that one under every implementor.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 pub trait Systemctl {
     fn daemon_reload(&self) -> Result<(), String>;
@@ -34,6 +35,11 @@ pub trait Systemctl {
     fn start(&self, unit: &str) -> Result<(), String>;
     /// `systemctl kill` — bypasses job control, for a unit that refuses a restart job.
     fn kill(&self, unit: &str) -> Result<(), String>;
+    /// The executable the unit's main process runs now (`/proc/<MainPID>/exe`, readable even
+    /// after its path was replaced), or `None` when it has no main process.
+    fn running_exe(&self, _unit: &str) -> Option<PathBuf> {
+        None
+    }
     /// `Type=` (empty when the unit cannot be shown).
     fn unit_type(&self, unit: &str) -> String;
     /// Names from `list-unit-files --no-legend <glob>` union `list-units --all --no-legend
@@ -174,6 +180,11 @@ impl Systemctl for RealSystemctl {
             Err(err)
         }
     }
+    fn running_exe(&self, unit: &str) -> Option<PathBuf> {
+        let (ok, out, _) = self.run(&["show", unit, "-p", "MainPID", "--value"]);
+        let pid: u32 = out.trim().parse().ok().filter(|_| ok)?;
+        (pid > 0).then(|| PathBuf::from(format!("{}/{pid}/exe", system_paths::PROC)))
+    }
     fn unit_type(&self, unit: &str) -> String {
         self.run(&["show", "-p", "Type", "--value", unit]).1.trim().to_string()
     }
@@ -218,6 +229,7 @@ pub struct FakeSystemctl {
     pub batched_queries: std::cell::Cell<u32>,
     /// A running unit that reads inactive after this many more `is_active` polls.
     pub finishes_after_polls: std::cell::RefCell<BTreeMap<String, u32>>,
+    pub running_exes: std::cell::RefCell<BTreeMap<String, PathBuf>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -311,6 +323,9 @@ impl Systemctl for FakeSystemctl {
         self.kills.borrow_mut().push(unit.to_string());
         self.units.borrow_mut().entry(unit.to_string()).or_default().active = true;
         Ok(())
+    }
+    fn running_exe(&self, unit: &str) -> Option<PathBuf> {
+        self.running_exes.borrow().get(unit).cloned()
     }
     fn unit_type(&self, unit: &str) -> String {
         self.units.borrow().get(unit).map(|u| u.kind.clone()).unwrap_or_default()
