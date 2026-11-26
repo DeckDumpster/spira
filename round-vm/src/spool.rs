@@ -569,7 +569,7 @@ mod tests {
         fs::write(home.join("round-launcher.env"), launcher).unwrap();
         fs::write(home.join("round-nextest.toml"), "").unwrap();
         let stub = |name: &str, body: &str| testkit::write_exe(bin.join(name), &format!("#!/bin/bash\n{body}\n"));
-        stub("git", "for a; do last=$a; done; mkdir -p \"$last/tools/test-sandbox\"; printf '#!/bin/bash\\n[ \"$1\" = --around ] || exit 97\\nshift\\nexport VIA_AROUND=1\\nexec \"$@\"\\n' > \"$last/tools/test-sandbox/runner\"; chmod +x \"$last/tools/test-sandbox/runner\"");
+        stub("git", "for a; do last=$a; done; mkdir -p \"$last/tools/test-sandbox\"; printf '#!/bin/bash\\n[ \"$1\" = --around ] || exit 97\\n[ -d \"$CARGO_TARGET_DIR\" ] || exit 2\\nshift\\nexport VIA_AROUND=1\\nexec \"$@\"\\n' > \"$last/tools/test-sandbox/runner\"; chmod +x \"$last/tools/test-sandbox/runner\"");
         let said = if cargo_rc == 0 { "" } else { "echo 'test x ... FAILED'; " };
         if !home.join("round-work/target/release/testenv").exists() {
             fs::create_dir_all(home.join("round-work/target/release")).unwrap();

@@ -5024,6 +5024,8 @@ mod tests {
     fn the_rounds_test_runs_enter_the_sandbox_once_and_its_build_does_not() {
         let enters = |name: &str| script_fn(name).contains("test_env ");
         assert!(enters("unit_nextest") && enters("integ_cargo"));
+        let only = REMOTE_SCRIPT.split("    integration-tests)\n").nth(1).and_then(|a| a.split(";;").next()).unwrap();
+        assert!(only.contains("test_env ") && !only.contains("unit_env "), "--only integration-tests: {only}");
         assert!(!script_fn("unit_cargo").contains("test_env"), "the build stays outside the sandbox");
         let tail = |f: &str| UNIT_ENV_FN.split(f).nth(1).unwrap().lines().find(|l| l.contains("cargo \"$@\"")).unwrap().trim().to_string();
         assert!(tail("test_env() {").ends_with("tools/test-sandbox/runner --around cargo \"$@\""));
