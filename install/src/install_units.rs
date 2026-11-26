@@ -840,6 +840,10 @@ mod tests {
         fs::write(&program, "B").unwrap();
         assert_eq!(rerun(&sc, &unit_dir), [unit], "a rebuilt spira-env restarts the broker once");
 
+        let (sc, unit_dir) = installed("unreadable", "@SPIRA_ENV_PATH@/mosquitto", "B");
+        sc.running_exes.borrow_mut().insert(unit.to_string(), td.join("gone"));
+        assert_eq!(rerun(&sc, &unit_dir), [unit], "an executable that cannot be compared is not assumed current");
+
         let outside = td.join("mosquitto");
         testkit::write_exe(&outside, "B");
         let (sc, unit_dir) = installed("outside", &outside.display().to_string(), "A");

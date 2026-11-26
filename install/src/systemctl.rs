@@ -182,8 +182,7 @@ impl Systemctl for RealSystemctl {
     }
     fn running_exe(&self, unit: &str) -> Option<PathBuf> {
         let (ok, out, _) = self.run(&["show", unit, "-p", "MainPID", "--value"]);
-        let pid: u32 = out.trim().parse().ok().filter(|_| ok)?;
-        (pid > 0).then(|| PathBuf::from(format!("{}/{pid}/exe", system_paths::PROC)))
+        release::systemctl::main_pid_exe(&out).filter(|_| ok)
     }
     fn unit_type(&self, unit: &str) -> String {
         self.run(&["show", "-p", "Type", "--value", unit]).1.trim().to_string()
