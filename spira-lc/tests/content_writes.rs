@@ -43,14 +43,25 @@ struct Store {
 
 impl Store {
     fn up() -> Option<Store> {
+        Store::loading(&testkit::manifest_dir().join("beads-schema.sql"))
+    }
+
+    /// A private server holding no beads store: only the one empty database testdb makes.
+    fn empty() -> Option<Store> {
+        let dir = testkit::TempDir::new("lcw-empty");
+        let schema = dir.join("empty.sql");
+        std::fs::write(&schema, "SELECT 1;\n").unwrap();
+        Store::loading(&schema)
+    }
+
+    fn loading(schema: &Path) -> Option<Store> {
         let dir = testkit::TempDir::new("lcw");
         let Some(dolt) = std::env::var("TESTDB_DOLT").ok().filter(|b| !b.is_empty()).or_else(|| tool("dolt")) else {
             eprintln!("SKIP: no dolt on PATH, spira.path or ~/spira-env/bin");
             return None;
         };
-        let schema = testkit::manifest_dir().join("../testenv/fixtures/beads-schema.sql");
         let mut up = Command::new(testkit::bin_exe("testenv"));
-        up.args(["testdb", "up", "--tag", "content-writes", "--dolt", &dolt]).arg("--schema").arg(&schema);
+        up.args(["testdb", "up", "--tag", "content-writes", "--dolt", &dolt]).arg("--schema").arg(schema);
         let root = std::env::var("TESTDB_ROOT").ok().filter(|r| !r.is_empty()).unwrap_or_else(|| dir.join("db").display().to_string());
         up.args(["--root", &root]);
         let out = up.output().expect("testenv runs");
@@ -1329,4 +1340,69 @@ fn a_dep_add_bd_would_refuse_says_which_condition_and_leaves_the_edges_unchanged
         }
     }
     assert_eq!(edges(), before);
+}
+
+#[test_id(tc4xb9l)]
+#[test]
+fn admin_create_beads_makes_a_store_the_content_verbs_work_on_and_a_second_run_changes_nothing() {
+    let Some(mut store) = Store::empty() else { return };
+    let beads = store.dir.join("fresh_db");
+    std::fs::create_dir_all(&beads).unwrap();
+    store.db = beads.display().to_string();
+    let writer = store.dir.join("writer.credential");
+    let mut lc = Lc::new(&store, "n", &writer.display().to_string());
+    let create = |lc: &Lc, prefix: &str, database: &str| {
+        let out = lc.command().args(["admin-create-beads", "--prefix", prefix, "--host", "127.0.0.1", "--port", &store.port, "--database", database]).output().expect("spira-lc runs");
+        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+    let (rc, out) = create(&lc, "sp", "fresh_db");
+    assert_eq!(rc, 0, "{out}");
+    let metadata = beads.join(".beads/metadata.json");
+    let wrote = std::fs::read_to_string(&metadata).expect("metadata.json is written");
+    assert!(wrote.contains("\"dolt_database\": \"fresh_db\"") && wrote.contains(&format!("\"dolt_server_port\": {}", store.port)), "{wrote}");
+    // The DDL's own seed row says `sp`, so only another prefix shows the verb sets it.
+    let elsewhere = store.dir.join("other_db");
+    store.db = elsewhere.display().to_string();
+    let other = Lc::new(&store, "o", "");
+    let (rc, out) = create(&other, "zz", "other_db");
+    assert_eq!(rc, 0, "{out}");
+    let said = store.dolt_sql("SELECT value FROM other_db.config WHERE `key` = 'issue_prefix'", &["-r", "csv"]);
+    assert_eq!(said.lines().nth(1), Some("zz"), "{said}");
+
+    let state = || {
+        store.dolt_sql("SELECT (SELECT commit_hash FROM fresh_db.dolt_log LIMIT 1) AS head, (SELECT COUNT(*) FROM fresh_db.dolt_status) AS dirty, (SELECT value FROM fresh_db.config WHERE `key` = 'issue_prefix') AS prefix", &["-r", "csv"])
+    };
+    let first = state();
+    assert!(first.trim_end().ends_with(",0,sp"), "committed, with its prefix: {first}");
+
+    let (rc, out) = create(&lc, "sp", "fresh_db");
+    assert_eq!(rc, 0, "{out}");
+    assert!(out.contains("nothing changed"), "{out}");
+    assert_eq!(state(), first);
+    assert_eq!(std::fs::read_to_string(&metadata).unwrap(), wrote);
+
+    let (rc, out) = create(&lc, "yy", "fresh_db");
+    assert_eq!(rc, 3, "another prefix is not this store: {out}");
+    assert!(out.contains("\"sp\"") && out.contains("\"yy\""), "{out}");
+    store.sql("CREATE DATABASE half_made; CREATE TABLE half_made.issues (id varchar(255) PRIMARY KEY)");
+    let (rc, out) = create(&lc, "zz", "half_made");
+    assert_eq!(rc, 3, "{out}");
+    assert!(out.contains("half_made") && out.contains("partial") && out.contains("comments"), "{out}");
+    assert_eq!(std::fs::read_to_string(&metadata).unwrap(), wrote);
+
+    provision(&lc);
+    lc.admin("admin-provision-writer");
+    lc.serve();
+    let make = |title: &str| first_line(&lc.children_of("content", &["content", "create", title, "--type", "task", "--labels", "repo:spira", "--silent", "--body-file", "-"], Some("a body\n")).0);
+    let (a, b) = (make("the first"), make("the second"));
+    assert!(a.starts_with("sp-") && b.starts_with("sp-") && a != b, "{a} {b}");
+    lc.children_of("content", &["content", "note", &a, "a note on the new store"], None);
+    lc.children_of("content", &["content", "dep", "add", &a, &b], None);
+    let shown = lc.shows(&a);
+    assert!(shown.contains("a note on the new store") && shown.contains(&b), "{shown}");
+    lc.children_of("close", &["close", &b, "--reason", "done"], None);
+    assert!(lc.shows(&b).contains("closed"), "{}", lc.shows(&b));
+    lc.children_of("content", &["content", "remember", "--key", "a-key"], Some("what is remembered"));
+    let kept = lc.children_of("content", &["content", "memories", "--json"], None).0;
+    assert!(kept.contains("what is remembered"), "{kept}");
 }

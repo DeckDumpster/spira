@@ -9,6 +9,10 @@ use crate::lc_call::{LcClient, LcError, Reply, CANNOT_TELL, LC_TIMEOUT, REFUSED}
 
 pub const LC_BIN_ENV: &str = "SPIRA_LC_BIN";
 
+/// What `spira-lc admin-create-beads` says on stderr, before the database's name, when it is about
+/// to create into a database holding nothing: after a failure, only then may a caller drop it.
+pub const CREATING_BEADS_DATABASE: &str = "admin-create-beads: creating database ";
+
 pub fn lc_bin() -> Result<String, String> {
     match std::env::var(LC_BIN_ENV).ok().filter(|v| !v.is_empty()) {
         Some(v) => Ok(v),
