@@ -16,7 +16,7 @@ use strand::yield_report;
 pub fn unsent_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     branch_backlog_section(&mut out, cfg);
-    yield_section(&mut out, &io::run_dir());
+    yield_section(&mut out, &yield_report::Sources::resolve(&io::run_dir(), |k| std::env::var(k).ok()));
     landing_funnel_section(&mut out, &io::run_dir(), cfg);
     acceptance_section(&mut out, cfg);
     gate_section(&mut out, &io::run_dir());
@@ -411,7 +411,7 @@ fn bead_exists_at(id: &str, timeout: &str) -> BeadStatus {
 // What the landing gate is worth: `strand::yield_report`'s reading, passed through untouched.
 // ---------------------------------------------------------------------------------------
 
-fn yield_section(out: &mut Kv, run: &Path) {
+fn yield_section(out: &mut Kv, from: &yield_report::Sources) {
     const MAP: &[(&str, &str)] = &[
         ("YIELD_REDS", "SP_YIELD_REDS"),
         ("YIELD_DEFECT", "SP_YIELD_DEFECT"),
@@ -421,7 +421,6 @@ fn yield_section(out: &mut Kv, run: &Path) {
         ("YIELD_CONC_MED", "SP_YIELD_CONC_MED"),
         ("YIELD_TOP_FAULT", "SP_YIELD_TOP_FAULT"),
     ];
-    let from = yield_report::Sources::resolve(run, |k| std::env::var(k).ok());
     let found: HashMap<String, String> = yield_report::report(&from.dir, &from.gate_log, from.window_s, io::now().max(0) as u64).into_iter().collect();
     for (src, dst) in MAP {
         push(out, dst, found.get(*src).cloned().unwrap_or_else(|| "?".to_string()));
@@ -1047,28 +1046,28 @@ mod tests {
     }
 
     fn yield_keys(run: &Path) -> Kv {
-        let _env = testkit::env(&[("SPIRA_YIELD", None), ("SPIRA_GATE_LOG", None), ("SPIRA_YIELD_WINDOW", None)]);
+        let from = yield_report::Sources { dir: run.join("records"), gate_log: run.join("meter"), window_s: 86400 };
         let mut out = Kv::new();
-        yield_section(&mut out, run);
+        yield_section(&mut out, &from);
         out
     }
 
     // covers: UC-gate-verdict-24
     #[test_id(tyv41s0)]
     #[test]
-    fn every_yield_key_is_written_from_the_records_under_the_run_directory_and_an_absent_record_is_a_question_mark() {
+    fn every_yield_key_is_written_from_the_records_and_the_meter_and_an_absent_record_is_a_question_mark() {
         let keys = ["SP_YIELD_REDS", "SP_YIELD_DEFECT", "SP_YIELD_FAULT", "SP_YIELD_UNKNOWN", "SP_YIELD_SOLO_MED", "SP_YIELD_CONC_MED", "SP_YIELD_TOP_FAULT"];
         let run = testkit::TempDir::new("yield-section");
         let got = yield_keys(run.path());
         assert_eq!(got.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), keys, "every key is still written");
         assert!(got.iter().all(|(_, v)| v == "?"), "nothing readable is ? everywhere, never 0: {got:?}");
 
-        std::fs::create_dir(run.join("gate-yield")).unwrap();
+        std::fs::create_dir(run.join("records")).unwrap();
         for (i, verdict) in ["DEFECT", "GATE_FAULT", "GATE_FAULT", "UNKNOWN"].iter().enumerate() {
-            std::fs::write(run.join(format!("gate-yield/r{i}")), format!("at={}\nsuite=test-b.sh\nverdict={verdict}\n", io::now())).unwrap();
+            std::fs::write(run.join(format!("records/r{i}")), format!("at={}\nsuite=test-b.sh\nverdict={verdict}\n", io::now())).unwrap();
         }
         let stamp = strand::timefmt::utc_stamp(io::now() - 1000);
-        std::fs::write(run.join("gate.log"), format!("{stamp} repo b waited=0s ran=60s rc=0 pass\n")).unwrap();
+        std::fs::write(run.join("meter"), format!("{stamp} repo b waited=0s ran=60s rc=0 pass\n")).unwrap();
         let got = yield_keys(run.path());
         let values: Vec<&str> = got.iter().map(|(_, v)| v.as_str()).collect();
         assert_eq!(values, ["4", "1", "2", "1", "60", "?", "test-b.sh x2"]);
