@@ -67,9 +67,6 @@ Side effects (unchanged from the bash):
 - `lanes.rs` — the lane family: `spira_lane_admitted`/`spira_repo_lanes` over the registry.
 - `observe.rs` — the reads the scheduler's trigger tasks make: the open-trigger count over the
   store's content door and the lifecycle list, and landings counted from `git log`.
-- `main.rs` — orchestration matching the bash's control flow 1:1: lock → dedup → lane check →
-  read clocks → count landings (home repo, then repo-map, skipping the home repo) → evaluate
-  the three triggers → file or exit.
 
 ## Non-goals (out of scope for this bead)
 
@@ -78,10 +75,8 @@ Side effects (unchanged from the bash):
   this crate). Stays a subprocess seam here.
 - **`repo_field`, `spira_landref`'s resolution ladder — no longer true.** Family U (the repo
   registry) and family W (base refs) ported to `spira_config::repos` in sp-37rmg/sp-o88bx
-  ("wave 4.11"/"4.12"); `real.rs`'s `home_repo`/`repo_root`/`landref` call that in-process now
-  (sp-k6lku, "wave 4.13") instead of a `bash -c '. lib.sh; ...'` seam that itself only shelled
-  into the `spira-config` binary a second time. This is calling the canonical port, not a
-  second copy of it.
+  ("wave 4.11"/"4.12"); the reads here call that in-process. This is calling the canonical
+  port, not a second copy of it.
 - **`spira_lane_admitted`/`spira_open_trigger_count`/`spira_repo_lanes` — no longer true
   either.** Family V ported in-process (wave 4.35, sp-kelr2, "the plan: shims, not a big
   bang" — this bead's own family moves to its owning crate, and that crate's Rust seam
@@ -99,10 +94,9 @@ Side effects (unchanged from the bash):
 - `engine.rs`'s 21 unit tests include a fixture window of real commit subjects captured
   verbatim from this repository's own `git log --format=%s` history, so the landing-id
   extraction is checked against real data, not only hand-written examples.
-- `main.rs`'s tests run the sweep against a fake `World` and carry
-  `UC-ops-detection-remediation-16`: gap and landing triggers, non-bead commits, per-bead
-  dedup, the home repo counted once, a non-`origin` remote, an open trigger suppressing a
-  second, a failed `bd create` as a failed sweep, and the allowlisted closed-record rows.
+- `observe.rs`'s tests carry `UC-ops-detection-remediation-16` for two cases: landings read
+  from a repository whose only remote is not `origin`, and which trigger beads still count as
+  open.
 
 ## Decisions
 

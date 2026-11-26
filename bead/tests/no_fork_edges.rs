@@ -95,3 +95,26 @@ fn a_planted_bdq_spawn_is_caught_marked_or_not() {
     assert_eq!(spawns_bdq("Command::new(\"bdq\")").len(), 1);
     assert!(spawns_bdq("let c = Command::new(\"git\"); // bdq\n").is_empty());
 }
+
+/// Whether the crate at `dir` has a `bdq` bin target: a `[[bin]]` of that name, or a source
+/// cargo discovers by itself under `src/bin/`.
+fn declares_bdq(dir: &Path) -> bool {
+    let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).expect("read Cargo.toml");
+    let named = manifest.split("[[bin]]").skip(1).any(|t| t.split("\n[").next().unwrap_or("").lines().any(|l| l.trim() == "name = \"bdq\""));
+    named || dir.join("src/bin/bdq.rs").exists() || dir.join("src/bin/bdq/main.rs").exists()
+}
+
+#[test_id(t5g0hym)]
+#[test]
+fn the_bead_crate_builds_no_bdq_program() {
+    let planted = testkit::TempDir::new("bead-bdq-target");
+    std::fs::write(planted.path().join("Cargo.toml"), "[[bin]]\nname = \"bdq\"\npath = \"x.rs\"\n").unwrap();
+    assert!(declares_bdq(planted.path()), "positive control: a declared target");
+    std::fs::write(planted.path().join("Cargo.toml"), "[package]\nname = \"p\"\n").unwrap();
+    assert!(!declares_bdq(planted.path()));
+    std::fs::create_dir_all(planted.path().join("src/bin")).unwrap();
+    std::fs::write(planted.path().join("src/bin/bdq.rs"), "fn main() {}\n").unwrap();
+    assert!(declares_bdq(planted.path()), "positive control: a discovered target");
+
+    assert!(!declares_bdq(&testkit::manifest_dir()), "bead builds a bdq program; no release ships one");
+}
