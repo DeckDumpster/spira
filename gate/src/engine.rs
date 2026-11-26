@@ -941,6 +941,7 @@ impl<'w, W: World> Trial<'w, W> {
                 e("SPIRA_GATE_REPO_NAME", &name),
                 e("SPIRA_GATE_BRANCH", branch),
                 e("SPIRA_GATE_BASE", &base_rev),
+                e("SPIRA_GATE_BEAD", &self.s.bead),
                 e("SPIRA_GATE_SELECT_HEAD", &br),
                 e(
                     "SPIRA_GATE_FILES",

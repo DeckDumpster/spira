@@ -49,7 +49,7 @@ bin SPIRA_TESTENV_BIN testenv
 
 # The lint fences (inventory, literal-lint, scratch-fence, wiki-add-fence, bd-stdin-lint,
 # incident-cause-lint, ...) are spira-lint rules and run as part of the "$SPIRA_LINT_BIN" step.
-step bash spira/lint-staged.sh "$SPIRA_LINT_BIN" --deny-list "$SPIRA_TEST_DENY_LIST"
+step bash spira/lint-staged.sh "$SPIRA_LINT_BIN" --deny-list "$SPIRA_TEST_DENY_LIST" --gate-bead "${SPIRA_GATE_BEAD:-}"
 # The lifecycle barrier (sp-ts2qr; brain design bead-lifecycle-state-machine §3.6(3), §3.8(2)):
 # the tree's own lifecycle-guard, over the whole gate tree, refuses any path that reaches the
 # landstate ledger or a landed oracle — the lifecycle machine (spira-lc) is the only route.

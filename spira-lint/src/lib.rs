@@ -52,6 +52,7 @@ pub struct Tree {
     /// and such a rule refuses rather than compare against nothing.
     pub base: Option<String>,
     deny_list: Option<String>,
+    gate_bead: Option<String>,
     reader: Option<GitReader>,
 }
 
@@ -122,6 +123,7 @@ impl Tree {
             entries,
             base: None,
             deny_list: None,
+            gate_bead: None,
             reader: None,
         }
     }
@@ -140,6 +142,16 @@ impl Tree {
 
     pub fn deny_list(&self) -> Option<&str> {
         self.deny_list.as_deref()
+    }
+
+    /// The same tree, with the item the gate is judging (`--gate-bead`).
+    pub fn with_gate_bead(mut self, id: Option<String>) -> Tree {
+        self.gate_bead = id;
+        self
+    }
+
+    pub fn gate_bead(&self) -> Option<&str> {
+        self.gate_bead.as_deref()
     }
 
     /// The same tree, answering git reads from `reader` instead of spawning git.
