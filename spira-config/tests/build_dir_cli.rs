@@ -352,3 +352,41 @@ fn a_unit_with_no_timestamp_is_removed_and_a_deleted_file_cleans_its_crate() {
     assert!(fresh.exists());
     assert_eq!(cargo_log(&b), "clean -q -p crate-b", "a deleted file cleans the crate whatever its units");
 }
+
+fn clean_tree(b: &Box_, dir: &Path) -> String {
+    let home = spira_config::resolve::locate_home_for_process().unwrap();
+    spira_config::build_dir::clean(&home.join(spira_config::build_dir::CLEAN_SCRIPT), &b.tree, dir, &b.bin, false).unwrap()
+}
+
+#[test_id(thvvkjk)]
+#[test]
+fn a_unit_built_since_the_last_recorded_run_is_rebuilt_though_no_bytes_changed() {
+    let b = setup("bdcli-foreign-build");
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    let _ = std::fs::remove_file(&b.log);
+    let later = std::time::SystemTime::now() + Duration::from_secs(3600);
+    let u = unit(&d, "crate-a-0123456789abcdef", Some(later));
+    let said = clean_tree(&b, &d);
+    assert!(!u.exists(), "the unit another build made is dropped: {said}");
+    assert!(
+        said.lines().any(|l| l.contains("built since the last recorded run") && l.ends_with("rebuilding: crate-a")),
+        "{said}"
+    );
+    assert!(!b.log.exists(), "nothing is cargo-cleaned: {}", cargo_log(&b));
+}
+
+#[test_id(t2bk9e8)]
+#[test]
+fn a_unit_built_before_the_last_recorded_run_stays_warm() {
+    let b = setup("bdcli-own-build");
+    let d = b.base.join("dir.1");
+    let earlier = std::time::SystemTime::now() - Duration::from_secs(3600);
+    let u = unit(&d, "crate-a-0123456789abcdef", Some(earlier));
+    clean_tree(&b, &d);
+    let _ = std::fs::remove_file(&b.log);
+    let said = clean_tree(&b, &d);
+    assert!(u.exists(), "{said}");
+    assert!(!said.contains("built since the last recorded run"), "{said}");
+    assert!(!b.log.exists(), "nothing is cleaned: {}", cargo_log(&b));
+}
