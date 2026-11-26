@@ -26,8 +26,7 @@ pub fn place_conf(templates_dir: &Path, host: &HostValues) -> Result<bool, Strin
     for dir in [Some(run), Path::new(&host.broker_socket).parent()].into_iter().flatten() {
         std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     }
-    let tmp = run.join(format!("{CONF_FILE}.new"));
-    std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, &dest)).map_err(|e| format!("cannot write {}: {e}", dest.display()))?;
+    spira_config::write_atomic(&dest, &text).map_err(|e| format!("cannot write {}: {e}", dest.display()))?;
     println!("install: wrote {}", dest.display());
     Ok(true)
 }
