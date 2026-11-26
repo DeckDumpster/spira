@@ -19,7 +19,7 @@ use crate::totals::{cpu_seconds, Drain, StartCount};
 struct Aligned<T: ?Sized>(T);
 
 // The loader reads ELF64 headers in place, which wants 8-byte alignment.
-static ALIGNED: &Aligned<[u8]> = &Aligned(*include_bytes!(concat!(env!("OUT_DIR"), "/proc_starts.bpf.o")));
+static ALIGNED: &Aligned<[u8]> = &Aligned(*include_bytes!("../bpf/proc_starts.bpf.o"));
 
 const PROGRAMS: [(&str, &str); 4] = [("on_fork", "sched_process_fork"), ("on_exec", "sched_process_exec"), ("on_exit", "sched_process_exit"), ("on_mkdir", "cgroup_mkdir")];
 
