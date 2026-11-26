@@ -40,6 +40,10 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
     assert_traps_and_double_are_live(&f);
     Command::new("yield.sh").output().unwrap();
     assert_eq!(started(&f, "yield.sh"), 1, "the yield.sh stub is what PATH resolves, so a started one is seen");
+    let records = std::path::PathBuf::from(spira_config::process::cfg("SPIRA_RUN").unwrap()).join("gate-yield");
+    std::fs::create_dir_all(&records).unwrap();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    std::fs::write(records.join("planted"), format!("at={now}\nsuite=test-planted.sh\nverdict=GATE_FAULT\n")).unwrap();
     let (warm, idle) = (START + HOUR, START + 2 * HOUR);
     let unsent_passes = |f: &Fixture| f.seen.lock().unwrap().iter().filter(|(n, _)| n == "cockpit-tier-600s.observe").count();
     let (mut yields_at_warm, mut yields_at_idle, mut passes_at_warm, mut passes_at_idle) = (0, 0, 0, 0);
@@ -97,7 +101,7 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
     assert_eq!(at_idle, at_warm, "an idle virtual hour logged git: {}\n{}", argv_counts(&all[at_warm..at_idle]), all[at_warm..at_idle].join("\n"));
     assert!(passes_at_idle - passes_at_warm >= 5, "the unsent probe ran {} times in the idle hour, so it proves little", passes_at_idle - passes_at_warm);
     assert_eq!(yields_at_idle - yields_at_warm, 0, "an idle virtual hour started yield.sh");
-    assert!(unsent_before.contains("SP_YIELD_REDS") && unsent_before.contains("SP_YIELD_TOP_FAULT"), "the unsent section still carries the yield keys: {unsent_before}");
+    assert!(unsent_before.contains("SP_YIELD_REDS") && unsent_before.contains("test-planted.sh x1"), "the unsent section carries the reading of the record under the run directory: {unsent_before}");
     assert_eq!((ensures_at_warm, ensures_at_idle), (1, 1), "the cockpit is ensured once on the first tick and not over an idle hour");
     assert_eq!(ensures_after_touch, 2, "a touched bin/health is one more start on the next tick");
     assert_eq!(ensures(&f), 3, "a new tmux client is one more start, and nothing else started one after the touch");
