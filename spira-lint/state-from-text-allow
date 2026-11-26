@@ -10,7 +10,6 @@
 1 unit-name cockpit/ops/src/lcview.rs
 2 unit-name doctor/src/lib.rs
 1 output hel/src/real.rs
-1 output install/src/bin/install.rs
 1 unit-name install/src/bin/install.rs
 2 unit-name install/src/bin/units_install.rs
 1 unit-name install/src/bootstrap.rs

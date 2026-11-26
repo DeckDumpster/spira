@@ -1008,15 +1008,10 @@ fn run_declared(opts: Opts) -> ExitCode {
                 return ExitCode::from(2);
             }
             let dbname = Path::new(&db).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            let max_tries: u32 = nonempty_env("SPIRA_INSTALL_CREATE_TRIES").and_then(|v| v.parse().ok()).unwrap_or(3).max(1);
             let created = install::orchestrate::create_beads(
+                &HostDeps,
                 &mut || create_beads_store(&lc, &id_prefix, dolt_port, &dbname),
                 &mut || clean_partial_init(&db, &dbname, dolt_port),
-                &mut |ran| {
-                    info("  the database was not created — retrying");
-                    std::thread::sleep(std::time::Duration::from_secs(2 * u64::from(ran)));
-                },
-                max_tries,
             );
             if let Err(out) = created {
                 eprint!("{out}");

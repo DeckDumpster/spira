@@ -123,10 +123,12 @@ pub fn wait_for_store(deps: &dyn Deps, lc: &str, max_secs: u64) -> bool {
     }
 }
 
+const CREATE_TRIES: u32 = 3;
+
 /// Runs `spira-lc admin-create-beads` through `run` (its exit code and output). A refusal is
-/// final. Any other failure is retried up to `tries` runs, and `drop_partial` is called only when
+/// final. Any other failure is retried up to [`CREATE_TRIES`] runs, and `drop_partial` is called only when
 /// the run said it had begun creating, so a database it found holding anything is never dropped.
-pub fn create_beads(run: &mut dyn FnMut() -> (i32, String), drop_partial: &mut dyn FnMut(), pause: &mut dyn FnMut(u32), tries: u32) -> Result<(), String> {
+pub fn create_beads(deps: &dyn Deps, run: &mut dyn FnMut() -> (i32, String), drop_partial: &mut dyn FnMut()) -> Result<(), String> {
     let mut ran = 0;
     loop {
         ran += 1;
@@ -137,10 +139,10 @@ pub fn create_beads(run: &mut dyn FnMut() -> (i32, String), drop_partial: &mut d
         if out.lines().any(|l| l.starts_with(spira_store::lifecycle_row::CREATING_BEADS_DATABASE)) {
             drop_partial();
         }
-        if code == spira_store::lc_call::REFUSED || ran >= tries {
+        if code == spira_store::lc_call::REFUSED || ran >= CREATE_TRIES {
             return Err(out);
         }
-        pause(ran);
+        deps.sleep_secs(2 * u64::from(ran));
     }
 }
 
@@ -359,18 +361,17 @@ mod tests {
     }
 
     /// Runs [`create_beads`] over `answers`, in order: its result, how often it ran, how often it dropped.
-    fn creating(tries: u32, answers: &[(i32, &str)]) -> (Result<(), String>, usize, usize) {
+    fn creating(answers: &[(i32, &str)]) -> (Result<(), String>, usize, usize) {
         let mut ran = 0;
         let mut dropped = 0;
         let out = create_beads(
+            &Pinged { ok_from: 0, clock: Default::default(), asked: Default::default() },
             &mut || {
                 let (code, out) = answers[ran];
                 ran += 1;
                 (code, out.to_string())
             },
             &mut || dropped += 1,
-            &mut |_| {},
-            tries,
         );
         (out, ran, dropped)
     }
@@ -380,19 +381,19 @@ mod tests {
     #[test_id(t0snudv)]
     #[test]
     fn a_creation_cut_after_it_began_is_dropped_and_retried_up_to_the_bound() {
-        assert_eq!(creating(3, &[(2, BEGAN), (0, "")]), (Ok(()), 2, 1));
-        let (out, ran, dropped) = creating(2, &[(2, BEGAN), (124, BEGAN)]);
-        assert_eq!((ran, dropped), (2, 2));
+        assert_eq!(creating(&[(2, BEGAN), (0, "")]), (Ok(()), 2, 1));
+        let (out, ran, dropped) = creating(&[(2, BEGAN), (124, BEGAN), (2, BEGAN)]);
+        assert_eq!((ran, dropped), (3, 3));
         assert!(out.unwrap_err().contains("lost"));
     }
 
     #[test_id(tc2t2cd)]
     #[test]
     fn a_database_this_run_never_began_to_create_is_never_dropped() {
-        let (out, ran, dropped) = creating(3, &[(3, "admin-create-beads: database d is a partial beads store")]);
+        let (out, ran, dropped) = creating(&[(3, "admin-create-beads: database d is a partial beads store")]);
         assert_eq!((ran, dropped), (1, 0), "a refusal is final");
         assert!(out.unwrap_err().contains("partial"));
-        assert_eq!(creating(3, &[(2, "connecting: refused"), (0, "")]), (Ok(()), 2, 0));
+        assert_eq!(creating(&[(2, "connecting: refused"), (0, "")]), (Ok(()), 2, 0));
     }
 
     #[test_id(t2g8lef)]
