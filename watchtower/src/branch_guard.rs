@@ -52,13 +52,20 @@ fn config_key(root: &Path) -> Option<String> {
     Some(format!("{shared}\0{}", std::fs::read_to_string(gitdir.join("config.worktree")).unwrap_or_default()))
 }
 
-/// `repo_field`'s declared base verifies from the ref files; anything else asks git, so the
-/// answer, "unresolved" included, is held until a ref or the config moves.
+/// A base the ref files cannot verify asks git. The answer is held until a ref or the config
+/// moves; "unresolved" only when git says the declared ref is missing, never on a git fault.
 fn landref(reg: &Registry, name: &str, root: &str) -> Option<String> {
     let declared = reg.field(name, Column::Base).unwrap_or_default();
     let path = Path::new(root);
     let key = refs_digest(path).zip(config_key(path)).map(|(refs, config)| format!("{refs}\0{config}\0{declared}"));
-    held_on(path, "branch-guard-landref", key, || Ok(repos::landref(reg, root))).ok().flatten()
+    let missing = (!declared.is_empty()).then(|| format!("tried {declared}: exit 1"));
+    held_on(path, "branch-guard-landref", key, || match repos::landref_explained(reg, root) {
+        Ok(found) => Ok(Some(found)),
+        Err(why) if Some(&why) == missing.as_ref() => Ok(None),
+        Err(why) => Err(why),
+    })
+    .ok()
+    .flatten()
 }
 
 /// The remote `landref` names, if its first component is one: `local/main` is a local branch.
@@ -275,6 +282,22 @@ mod tests {
         let unresolved = registry(d.path(), &repo, "nonesuch");
         gits(&unresolved);
         assert_eq!(gits(&unresolved), 0, "a base that does not resolve");
+    }
+
+    // covers: UC-safety-fences-19
+    #[test_id(tcw5v5f)]
+    #[test]
+    fn a_base_git_failed_to_verify_is_asked_again_though_nothing_moved() {
+        let d = testkit::TempDir::new("guard-flaky");
+        let repo = checkout(d.path());
+        let failed = d.join("failed");
+        let flaky = d.join("flaky-git");
+        testkit::write_exe(&flaky, &format!("#!/bin/sh\n[ -e {0} ] || {{ : > {0}; echo 'fatal: transient' >&2; exit 128; }}\nexec git \"$@\"\n", failed.display()));
+        // A revision expression: the ref files cannot answer, so the base is verified by git.
+        let reg = registry(d.path(), &repo, "trunk~0").with_git(flaky);
+        let first = audited(&reg);
+        assert!(first.contains("could not resolve base branch"), "{first}");
+        assert!(!audited(&reg).contains("could not resolve base branch"), "{}", audited(&reg));
     }
 
     // covers: UC-safety-fences-19
