@@ -53,7 +53,7 @@ impl Run<'_> {
 
     /// When the row's ask hold was last raised; every raise restamps it.
     pub(crate) fn ask_raised(&self, id: &str) -> Option<i64> {
-        let o = self.d.exec.exec("spira-lc", &s(&["show", id]), None, None);
+        let o = self.d.exec.exec("spira-lc", &s(&["show", id]), None, None); // BDQ_READ_CONSIDERED="the spira-lc lifecycle door, not a bd read"
         let v: serde_json::Value = o.success().then(|| serde_json::from_str(o.stdout.trim()).ok()).flatten()?;
         v["bead"]["ask_since"].as_i64()
     }
