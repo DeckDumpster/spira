@@ -3,6 +3,8 @@
 //! filesystem or `watchd.sh` — callers resolve [`Inputs::watch_names`] and the two presence
 //! flags themselves and hand them in.
 
+use release::units::{subscriber_unit, SUBSCRIBERS, SUB_TEMPLATE};
+
 /// One template this box installs. `enable` is the template-level default; a template that
 /// should never be auto-enabled (the `.service` half of a timer pair) carries `enable: false`
 /// and the pairing timer carries `enable: true`.
@@ -10,6 +12,14 @@
 pub struct Template {
     pub name: String,
     pub enable: bool,
+}
+
+/// The templates installed once per name, never under their own: each instance is a concrete
+/// `<template>-<name>-<instance>.service`.
+const WATCH_TEMPLATE: &str = "spira-watch@.service";
+
+fn is_instanced(template: &str) -> bool {
+    template.ends_with("@.service")
 }
 
 fn t(name: &str, enable: bool) -> Template {
@@ -77,8 +87,9 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     // What remains is the scheduler, its outside watchdog, the store and its door, the sources
     // the scheduler does not yet host, the clients (loom, the pane, the metrics stack) and the
     // Concierge's own service.
-    // spira-watch@.service is the template, not an installed unit — never enabled directly.
-    m.units.push(t("spira-watch@.service", false));
+    // An instanced template is not an installed unit — never enabled directly.
+    m.units.push(t(WATCH_TEMPLATE, false));
+    m.units.push(t(SUB_TEMPLATE, false));
     m.units.push(t("cockpit-ensure.service", false));
     m.units.push(t("concierge.service", false));
     m.units.push(t("lc-backup.service", false));
@@ -168,14 +179,28 @@ impl Manifest {
     /// order (templates first, watchers appended by the loop after `watchd.sh units`).
     pub fn enable(&self, instance: &str) -> Vec<String> {
         let mut out: Vec<String> = self.units.iter().filter(|u| u.enable).map(|u| inst_name(&u.name, instance)).collect();
-        out.extend(self.watch_names.iter().map(|w| inst_watch_name(w, instance)));
+        out.extend(self.instance_names(instance));
         out
     }
 
-    /// Every template name this box installs, excluding the watcher template itself (callers
-    /// render it once per watcher name instead).
+    /// Every instanced unit as `(template, name)`: the watchers, then the subscribers.
+    /// A subscriber runs where its template's row is.
+    pub fn instances(&self) -> impl Iterator<Item = (&'static str, &str)> {
+        let watchers = self.watch_names.iter().map(|w| (WATCH_TEMPLATE, w.as_str()));
+        let ships_sub = self.units.iter().any(|u| u.name == SUB_TEMPLATE);
+        let subscribers = SUBSCRIBERS.into_iter().filter(move |_| ships_sub).map(|s| (SUB_TEMPLATE, s));
+        watchers.chain(subscribers)
+    }
+
+    /// The installed names of [`instances`](Manifest::instances).
+    pub fn instance_names<'a>(&'a self, instance: &'a str) -> impl Iterator<Item = String> + 'a {
+        self.instances().map(move |(template, name)| inst_instance_name(template, name, instance))
+    }
+
+    /// Every template name this box installs, excluding the instanced ones (callers render
+    /// those once per name instead).
     pub fn template_names(&self) -> Vec<&str> {
-        self.units.iter().map(|u| u.name.as_str()).filter(|n| *n != "spira-watch@.service").collect()
+        self.units.iter().map(|u| u.name.as_str()).filter(|n| !is_instanced(n)).collect()
     }
 
     /// A unit file name present on disk that this manifest neither installs nor declined —
@@ -215,7 +240,7 @@ pub fn union_template_names() -> Vec<String> {
                 for repo_git in [false, true] {
                     let inputs = Inputs { dolt_data_set: dolt, dolt_durable_set: dolt, sccache_dav_addr_set: sccache, lc_system_mode: lc_system, repo_is_git_checkout: repo_git, ..Default::default() };
                     if let Ok(m) = build(&inputs) {
-                        set.extend(m.units.into_iter().map(|u| u.name).filter(|n| n != "spira-watch@.service"));
+                        set.extend(m.units.into_iter().map(|u| u.name).filter(|n| !is_instanced(n)));
                     }
                 }
             }
@@ -227,14 +252,15 @@ pub fn union_template_names() -> Vec<String> {
 /// [`union_template_names`], resolved to this instance's installed names via [`inst_name`]
 /// — what a removal caller actually needs to check against disk.
 pub fn union_installed_names(instance: &str) -> Vec<String> {
-    union_template_names().iter().map(|n| inst_name(n, instance)).collect()
+    let subscribers = SUBSCRIBERS.iter().map(|s| subscriber_unit(s, instance));
+    union_template_names().iter().map(|n| inst_name(n, instance)).chain(subscribers).collect()
 }
 
 /// `inst_name` (units.sh): a `spira-*.service`/`.timer` template gets the instance suffix
 /// appended before its extension; everything else (shared units, and the watcher template
 /// itself, which is never installed directly) keeps its plain name.
 pub fn inst_name(template: &str, instance: &str) -> String {
-    if template == "spira-watch@.service" {
+    if is_instanced(template) {
         return template.to_string();
     }
     if let Some(base) = template.strip_suffix(".service") {
@@ -253,6 +279,13 @@ pub fn inst_name(template: &str, instance: &str) -> String {
 /// `inst_watch_name` (units.sh): `spira-watch@<name>.service`'s per-instance installed name.
 pub fn inst_watch_name(name: &str, instance: &str) -> String {
     format!("spira-watch-{name}-{instance}.service")
+}
+
+fn inst_instance_name(template: &str, name: &str, instance: &str) -> String {
+    match template {
+        SUB_TEMPLATE => subscriber_unit(name, instance),
+        _ => inst_watch_name(name, instance),
+    }
 }
 
 #[cfg(test)]
@@ -552,6 +585,17 @@ mod tests {
         let dir = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd");
         assert!(dir.join("spira-proc-starts.service").is_file());
         assert!(m.unlisted(["spira-proc-starts.service"]).is_empty());
+    }
+
+    #[test_id(t1uayd6)]
+    #[test]
+    fn the_concierges_subscriber_is_one_enabled_unit_named_for_it_and_the_instance() {
+        let m = build(&inputs()).unwrap();
+        let want = "spira-sub-concierge-prod.service".to_string();
+        assert!(m.enable("prod").contains(&want), "{:?}", m.enable("prod"));
+        assert!(union_installed_names("prod").contains(&want), "a removal finds it");
+        assert!(!m.template_names().contains(&"spira-sub@.service"));
+        assert!(m.unlisted(["spira-sub@.service"]).is_empty());
     }
 
     #[test_id(tx85ytp)]

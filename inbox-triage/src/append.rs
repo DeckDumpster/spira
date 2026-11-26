@@ -44,7 +44,15 @@ pub fn run(text: &str) -> Result<(), String> {
             (String::new(), String::new())
         }
     };
-    record(Path::new(&inbox), &line, &wake, &pattern, || std::env::current_exe().map_err(|e| e.to_string())).map(|_| ())
+    let flusher = || std::env::current_exe().map_err(|e| e.to_string());
+    // With no run directory there is no cursor to count from, so nothing is announced.
+    let run = spira_config::process::cfg("SPIRA_RUN");
+    let cursor = inbox_rules::concierge_cursor(run.as_deref().unwrap_or_default());
+    let publisher = || match &run {
+        Ok(_) => spira_pub::Publisher::new("inbox-triage"),
+        Err(why) => Err(spira_pub::PubError::Config(why.clone())),
+    };
+    record(Path::new(&inbox), &line, &wake, &pattern, flusher, &cursor, publisher).map(|_| ())
 }
 
 fn size(path: &Path) -> u64 {

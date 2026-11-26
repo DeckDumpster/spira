@@ -290,3 +290,38 @@ fn with_no_claude_ancestor_the_failed_turn_hook_asks_nothing_and_exits_zero() {
     assert!(c.status().unwrap().success());
     assert!(!exists(&fx.p("calls")));
 }
+
+/// The SessionStart hook's output, run beside an empty `conf.sh` as the harness in force.
+fn session_start(env: &[(&str, &str)]) -> String {
+    let tmp = testkit::TempDir::new("concierge-session-start");
+    let d = tmp.path();
+    for sub in ["hooks", "bin"] {
+        std::fs::create_dir_all(d.join(sub)).unwrap();
+    }
+    std::fs::copy(hook_path("session.sh"), d.join("hooks/session.sh")).unwrap();
+    std::fs::write(d.join("conf.sh"), "").unwrap();
+    std::fs::write(d.join("inbox"), "").unwrap();
+    testkit::write_exe(d.join("bin/watchd"), "#!/bin/sh\n[ \"$1\" = status ] && echo NAME\nexit 0\n");
+    let mut command = Command::new("bash");
+    command
+        .arg(d.join("hooks/session.sh"))
+        .env_clear()
+        .env("PATH", format!("{}:{}", d.join("bin").display(), std::env::var("PATH").unwrap()))
+        .env("SPIRA_RUN", d.join("run"))
+        .env("SPIRA_CONCIERGE_INBOX", d.join("inbox"))
+        .envs(env.iter().copied())
+        .stdin(Stdio::null());
+    let out = command.output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[test_id(tlds18c)]
+#[test]
+fn the_concierges_session_start_names_the_event_stream_and_its_commands_beside_the_waiter() {
+    let out = session_start(&[("SPIRA_CONCIERGE", "1")]);
+    for want in ["spira-sub follow --as concierge", "spira-sub add|drop|list", "watchd next concierge-inbox"] {
+        assert!(out.contains(want), "{want}: {out}");
+    }
+    assert!(!session_start(&[]).contains("spira-sub"), "another session is told nothing of it");
+}

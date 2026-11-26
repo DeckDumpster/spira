@@ -3,43 +3,8 @@
 //! being appended to while this runs). File IO lives in `fs_ops.rs`; this module is the pure
 //! part, heavily unit tested because it is the part every command's correctness rests on.
 
-/// Clamp a raw cursor value into `[0, total]`. A cursor that is missing, negative, or past
-/// the end of the log (rotation, truncation, hand-edit, or a final unterminated line `wc -l`
-/// undercounts) reads as "nothing unread" rather than negative or out of range — the
-/// conservative direction, because the alternative is replaying a whole log into a fresh
-/// context window.
-pub fn clamp_pos(raw: Option<i64>, total: u64) -> u64 {
-    let total = total as i64;
-    match raw {
-        Some(p) if p < 0 => 0,
-        Some(p) if p > total => total as u64,
-        Some(p) => p as u64,
-        None => 0,
-    }
-}
-
-/// Parses a cursor file's content the way the bash did: the first whitespace-delimited
-/// token, empty/negative/non-numeric reads as "no cursor at all" (`None`), which `clamp_pos`
-/// then turns into 0.
-pub fn parse_cursor(content: &str) -> Option<i64> {
-    content.split_whitespace().next()?.parse::<i64>().ok()
-}
-
-/// The coarsest non-zero unit — `_wd_age`. Whitespace-free, because `status` is a
-/// whitespace-delimited table addressed by column index. A negative age (a clock that moved
-/// backwards, or a log with a future mtime) clamps to zero rather than rendering.
-pub fn format_age(seconds: i64) -> String {
-    let s = seconds.max(0);
-    if s < 60 {
-        format!("{s}s")
-    } else if s < 3600 {
-        format!("{}m", s / 60)
-    } else if s < 86400 {
-        format!("{}h", s / 3600)
-    } else {
-        format!("{}d", s / 86400)
-    }
-}
+pub use inbox_rules::{clamp_pos, parse_cursor};
+pub use spira_world::clock::format_age;
 
 #[cfg(test)]
 mod tests {
