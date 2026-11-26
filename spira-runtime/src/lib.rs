@@ -14,6 +14,7 @@ pub mod hunk;
 pub mod margin_mail;
 pub mod modes;
 pub mod notify;
+pub mod pr_topics;
 pub mod repin;
 pub mod reconcile_host;
 pub mod settings;
@@ -235,7 +236,7 @@ pub struct Effects {
     pub overrides_held: wiki_git::Held,
     /// pr-notify's publisher, built at its first use; `None` when the configuration names no
     /// broker.
-    pub pr_topics: OnceLock<Option<watchers::pr_topics::PrTopics>>,
+    pub pr_topics: OnceLock<Option<pr_topics::PrTopics>>,
 }
 
 /// The mail environment operator notes are sent under: no bd (a note needs no tracking bead, and an empty db keeps the mailer from launching one), and the repeat guard overridden because consecutive merges normalise to one subject.
@@ -260,8 +261,8 @@ impl Effects {
         mail::cmds::send(&bd, env, &args, format!("## Note\n{}\n", note.body)).map(|o| o.delivered_path.display().to_string()).inspect_err(|_| eprintln!("reconciler-flow: concierge alert failed for: {}", note.subject))
     }
 
-    fn pr_topics(&self) -> Option<&watchers::pr_topics::PrTopics> {
-        let build = || spira_pub::Publisher::new("pr-notify").inspect_err(|e| eprintln!("pr-notify: nothing will be published: {e}")).ok().map(watchers::pr_topics::PrTopics::new);
+    fn pr_topics(&self) -> Option<&pr_topics::PrTopics> {
+        let build = || spira_pub::Publisher::new("pr-notify").inspect_err(|e| eprintln!("pr-notify: nothing will be published: {e}")).ok().map(pr_topics::PrTopics::new);
         self.pr_topics.get_or_init(build).as_ref()
     }
 

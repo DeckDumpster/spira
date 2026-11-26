@@ -6,7 +6,7 @@ use runtime::taskrig::TaskRig;
 use spira_pub::{Options, Publisher};
 use spira_runtime::tasks::a::kit;
 use spira_runtime::watchers::pr_notify::*;
-use spira_runtime::watchers::pr_topics::PrTopics;
+use spira_runtime::pr_topics::PrTopics;
 use spira_runtime::watchers::INBOX_APPEND;
 use testkit::broker::Broker;
 

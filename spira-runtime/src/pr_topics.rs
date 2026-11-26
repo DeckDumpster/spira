@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use spira_pub::Publisher;
 
-use super::pr_notify::{carried_topics, Carry, Topics};
+use crate::watchers::pr_notify::{carried_topics, Carry, Topics};
 
 pub struct PrTopics {
     publisher: Publisher,
