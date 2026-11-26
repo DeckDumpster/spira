@@ -104,7 +104,11 @@ Passes only if all hold, and reports every failure, not just the first:
   release built with function names stripped is refused;
 * every runtime-tier program in `spira/deps.toml` resolves to an executable on the release's
   own PATH, and meets `version_min` from its store directory name when one is set
-  (`deps_check`; files only, nothing is started; skipped with `--no-pre-activate`);
+  (`deps_check`; files only, nothing is started; skipped with `--no-pre-activate`). For a
+  release with a flake, a `provider = "spira-env"` row resolves instead in the `bin/` of the
+  env that flake builds, linked in a scratch directory; the installed env link and
+  `spira-env.prev` are untouched, and a failed build is a problem that leaves those rows
+  unjudged. A release with no flake keeps the installed env, so its rows resolve on PATH;
 * the release's own `spira/pre-activate.sh <release>` passes (skip with
   `--no-pre-activate`; a release that has none is a failure).
 

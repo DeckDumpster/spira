@@ -1958,7 +1958,7 @@ fn verify_symbol_problems(lc: &[u8]) -> Vec<String> {
     fs::write(rel.join("bin/spira-lc"), lc).unwrap();
     let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
     fs::write(rel.join("MANIFEST"), m.render()).unwrap();
-    let o = verify::VerifyOpts { pre_activate: false, system_dirs: vec![] };
+    let o = verify::VerifyOpts { pre_activate: false, system_dirs: vec![], nix: &FakeNix::default() };
     verify::verify(&w.cfg, A, &o).unwrap().into_iter().filter(|p| p.starts_with("bin/spira-lc")).collect()
 }
 
@@ -2188,7 +2188,7 @@ fn dep_row(name: &str, version_min: &str) -> String {
 }
 
 fn deps_problems(rel: &Path, path: &str) -> Vec<String> {
-    crate::deps_check::problems(rel, path)
+    crate::deps_check::problems(rel, path, crate::deps_check::SpiraEnv::Installed)
 }
 
 fn stub(path: &Path, body: &str) {
@@ -2204,18 +2204,69 @@ fn verify_names_a_runtime_program_missing_from_the_release_path_as_a_deps_proble
     file(&rel.join("spira/deps.toml"), &dep_row("spira-no-such-runtime-program", ""));
     let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
     fs::write(rel.join("MANIFEST"), m.render()).unwrap();
-    let o = verify::VerifyOpts { pre_activate: true, system_dirs: vec![] };
+    let o = verify::VerifyOpts { pre_activate: true, system_dirs: vec![], nix: &FakeNix::default() };
     let p = verify::verify(&w.cfg, A, &o).unwrap();
     assert!(p.iter().any(|p| p.starts_with("deps: spira-no-such-runtime-program:")), "{p:?}");
     stub(&rel.join("bin/spira-no-such-runtime-program"), "#!/bin/sh\n");
     let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
     fs::write(rel.join("MANIFEST"), m.render()).unwrap();
-    let o = verify::VerifyOpts { pre_activate: true, system_dirs: vec![] };
+    let o = verify::VerifyOpts { pre_activate: true, system_dirs: vec![], nix: &FakeNix::default() };
     let p = verify::verify(&w.cfg, A, &o).unwrap();
     assert!(!p.iter().any(|p| p.starts_with("deps:")), "a program on the release's own bin resolves: {p:?}");
-    let o = verify::VerifyOpts { pre_activate: false, system_dirs: vec![] };
+    let o = verify::VerifyOpts { pre_activate: false, system_dirs: vec![], nix: &FakeNix::default() };
     let p = verify::verify(&w.cfg, A, &o).unwrap();
     assert!(!p.iter().any(|p| p.starts_with("deps:")), "--no-pre-activate skips the check: {p:?}");
+}
+
+const ENV_PROG: &str = "spira-no-such-env-program";
+
+/// Verifies release A, a flake release whose one `spira-env` row names [`ENV_PROG`], with
+/// `nix`, over an installed env on verify's PATH that ships `installed`. Asserts that verify
+/// left the installed env alone, and returns its `deps:` problems.
+fn verify_a_flake_release(nix: FakeNix, installed: &[&str]) -> Vec<String> {
+    let w = World::with_git(FakeGit::default());
+    let held = installed_env(&w, "installed-spira-env");
+    for prog in installed {
+        stub(&held.join("bin").join(prog), "#!/bin/sh\n");
+    }
+    let linked = fs::read_link(env_link(&w)).unwrap();
+    let rel = w.cfg.releases.join(A);
+    file(&rel.join("spira/deps.toml"), &format!("{}provider = \"spira-env\"\n", dep_row(ENV_PROG, "")));
+    release_gains(&w, A, &FLAKE);
+    let nix = FakeNix { store: w._sb.p().join("store"), ..nix };
+
+    let o = verify::VerifyOpts { pre_activate: true, system_dirs: vec![], nix: &nix };
+    let p = verify::verify(&w.cfg, A, &o).unwrap();
+
+    assert_eq!(fs::read_link(env_link(&w)).unwrap(), linked, "the installed env link moved");
+    assert!(!home_of(&w).join(spira_config::SPIRA_ENV_PREV_REL).exists());
+    let log = nix.log.borrow();
+    let [NixCall::Build { target, out, .. }] = &log[..] else { panic!("want one build and no root: {log:?}") };
+    assert_eq!(target, &spira_env::target(&rel));
+    assert_ne!(out, &env_link(&w));
+    assert!(fs::symlink_metadata(out).is_err() && !out.parent().unwrap().exists(), "the scratch link is left: {}", out.display());
+    p.into_iter().filter(|p| p.starts_with("deps:")).collect()
+}
+
+#[test_id(t4962w5)]
+#[test]
+fn verify_finds_a_spira_env_program_only_the_releases_own_flake_ships() {
+    let p = verify_a_flake_release(FakeNix { provides: vec![ENV_PROG], ..FakeNix::default() }, &[]);
+    assert_eq!(p, Vec::<String>::new());
+}
+
+#[test_id(ta4x16z)]
+#[test]
+fn verify_refuses_a_spira_env_program_the_releases_flake_drops_though_the_installed_env_has_it() {
+    let p = verify_a_flake_release(FakeNix::default(), &[ENV_PROG]);
+    assert!(p.len() == 1 && p[0].starts_with(&format!("deps: {ENV_PROG}:")), "{p:?}");
+}
+
+#[test_id(tv1gevw)]
+#[test]
+fn verify_reports_a_spira_env_that_does_not_build_as_one_problem_in_nixs_words() {
+    let p = verify_a_flake_release(FakeNix { fails: Some("attribute 'spira-env' missing"), ..FakeNix::default() }, &[]);
+    assert_eq!(p, vec!["deps: cannot build the release's spira-env: attribute 'spira-env' missing".to_string()]);
 }
 
 #[test_id(tfmpvdw)]
@@ -2230,7 +2281,7 @@ fn verify_finds_a_spira_env_program_in_the_env_bin_without_a_link_or_a_tail() {
     let home = w.cfg.home().unwrap();
     let in_env = PathBuf::from(spira_config::spira_env_bin(&home.display().to_string())).join(prog);
     stub(&in_env, "#!/bin/sh\n");
-    let o = verify::VerifyOpts { pre_activate: true, system_dirs: vec![] };
+    let o = verify::VerifyOpts { pre_activate: true, system_dirs: vec![], nix: &FakeNix::default() };
     let p = verify::verify(&w.cfg, A, &o).unwrap();
     assert!(!p.iter().any(|p| p.starts_with("deps:")), "{p:?}");
     fs::remove_file(&in_env).unwrap();
@@ -2315,6 +2366,8 @@ struct FakeNix {
     current: PathBuf,
     fails: Option<&'static str>,
     root_fails: bool,
+    /// Executables each built env ships in its `bin/`.
+    provides: Vec<&'static str>,
     /// A failing root also leaves the env link impossible to repoint.
     restore_blocked: Option<PathBuf>,
     log: RefCell<Vec<NixCall>>,
@@ -2343,6 +2396,9 @@ impl spira_env::Nix for FakeNix {
         let release = target.trim_end_matches("#spira-env").rsplit('/').next().unwrap();
         let dest = self.store_path(release);
         fs::create_dir_all(&dest).unwrap();
+        for prog in &self.provides {
+            stub(&dest.join("bin").join(prog), "#!/bin/sh\n");
+        }
         fsutil::atomic_symlink(out, &dest.display().to_string())
     }
     fn add_root(&self, root: &Path, store_path: &Path) -> Result<(), String> {
