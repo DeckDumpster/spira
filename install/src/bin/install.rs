@@ -787,13 +787,13 @@ fn run_main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    // Ahead of the declared-environment check: under plain sudo this mode derives its own.
-    if opts.proc_starts && !opts.system_user {
-        return standalone_proc_starts(opts.instance.as_deref(), opts.dry);
-    }
-    if let Err(e) = require_declared_config_and_release() {
-        eprintln!("install: {e}");
-        return ExitCode::from(2);
+    match proc_starts_or_declared(opts.proc_starts, opts.system_user, require_declared_config_and_release) {
+        Ok(true) => return standalone_proc_starts(opts.instance.as_deref(), opts.dry),
+        Ok(false) => {}
+        Err(e) => {
+            eprintln!("install: {e}");
+            return ExitCode::from(2);
+        }
     }
     let requested = opts.instance.clone().or_else(|| nonempty_env("SPIRA_INSTANCE"));
     let ephemeral = opts.ephemeral && requested.is_none();
@@ -1967,6 +1967,15 @@ fn proc_starts_phase(host: &install::values::HostValues, user: &str, dest_dir: &
     Ok(())
 }
 
+/// True for the standalone proc-starts mode, which never meets the declared-environment
+/// check: under plain sudo it derives its own. Every other mode must pass it.
+fn proc_starts_or_declared(proc_starts: bool, system_user: bool, declared: impl FnOnce() -> Result<(), String>) -> Result<bool, String> {
+    if proc_starts && !system_user {
+        return Ok(true);
+    }
+    declared().map(|()| false)
+}
+
 type RunCmd<'a> = &'a dyn Fn(&str, &[&str]) -> Result<(), String>;
 
 const PROC_STARTS_PHASE_FAILED: &str = "phase proc-starts failed — ";
@@ -2573,6 +2582,17 @@ mod proc_starts_phase_tests {
         let host = install::values::HostValues { home: td.path().join("absent").display().to_string(), ..Default::default() };
         let none = |_: &str, _: &[&str]| Ok(());
         assert!(proc_starts_phase(&host, "operator", td.path(), &none).unwrap_err().contains("cannot stat"));
+    }
+
+    #[test_id(ttsyx67)]
+    #[test]
+    fn only_the_proc_starts_mode_skips_the_declared_environment_check() {
+        let unset = || Err("SPIRA_TOML is not set".to_string());
+        assert_eq!(proc_starts_or_declared(true, false, unset), Ok(true));
+        for (proc_starts, system_user) in [(false, false), (false, true), (true, true)] {
+            assert_eq!(proc_starts_or_declared(proc_starts, system_user, unset), unset().map(|()| false));
+            assert_eq!(proc_starts_or_declared(proc_starts, system_user, || Ok(())), Ok(false));
+        }
     }
 
     #[derive(Default)]

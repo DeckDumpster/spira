@@ -230,8 +230,14 @@ fn runs_the_scheduler(line: &str) -> bool {
 fn installed_spira_toml(user_home: &Path, release: &Path) -> Result<String, String> {
     let home = user_home.display().to_string();
     let dir = crate::orchestrate::default_unit_dir(&|k| (k == "HOME").then(|| home.clone())).ok_or("no unit directory for the operator")?;
+    let unlisted = |e: std::io::Error| format!("cannot list {}: {e}; as the operator make it a readable directory, then run: sudo {}/bin/spira-install --proc-starts", dir.display(), release.display());
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries.collect::<Result<Vec<_>, _>>().map_err(unlisted)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(unlisted(e)),
+    };
     let mut values = std::collections::BTreeSet::new();
-    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+    for entry in entries {
         let path = entry.path();
         if path.extension().is_none_or(|x| x != "service") || !path.is_file() {
             continue;
@@ -723,6 +729,16 @@ mod proc_starts_env_tests {
         let r = rig(&[]);
         let e = derive(&r, &r.release.join("bin/spira-install"), &[]).unwrap_err();
         assert!(e.contains(&r.units.display().to_string()) && e.contains("--proc-starts"), "{e}");
+    }
+
+    #[test_id(tiabljm)]
+    #[test]
+    fn a_unit_directory_that_cannot_be_listed_is_reported_as_that_and_not_as_missing_units() {
+        let r = rig(&[]);
+        std::fs::remove_dir(&r.units).unwrap();
+        std::fs::write(&r.units, "").unwrap();
+        let e = derive(&r, &r.release.join("bin/spira-install"), &[]).unwrap_err();
+        assert!(e.contains("cannot list") && e.contains(&r.units.display().to_string()) && e.contains("--proc-starts"), "{e}");
     }
 
     #[test_id(tm2w4a0)]
