@@ -110,6 +110,46 @@ fn t5_a_closed_pr_is_reconciled() {
     assert!(effects(&acts).contains(&RECONCILE), "{acts:?}");
 }
 
+fn operator_batch(owner: &str, pr_state: PrState, check: Check) -> Snapshot {
+    let batch = OpenBatch { owner: owner.into(), batcher_owned: false, ..batch() };
+    with(Repo { open_batch: Some(batch), pr_state, check, ..busy().repos["spira"].clone() })
+}
+
+fn reconcile_keys(acts: &[Act]) -> Vec<&str> {
+    acts.iter().filter(|a| a.effect == RECONCILE).map(|a| a.key.as_str()).collect()
+}
+
+#[test_id(tj2q56i)]
+#[test]
+fn t5_a_merged_pr_of_an_operator_batch_is_reconciled() {
+    let (_, acts) = decide(&Carry::default(), &operator_batch("operator", PrState::Merged, Check::None));
+    assert_eq!(reconcile_keys(&acts), ["batch-7"], "{acts:?}");
+}
+
+#[test_id(taztjqz)]
+#[test]
+fn t5_a_closed_pr_of_an_operator_batch_is_reconciled() {
+    let (_, acts) = decide(&Carry::default(), &operator_batch("operator", PrState::Closed, Check::None));
+    assert_eq!(reconcile_keys(&acts), ["batch-7"], "{acts:?}");
+}
+
+#[test_id(tzn3uv5)]
+#[test]
+fn t5_a_merged_pr_of_a_concierge_batch_is_left_alone() {
+    let (_, acts) = decide(&Carry::default(), &operator_batch("concierge", PrState::Merged, Check::None));
+    assert_eq!(acts, Vec::<Act>::new());
+}
+
+#[test_id(tfqk7xu)]
+#[test]
+fn t5_an_open_pr_of_an_operator_batch_is_neither_pushed_nor_judged() {
+    for check in [Check::Green, Check::Red] {
+        let (carry, acts) = decide(&Carry::default(), &operator_batch("operator", PrState::Open, check));
+        assert!(!effects(&acts).contains(&PUSH) && !effects(&acts).contains(&JUDGEMENT), "{check:?}: {acts:?}");
+        assert_eq!(carry.repos.get("spira").and_then(|r| r.batch.as_deref()), None, "{check:?}");
+    }
+}
+
 /// The contract's States table sends `Observing × no batch, no publish rec` to `Cutting` with a
 /// `cut_wanted` Emit, while its T2 makes that same snapshot silent. Silence wins (the soak
 /// lesson): the idle repo settles once and then asks for nothing, so a cut is wanted only on a change.

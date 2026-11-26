@@ -5360,6 +5360,16 @@ fn eject_dry_run_writes_nothing() {
     assert!(t.lib.calls.borrow().is_empty());
 }
 
+#[test_id(tfwjnkm)]
+#[test]
+fn a_concierge_claim_binds_every_actor_but_the_concierge() {
+    use crate::ops::concierge_claimed;
+    assert!(!concierge_claimed("concierge", "concierge"));
+    assert!(concierge_claimed("concierge", "verdict"));
+    assert!(!concierge_claimed("operator", "verdict"));
+    assert!(!concierge_claimed("batcher", "verdict"));
+}
+
 // covers: UC-landing-merge-queue-29
 #[test_id(tg7dkmt)]
 #[test]
