@@ -229,6 +229,9 @@ fn an_idle_hour_of_the_cockpit_drift_probe_starts_no_drift_script_and_reads_a_di
         let out: serde_json::Value = serde_json::from_str(&last_output(f, "cockpit-tier-600s.observe")).unwrap_or_default();
         out["fragments"]["cockpit.drift"]["kv"].to_string()
     };
+    let path = spira_config::release_env::child_path_env_for_process().unwrap();
+    std::process::Command::new("bash").envs(path).args(["drift.sh", "checkout"]).stdout(std::process::Stdio::null()).status().unwrap();
+    assert_eq!(drift_scripts(&f), 1, "a bash start naming drift.sh is seen, so a count of zero means none ran");
     let (mut statuses_at_warm, mut statuses_at_idle, mut scripts_at_warm, mut scripts_at_idle) = (0, 0, 0, 0);
     let (mut at_warm, mut at_idle) = (String::new(), String::new());
     run_hours(&f, &["cockpit-tier-600s.observe"], (&[], 0), &[warm, idle, idle + 11 * MINUTE], &mut |t| {
