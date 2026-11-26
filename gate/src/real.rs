@@ -1464,9 +1464,8 @@ mod tests {
     fn a_gate_waits_for_the_beads_own_session_to_release_its_builder_directory() {
         let p = pool("exit 0\n");
         let held = spira_config::build_dir::lease_dir(&p.bases, &p.slot, "sp-a", "sp-a", std::time::Duration::ZERO).unwrap().ok().unwrap();
-        // clock-safe: the delay only makes the gate arrive while the slot is held; the 10s wait bounds it
         let holder = std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            std::thread::sleep(std::time::Duration::from_millis(200)); // clock-safe: a late gate finds the slot free and a late release is inside its 10s wait
             drop(held);
         });
         let b = crate::ports::Builder { wait: std::time::Duration::from_secs(10), ..builder(&p) };
