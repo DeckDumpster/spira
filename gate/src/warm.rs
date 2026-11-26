@@ -531,6 +531,7 @@ mod tests {
     #[test_id(t6rm0qf)]
     #[test]
     fn a_directory_adopted_at_another_path_ages_unchanged_sources_and_drops_only_units_bound_to_the_donors_path() {
+        // Real git, though a unit test: warm_start itself diffs the tree through it.
         let t = testkit::TempDir::new("gate-warm-adopted-elsewhere");
         let root = t.path().join("root");
         let tree = t.path().join("tree");
