@@ -217,3 +217,37 @@ fn conditions_check_refusal(f: &Fixture) -> String {
     let snap: serde_json::Value = serde_json::from_str(&last_output(f, "sentinel-pass.observe")).unwrap_or_default();
     snap["tower"].as_array().into_iter().flatten().filter_map(|t| t.as_str()).find(|t| t.starts_with("watchtower: conditions-check")).unwrap_or("no conditions-check entry in the last sentinel pass").to_string()
 }
+
+#[test_id(tnd8kl4)]
+#[test]
+fn the_livelock_probe_starts_no_bash_over_an_idle_hour_and_still_reports_an_ask_without_overseer() {
+    let mut f = fixture(testkit::env);
+    f.cockpit_input = COCKPIT_LIVELOCK;
+    spira_config::process::with_fresh(|| {
+    assert_traps_and_double_are_live(&f);
+    assert_stubs_log(&f);
+    let lib = std::path::PathBuf::from(std::env::var("SPIRA_HOME").unwrap()).join("lib.sh");
+    assert!(lib.is_file(), "no lib.sh at SPIRA_HOME, so a probe that sources it would be skipped: {}", lib.display());
+    let ask = spira_config::process::cfg("SPIRA_ASK_LABEL").unwrap();
+    let (warm, idle, asked) = (START + HOUR, START + 2 * HOUR, START + 2 * HOUR + 11 * MINUTE);
+    let (mut at_warm, mut at_idle) = (0, 0);
+    let observed = |f: &Fixture| f.seen.lock().unwrap().len();
+    let (mut seen_at_warm, mut seen_at_idle) = (0, 0);
+    run_hours(&f, &["cockpit-tier-600s.observe"], (&[], 0), &[warm, idle, asked], &mut |t| match t {
+        t if t == warm => (at_warm, seen_at_warm) = (started(&f, "bash"), observed(&f)),
+        t if t == idle => {
+            (at_idle, seen_at_idle) = (started(&f, "bash"), observed(&f));
+            let rows = format!(r#"[{{"id":"sp-zzzzzz","title":"q","status":"open","labels":["{ask}"]}}]"#);
+            *f.labelled.lock().unwrap() = Some((ask.clone(), rows));
+        }
+        _ => {}
+    });
+    assert_only_the_double_answered(&f);
+    assert!(seen_at_idle - seen_at_warm >= 5, "the probe ran {} times in the idle hour", seen_at_idle - seen_at_warm);
+    assert_eq!(at_idle - at_warm, 0, "an idle virtual hour started bash");
+    let out: serde_json::Value = serde_json::from_str(&last_output(&f, "cockpit-tier-600s.observe")).unwrap();
+    let kv = out["fragments"]["cockpit.livelock"]["kv"].to_string();
+    assert!(kv.contains("SP_LIVELOCK0") && kv.contains("LIVELOCK sp-zzzzzz ask-no-overseer"), "{kv}");
+    })
+    .unwrap();
+}

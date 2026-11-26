@@ -115,7 +115,6 @@ Each row is `LIVELOCK <id> <category> — <reason>`. Handle by category:
 | category | what to do |
 |---|---|
 | `unmapped-repo` | Fix the `repo:` label to a mapped name, or close as litter if it is fixture-shaped. |
-| `unclaimable` | Add the missing partition label or correct the lane; escalate if the right label is unclear. |
 | `needs-ryan-no-overseer` | Add the `overseer` label: `work label-add <id> overseer`. |
 | `ci-stuck` | Strip `awaiting-ci` if the bead can proceed; escalate if the land mode is structurally wrong. |
 
