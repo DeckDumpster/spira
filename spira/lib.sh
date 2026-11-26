@@ -3,7 +3,7 @@
 # Spira runs personas as DWARVES: called from a RUNE (a persona definition), they claim
 # one bead with a lease, work it, close or fail it, and exit. Nothing is long-lived except
 # the systemd timers, because a session that dies takes its state with it — the scar behind
-# cockpit-ensure.timer — while a lease is recovered by whoever runs `bd reclaim` next.
+# the cockpit self-heal — while a lease is recovered by whoever runs `bd reclaim` next.
 
 # EVERY PATH COMES FROM conf.sh AND NOTHING IS HARDCODED HERE. It also sets PATH, because
 # `bd`, `claude` and `git` live on the LOGIN shell's PATH and everything here is invoked

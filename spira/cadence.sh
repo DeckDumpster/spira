@@ -171,7 +171,7 @@ render_schedule() {      # render_schedule <interval> -> the [Timer] lines, on s
 #   DISARMED         NextElapseUSecRealtime=                              Monotonic=infinity
 #
 # The first version of this file read only the realtime property and reported
-# cockpit-ensure.timer — which fires every minute — as NEVER. A checker that calls a healthy
+# a timer that fires every minute as NEVER. A checker that calls a healthy
 # timer dead is the same defect as one that calls a dead timer healthy, run backwards; both
 # come from asking one source a question it cannot answer (law-absence-needs-a-positive-control).
 # ---------------------------------------------------------------------------------------

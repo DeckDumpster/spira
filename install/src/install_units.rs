@@ -448,7 +448,11 @@ pub(crate) fn retire_dropped_units(ctx: &Ctx, rendered: &[(String, String, Strin
 
 /// Units outside the `spira-*` namespace that an earlier release shipped and none does now; the
 /// ledger may never have listed them, and no name pattern marks them as Spira's.
-const RETIRED_UNITS: [&str; 1] = ["dolt-beads-test.service"];
+const RETIRED_UNITS: [&str; 3] = [
+    "dolt-beads-test.service",
+    "cockpit-ensure.timer",
+    "concierge.timer",
+];
 
 fn retire_named_units(ctx: &Ctx, now: &std::collections::BTreeSet<String>, r: &mut Report) {
     for u in RETIRED_UNITS {
@@ -729,7 +733,7 @@ mod tests {
         let (unit_dir, tmpl_dir) = (td.join("units"), td.join("templates"));
         fs::create_dir_all(&unit_dir).unwrap();
         fs::create_dir_all(&tmpl_dir).unwrap();
-        let pairs = ["spira-watchdog", "cockpit-ensure", "concierge", "lc-backup", "lc-backup-drill"];
+        let pairs = ["spira-watchdog", "lc-backup", "lc-backup-drill"];
         let inputs = Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) };
         let mut manifest = build(&inputs).unwrap();
         manifest.units.retain(|u| pairs.iter().any(|p| u.name == format!("{p}.service") || u.name == format!("{p}.timer")));
@@ -880,6 +884,26 @@ mod tests {
         assert!(r.retired.contains(&"dolt-beads-test.service".to_string()), "{:?}", r.retired);
         assert!(sc.disabled_now.borrow().contains(&"dolt-beads-test.service".to_string()));
         assert!(run(&ctx).retired.is_empty(), "a second run has nothing left to retire");
+    }
+
+    #[test_id(tyj1m9v)]
+    #[test]
+    fn the_concierge_timer_an_earlier_release_installed_is_stopped_and_removed() {
+        let td = tempdir();
+        let (unit_dir, tmpl_dir) = (td.join("units"), td.join("templates"));
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        write_templates(&tmpl_dir);
+        fs::write(unit_dir.join("concierge.timer"), "x").unwrap();
+        let manifest = tiny_manifest();
+        let h = host();
+        let sc = FakeSystemctl::default();
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let r = run(&ctx);
+        assert!(!unit_dir.join("concierge.timer").exists());
+        assert!(r.retired.contains(&"concierge.timer".to_string()), "{:?}", r.retired);
+        assert!(sc.disabled_now.borrow().contains(&"concierge.timer".to_string()));
     }
 
     #[test_id(tqedo1f)]
