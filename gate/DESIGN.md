@@ -508,7 +508,9 @@ Each failing test is judged on the rerun output: **flip** (a `PASS [` / `... ok`
 * One gate records at most 3 flips (`MAX_GATE_FLIPS`, law-a-detector-files-a-bounded-batch), the
   first in first-run order. Every flipped test after the third row gets no bead and no row, the
   message adds `gate: held back by the flip cap (3): <tests>`, and the item goes back as FAIL:
-  that many flips is the box, not the tests.
+  that many flips is the box, not the tests. Held tests are the one exception to
+  law-a-flipping-test-is-disabled-by-a-registry-row. The FAIL and the line are the unattributed
+  `branch-red` path's: the cross-bead PASS and the base-fences-red FAIL keep their own messages.
 * Any red-twice or unproven test sends the item back as FAIL `branch-red`, the message adding
   `gate: red twice on the same tree <T>: <tests>` and/or `gate: not rerun: <tests>`. Rows for
   flips among them are still written. A red the cross-bead detector (`shared_unit_red`) matches
