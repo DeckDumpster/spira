@@ -52,7 +52,7 @@ not a summary to double-check against the bead title.
 
 ## Tests
 
-While iterating, run the unit tests of the crate you are changing (`cargo test -p <crate>`).
+While iterating, run the unit tests of the crate you are changing (`tools/test-sandbox/runner --around cargo test -p <crate>`).
 Before closing, do not run the suites: commit and close, and the landing pass certifies the
 branch with the budgeted gate right after. A runner call with no `--suites` is not the gate's
 selection — it runs the full unbudgeted diff set outside the gate's host-wide admission. The one

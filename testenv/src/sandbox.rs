@@ -208,8 +208,8 @@ impl Profile {
 /// tmpfs /tmp, since the read-only root cannot take a new mountpoint.
 pub const TREE_MOUNT: &str = system_paths::guest::TMP_SANDBOX_TREE;
 
-/// A tree's runner-less cargo config, bound over its `.cargo/config.toml`; a tree without it is
-/// left as it is.
+/// The cargo config a test sees: the workspace's without its target runner, so cargo inside the
+/// sandbox launches each test binary directly (`tools/test-sandbox/runner --around` is the entry).
 const CARGO_CONFIG_INSIDE: &str = "tools/test-sandbox/cargo-config.toml";
 
 /// Where the run's cargo target is inside the sandbox, the same for every branch: sccache keys on
