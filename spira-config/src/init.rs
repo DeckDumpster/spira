@@ -356,7 +356,11 @@ mod tests {
     /// The real registry this tree ships, defaults written against a fake home.
     fn reg() -> Registry<'static> {
         let env: &'static BTreeMap<String, String> = Box::leak(Box::new([("HOME".to_string(), "b/home".to_string())].into_iter().collect()));
-        Registry { conf_d: Box::leak(Box::new(crate::resolve::locate_home_for_process().unwrap().join("conf.d"))), env }
+        let home = {
+            let _env = testkit::env_read();
+            crate::resolve::locate_home_for_process().unwrap()
+        };
+        Registry { conf_d: Box::leak(Box::new(home.join("conf.d"))), env }
     }
 
     fn full() -> BTreeMap<String, String> {

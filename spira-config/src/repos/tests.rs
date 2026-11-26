@@ -109,6 +109,27 @@
     }
 
 
+    #[test_id(trk43sd)]
+    #[test]
+    fn a_handed_home_that_is_no_release_still_resolves_its_repository_row() {
+        let t = testkit::TempDir::new("repos-registry-foreign-home");
+        let other = t.path().join("other");
+        std::fs::create_dir_all(other.join(".git")).unwrap();
+        let map = t.path().join("repo-map");
+        std::fs::write(&map, format!("other | {} | queue.local | local/main |  |\n", other.display())).unwrap();
+        let toml = crate::process::fixture_toml(t.path(), &[("SPIRA_REPO_MAP", &map.display().to_string())]);
+        let env = env(&[("HOME", &t.path().display().to_string()), ("SPIRA_TOML", &toml.display().to_string())]);
+        // A foreign worktree, and a release root with no `spira/` beneath the handed path.
+        for home in [other.clone(), t.path().join("release")] {
+            let reg = Registry::from_env(env.clone(), &home);
+            let at = home.display();
+            assert_eq!(reg.root("other"), Some(other.display().to_string()), "{at}");
+            assert_eq!(reg.field("other", Column::Land).as_deref(), Some("queue.local"), "{at}");
+            assert_eq!(reg.field("other", Column::Base).as_deref(), Some("local/main"), "{at}");
+            assert_eq!(reg.name_at(&other.display().to_string()).as_deref(), Some("other"), "{at}");
+        }
+    }
+
     fn env(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
