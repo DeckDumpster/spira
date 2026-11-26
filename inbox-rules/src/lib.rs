@@ -15,9 +15,10 @@ use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
-use spira_pub::{PubError, Publisher};
+use ports::{SeededRng, WallClock};
+use spira_pub::{Options, PubError, Publisher};
 
 /// Strips the leading UTC timestamp token: up to and including the first space.
 pub fn strip_timestamp(line: &str) -> &str {
@@ -126,9 +127,24 @@ pub fn spool_path(inbox: &Path) -> PathBuf {
 /// The most of the oldest unread line `concierge/inbox` carries.
 const OLDEST_CHARS: usize = 500;
 
-/// Where watchd keeps the count of inbox lines its `concierge-inbox` row has read.
-pub fn concierge_cursor(run: &Path) -> PathBuf {
-    run.join("watchd").join("concierge-inbox.cursor")
+/// Where watchd keeps the count of lines its row `name` has been read.
+pub fn cursorfile(run: &str, name: &str) -> PathBuf {
+    Path::new(run).join("watchd").join(format!("{name}.cursor"))
+}
+
+/// The cursor of the Concierge inbox's reader.
+pub fn concierge_cursor(run: &str) -> PathBuf {
+    cursorfile(run, "concierge-inbox")
+}
+
+/// The finished lines in a log: an unterminated last one is still being written.
+pub fn count_lines(log: &[u8]) -> u64 {
+    log.iter().filter(|b| **b == b'\n').count() as u64
+}
+
+/// The position the cursor file holds in a log of `total` lines.
+pub fn read_pos(cursor: &Path, total: u64) -> u64 {
+    clamp_pos(std::fs::read_to_string(cursor).ok().and_then(|c| parse_cursor(&c)), total)
 }
 
 /// A cursor file's first token; empty or non-numeric is no cursor.
@@ -145,11 +161,34 @@ pub fn clamp_pos(raw: Option<i64>, total: u64) -> u64 {
 /// How many lines of `inbox` lie past the position `cursor` holds, and the oldest of them.
 pub fn unread(inbox: &Path, cursor: &Path) -> std::io::Result<(u64, Option<String>)> {
     let bytes = std::fs::read(inbox)?;
-    let lines = || bytes.split_inclusive(|b| *b == b'\n').filter(|l| l.ends_with(b"\n"));
-    let total = lines().count() as u64;
-    let read = clamp_pos(std::fs::read_to_string(cursor).ok().and_then(|c| parse_cursor(&c)), total);
-    let oldest = lines().nth(read as usize).map(|l| String::from_utf8_lossy(l).trim_end().chars().take(OLDEST_CHARS).collect());
+    let total = count_lines(&bytes);
+    let read = read_pos(cursor, total);
+    let mut finished = bytes.split_inclusive(|b| *b == b'\n').filter(|l| l.ends_with(b"\n"));
+    let oldest = finished.nth(read as usize).map(|l| String::from_utf8_lossy(l).trim_end().chars().take(OLDEST_CHARS).collect());
     Ok((total - read, oldest))
+}
+
+/// Which broker a writer announces the inbox on.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Bus {
+    /// The one the configuration names.
+    #[default]
+    Configured,
+    /// The one on this socket.
+    At(PathBuf),
+    /// None: the writer only appends.
+    Off,
+}
+
+impl Bus {
+    /// A publisher called `name`.
+    pub fn publisher(&self, name: &str) -> Result<Publisher, PubError> {
+        match self {
+            Bus::Configured => Publisher::new(name),
+            Bus::At(socket) => Publisher::with(name, Options::new(socket, Arc::new(WallClock), Box::new(SeededRng::new(u64::from(std::process::id()))))),
+            Bus::Off => Err(PubError::Config("this writer announces on no broker".into())),
+        }
+    }
 }
 
 /// Publishes `concierge/inbox`. Every failure is logged here or by the publisher, and none is

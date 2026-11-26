@@ -17,7 +17,7 @@ fn append_publishes_the_unread_count_past_watchds_cursor_under_its_own_name() {
     std::fs::create_dir_all(run.join("watchd")).unwrap();
     std::fs::create_dir_all(dir.join("elsewhere")).unwrap();
     std::fs::write(&inbox, "t0 read already\n").unwrap();
-    std::fs::write(inbox_rules::concierge_cursor(&run), "1\n").unwrap();
+    std::fs::write(inbox_rules::concierge_cursor(run.to_str().unwrap()), "1\n").unwrap();
     let declare = [
         ("SPIRA_BROKER_SOCKET", broker.socket().to_str().unwrap()),
         ("SPIRA_RUN", run.to_str().unwrap()),

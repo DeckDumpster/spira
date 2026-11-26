@@ -22,6 +22,11 @@ name = "lane"
 path = "tests/lane.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "inbox_page"
+path = "tests/inbox_page.rs"
+required-features = ["integration"]
+
 [features]
 integration = ["spira-pub/integration", "runtime/integration", "inbox-rules/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
 

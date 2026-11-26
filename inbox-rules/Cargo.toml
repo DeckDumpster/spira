@@ -17,8 +17,8 @@ integration = ["ports/integration", "spira-pub/integration", "testkit/integratio
 regex = "1"
 serde_json = "1"
 spira-pub = { path = "../spira-pub" }
+ports = { path = "../ports" }
 
 [dev-dependencies]
-ports = { path = "../ports" }
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }

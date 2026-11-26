@@ -245,8 +245,8 @@ fn pass() -> i32 {
         thresholds,
     };
     let inp = PassInput { obs, confirm, clear_n, refresh, tz, render_time: util::iso_display, report_only: report };
-    let inbox_cursor = inbox_rules::concierge_cursor(&run_dir);
-    let paths = PassPaths { fallback: fallback_path, heartbeat: status_path, inbox, inbox_cursor, push_wake, push_pattern };
+    let inbox_cursor = inbox_rules::concierge_cursor(&run_dir.to_string_lossy());
+    let paths = PassPaths { fallback: fallback_path, heartbeat: status_path, inbox, inbox_cursor, inbox_bus: inbox_rules::Bus::Configured, push_wake, push_pattern };
     let rep = pass::run(&inp, &ops, &mut state, &paths, now);
     for l in &rep.out {
         sink.out(l);

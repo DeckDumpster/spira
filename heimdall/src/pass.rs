@@ -34,6 +34,8 @@ pub struct PassPaths {
     pub inbox: PathBuf,
     /// How far the inbox has been read.
     pub inbox_cursor: PathBuf,
+    /// Where a page is announced as `concierge/inbox`.
+    pub inbox_bus: inbox_rules::Bus,
     pub push_wake: String,
     pub push_pattern: String,
 }
@@ -185,11 +187,12 @@ pub fn run(inp: &PassInput, ops: &dyn Conditions, state: &mut State, paths: &Pas
     rep
 }
 
-fn page_inbox(paths: &PassPaths, now: i64, title: &str, evidence: &str) -> Result<(), String> {
+/// One page in the Concierge inbox: pushed and announced like any other writer's line.
+pub fn page_inbox(paths: &PassPaths, now: i64, title: &str, evidence: &str) -> Result<(), String> {
     let beads = evidence.lines().find_map(|l| l.strip_prefix("BEADS")).map(str::trim).unwrap_or_default();
     let line = inbox_rules::line(&util::iso_utc(now), &format!("[heimdall] {title}; beads {beads}"));
     let flusher = || spira_config::release_env::tool("inbox-triage").map(PathBuf::from);
-    let publisher = || spira_pub::Publisher::new("heimdall");
+    let publisher = || paths.inbox_bus.publisher("heimdall");
     inbox_rules::record(&paths.inbox, &line, &paths.push_wake, &paths.push_pattern, flusher, &paths.inbox_cursor, publisher).map(|_| ())
 }
 
@@ -232,7 +235,7 @@ mod tests {
             Rig { dir: testkit::TempDir::new("heimdall-pass"), ops: Fake::default(), state: State::default(), now: 1_800_000_000, wedged: false, halted: false, restart_delta: None, refresh: 3600, gate_rows: Vec::new(), gate_unread: false }
         }
         fn paths(&self) -> PassPaths {
-            PassPaths { fallback: self.dir.join("heimdall.alerts.json"), heartbeat: self.dir.join("heimdall.status"), inbox: self.dir.join("inbox.log"), inbox_cursor: self.dir.join("inbox.cursor"), push_wake: String::new(), push_pattern: String::new() }
+            PassPaths { fallback: self.dir.join("heimdall.alerts.json"), heartbeat: self.dir.join("heimdall.status"), inbox: self.dir.join("inbox.log"), inbox_cursor: self.dir.join("inbox.cursor"), inbox_bus: inbox_rules::Bus::Off, push_wake: String::new(), push_pattern: String::new() }
         }
         fn pass(&mut self) -> PassReport {
             self.now += 120;

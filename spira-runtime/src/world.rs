@@ -53,6 +53,8 @@ pub struct World {
     pub push_pattern: String,
     /// The `inbox-triage` program whose `flush` verb delivers a pushed line; empty, the release's.
     pub inbox_flusher: PathBuf,
+    /// Where an inbox append is announced as `concierge/inbox`.
+    pub inbox_bus: inbox_rules::Bus,
     pub lc_socket: PathBuf,
     pub proc_dir: PathBuf,
     pub mail: PathBuf,
@@ -397,7 +399,7 @@ impl World {
         fs::metadata(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let waiter_alive = watchd::lock::try_lock(&lock).map_err(|e| format!("{}: {e}", lock.display()))?.is_err();
         let log = fs::read(&self.inbox).map_err(|e| format!("{}: {e}", self.inbox.display()))?;
-        let total = log.iter().filter(|&&b| b == b'\n').count() as u64;
+        let total = inbox_rules::count_lines(&log);
         let (pos, cursor_mtime) = match fs::read_to_string(&cursor) {
             Ok(text) => {
                 let mtime = fs::metadata(&cursor).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
@@ -1445,7 +1447,7 @@ impl World {
         };
         let lines: Vec<&str> = input.lines().filter(|l| !l.is_empty()).collect();
         let cursor = watchd::paths::cursorfile(&self.run_dir.to_string_lossy(), INBOX_WATCHER);
-        let publisher = || spira_pub::Publisher::new("spira-runtime");
+        let publisher = || self.inbox_bus.publisher("spira-runtime");
         let pushed = inbox_rules::record_lines(&self.inbox, &lines, &self.push_wake, &self.push_pattern, flusher, &cursor, publisher)?;
         Ok(if pushed { "appended, pushed" } else { "appended" }.into())
     }

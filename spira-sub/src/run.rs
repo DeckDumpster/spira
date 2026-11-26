@@ -2,7 +2,6 @@
 //! Nothing here wakes on a timer while no `--at` is pending and the broker answers.
 
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
-use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
@@ -112,9 +111,19 @@ fn load(path: &Path) -> Result<Saved, String> {
 }
 
 fn store(path: &Path, saved: &Saved) -> std::io::Result<()> {
-    let tmp = path.with_extension("subs.tmp");
-    std::fs::write(&tmp, serde_json::to_string(saved)? + "\n")?;
-    std::fs::rename(&tmp, path)
+    spira_config::write_atomic(path, &(serde_json::to_string(saved)? + "\n"))
+}
+
+/// What carrying out a step left behind.
+struct Applied {
+    /// The last acknowledgement asked for.
+    ticket: Option<(u64, u64)>,
+    /// Why the set file does not hold the set as it now stands.
+    unsaved: Option<String>,
+}
+
+fn unsaved(live: &str, why: &str) -> Reply {
+    Reply::Failed(format!("{live} but not saved, so a restart of `spira-sub run` undoes it: {why}"))
 }
 
 impl State {
@@ -142,17 +151,20 @@ impl Server {
         }
     }
 
-    /// Carries out what one step of the core owes. The last ticket asked for, if any.
-    fn apply(&self, state: &mut State, out: Out) -> Option<(u64, u64)> {
+    /// Carries out what one step of the core owes.
+    fn apply(&self, state: &mut State, out: Out) -> Applied {
         if !out.lines.is_empty() {
             for line in &out.lines {
                 state.readers.retain(|r| r.lines.try_send(line.clone()).is_ok());
             }
             self.sample(Sample::Delivered(out.lines.len(), state.core.len()));
         }
+        let mut unsaved = None;
         if out.changed {
             if let Err(e) = store(&self.set, &state.core.saved()) {
-                say(&self.name, &format!("cannot write {}: {e}", self.set.display()));
+                let why = format!("cannot write {}: {e}", self.set.display());
+                say(&self.name, &why);
+                unsaved = Some(why);
             }
         }
         let mut ticket = None;
@@ -160,7 +172,7 @@ impl Server {
             ticket = state.ask(filter, false).or(ticket);
         }
         self.changed.notify_all();
-        ticket
+        Applied { ticket, unsaved }
     }
 
     /// Waits for the broker's acknowledgement; false when it did not come.
@@ -181,7 +193,9 @@ impl Server {
                         // Asked even when the filter is already held: that is what resends the
                         // retained values, which the other holders recognise and skip.
                         let ticket = state.ask(&filter, true);
-                        self.apply(&mut state, out);
+                        if let Some(why) = self.apply(&mut state, out).unsaved {
+                            return unsaved(&format!("{id} is live"), &why);
+                        }
                         (id, ticket)
                     }
                     Err(why) => return Reply::Refused(why),
@@ -189,17 +203,22 @@ impl Server {
             }
             Request::At { at_ms, note } => {
                 let (id, out) = state.core.add_at(at_ms, &note);
-                self.apply(&mut state, out);
-                return Reply::Done { out: id, warning: None };
+                return match self.apply(&mut state, out).unsaved {
+                    Some(why) => unsaved(&format!("{id} is set"), &why),
+                    None => Reply::Done { out: id, warning: None },
+                };
             }
             Request::Drop { id } => match state.core.remove(&id) {
                 Ok(out) => {
                     let owes = !out.unsubscribe.is_empty();
-                    let ticket = self.apply(&mut state, out);
+                    let applied = self.apply(&mut state, out);
+                    if let Some(why) = applied.unsaved {
+                        return unsaved(&format!("{id} is dropped"), &why);
+                    }
                     if !owes {
                         return Reply::Done { out: String::new(), warning: None };
                     }
-                    (String::new(), ticket)
+                    (String::new(), applied.ticket)
                 }
                 Err(why) => return Reply::Refused(why),
             },
@@ -307,6 +326,7 @@ impl Server {
         }
         state.client = Some(client);
         state.connection += 1;
+        state.core.reconnected();
         (state.asked, state.acked) = (0, 0);
         for filter in std::iter::once(LIVENESS.to_string()).chain(state.core.filters()) {
             if state.ask(&filter, true).is_none() {
@@ -383,12 +403,11 @@ impl Server {
 /// other for ever. The lock lives as long as the returned file.
 fn only_instance(options: &Options) -> Result<std::fs::File, String> {
     let path = options.control_dir.join(format!("{}.lock", options.name));
-    let file = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
-    // SAFETY: flock on a descriptor this process owns.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        return Err(format!("another `spira-sub run --as {}` holds {}", options.name, path.display()));
+    match strand::state::try_lock(&path) {
+        Ok(Some(file)) => Ok(file),
+        Ok(None) => Err(format!("another `spira-sub run --as {}` holds {}", options.name, path.display())),
+        Err(e) => Err(format!("cannot lock {}: {e}", path.display())),
     }
-    Ok(file)
 }
 
 /// Runs until killed; returns only a failure to do so.

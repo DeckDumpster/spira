@@ -117,6 +117,12 @@ impl Core {
         self.clock.now_ms()
     }
 
+    /// A new connection: who is up is unknown until the broker says, since a restarted one
+    /// holds nothing about a publisher that does not come back.
+    pub fn reconnected(&mut self) {
+        self.publishers.clear();
+    }
+
     /// Every topic filter the set holds.
     pub fn filters(&self) -> BTreeSet<String> {
         self.subs.iter().filter_map(|s| s.filter().map(str::to_string)).collect()
@@ -485,5 +491,17 @@ mod tests {
         for want in ["s1 bead/+/state", "once", "fired 2m ago", "fired never", "lc-serve up", "on demand", "s3 at 1970-01-01T00:16:41Z"] {
             assert!(screen.contains(want), "{want}: {screen}");
         }
+    }
+
+    #[test_id(tzpz0yg)]
+    #[test]
+    fn a_new_connection_forgets_which_publishers_were_up() {
+        let (mut c, _) = core();
+        c.add("bead/+/state", "", false, true).unwrap();
+        say(&mut c, "publisher/lc-serve", json!({"state": "up", "since_ms": 1}));
+        assert!(c.list("concierge", true, 1).contains("lc-serve up"), "positive control");
+        c.reconnected();
+        let screen = c.list("concierge", true, 1);
+        assert!(!screen.contains("lc-serve up"), "{screen}");
     }
 }

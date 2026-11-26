@@ -369,3 +369,20 @@ fn deliveries_subscriptions_and_control_commands_reach_the_metrics_store() {
 
     sink.expect(&["spira_sub_deliveries", "spira_sub_subscriptions", "spira_sub_control_commands"], FAILSAFE);
 }
+
+#[test_id(tsbnmw0)]
+#[test]
+fn a_change_the_set_file_cannot_hold_fails_and_says_what_is_live() {
+    let broker = Broker::up();
+    let world = World::new(broker.socket());
+    let _run = world.run(broker.socket());
+    // A directory where the set file goes: no write can replace it.
+    std::fs::create_dir_all(world.set_file().join("in-the-way")).unwrap();
+
+    let (code, _, err) = world.call(&["add", "release/active"]);
+    assert!(code == Some(1) && err.contains("s1 is live but not saved"), "{code:?} {err}");
+    let (code, _, err) = world.call(&["add", "--at", "2999-01-01T00:00:00Z", "--note", "n"]);
+    assert!(code == Some(1) && err.contains("s2 is set but not saved"), "{code:?} {err}");
+    let (code, _, err) = world.call(&["drop", "s1"]);
+    assert!(code == Some(1) && err.contains("s1 is dropped but not saved"), "{code:?} {err}");
+}

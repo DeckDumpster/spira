@@ -264,7 +264,7 @@ mod tests {
         append(&log, "2026-10-08T00:00:03Z two\n");
         let cursor = paths::cursorfile(&d.join("run").display().to_string(), "inbox");
         assert_eq!(inbox_rules::unread(&log, &cursor).unwrap(), (1, Some("2026-10-08T00:00:03Z two".to_string())));
-        assert_eq!(inbox_rules::concierge_cursor(&d.join("run")), paths::cursorfile(&d.join("run").display().to_string(), "concierge-inbox"));
+        assert_eq!(inbox_rules::concierge_cursor(&d.join("run").display().to_string()), paths::cursorfile(&d.join("run").display().to_string(), "concierge-inbox"));
     }
 
     #[test_id(tzzcplw)]

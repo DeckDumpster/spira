@@ -33,7 +33,7 @@ fn record_publishes_how_many_lines_are_unread_and_the_oldest_of_them() {
     let broker = Broker::up();
     let dir = testkit::TempDir::new("inbox-pub");
     let inbox = dir.join("concierge-inbox.log");
-    let cursor = concierge_cursor(dir.path());
+    let cursor = concierge_cursor(dir.path().to_str().unwrap());
     std::fs::create_dir_all(cursor.parent().unwrap()).unwrap();
     let write = |line: &str| record(&inbox, line, "", "", no_flusher, &cursor, publisher(broker.socket())).unwrap();
 
