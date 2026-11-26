@@ -2569,7 +2569,10 @@ mod proc_starts_phase_tests {
         (td, calls, unit, got)
     }
 
-    fn plain_sudo_metered(case: Case) -> (testkit::TempDir, Vec<String>, String, (Result<(), String>, Option<String>)) {
+    /// What `standalone_proc_starts_with` returns.
+    type Ran = (Result<(), String>, Option<String>);
+
+    fn plain_sudo_metered(case: Case) -> (testkit::TempDir, Vec<String>, String, Ran) {
         let td = testkit::TempDir::new("proc-starts-sudo");
         let release = spira_config::process::fixture_release(td.path(), true);
         std::fs::create_dir_all(release.join("systemd")).unwrap();
