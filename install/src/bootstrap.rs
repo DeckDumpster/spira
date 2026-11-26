@@ -588,9 +588,8 @@ mod stale_release_tests {
 
     fn rendered_cache_root(configured: &str) -> String {
         let t = testkit::TempDir::new("host-from-root");
-        let home = spira_config::resolve::locate_home_for_process().unwrap();
-        let toml = home.join("testlib/complete.toml");
-        let env: std::collections::BTreeMap<String, String> = [("SPIRA_HOME", home), ("SPIRA_REPO", t.path().join("h")), ("SPIRA_TOML", toml)]
+        let toml = spira_config::resolve::locate_home_for_process().unwrap().join("testlib/complete.toml");
+        let env: std::collections::BTreeMap<String, String> = [("SPIRA_HOME", t.path().join("h")), ("SPIRA_REPO", t.path().join("h")), ("SPIRA_TOML", toml)]
             .into_iter()
             .map(|(k, v)| (k.to_string(), v.display().to_string()))
             .collect();

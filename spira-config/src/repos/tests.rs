@@ -77,14 +77,16 @@
         std::fs::write(&map, format!("spira | {} | queue.local | local/main |  |\n", checkout.display())).unwrap();
 
         // The release's own bundled `spira/` — NOT a git checkout (a release layout, not a
-        // clone), exactly sp-8bhnr's own repro. Only the registry needs to be real (resolve()
-        // reads it from this home); borrow this checkout's own, real one.
+        // clone), exactly sp-8bhnr's own repro. Only `conf.d` needs to be real (resolve()
+        // reads it unconditionally); borrow this checkout's own, real one.
         let release = t.path().join("spira-releases/deadbeef");
         let release_spira = release.join("spira");
         std::fs::create_dir_all(&release_spira).unwrap();
-        for dir in ["conf.d", "conf.toml.d"] {
-            std::os::unix::fs::symlink(crate::resolve::locate_home_for_process().unwrap().join(dir), release_spira.join(dir)).unwrap();
-        }
+        std::os::unix::fs::symlink(
+            crate::resolve::locate_home_for_process().unwrap().join("conf.d"),
+            release_spira.join("conf.d"),
+        )
+        .unwrap();
 
         // CHECK6's own forwarded env: SPIRA_REPO = sentinel's own derived value for THIS
         // SAME home (the release root — `derive_repo_filesystem` falls back to `home`'s
