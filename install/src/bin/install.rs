@@ -269,23 +269,7 @@ fn build_spira_env(dry: bool, home: &str, release_root: Option<&Path>) -> Result
     build_spira_env_with(dry, home, root, &run_ok, units.as_deref(), gc.as_ref())
 }
 
-/// What the collection unit needs besides the env: where `nix-collect-garbage` may live, where its
-/// output goes, and the key that makes one install start one unit.
-struct GcPlan {
-    profile_bin: PathBuf,
-    log: PathBuf,
-    key: String,
-}
-
-fn gc_plan(profile_bin: Result<String, String>, run_dir: Result<String, String>, root: &Path) -> Result<GcPlan, String> {
-    Ok(GcPlan { profile_bin: PathBuf::from(profile_bin?), log: Path::new(&run_dir?).join("nix-gc.log"), key: root_key(root) })
-}
-
-fn root_key(root: &Path) -> String {
-    std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
-}
-
-use release::spira_env::Runner;
+use release::spira_env::{collect_nix_garbage, gc_plan, GcPlan, Runner};
 
 fn build_spira_env_with(dry: bool, home: &str, root: &Path, run: Runner, units: Option<&dyn runtime::units::Units>, gc: Option<&GcPlan>) -> Result<(), String> {
     let out = Path::new(home).join(spira_config::SPIRA_ENV_REL);
@@ -305,28 +289,12 @@ fn build_spira_env_with(dry: bool, home: &str, root: &Path, run: Runner, units: 
     }
     info(&format!("built spira-env at {}", out.display()));
     if let (Some(units), Some(gc)) = (units, gc) {
-        collect_nix_garbage(units, gc, &out);
+        match collect_nix_garbage(units, gc, &out) {
+            Ok(name) => info(&format!("started nix garbage collection as {name}")),
+            Err(w) => warn(&w),
+        }
     }
     Ok(())
-}
-
-/// Starts `nix-collect-garbage` as a background unit and returns at once. Without `-d` it removes
-/// only store paths no GC root reaches, so the current env, the rooted previous env and every
-/// path a running process holds survive. A failure to start costs only a warning.
-fn collect_nix_garbage(units: &dyn runtime::units::Units, gc: &GcPlan, env: &Path) {
-    use runtime::units::{UnitProps, UnitSpec};
-    use std::os::unix::fs::PermissionsExt;
-    let executable = |p: &Path| std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
-    let Some(bin) = [gc.profile_bin.clone(), env.join("bin")].into_iter().map(|d| d.join("nix-collect-garbage")).find(|p| executable(p)) else {
-        warn("nix garbage will not be collected: nix-collect-garbage was found neither in the profile nor in the spira-env");
-        return;
-    };
-    let spec = UnitSpec { task: install::NIX_GC_UNIT_TASK.into(), key: gc.key.clone(), argv: vec![bin.display().to_string()], env: vec![], cwd: None };
-    let props = UnitProps { cpu_quota_pct: Some(20), nice: Some(10), io_class: Some("idle".into()), runtime_max_ms: Some(1_800_000), output_append: Some(gc.log.clone()), ..UnitProps::default() };
-    match units.start_with(&spec, &props) {
-        Ok(h) => info(&format!("started nix garbage collection as {}", h.name)),
-        Err(e) => warn(&format!("nix garbage collection did not start: {e}")),
-    }
 }
 
 fn bd_config_path() -> Option<PathBuf> {

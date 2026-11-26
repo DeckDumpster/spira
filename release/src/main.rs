@@ -500,7 +500,15 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
         }
         "activate" | "rollback" => {
             let sc = RealSystemctl::from_env();
-            let ctx = Ctx { cfg: &cfg, reads: &activate::RealReads(&cfg), sc: &sc, nix: &release::spira_env::RealNix, git: &RealGit, repo: repo(), landed_ref: a.landed_ref.clone(), settle: a.settle, drain: a.drain, steady: a.steady, warm_wait: a.warm_wait, warm_pause: Duration::from_secs(1), report: &|l| eprintln!("{l}") };
+            let backend = runtime::units::from_env(std::sync::Arc::new(runtime::ports::WallClock));
+            let units = backend.as_ref().map(|b| b.units()).map_err(ToString::to_string);
+            let gc = units.as_ref().map_err(Clone::clone).and_then(|u| {
+                let profile_bin = spira_config::process::cfg("SPIRA_NIX_PROFILE_BIN")?.into();
+                let run_dir = cfg.run.clone().ok_or("no run directory: set spira.run (SPIRA_RUN)")?;
+                Ok::<_, String>(release::spira_env::Collector { units: u.as_ref(), profile_bin, run_dir })
+            });
+            let gc = gc.map_err(|e| eprintln!("release: WARN: nix garbage will not be collected: {e}")).ok();
+            let ctx = Ctx { cfg: &cfg, reads: &activate::RealReads(&cfg), sc: &sc, nix: &release::spira_env::RealNix, git: &RealGit, repo: repo(), landed_ref: a.landed_ref.clone(), settle: a.settle, drain: a.drain, steady: a.steady, warm_wait: a.warm_wait, warm_pause: Duration::from_secs(1), report: &|l| eprintln!("{l}"), gc };
             if cmd == "activate" {
                 want(1)?;
                 if activate::current(&cfg).as_deref() != Some(rest[0].as_str()) {

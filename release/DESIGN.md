@@ -134,7 +134,8 @@ about which release they name.
    `$SPIRA_NIX_PROFILE_BIN`, and the env it replaces rooted at `spira-env.prev`. A failed
    build or root refuses with the link as it was. Every later failure points the link back.
    `rollback` does the same for the release it returns to. A release without a flake skips it.
-   Garbage collection is install's, and no service is restarted for an env change.
+   A switch that stood with a changed env starts the background garbage collection install
+   starts, without waiting for it, and no service is restarted for an env change.
 4. Install the rendered files that differ (write `.new`, rename).
 5. Swap `current` atomically (a symlink written beside it, renamed over it).
 6. `daemon-reload`.
@@ -681,7 +682,7 @@ only `HOME` is required of the caller.
 | `config` | resolve the releases dir, run dir, keep, unit dir and host keys |
 | `build` | archive, cargo, bins, clash check, MANIFEST, read-only, rename |
 | `verify` | the checks above |
-| `spira_env` | build, root and restore the release's tool env (shared with `spira-install`) |
+| `spira_env` | build, root and restore the release's tool env, and start the background nix collection (`GcPlan`) that removes superseded ones (shared with `spira-install`) |
 | `units` | installed-unit ↔ template mapping and the renderer |
 | `systemctl` | the `Systemctl` trait; the real one runs `systemctl --user` (`$SPIRA_SYSTEMCTL`) |
 | `git` | the `Git` trait (resolve, archive, is-ancestor) |

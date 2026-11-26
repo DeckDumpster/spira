@@ -122,6 +122,8 @@ pub struct Ctx<'a> {
     pub warm_pause: Duration,
     /// Where the lines that state a measurement go.
     pub report: &'a dyn Fn(&str),
+    /// Collects the envs a switch supersedes; `None` collects nothing.
+    pub gc: Option<spira_env::Collector<'a>>,
 }
 
 /// A standing hotfix: the running system is on a commit that has not landed.
@@ -347,6 +349,21 @@ fn build_env(ctx: &Ctx, rel: &Path, sha: &str) -> Result<Option<spira_env::Built
     Ok(Some(built))
 }
 
+/// Starts the background collection when the switch replaced the env. Never fails the switch.
+fn collect_superseded_env(ctx: &Ctx, env: Option<&spira_env::Built>, rel: &Path) {
+    let replaced = env.is_some_and(|b| b.before.as_ref().is_some_and(|before| *before != b.after));
+    let (true, Some(gc)) = (replaced, ctx.gc.as_ref()) else { return };
+    let home = match ctx.cfg.home() {
+        Ok(h) => h,
+        Err(e) => return eprintln!("release: WARN: nix garbage will not be collected: {e}"),
+    };
+    let plan = spira_env::GcPlan::for_release(&gc.profile_bin, &gc.run_dir, rel);
+    match spira_env::collect_nix_garbage(gc.units, &plan, &home.join(spira_config::SPIRA_ENV_REL)) {
+        Ok(name) => eprintln!("release: started nix garbage collection as {name}"),
+        Err(w) => eprintln!("release: WARN: {w}"),
+    }
+}
+
 /// Switch the running system onto release `sha`: render and install units, swap
 /// `current`, daemon-reload, restart what changed, check it came up, and undo all of it
 /// when something did not.
@@ -550,6 +567,8 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
             failed.join("\n  ")
         ));
     }
+    // Past the last undo: a collection started sooner could remove an env an undo links back to.
+    collect_superseded_env(ctx, env.as_ref(), &rel);
     revive_failed(ctx, &mut out);
     for s in units::path_shadows(&cfg.unit_dir, &rel, &cfg.releases) {
         eprintln!("release: WARN: {s}");
