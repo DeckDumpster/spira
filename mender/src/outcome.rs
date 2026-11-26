@@ -60,7 +60,7 @@ pub fn validate(a: &Answer) -> Result<String, String> {
         },
         _ if !a.members.is_empty() => Err("--member belongs to return alone".into()),
         Kind::Mended => match a.checks.map(str::trim).filter(|c| !c.is_empty()) {
-            None => Err("mended: --checks must say what ran (each touched crate's `cargo test -p`, the suites naming touched non-Rust files) and that it passed; a failing check is a return".into()),
+            None => Err("mended: --checks must say what ran (each touched crate's `tools/test-sandbox/runner --around cargo test -p`, the suites naming touched non-Rust files) and that it passed; a failing check is a return".into()),
             Some(c) => Ok(format!("{d}\nchecks: {c}")),
         },
         _ if a.checks.is_some() || a.ask.is_some() => Err("--checks and --ask belong to mended alone".into()),

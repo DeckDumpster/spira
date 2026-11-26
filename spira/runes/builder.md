@@ -38,7 +38,8 @@ holds at your tip, the work is done.
    `runtime::ports::VirtualClock` with no real clock; see `sim/tests/it/` for the pattern. A
    test of a real system at its boundary (SQLite, git, a subprocess) waits on a signal from
    that system, such as a completion counter, a condvar or a marker file, never on a sleep
-   or an elapsed duration. Plain `cargo test` runs unit tests only; a test under a
+   or an elapsed duration. Run Rust tests as `tools/test-sandbox/runner --around cargo test`;
+   bare `cargo test` is refused. Without a feature it runs unit tests only; a test under a
    crate's `tests/` is an integration test, declared `[[test]]` with
    `required-features = ["integration"]` and run with `--features integration`.
 

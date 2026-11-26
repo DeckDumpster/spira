@@ -15,9 +15,10 @@ fn workspace() -> PathBuf {
 
 /// The workspace's `.cargo/config.toml` as committed: a test sees the sandbox's runner-less
 /// overlay at that path, so the file itself is read from the tree's own commit.
-fn committed_cargo_config() -> Option<toml::Table> {
-    let out = std::process::Command::new("git").arg("-C").arg(workspace()).args(["show", "HEAD:.cargo/config.toml"]).output().ok()?;
-    out.status.success().then(|| String::from_utf8(out.stdout).unwrap().parse().expect(".cargo/config.toml parses"))
+fn committed_cargo_config() -> toml::Table {
+    let out = std::process::Command::new("git").arg("-C").arg(workspace()).args(["show", "HEAD:.cargo/config.toml"]).output().expect("git spawns");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8(out.stdout).unwrap().parse().expect(".cargo/config.toml parses")
 }
 
 #[test_id(tx9xe9v)]
@@ -25,10 +26,9 @@ fn committed_cargo_config() -> Option<toml::Table> {
 fn cargo_names_the_sandbox_runner_outside_the_sandbox_and_the_overlay_is_that_config_without_it() {
     let ws = workspace();
     let overlay: toml::Table = fs::read_to_string(ws.join("tools/test-sandbox/cargo-config.toml")).unwrap().parse().expect("cargo-config.toml parses");
-    let Some(conf) = committed_cargo_config() else {
-        eprintln!("skipped: no git history to read the committed .cargo/config.toml from");
-        return;
-    };
+    let mode = fs::metadata(ws.join("tools/test-sandbox/runner")).expect("the runner exists").permissions().mode();
+    assert_ne!(mode & 0o111, 0, "the runner is executable");
+    let conf = committed_cargo_config();
     let target = conf.get("target").and_then(toml::Value::as_table).expect("a [target] table");
     for triple in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"] {
         let runner = target.get(triple).and_then(|t| t.get("runner")).and_then(toml::Value::as_str);
@@ -38,8 +38,6 @@ fn cargo_names_the_sandbox_runner_outside_the_sandbox_and_the_overlay_is_that_co
     let mut without = conf.clone();
     without.remove("target");
     assert_eq!(overlay, without, "cargo-config.toml is .cargo/config.toml minus its target tables");
-    let mode = fs::metadata(ws.join("tools/test-sandbox/runner")).expect("the runner exists").permissions().mode();
-    assert_ne!(mode & 0o111, 0, "the runner is executable");
 }
 
 #[test_id(tw5vhoi)]
@@ -96,12 +94,7 @@ fn around_applies_the_environment_allow_list_once_keeping_rust_build_flags() {
         .env("RUSTFLAGS", "y")
         .output()
         .expect("the runner spawns");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    if stderr.contains("bwrap:") {
-        eprintln!("skipped: no nested sandbox to run the runner in: {stderr}");
-        return;
-    }
-    assert!(out.status.success(), "{stderr}");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let env = String::from_utf8_lossy(&out.stdout);
     assert!(env.lines().any(|l| l == "RUSTFLAGS=y"), "{env}");
     assert!(!env.contains("SPIRA_RELEASE"), "{env}");
@@ -221,6 +214,7 @@ fn print_args_for_a_command_is_what_the_landing_ref_printed_but_for_the_environm
     let before = std::process::Command::new(&copy).args(["--print-args", "--around", system_paths::USR_BIN_TRUE, "a", "b"]).output();
     fs::remove_file(&copy).unwrap();
     let before = String::from_utf8(before.unwrap().stdout).unwrap();
+    let landing_ref_kept_the_environment = !before.lines().any(|l| l == "--clearenv");
     let strip = |mut args: Vec<String>| {
         for name in [".cargo/config.toml", ".cargo/config"] {
             if let Some(i) = args.windows(3).position(|w| w[0] == "--ro-bind" && w[1].ends_with(name) && w[1] == w[2]) {
@@ -233,10 +227,12 @@ fn print_args_for_a_command_is_what_the_landing_ref_printed_but_for_the_environm
         while let Some(i) = args.windows(3).position(|w| w[0] == "--bind" && w[1].contains("/around-dest")) {
             args.drain(i..i + 3);
         }
-        while let Some(i) = args.iter().position(|a| a == "--setenv") {
-            args.drain(i..i + 3);
+        if landing_ref_kept_the_environment {
+            while let Some(i) = args.iter().position(|a| a == "--setenv") {
+                args.drain(i..i + 3);
+            }
+            args.retain(|a| a != "--clearenv");
         }
-        args.retain(|a| a != "--clearenv");
         args
     };
     let now = strip(print_args(&["--around", system_paths::USR_BIN_TRUE, "a", "b"]));

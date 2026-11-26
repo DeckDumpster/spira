@@ -104,7 +104,7 @@ It belongs to whoever runs the harness. No shared repository holds it, and no be
 
 ```sh
 make build     # cargo build --release --workspace
-make test      # cargo test --workspace --features integration
+make test      # cargo test --workspace --features integration, inside tools/test-sandbox/runner --around
 make dist      # build + spira/build-tarball.sh build --workspace .
 ```
 
