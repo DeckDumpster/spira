@@ -233,9 +233,10 @@ fn rerun_red_tests<W: World>(w: &W, at: RerunScope, name: &str, cmd: &str) -> Re
     let mut held = Vec::new();
     for t in std::mem::take(&mut flipped) {
         if flipped.len() == MAX_GATE_FLIPS {
-            let green = format!("{t}:{}/green", parse::red_kind(at.out, &t));
+            let first = parse::red_kind(at.out, &t);
+            let green = format!("{t}:{first}/green");
             for e in at.reruns.iter_mut().filter(|e| **e == green) {
-                *e = e.replace("/green", "/held");
+                *e = format!("{t}:{first}/held");
             }
             held.push(t);
             continue;
