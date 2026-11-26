@@ -13,7 +13,8 @@
 # destination and binds cargo-config.toml, which is .cargo/config.toml without its target runner,
 # over the workspace's, so cargo inside resolves no runner. Every directory the home already
 # holds comes back empty and writable, so a write to the install lands in tmpfs and never on
-# disk. It differs in hiding both $HOME and the passwd entry's home.
+# disk. It differs in hiding both $HOME and the passwd entry's home, and in binding back a round's
+# env.
 #
 # Called as cargo's target runner (the overlay missing) it refuses every test binary: one is never
 # sandboxed alone. Only a `cargo run` artifact, which is no test, runs as it is. No fallback: without an executable bwrap it refuses and runs nothing.

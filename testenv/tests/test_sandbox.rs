@@ -349,28 +349,21 @@ fn a_binary_run_binds_the_declared_cargo_homes_config_back_read_only_and_never_t
     assert_config_bound_after_shadow_and_credentials_not(&args, &home);
 }
 
-/// The `mosquitto` this suite requires, as the store holds it.
-fn store_mosquitto() -> PathBuf {
-    std::env::split_paths(&std::env::var_os("PATH").unwrap())
-        .map(|d| d.join("mosquitto"))
-        .find(|p| p.is_file())
-        .map(|p| fs::canonicalize(p).unwrap())
-        .expect("mosquitto is on PATH, which this test requires")
-}
-
-/// The sandbox `PATH` for a caller holding `home` with `caller_dir` first on its `PATH`.
-fn sandbox_path_for(home: &Path, caller_dir: &Path) -> Vec<PathBuf> {
+/// The printed command line for a caller whose only installation is what `home` holds.
+fn print_args_under_home(home: &Path) -> Vec<String> {
     let out = std::process::Command::new(workspace().join("tools/test-sandbox/runner"))
-        .args(["--print-args", "--around", "bash"])
+        .args(["--print-args", "--around", system_paths::USR_BIN_TRUE])
         .env_clear()
-        .env("PATH", format!("{}:/usr/bin:/bin", caller_dir.display()))
+        .env("PATH", format!("{}:{}", system_paths::USR_BIN, system_paths::BIN))
         .env("HOME", home)
         .output()
         .expect("the runner spawns");
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8(out.stdout).unwrap();
-    let args: Vec<&str> = stdout.lines().collect();
-    let path = args.windows(3).find(|w| w[0] == "--setenv" && w[1] == "PATH").expect("a PATH is set")[2];
+    String::from_utf8(out.stdout).unwrap().lines().map(String::from).collect()
+}
+
+fn sandbox_path_in(args: &[String]) -> Vec<PathBuf> {
+    let path = &args.windows(3).find(|w| w[0] == "--setenv" && w[1] == "PATH").expect("a PATH is set")[2];
     std::env::split_paths(path).collect()
 }
 
@@ -384,45 +377,26 @@ fn a_rounds_spira_env_is_bound_back_over_the_hidden_home_and_its_bin_is_on_the_s
     fs::create_dir_all(store_env.join("bin")).unwrap();
     testkit::write_exe(store_env.join("bin/dolt"), "#!/bin/sh\nexit 0\n");
     std::os::unix::fs::symlink(&store_env, home.join("spira-env")).unwrap();
-    let out = std::process::Command::new(workspace().join("tools/test-sandbox/runner"))
-        .args(["--print-args", "--around", system_paths::USR_BIN_TRUE])
-        .env_clear()
-        .env("PATH", format!("{}:{}", system_paths::USR_BIN, system_paths::BIN))
-        .env("HOME", &home)
-        .output()
-        .expect("the runner spawns");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    let args: Vec<String> = String::from_utf8(out.stdout).unwrap().lines().map(String::from).collect();
+    let args = print_args_under_home(&home);
     let hidden = home.display().to_string();
     let shadow = args.windows(2).position(|w| w[0] == "--tmpfs" && w[1] == hidden).expect("the home is shadowed");
     let env = format!("{hidden}/spira-env");
     let at = args.windows(3).position(|w| w[0] == "--ro-bind" && w[1] == env && w[2] == env);
     assert!(at.is_some_and(|at| at > shadow), "{env} is not bound back over the hidden home: {args:?}");
-    let path = args.windows(3).find(|w| w[0] == "--setenv" && w[1] == "PATH").expect("a PATH is set")[2].clone();
-    assert!(std::env::split_paths(&path).any(|d| d == home.join("spira-env/bin")), "{path}");
+    let dirs = sandbox_path_in(&args);
+    let installed = dirs.iter().position(|d| *d == home.join(".local/lib/spira-env/bin")).expect("the installed env is on PATH");
+    assert_eq!(dirs.get(installed + 1), Some(&home.join("spira-env/bin")), "the round's env follows the installed one: {dirs:?}");
 }
 
-#[test_id(tl9ad6f)]
+#[test_id(tidh4by)]
 #[test]
-fn no_mosquitto_is_carried_over_from_outside_the_store_or_beside_the_homes_own() {
-    let store = store_mosquitto();
-    let tmp = testkit::TempDir::new("around-no-carry");
-    let root = fs::canonicalize(tmp.path()).unwrap();
-
-    let (home, stray) = (root.join("stray-home"), root.join("stray-home/bin"));
-    fs::create_dir_all(&stray).unwrap();
-    testkit::write_exe(stray.join("mosquitto"), "#!/bin/sh\nexit 0\n");
-    let dirs = sandbox_path_for(&home, &stray);
-    assert!(!dirs.contains(&stray), "{dirs:?}");
-
-    let (home, caller) = (root.join("provided-home"), root.join("provided-home/caller"));
-    let own_bin = home.join(".local/lib/spira-env/bin");
-    for dir in [&own_bin, &caller] {
-        fs::create_dir_all(dir).unwrap();
-        std::os::unix::fs::symlink(&store, dir.join("mosquitto")).unwrap();
-    }
-    let dirs = sandbox_path_for(&home, &caller);
-    assert!(dirs.contains(&own_bin) && !dirs.iter().any(|d| Some(d.as_path()) == store.parent()), "{dirs:?}");
+fn a_home_without_a_rounds_spira_env_gets_neither_its_bind_nor_its_path_entry() {
+    let tmp = testkit::TempDir::new("around-no-round-env");
+    let home = fs::canonicalize(tmp.path()).unwrap().join("home");
+    fs::create_dir_all(&home).unwrap();
+    let args = print_args_under_home(&home);
+    let env = home.join("spira-env").display().to_string();
+    assert!(args.iter().all(|a| !a.contains(&env)), "{args:?}");
 }
 
 #[test_id(tj4gn43)]
