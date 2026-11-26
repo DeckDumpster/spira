@@ -35,10 +35,21 @@ impl Process {
     }
 
     /// SIGTERM and a clean exit, which is when a persisting broker writes its database.
+    ///
+    /// The signal is repeated until it exits: mosquitto reports ready before its main loop sets
+    /// its run flag, so a SIGTERM landing in between is overwritten and lost.
     pub fn stop_clean(mut self) {
-        // SAFETY: a plain signal(2) to a child this value has not reaped, so the pid is its own.
-        assert_eq!(unsafe { libc::kill(self.0.id() as i32, libc::SIGTERM) }, 0, "signal mosquitto");
-        assert!((self.0).0.wait().expect("wait for mosquitto").success(), "mosquitto did not exit cleanly");
+        let deadline = std::time::Instant::now() + FAILSAFE;
+        let status = loop {
+            if let Some(status) = (self.0).0.try_wait().expect("poll mosquitto") {
+                break status;
+            }
+            assert!(std::time::Instant::now() < deadline, "mosquitto ignored SIGTERM for {FAILSAFE:?}");
+            // SAFETY: a plain signal(2) to a child this value has not reaped, so the pid is its own.
+            assert_eq!(unsafe { libc::kill(self.0.id() as i32, libc::SIGTERM) }, 0, "signal mosquitto");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert!(status.success(), "mosquitto did not exit cleanly: {status}");
     }
 }
 
