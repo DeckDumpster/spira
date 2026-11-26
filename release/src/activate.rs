@@ -127,6 +127,8 @@ pub struct Ctx<'a> {
     pub unit_ensure: &'a dyn Fn(&Config, &str) -> Result<(), String>,
     /// Collects the envs a switch supersedes; `None` collects nothing.
     pub gc: Option<spira_env::Collector<'a>>,
+    /// The publisher `release/active` goes out on, built only once an activation stands.
+    pub publisher: &'a dyn Fn() -> Result<spira_pub::Publisher, spira_pub::PubError>,
 }
 
 /// A standing hotfix: the running system is on a commit that has not landed.
@@ -1371,7 +1373,21 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
     if let Some(e) = late {
         return Err(e);
     }
+    announce(ctx, sha, &out.restarted);
     Ok(out)
+}
+
+const ANNOUNCE_FLUSH: Duration = Duration::from_secs(1);
+
+/// Publishes `release/active` and waits for the broker to take it: the process may exit next.
+/// The activation already stands, so a failure is only said.
+fn announce(ctx: &Ctx, sha: &str, restarted: &[String]) {
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let payload = serde_json::json!({ "sha": sha, "at": at, "restarted": restarted });
+    let sent = (ctx.publisher)().and_then(|p| p.publish("release/active", &payload).and_then(|()| p.flush(ANNOUNCE_FLUSH)));
+    if let Err(e) = sent {
+        eprintln!("release: WARN: {sha} is active; release/active was not published: {e}");
+    }
 }
 
 /// A failed activation leaves its release `rolled_back`, whether or not it got as far as

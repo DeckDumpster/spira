@@ -158,7 +158,17 @@ fn conditions_check(n: i64, run: &Path) -> Result<String, String> {
     let drift = probes::ContentDriftCfg { lc: client()?, slack: getenv_i64("SPIRA_CONTENT_DRIFT_SLACK", 10).max(0) as usize, sustain_secs: getenv_i64("SPIRA_CONTENT_DRIFT_SUSTAIN_SECS", 1800), state: run.join("conditions").join("content-drift.state") };
     conditions::reconcile(n, &ctx, "content-drift", probes::content_drift(&drift));
     ctx.end_pass();
+    watchtower::log::log(&publish_pressure(n, run, Path::new(&cfg.psi_dir)));
     watchtower::host_real::cfg_of(run, getenv("SPIRA_TMP_PROBE_PATH"), getenv("SPIRA_PSI_DIR")).and_then(|c| watchtower::host_real::pass(n as u64, &c, run))
+}
+
+/// This process outlives its passes, so it keeps one publisher: it stays connected and
+/// republishes the recorded band to a broker that comes back.
+fn publish_pressure(n: i64, run: &Path, psi_dir: &Path) -> String {
+    use watchtower::pressure_topic::{run_pass, Pressure};
+    static PRESSURE: std::sync::OnceLock<Result<Pressure, String>> = std::sync::OnceLock::new();
+    let held = PRESSURE.get_or_init(|| Pressure::configured(run).inspect(Pressure::reconnect_recorded));
+    run_pass(held.as_ref(), psi_dir, &spira_config::process::cfg, n.max(0) as u64)
 }
 
 #[cfg(test)]

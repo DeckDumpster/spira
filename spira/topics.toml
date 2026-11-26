@@ -52,19 +52,19 @@ fields = ["at", "tree", "touches_crate"]
 family = "release/active"
 class = "state"
 publisher = "release"
-fields = ["release"]
+fields = ["sha", "at", "restarted"]
 
 [[topic]]
 family = "host/pressure"
 class = "state"
-publisher = "scheduler"
-fields = ["resource", "avg300", "line", "direction"]
+publisher = "watchtower"
+fields = ["cpu", "io", "cpu_over", "io_over", "at"]
 
 [[topic]]
 family = "pr/<repo>/<n>"
 class = "state"
 publisher = "pr-notify"
-fields = ["change"]
+fields = ["state", "sha", "at"]
 
 [[topic]]
 family = "concierge/inbox"

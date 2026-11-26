@@ -25,11 +25,16 @@ name = "conditions_on_store"
 path = "tests/conditions_on_store.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "pressure_topic"
+path = "tests/pressure_topic.rs"
+required-features = ["integration"]
+
 [package.metadata.spira]
 test-bins = ["spira-lc", "spira-config", "testenv"]
 
 [features]
-integration = ["install/integration", "system-paths/integration", "spira-claim/integration", "forge/integration", "reconciler-engine/integration", "spira-desired-state/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-ctrl/integration", "strand/integration", "testkit/integration", "cockpit-ops/integration", "spira-test-id/integration", "testenv/integration", "incident/integration", "release/integration"]
+integration = ["install/integration", "system-paths/integration", "spira-claim/integration", "forge/integration", "reconciler-engine/integration", "spira-desired-state/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-ctrl/integration", "strand/integration", "testkit/integration", "cockpit-ops/integration", "spira-test-id/integration", "testenv/integration", "incident/integration", "release/integration", "spira-pub/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 install = { path = "../install" }
@@ -49,6 +54,7 @@ forge = { path = "../forge" }
 cockpit-ops = { path = "../cockpit/ops" }
 testenv = { path = "../testenv" }
 incident = { path = "../incident" }
+spira-pub = { path = "../spira-pub" }
 
 [lib]
 name = "watchtower"
