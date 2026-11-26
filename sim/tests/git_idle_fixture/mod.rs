@@ -60,6 +60,11 @@ pub fn git(repo: &Path, args: &[&str], at: u64) {
     assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
 }
 
+/// A config the ref files cannot list remotes from, as a checkout with dwarf worktrees has.
+pub fn per_worktree_config(repo: &Path) {
+    git(repo, &["config", "extensions.worktreeConfig", "true"], 1);
+}
+
 pub fn commit(repo: &Path, msg: &str, at: u64) {
     git(repo, &["commit", "-q", "--allow-empty", "-m", msg], at);
 }
@@ -146,9 +151,6 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
     git(&pr, &["remote", "add", "origin", remote.to_str().unwrap()], 1);
     git(&pr, &["push", "-q", "origin", "main"], 1);
     git(&pr, &["fetch", "-q", "origin"], 1);
-    for shared in [&local, &pr] {
-        git(shared, &["config", "extensions.worktreeConfig", "true"], 1);
-    }
 
     let map = dir.join("repos");
     std::fs::write(&map, format!("spira|{}|queue.local|local/main||\nprrepo|{}|pr|origin/main||\n", local.display(), pr.display())).unwrap();

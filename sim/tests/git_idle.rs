@@ -13,6 +13,9 @@ use fixture::*;
 #[test]
 fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_reads() {
     let f = fixture(testkit::env);
+    for shared in [&f.local, &f.pr] {
+        per_worktree_config(shared);
+    }
     spira_config::process::with_fresh(|| {
     assert_traps_and_double_are_live(&f);
     assert_stubs_log(&f);
