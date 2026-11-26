@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use runtime::ports::{Proc, SysProc};
 use runtime::socket::lc_call;
 use spira_config::nonwork::{status_args, Kind, Which};
 use serde_json::Value;
@@ -141,15 +142,19 @@ pub fn pr_snapshot_from(records: &RecordedPrs, targets: &[PrTarget], forge: &For
 
 /// Each queue.local checkout's forge tip, fetched in parallel and best-effort: the measurement
 /// that follows reads local refs and answers from the cached tip when this fails.
-fn refresh_forge_tip(git: &Path, reg: spira_config::repos::Registry, r: &MapRow) {
-    use crate::tasks::a::queue_step::edge::git_with;
+fn refresh_forge_tip(proc: &dyn Proc, git: &Path, reg: spira_config::repos::Registry, r: &MapRow) {
+    use crate::tasks::a::queue_step::edge::git_through;
     let reg = &if git == Path::new("git") { reg } else { reg.with_git(git.to_path_buf()) };
     if let Some((remote, branch)) = spira_config::repos::publish_forge(reg, &r.name, &BTreeMap::new()) {
         if spira_config::repos::landref(reg, &r.name).is_some_and(|base| crate::unpublished::published(Path::new(&r.path), &base, &remote, &branch)) {
             return;
         }
-        let _ = git_with(git, Path::new(&r.path), &["fetch", "--quiet", &remote, &branch], REFRESH_FETCH);
+        let _ = git_through(proc, git, Path::new(&r.path), &["fetch", "--quiet", &remote, &branch], REFRESH_FETCH);
     }
+}
+
+fn forge_refresh(proc: &dyn Proc, reg: Option<spira_config::repos::Registry>) -> impl Fn(&Path, &MapRow) + Sync + '_ {
+    move |git, r| reg.iter().for_each(|reg| refresh_forge_tip(proc, git, reg.clone(), r))
 }
 
 /// Refreshes every queue.local checkout at once, waits for all of them, then measures each.
@@ -1096,8 +1101,7 @@ impl World {
 
     /// Per queue.local repo, how far the forge trails the landing ref, as `spira-lc unpublished` measures it.
     pub fn publish_backlog_snapshot(&self) -> Result<String, String> {
-        let reg = crate::tasks::a::queue_step::edge::registry().ok();
-        self.publish_backlog_through(&|git: &Path, r: &MapRow| reg.iter().for_each(|reg| refresh_forge_tip(git, reg.clone(), r)), &crate::unpublished::measure)
+        self.publish_backlog_through(&forge_refresh(&SysProc, crate::tasks::a::queue_step::edge::registry().ok()), &crate::unpublished::measure)
     }
 
     fn publish_backlog_through(&self, refresh: &(dyn Fn(&Path, &MapRow) + Sync), measure: &dyn Fn(&Path, &str, u64) -> Result<crate::unpublished::Measurement, String>) -> Result<String, String> {
@@ -1834,7 +1838,18 @@ mod last_hold_tests {
 #[cfg(test)]
 mod publish_backlog_tests {
     use super::*;
+    use runtime::ports::{ProcOutput, ProcSpec};
     use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Recording(Mutex<Vec<ProcSpec>>);
+
+    impl Proc for Recording {
+        fn run(&self, spec: &ProcSpec) -> Result<ProcOutput, String> {
+            self.0.lock().unwrap().push(spec.clone());
+            Ok(ProcOutput { code: Some(0), stdout: vec![], stderr: vec![] })
+        }
+    }
 
     fn row(dir: &Path, name: &str, land: &str) -> MapRow {
         let path = dir.join(name);
@@ -1876,6 +1891,27 @@ mod publish_backlog_tests {
         let out = publish_backlog_snapshot_from(&rows, &|r| assert_ne!(r.name, "a", "refresh failed"), &|_| Ok(Some(measured(3)))).unwrap();
         let snap: publish_backlog::Snapshot = serde_json::from_str(&out).unwrap();
         assert_eq!(snap.repos, vec![("a".to_string(), measured(3)), ("b".to_string(), measured(3))]);
+    }
+
+    #[test_id(t8j0xi6)]
+    #[test]
+    fn the_production_refresh_fetches_the_forge_branch_with_the_git_it_was_handed() {
+        let tmp = testkit::TempDir::new("backlog");
+        let alpha = row(tmp.path(), "alpha", "queue.local");
+        let refs = Path::new(&alpha.path).join(".git/refs/heads/local");
+        fs::create_dir_all(&refs).unwrap();
+        fs::write(refs.join("main"), format!("{}\n", "a".repeat(40))).unwrap();
+        let map = format!("alpha|{}|queue.local|local/main||\n", alpha.path);
+        let reg = spira_config::repos::Registry::new(Some(&map), &BTreeMap::new(), tmp.path());
+        let rec = Recording::default();
+        let handed = tmp.path().join("handed-git");
+
+        forge_refresh(&rec, Some(reg))(&handed, &alpha);
+
+        let specs = rec.0.into_inner().unwrap();
+        assert_eq!(specs.len(), 1, "one fetch through the port: {specs:?}");
+        assert_eq!(specs[0].prog, handed.display().to_string(), "the fetch ran the handed git");
+        assert_eq!(specs[0].args, ["-C", alpha.path.as_str(), "fetch", "--quiet", "origin", "main"]);
     }
 
     #[test_id(tpr5txo)]
