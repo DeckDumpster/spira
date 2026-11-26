@@ -11,8 +11,11 @@ pub trait Nix {
     fn add_root(&self, root: &Path, store_path: &Path) -> Result<(), String>;
 }
 
-/// [`Nix`] over a command runner, which is given `nix` or `nix-store` and its arguments.
-pub struct Argv<'a>(pub &'a dyn Fn(&str, &[&str]) -> Result<(), String>);
+/// Runs `nix` or `nix-store` with these arguments.
+pub type Runner<'a> = &'a dyn Fn(&str, &[&str]) -> Result<(), String>;
+
+/// [`Nix`] over a command runner.
+pub struct Argv<'a>(pub Runner<'a>);
 
 impl Nix for Argv<'_> {
     fn build(&self, target: &str, out: &Path) -> Result<(), String> {
