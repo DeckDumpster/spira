@@ -97,3 +97,16 @@ fn cpu_some_pressure_over_its_line_is_published_though_cpu_full_is_zero() {
     run_pass(Ok(&p), d.path(), &cfg, 100);
     assert_eq!(held(&broker), [serde_json::json!({"cpu": 25.0, "io": 0.0, "cpu_over": true, "io_over": false, "at": 100})]);
 }
+
+#[test_id(t3365zq)]
+#[test]
+fn a_psi_file_without_the_line_its_resource_is_judged_on_is_refused_naming_it() {
+    let (broker, d) = (Broker::up(), TempDir::new("psi"));
+    let p = pressure(&broker, d.path());
+    for (resource, line, other) in [("cpu", "some", "full"), ("io", "full", "some")] {
+        psi(d.path(), "1.00", "1.00");
+        std::fs::write(d.path().join(resource), format!("{other} avg300=1.00 total=0\n")).unwrap();
+        let e = p.pass(d.path(), &LINES, 100).unwrap_err();
+        assert!(e.ends_with(&format!("{resource} has no {line} avg300")), "{e}");
+    }
+}
