@@ -2926,7 +2926,8 @@ mod tests {
     #[test_id(tfh9r32)]
     #[test]
     fn a_blocked_call_without_its_class_or_basis_is_refused_before_anything_is_sent() {
-        let _env = testkit::env(&[("SPIRA_MAIL_SH", Some("/nonexistent/mail"))]);
+        let dir = testkit::TempDir::new("blocked-no-mail");
+        let _env = testkit::env(&[("SPIRA_MAIL_SH", Some(&dir.path().join("mail").to_string_lossy()))]);
         let base = ["Has the Control run passed?", "--default", "wait for it", "--actor", "builder"];
         for extra in [&[][..], &["--class", "policy"], &["--class-basis", "it is policy"], &["--class", "", "--class-basis", "it is policy"], &["--class", "policy", "--class-basis", " "]] {
             let args: Vec<String> = base.iter().chain(extra).map(|a| a.to_string()).collect();
