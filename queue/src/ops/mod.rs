@@ -278,13 +278,18 @@ pub fn lock_held_by_caller(w: &World) -> bool {
     w.env.var("SPIRA_QUEUE_LOCK_HELD").as_deref() == Some("1")
 }
 
+/// A Concierge claim binds every actor but the Concierge.
+pub fn concierge_claimed(owner: &str, actor: &str) -> bool {
+    owner == "concierge" && actor != "concierge"
+}
+
 /// queue_owner_refused: refused (message printed) when the batch is concierge-owned and
 /// the actor is not the concierge, unless SPIRA_QUEUE_OWNER_OVERRIDE=1.
 pub fn owner_refused(w: &World, owner: &str, actor: &str, label: &str) -> bool {
     if w.env.var("SPIRA_QUEUE_OWNER_OVERRIDE").as_deref() == Some("1") {
         return false;
     }
-    if owner != "concierge" || actor == "concierge" {
+    if !concierge_claimed(owner, actor) {
         return false;
     }
     w.err(format!("{label}: refused — this batch is claimed by concierge; override with SPIRA_QUEUE_OWNER_OVERRIDE=1"));
