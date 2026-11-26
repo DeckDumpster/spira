@@ -233,9 +233,14 @@ fn print_args_for_a_command_is_what_the_landing_ref_printed_but_for_the_environm
             }
             args.retain(|a| a != "--clearenv");
         }
-        // The carried-over broker directory is absent from a landing ref's runner that predates it.
+        let home = fs::canonicalize(std::env::var_os("HOME").unwrap()).unwrap().display().to_string();
+        let round_env = format!("{home}/spira-env");
+        if let Some(i) = args.windows(3).position(|w| w[0] == "--ro-bind" && w[1] == round_env && w[2] == round_env) {
+            args.drain(i..i + 3);
+        }
+        // A landing ref's runner may carry over a broker directory, or print no round env.
         if let Some(i) = args.windows(3).position(|w| w[0] == "--setenv" && w[1] == "PATH") {
-            let kept: Vec<&str> = args[i + 2].split(':').filter(|d| !d.contains("-mosquitto-")).collect();
+            let kept: Vec<&str> = args[i + 2].split(':').filter(|d| !d.contains("-mosquitto-") && *d != format!("{round_env}/bin")).collect();
             args[i + 2] = kept.join(":");
         }
         args
@@ -369,18 +374,32 @@ fn sandbox_path_for(home: &Path, caller_dir: &Path) -> Vec<PathBuf> {
     std::env::split_paths(path).collect()
 }
 
-#[test_id(trg288p)]
+#[test_id(tdu6g7u)]
 #[test]
-fn a_rounds_own_spira_env_keeps_its_mosquitto_on_the_sandbox_path_and_no_other_tool_of_it() {
-    let store = store_mosquitto();
+fn a_rounds_spira_env_is_bound_back_over_the_hidden_home_and_its_bin_is_on_the_sandbox_path() {
     let tmp = testkit::TempDir::new("around-round-env");
-    let home = fs::canonicalize(tmp.path()).unwrap().join("home");
-    let env_bin = home.join("spira-env/bin");
-    fs::create_dir_all(&env_bin).unwrap();
-    std::os::unix::fs::symlink(&store, env_bin.join("mosquitto")).unwrap();
-    let dirs = sandbox_path_for(&home, &env_bin);
-    assert_eq!(dirs.last().map(PathBuf::as_path), store.parent(), "{dirs:?}");
-    assert!(!dirs.contains(&env_bin), "{dirs:?}");
+    let root = fs::canonicalize(tmp.path()).unwrap();
+    let (home, store_env) = (root.join("home"), root.join("store-env"));
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(store_env.join("bin")).unwrap();
+    testkit::write_exe(store_env.join("bin/dolt"), "#!/bin/sh\nexit 0\n");
+    std::os::unix::fs::symlink(&store_env, home.join("spira-env")).unwrap();
+    let out = std::process::Command::new(workspace().join("tools/test-sandbox/runner"))
+        .args(["--print-args", "--around", system_paths::USR_BIN_TRUE])
+        .env_clear()
+        .env("PATH", format!("{}:{}", system_paths::USR_BIN, system_paths::BIN))
+        .env("HOME", &home)
+        .output()
+        .expect("the runner spawns");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let args: Vec<String> = String::from_utf8(out.stdout).unwrap().lines().map(String::from).collect();
+    let hidden = home.display().to_string();
+    let shadow = args.windows(2).position(|w| w[0] == "--tmpfs" && w[1] == hidden).expect("the home is shadowed");
+    let env = format!("{hidden}/spira-env");
+    let at = args.windows(3).position(|w| w[0] == "--ro-bind" && w[1] == env && w[2] == env);
+    assert!(at.is_some_and(|at| at > shadow), "{env} is not bound back over the hidden home: {args:?}");
+    let path = args.windows(3).find(|w| w[0] == "--setenv" && w[1] == "PATH").expect("a PATH is set")[2].clone();
+    assert!(std::env::split_paths(&path).any(|d| d == home.join("spira-env/bin")), "{path}");
 }
 
 #[test_id(tl9ad6f)]

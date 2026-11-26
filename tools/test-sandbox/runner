@@ -6,13 +6,14 @@
 #   runner --print-args --around CMD [ARGS...]  the bwrap command line, one argument per line
 #
 # The policy is testenv's sandbox unit runner's (testenv/src/sandbox.rs, Profile::bwrap_args):
-# read-only root; tmpfs /tmp, /run and home; the toolchain bound back; the workspace and
-# CARGO_TARGET_DIR writable; the environment cleared to an allow-list, applied once to CMD; no
-# network. It adds one writable bind per target/<d> link destination and binds cargo-config.toml,
-# which is .cargo/config.toml without its target runner, over the workspace's, so cargo inside
-# resolves no runner. Every directory the home already holds comes back empty and writable, so a
-# write to the install lands in tmpfs and never on disk. It differs in hiding both $HOME and the
-# passwd entry's home.
+# read-only root; tmpfs /tmp, /run and home; the toolchain bound back; spira-env, both the
+# installed ~/.local/lib/spira-env and a round's $HOME/spira-env, bound back read-only with its
+# bin on PATH; the workspace and CARGO_TARGET_DIR writable; the environment cleared to an
+# allow-list, applied once to CMD; no network. It adds one writable bind per target/<d> link
+# destination and binds cargo-config.toml, which is .cargo/config.toml without its target runner,
+# over the workspace's, so cargo inside resolves no runner. Every directory the home already
+# holds comes back empty and writable, so a write to the install lands in tmpfs and never on
+# disk. It differs in hiding both $HOME and the passwd entry's home.
 #
 # Called as cargo's target runner (the overlay missing) it refuses every test binary: one is never
 # sandboxed alone. Only a `cargo run` artifact, which is no test, runs as it is. No fallback: without an executable bwrap it refuses and runs nothing.
@@ -82,15 +83,10 @@ cmd="$(command -v -- "$1")" && [ "${cmd#/}" != "$cmd" ] && [ -x "$cmd" ] && [ ! 
 shift
 set -- "$cmd" "$@"
 
-path="$home/.local/lib/spira-env/bin:${CARGO_HOME:+$CARGO_HOME/bin:}/usr/local/bin:/usr/bin:/bin"
+round_bin=""; [ -d "$home/spira-env/bin" ] && round_bin="$home/spira-env/bin:"
+path="$home/.local/lib/spira-env/bin:$round_bin${CARGO_HOME:+$CARGO_HOME/bin:}/usr/local/bin:/usr/bin:/bin"
 [ -n "${CARGO:-}" ] && path="${CARGO%/*}:$path"
 path="${1%/*}:$path"
-# A round's spira-env is not under the home, so its broker's store directory is carried over,
-# last and alone: the sandbox's read-only root already holds the store.
-if [ ! -x "$home/.local/lib/spira-env/bin/mosquitto" ] && broker="$(command -v mosquitto)" &&
-    broker="$(readlink -f -- "$broker")" && [[ $broker == /nix/store/* ]]; then
-    path="$path:${broker%/*}"
-fi
 
 here="${BASH_SOURCE[0]}"; case "$here" in */*) here="${here%/*}" ;; *) here=. ;; esac
 physdir "$here" || die "cannot resolve the runner's own directory"
@@ -190,6 +186,7 @@ if [ -z "${RUSTUP_HOME:-}" ]; then
 fi
 t="$(toolchain_of "$1")" && [ "$t" != "$cargo_home" ] && ro+=("$t")
 ro+=("$home/.local/lib/spira-env")
+ro+=("$home/spira-env")
 prev=""
 for w in "$@"; do
     # bwrap binds a destination path as given, so a relative one is made absolute first.
