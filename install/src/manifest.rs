@@ -76,7 +76,7 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     // that drops one retires it from a host that has it (`install_units::retire_dropped_units`).
     // What remains is the scheduler, its outside watchdog, the store and its door, the sources
     // the scheduler does not yet host, the clients (loom, the pane, the metrics stack) and the
-    // Concierge's own timers.
+    // Concierge's own service.
     // spira-watch@.service is the template, not an installed unit — never enabled directly.
     m.units.push(t("spira-watch@.service", false));
     m.units.push(t("cockpit-ensure.service", false));
