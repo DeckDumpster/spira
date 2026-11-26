@@ -1061,6 +1061,12 @@ if [ -n "$lint" ] && { [ "${lint_rc:-0}" -ne 0 ] || [ -n "$fence_fail" ]; }; the
     kill "$sampler_pid" 2>/dev/null
     exit 1
 fi
+write_round_nextest_config() {
+    local secs periods tsecs tperiods
+    secs="$(target/release/spira-config get spira.unit_test_deadline_secs)" && periods="$(target/release/spira-config get spira.unit_test_deadline_periods)" || { echo "round-vm: cannot read the unit-test deadline (spira.unit_test_deadline_secs, spira.unit_test_deadline_periods) from the round's config" >&2; exit 2; }
+    tsecs="$(target/release/spira-config get spira.integration_test_deadline_secs)" && tperiods="$(target/release/spira-config get spira.integration_test_deadline_periods)" || { echo "round-vm: cannot read the tests/ deadline (spira.integration_test_deadline_secs, spira.integration_test_deadline_periods) from the round's config" >&2; exit 2; }
+    write_unit_nextest_config "$secs" "$periods" "$tsecs" "$tperiods" "$HOME/round-nextest.toml" "$deny_filter_line"
+}
 # THE WORKSPACE'S OWN TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo), in the
 # standard two phases (sp-cddf76). UNIT FIRST: the tests inside src/ (--lib --bins) run to the end
 # BEFORE any suite. They are the cheapest red the round can find, so a red there ends the pass:
@@ -1101,12 +1107,6 @@ phase unit-tests
 rdir="$HOME/round-work/.runtime/spira/batch-results"
 write_unit_timings() {
     { echo "unit_build_secs $unit_build_secs"; echo "unit_secs $unit_secs"; grep -E '"#, spira_config::unit_tier_timing_lines!(), r#"' ~/round-unit-tests.log; } > "$rdir/unit-timings" || true
-}
-write_round_nextest_config() {
-    local secs periods tsecs tperiods
-    secs="$(target/release/spira-config get spira.unit_test_deadline_secs)" && periods="$(target/release/spira-config get spira.unit_test_deadline_periods)" || { echo "round-vm: cannot read the unit-test deadline (spira.unit_test_deadline_secs, spira.unit_test_deadline_periods) from the round's config" >&2; exit 2; }
-    tsecs="$(target/release/spira-config get spira.integration_test_deadline_secs)" && tperiods="$(target/release/spira-config get spira.integration_test_deadline_periods)" || { echo "round-vm: cannot read the tests/ deadline (spira.integration_test_deadline_secs, spira.integration_test_deadline_periods) from the round's config" >&2; exit 2; }
-    write_unit_nextest_config "$secs" "$periods" "$tsecs" "$tperiods" "$HOME/round-nextest.toml" "$deny_filter_line"
 }
 # One line per `test:` row of the deny list ($1) saying whether nextest ($2) reported a test ending `::<id>` skipped.
 unit_registry_skips() {
@@ -5068,6 +5068,38 @@ mod tests {
             .unwrap();
         assert!(ok.success());
         assert_eq!(std::fs::read_to_string(out).unwrap(), spira_config::unit_tier::nextest_config((7, 3), (11, 4), &deny));
+    }
+
+    #[test_id(t319hcz)]
+    #[test]
+    fn the_round_config_writer_is_defined_before_the_script_first_calls_it() {
+        let defined = REMOTE_SCRIPT.find("\nwrite_round_nextest_config() {").expect("defined");
+        let called = REMOTE_SCRIPT.match_indices("write_round_nextest_config\n").map(|(i, _)| i).next().expect("called");
+        assert!(defined < called, "bash runs top down: the ONLY integration-tests step calls it first");
+    }
+
+    #[test_id(ta7a5ym)]
+    #[test]
+    fn each_round_deadline_comes_from_its_own_config_key_and_an_unreadable_tests_key_refuses() {
+        let d = crate::testutil::TempDir::new();
+        std::fs::create_dir_all(d.path().join("target/release")).unwrap();
+        testkit::write_exe(
+            d.path().join("target/release/spira-config"),
+            "#!/bin/sh\n[ \"$2\" != \"$FAIL_KEY\" ] || exit 1\ncase \"$2\" in\nspira.unit_test_deadline_secs) echo 7 ;;\nspira.unit_test_deadline_periods) echo 3 ;;\nspira.integration_test_deadline_secs) echo 11 ;;\nspira.integration_test_deadline_periods) echo 4 ;;\n*) exit 1 ;;\nesac\n",
+        );
+        let body = format!("{}{}write_round_nextest_config", script_fn("write_unit_nextest_config"), script_fn("write_round_nextest_config"));
+        let run = |fail: &str| {
+            std::process::Command::new("bash").args(["-c", &body]).current_dir(d.path()).env("HOME", d.path()).env("FAIL_KEY", fail).env("deny_filter_line", "").output().unwrap()
+        };
+        assert!(run("").status.success());
+        let written = std::fs::read_to_string(d.path().join("round-nextest.toml")).unwrap();
+        assert_eq!(written, spira_config::unit_tier::nextest_config((7, 3), (11, 4), &Default::default()));
+        for key in ["spira.integration_test_deadline_secs", "spira.integration_test_deadline_periods"] {
+            let out = run(key);
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(out.status.code(), Some(2), "{key}: {err}");
+            assert!(err.contains("spira.integration_test_deadline_secs") && err.contains("spira.integration_test_deadline_periods"), "{err}");
+        }
     }
 
     /// A rerun checks the survivors' tree out over `round-work`, so layers that name files
