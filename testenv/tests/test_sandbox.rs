@@ -451,3 +451,28 @@ fn print_args_prints_the_command_line_and_never_runs_the_binary() {
     assert!(out.status.success() && String::from_utf8_lossy(&out.stdout).contains("bwrap"));
     assert!(!marker.exists());
 }
+
+#[test_id(tkt2rbj)]
+#[test]
+fn the_built_testenv_supervisor_records_who_signalled_it_and_passes_the_signal_on() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    let dir = testkit::TempDir::new("supervise-record");
+    let record = dir.path().join("rec");
+    let mut sup = Command::new(env!("CARGO_BIN_EXE_testenv"))
+        .args(["sandbox-supervise"])
+        .arg(&record)
+        .args(["sh", "-c", "echo ready; exec sleep 29.5"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut ready = String::new();
+    BufReader::new(sup.stdout.take().unwrap()).read_line(&mut ready).unwrap();
+    assert_eq!(ready.trim(), "ready");
+    let mut killer = Command::new("kill").args(["-TERM", &sup.id().to_string()]).spawn().unwrap();
+    let status = sup.wait().unwrap();
+    let text = fs::read_to_string(&record).unwrap();
+    assert!(text.starts_with(&format!("testenv: stopped from outside: sig=15 from pid={} cmd=", killer.id())), "{text}");
+    assert_eq!(status.code(), Some(143));
+    killer.wait().unwrap();
+}

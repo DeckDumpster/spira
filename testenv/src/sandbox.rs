@@ -395,9 +395,17 @@ impl Stopped {
     }
 }
 
-/// The first stop the supervisor recorded in a run's output.
-fn stopped_in(out: &Path) -> Option<Stopped> {
-    let file = fs::File::open(out).ok()?;
+/// Where the supervisor records a stop for the run whose output is `out`: a file the sandbox
+/// cannot write, so nothing the tests print passes for a sender.
+fn stop_file(out: &Path) -> PathBuf {
+    let mut p = out.as_os_str().to_owned();
+    p.push(".stopped");
+    PathBuf::from(p)
+}
+
+/// The first stop the supervisor recorded.
+fn stopped_in(stop_file: &Path) -> Option<Stopped> {
+    let file = fs::File::open(stop_file).ok()?;
     std::io::BufReader::new(file).split(b'\n').flatten().find_map(|l| Stopped::parse(&String::from_utf8_lossy(&l)))
 }
 
@@ -419,7 +427,7 @@ fn sender(sig: i32, pid: u32) -> Stopped {
     if pid == 0 {
         return Stopped { sig, by_pid: None, cmd: "?".into(), cgroup: "?".into() };
     }
-    let cmd = proc_text(pid, "cmdline").or_else(|| proc_text(pid, "comm").map(|c| format!("[{c}]"))).unwrap_or_else(|| "?".into());
+    let cmd = crate::cap::argv_of(pid).map(|a| a.join(" ")).filter(|c| !c.is_empty()).map(|c| c.replace('\n', " ")).or_else(|| proc_text(pid, "comm").map(|c| format!("[{c}]"))).unwrap_or_else(|| "?".into());
     let cgroup = fs::read_to_string(proc_path(pid, "cgroup"))
         .ok()
         .and_then(|t| t.lines().find_map(|l| l.strip_prefix("0::")).map(|p| p.trim().to_string()))
@@ -430,11 +438,11 @@ fn sender(sig: i32, pid: u32) -> Stopped {
 /// The supervisor: runs `argv` as its child and sits on the host as the head of the run's process
 /// group. A TERM, INT or HUP is read with its sender (`si_pid`, which only a process on the
 /// sender's own side of the sandbox's PID namespace can name), written to stderr as one
-/// [`Stopped`] line, and passed on to the child. Returns the child's exit code, 128+n for a signal.
+/// [`Stopped`] line (also appended to the record file `argv[0]`), and passed on to the child. Returns the child's exit code, 128+n for a signal.
 pub fn supervise(argv: &[String]) -> i32 {
     use std::os::unix::process::ExitStatusExt;
-    let Some((program, args)) = argv.split_first() else {
-        eprintln!("testenv: {SUPERVISE_ARG} needs a command");
+    let [record, program, args @ ..] = argv else {
+        eprintln!("testenv: {SUPERVISE_ARG} needs a record file and a command");
         return 2;
     };
     let wanted = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP, libc::SIGCHLD];
@@ -479,7 +487,11 @@ pub fn supervise(argv: &[String]) -> i32 {
         };
         if let Some((sig, pid)) = sig {
             use std::io::Write;
-            let _ = writeln!(std::io::stderr(), "{}", sender(sig, pid).line());
+            let line = sender(sig, pid).line();
+            let _ = writeln!(std::io::stderr(), "{line}");
+            if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(record) {
+                let _ = writeln!(f, "{line}");
+            }
             // SAFETY: signals the child this function spawned.
             unsafe { libc::kill(child.id() as i32, sig) };
         }
@@ -534,8 +546,10 @@ pub fn run(bwrap: &str, profile: &Profile, script: &Path, out: &Path, deadline: 
     let err = log.try_clone().map_err(|e| e.to_string())?;
     let started = Instant::now();
     // batch-job: the unit tier of a testenv trial, cut at the trial's deadline below
+    let record = stop_file(out);
+    let _ = fs::remove_file(&record);
     let mut cmd = supervisor_command()?;
-    cmd.arg(bwrap).args(profile.bwrap_args()).arg("--").arg("bash").arg(script).stdin(Stdio::null()).stdout(log).stderr(err).process_group(0);
+    cmd.arg(&record).arg(bwrap).args(profile.bwrap_args()).arg("--").arg("bash").arg(script).stdin(Stdio::null()).stdout(log).stderr(err).process_group(0);
     // SAFETY: only prctl, which is async-signal-safe, between fork and exec: the supervisor
     // dies with testenv, and the sandbox with it.
     unsafe {
@@ -547,8 +561,13 @@ pub fn run(bwrap: &str, profile: &Profile, script: &Path, out: &Path, deadline: 
     let mut child = cmd.spawn().map_err(|e| format!("cannot start {bwrap}: {e}"))?;
     loop {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-            let stopped = if status.code() == Some(0) { None } else { stopped_in(out) };
+            let stopped = if status.code() == Some(0) { None } else { stopped_in(&record) };
             return Ok(Ran { rc: status.code(), secs: started.elapsed().as_secs(), timed_out: false, stopped });
+        }
+        if crate::runtime::cancelled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(Ran { rc: None, secs: started.elapsed().as_secs(), timed_out: false, stopped: None });
         }
         if deadline.is_some_and(|d| started.elapsed() >= d) {
             let _ = child.kill();
@@ -859,7 +878,7 @@ mod tests {
             let head = all.iter().find(|p| {
                 let stat = proc_field(p, "stat");
                 let pgrp = stat.rsplit_once(')').and_then(|(_, r)| r.split_whitespace().nth(2).map(str::to_string));
-                sleeping && pgrp.as_deref() == Some(p.as_str()) && proc_field(p, "cmdline").split(' ').skip(1).take(2).collect::<Vec<_>>() == ["--", "bwrap"]
+                sleeping && pgrp.as_deref() == Some(p.as_str()) && proc_field(p, "cmdline").split(' ').skip(1).step_by(2).take(2).collect::<Vec<_>>() == ["--", "bwrap"]
             });
             if let Some(h) = head {
                 break h.clone();
