@@ -121,11 +121,7 @@ pub fn cache_dir() -> Result<PathBuf, String> {
 
 /// nix, from `$SPIRA_NIX_PROFILE_BIN`; a missing key is refused by name.
 pub fn nix_bin() -> Result<PathBuf, String> {
-    let dir = spira_config::process::cfg("SPIRA_NIX_PROFILE_BIN")?;
-    if dir.is_empty() {
-        return Err("SPIRA_NIX_PROFILE_BIN is not set; `work checks` cannot find nix".into());
-    }
-    Ok(Path::new(&dir).join("nix"))
+    spira_config::process::nix_profile_program("nix")
 }
 
 #[cfg(test)]

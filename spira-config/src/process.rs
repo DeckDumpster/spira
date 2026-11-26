@@ -289,6 +289,19 @@ pub fn fixture_metrics_env(dir: &std::path::Path, endpoint: &str, declare: &[(&s
     vec![("SPIRA_TOML", toml.display().to_string()), ("SPIRA_HOME", home.display().to_string())]
 }
 
+/// The nix program `prog` in `$SPIRA_NIX_PROFILE_BIN`; an unset key is refused by name.
+pub fn nix_profile_program(prog: &str) -> Result<std::path::PathBuf, String> {
+    in_nix_profile(cfg("SPIRA_NIX_PROFILE_BIN"), prog)
+}
+
+fn in_nix_profile(dir: Result<String, String>, prog: &str) -> Result<std::path::PathBuf, String> {
+    let dir = dir?;
+    if dir.is_empty() {
+        return Err(format!("SPIRA_NIX_PROFILE_BIN is not set; cannot find {prog}"));
+    }
+    Ok(std::path::Path::new(&dir).join(prog))
+}
+
 /// The read-only database user's secret file, kept beside the service user's: `<file>-ro`.
 /// Empty when the service credential is unnamed.
 pub fn ro_credential(service_file: &str) -> String {
@@ -303,3 +316,6 @@ mod ro_credential_tests;
 
 #[cfg(test)]
 mod declared_value_tests;
+
+#[cfg(test)]
+mod nix_profile_tests;

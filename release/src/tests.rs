@@ -2334,6 +2334,8 @@ struct FakeNix {
     current: PathBuf,
     fails: Option<&'static str>,
     root_fails: bool,
+    /// A failing root also leaves the env link impossible to repoint.
+    restore_blocked: Option<PathBuf>,
     log: RefCell<Vec<NixCall>>,
 }
 
@@ -2364,6 +2366,10 @@ impl spira_env::Nix for FakeNix {
     }
     fn add_root(&self, root: &Path, store_path: &Path) -> Result<(), String> {
         self.log.borrow_mut().push(NixCall::AddRoot { root: root.into(), store_path: store_path.into() });
+        if let Some(link) = &self.restore_blocked {
+            // A directory where the atomic swap writes its temporary link.
+            fs::create_dir_all(link.with_file_name(format!(".spira-env.new.{}", std::process::id()))).unwrap();
+        }
         if self.root_fails {
             return Err("no root".into());
         }
@@ -2546,4 +2552,54 @@ fn an_activation_that_cannot_move_current_puts_the_env_back() {
     assert!(e.contains("cannot swap") && !e.contains("UNDO INCOMPLETE"), "{e}");
     assert_eq!(fs::canonicalize(env_link(&w)).unwrap(), before);
     assert_eq!(fs::read_to_string(w.cfg.unit_dir.join("spira-tool-prod.service")).unwrap(), OLD_UNIT);
+}
+
+#[test_id(tdhmlwl)]
+#[test]
+fn a_refusal_whose_env_link_could_not_be_put_back_does_not_say_nothing_changed() {
+    let w = world_activating_a_flake_release();
+    installed_env(&w, "old-env");
+    let nix = FakeNix { root_fails: true, restore_blocked: Some(env_link(&w)), ..FakeNix::watching(&w) };
+    let e = activate_with_nix(&w, &FakeSystemctl::new(w.cfg.unit_dir.clone()), &nix).unwrap_err();
+    assert!(e.contains("the env link still names") && !e.contains("nothing changed"), "{e}");
+    assert_eq!(fs::read_link(env_link(&w)).unwrap(), nix.store_path(A));
+}
+
+#[test_id(t7zr92b)]
+#[test]
+fn an_activation_that_cannot_write_a_unit_puts_the_env_back() {
+    let w = world_activating_a_flake_release();
+    let before = installed_env(&w, "old-env");
+    fs::create_dir_all(w.cfg.unit_dir.join("spira-tool-prod.service.new")).unwrap();
+    let e = activate_with_nix(&w, &FakeSystemctl::new(w.cfg.unit_dir.clone()), &FakeNix::watching(&w)).unwrap_err();
+    assert!(e.contains("cannot write") && !e.contains("UNDO INCOMPLETE"), "{e}");
+    assert_eq!(fs::canonicalize(env_link(&w)).unwrap(), before);
+    assert!(!w.cfg.releases.join("current").exists());
+}
+
+#[test_id(tolvf7h)]
+#[test]
+fn the_nix_commands_build_to_the_link_and_root_the_old_env_indirectly() {
+    let calls = RefCell::new(Vec::new());
+    let run = |prog: &str, args: &[&str]| {
+        calls.borrow_mut().push(format!("{prog} {}", args.join(" ")));
+        Ok(())
+    };
+    let nix = spira_env::Argv(&run);
+    spira_env::Nix::build(&nix, "path:r#spira-env", Path::new("h/env")).unwrap();
+    spira_env::Nix::add_root(&nix, Path::new("h/env.prev"), Path::new("store/old")).unwrap();
+    assert_eq!(*calls.borrow(), [
+        "nix --extra-experimental-features nix-command flakes build path:r#spira-env -o h/env",
+        "nix-store --add-root h/env.prev --indirect --realise store/old",
+    ]);
+}
+
+#[test_id(tvkix2p)]
+#[test]
+fn a_failed_nix_run_reports_what_nix_wrote_to_stderr() {
+    use std::os::unix::process::ExitStatusExt;
+    let said = |code: i32| std::process::Output { status: std::process::ExitStatus::from_raw(code << 8), stdout: vec![], stderr: b"error: attribute 'spira-env' missing\n".to_vec() };
+    assert_eq!(spira_env::verdict(Path::new("p/nix"), &said(0)), Ok(()));
+    let e = spira_env::verdict(Path::new("p/nix"), &said(1)).unwrap_err();
+    assert!(e.contains("p/nix failed") && e.contains("attribute 'spira-env' missing"), "{e}");
 }

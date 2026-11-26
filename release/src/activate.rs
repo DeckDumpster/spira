@@ -333,7 +333,13 @@ fn build_env(ctx: &Ctx, rel: &Path, sha: &str) -> Result<Option<spira_env::Built
         return Ok(None);
     }
     let home = ctx.cfg.home()?;
-    let built = spira_env::build(ctx.nix, rel, &home).map_err(|e| format!("cannot build spira-env from {sha}: {e}; nothing changed"))?;
+    let link = home.join(spira_config::SPIRA_ENV_REL);
+    let held = fs::canonicalize(&link).ok();
+    let built = spira_env::build(ctx.nix, rel, &home).map_err(|e| {
+        // Claimed only when true: a root that failed may also have failed to put the link back.
+        let unchanged = if fs::canonicalize(&link).ok() == held { "; nothing changed" } else { "" };
+        format!("cannot build spira-env from {sha}: {e}{unchanged}")
+    })?;
     match &built.before {
         Some(before) if *before == built.after => eprintln!("release: spira-env unchanged ({})", built.after.display()),
         before => eprintln!("release: spira-env {} -> {}", before.as_deref().map_or("(none)".into(), |b| b.display().to_string()), built.after.display()),

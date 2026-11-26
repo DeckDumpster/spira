@@ -3,7 +3,7 @@
 
 use crate::fsutil;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 pub trait Nix {
     /// Builds `target` and links the result at `out`; `out` is untouched when the build fails.
@@ -39,13 +39,14 @@ impl Nix for RealNix {
 }
 
 fn run_from_profile(prog: &str, args: &[&str]) -> Result<(), String> {
-    let dir = spira_config::process::cfg("SPIRA_NIX_PROFILE_BIN")?;
-    if dir.is_empty() {
-        return Err(format!("SPIRA_NIX_PROFILE_BIN is not set; cannot find {prog}"));
-    }
-    let bin = Path::new(&dir).join(prog);
+    let bin = spira_config::process::nix_profile_program(prog)?;
     // batch-job: nix build of the release's tool env
     let out = Command::new(&bin).args(args).output().map_err(|e| format!("cannot run {}: {e}", bin.display()))?;
+    verdict(&bin, &out)
+}
+
+/// A failed run carries nix's own words: they are all that says why the env did not build.
+pub(crate) fn verdict(bin: &Path, out: &Output) -> Result<(), String> {
     if out.status.success() {
         return Ok(());
     }
