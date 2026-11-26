@@ -30,4 +30,13 @@ mod object_tests {
         let actual: String = Sha256::digest(source).iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(actual, recorded, "bpf/proc_starts.bpf.c changed without its object: run proc-starts/bpf/regen.sh and commit both");
     }
+
+    #[test_id(ttw13gi)]
+    #[test]
+    fn committed_bpf_object_carries_the_programs_and_maps() {
+        let object = include_bytes!("../bpf/proc_starts.bpf.o");
+        for name in ["tp_btf/sched_process_fork", "tp_btf/sched_process_exec", "tp_btf/sched_process_exit", "tp_btf/cgroup_mkdir", "pending", "starts", "threads", "names", "cost", "dropped"] {
+            assert!(object.windows(name.len()).any(|w| w == name.as_bytes()), "{name} missing from the committed object: run proc-starts/bpf/regen.sh");
+        }
+    }
 }
