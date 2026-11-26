@@ -168,9 +168,9 @@ fn resolve_process(
         .filter(|p| !p.is_empty())
         .ok_or_else(|| "SPIRA_TOML is not set — it names the one source of config (a file, or base:override); refusing".to_string())?;
     let toml_path = std::path::PathBuf::from(spec);
-    let doc = Some(crate::load(&toml_path)?);
+    let registry = registry::for_home(home)?;
+    let doc = Some(crate::load_with(&toml_path, registry)?);
     let conf_d = default_conf_d(home);
-    let registry = registry::for_process()?;
     resolve_checked(ResolveInput {
         env,
         home,
@@ -231,7 +231,10 @@ pub fn declared_run_dir(env: &BTreeMap<String, String>) -> Result<PathBuf, Strin
         .get("SPIRA_TOML")
         .filter(|p| !p.is_empty())
         .ok_or_else(|| "SPIRA_TOML is not set — it names the one source of config (a file, or base:override); refusing".to_string())?;
-    let doc = crate::load(Path::new(spec)).map_err(|e| format!("cannot resolve spira.run: {e}"))?;
+    let doc = locate_home(env, Path::new(""))
+        .and_then(|home| registry::for_home(&home))
+        .and_then(|reg| crate::load_with(Path::new(spec), reg))
+        .map_err(|e| format!("cannot resolve spira.run: {e}"))?;
     let map = toml_key_map(&doc);
     let declared = |key: &str| map.get(key).cloned().ok_or_else(|| undeclared(key));
     let run = declared("SPIRA_RUN")?;

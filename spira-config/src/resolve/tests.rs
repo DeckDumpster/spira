@@ -156,6 +156,45 @@
         resolve_with_defaults(ResolveInput { env: e, home: &home, repo, toml: Some(doc), conf_d: &shipped_conf_d() }).unwrap()
     }
 
+    #[test_id(tt2vd9w)]
+    #[test]
+    fn a_key_only_the_handed_homes_registry_declares_is_resolved() {
+        let ws = testkit::TempDir::new("spira-config-handed-home");
+        let home = crate::process::fixture_registry_home(ws.path());
+        std::fs::write(
+            home.join("conf.d/SPIRA_HANDED_HOME_PROBE"),
+            "TYPE=string\nGROUP=test\nDOC=a key no other registry has\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n: \"${SPIRA_HANDED_HOME_PROBE:=}\"\nSPIRA_CONF_DEFAULT_EOF\n",
+        )
+        .unwrap();
+        let toml = crate::fixture_toml_file(ws.path(), &env(&[]));
+        // Edited as text: `set_path` consults the process registry and would drop the field.
+        let text = std::fs::read_to_string(&toml).unwrap();
+        let edited = text.replacen("[spira]\n", "[spira]\nhanded_home_probe = \"from-the-handed-home\"\n", 1);
+        assert_ne!(edited, text, "the fixture has a [spira] table to add to");
+        std::fs::write(&toml, edited).unwrap();
+
+        let e = env(&[("HOME", "h"), ("SPIRA_TOML", toml.to_str().unwrap())]);
+        let resolved = resolve_for_process(&home, home.parent().unwrap(), &e).unwrap();
+        assert_eq!(resolved.values.get("SPIRA_HANDED_HOME_PROBE").map(String::as_str), Some("from-the-handed-home"));
+    }
+
+    #[test_id(tf89zy9)]
+    #[test]
+    fn the_declared_run_dir_is_read_through_the_registry_of_the_home_the_environment_names() {
+        let ws = testkit::TempDir::new("spira-config-handed-run-dir");
+        let home = crate::process::fixture_registry_home(ws.path());
+        std::fs::remove_file(home.join("conf.d/SPIRA_ASK_LABEL")).expect("a registered key the fixture declares");
+        let run = ws.path().join("run").display().to_string();
+        let workspaces = ws.path().display().to_string();
+        let toml = crate::fixture_toml_file(ws.path(), &env(&[("SPIRA_RUN", &run), ("SPIRA_WORKSPACES", &workspaces), ("SPIRA_ASK_LABEL", "x")]));
+        let named = |home: &Path| env(&[("SPIRA_HOME", home.to_str().unwrap()), ("SPIRA_TOML", toml.to_str().unwrap())]);
+        assert_eq!(declared_run_dir(&named(&home)), Ok(std::path::PathBuf::from(&run)));
+
+        let bare = ws.path().join("no-registry");
+        let err = declared_run_dir(&named(&bare)).expect_err("the handed home is the one whose registry is read");
+        assert!(err.contains("no config registry at"), "{err}");
+    }
+
     // covers: UC-config-store-preflight-01
     #[test_id(tge5msq)]
     #[test]
