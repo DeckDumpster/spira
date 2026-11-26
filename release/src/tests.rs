@@ -2220,10 +2220,10 @@ fn verify_names_a_runtime_program_missing_from_the_release_path_as_a_deps_proble
 
 const ENV_PROG: &str = "spira-no-such-env-program";
 
-/// Verifies release A, a flake release whose one `spira-env` row names [`ENV_PROG`], with
-/// `nix`, over an installed env on verify's PATH that ships `installed`. Asserts that verify
+/// Verifies release A, a flake release whose `spira-env` row names [`ENV_PROG`], plus any
+/// `more_rows`, with `nix`, over an installed env on verify's PATH that ships `installed`. Asserts that verify
 /// left the installed env alone, and returns its `deps:` problems.
-fn verify_a_flake_release(nix: FakeNix, installed: &[&str]) -> Vec<String> {
+fn verify_a_flake_release(nix: FakeNix, installed: &[&str], more_rows: &str) -> Vec<String> {
     let w = World::with_git(FakeGit::default());
     let held = installed_env(&w, "installed-spira-env");
     for prog in installed {
@@ -2231,7 +2231,7 @@ fn verify_a_flake_release(nix: FakeNix, installed: &[&str]) -> Vec<String> {
     }
     let linked = fs::read_link(env_link(&w)).unwrap();
     let rel = w.cfg.releases.join(A);
-    file(&rel.join("spira/deps.toml"), &format!("{}provider = \"spira-env\"\n", dep_row(ENV_PROG, "")));
+    file(&rel.join("spira/deps.toml"), &format!("{}provider = \"spira-env\"\n{more_rows}", dep_row(ENV_PROG, "")));
     release_gains(&w, A, &FLAKE);
     let nix = FakeNix { store: w._sb.p().join("store"), ..nix };
 
@@ -2251,22 +2251,59 @@ fn verify_a_flake_release(nix: FakeNix, installed: &[&str]) -> Vec<String> {
 #[test_id(t4962w5)]
 #[test]
 fn verify_finds_a_spira_env_program_only_the_releases_own_flake_ships() {
-    let p = verify_a_flake_release(FakeNix { provides: vec![ENV_PROG], ..FakeNix::default() }, &[]);
+    let p = verify_a_flake_release(FakeNix { provides: vec![ENV_PROG], ..FakeNix::default() }, &[], "");
     assert_eq!(p, Vec::<String>::new());
 }
 
 #[test_id(ta4x16z)]
 #[test]
 fn verify_refuses_a_spira_env_program_the_releases_flake_drops_though_the_installed_env_has_it() {
-    let p = verify_a_flake_release(FakeNix::default(), &[ENV_PROG]);
+    let p = verify_a_flake_release(FakeNix::default(), &[ENV_PROG], "");
     assert!(p.len() == 1 && p[0].starts_with(&format!("deps: {ENV_PROG}:")), "{p:?}");
 }
 
 #[test_id(tv1gevw)]
 #[test]
 fn verify_reports_a_spira_env_that_does_not_build_as_one_problem_in_nixs_words() {
-    let p = verify_a_flake_release(FakeNix { fails: Some("attribute 'spira-env' missing"), ..FakeNix::default() }, &[]);
+    let p = verify_a_flake_release(FakeNix { fails: Some("attribute 'spira-env' missing"), ..FakeNix::default() }, &[], "");
     assert_eq!(p, vec!["deps: cannot build the release's spira-env: attribute 'spira-env' missing".to_string()]);
+}
+
+#[test_id(ts2irlh)]
+#[test]
+fn verify_judges_a_flake_releases_other_rows_on_its_path_whether_or_not_the_env_builds() {
+    const HOST_PROG: &str = "spira-no-such-host-program";
+    let host_row = dep_row(HOST_PROG, "");
+    let built = FakeNix { provides: vec![ENV_PROG], ..FakeNix::default() };
+    assert_eq!(verify_a_flake_release(built, &[HOST_PROG], &host_row), Vec::<String>::new());
+    let broken = FakeNix { fails: Some("boom"), ..FakeNix::default() };
+    let p = verify_a_flake_release(broken, &[], &host_row);
+    assert!(p.len() == 2 && p[1].starts_with(&format!("deps: {HOST_PROG}: not on PATH")), "{p:?}");
+}
+
+#[test_id(tyq957n)]
+#[test]
+fn a_spira_env_program_below_version_min_in_the_built_env_points_at_the_flake() {
+    let d = TempDir::new("deps-built-version");
+    let bin = d.path().join("store/abc123-slowtool-1.4.2/bin");
+    stub(&bin.join("slowtool"), "#!/bin/sh\n");
+    let rel = d.path().join("rel");
+    file(&rel.join("spira/deps.toml"), &format!("{}provider = \"spira-env\"\n", dep_row("slowtool", "1.10")));
+    let p = crate::deps_check::problems(&rel, "", crate::deps_check::SpiraEnv::Built(&bin));
+    assert!(p.len() == 1 && p[0].contains("1.4.2") && p[0].contains("flake.lock") && !p[0].contains("spira.path"), "{p:?}");
+}
+
+#[test_id(tx2oupg)]
+#[test]
+fn verify_without_pre_activate_calls_no_nix_for_a_flake_release() {
+    let w = World::with_git(FakeGit::default());
+    file(&w.cfg.releases.join(A).join("spira/deps.toml"), &dep_row(ENV_PROG, ""));
+    release_gains(&w, A, &FLAKE);
+    let nix = FakeNix::default();
+    let o = verify::VerifyOpts { pre_activate: false, system_dirs: vec![], nix: &nix };
+    let p = verify::verify(&w.cfg, A, &o).unwrap();
+    assert!(!p.iter().any(|p| p.starts_with("deps:")), "{p:?}");
+    assert_eq!(*nix.log.borrow(), Vec::<NixCall>::new());
 }
 
 #[test_id(tfmpvdw)]

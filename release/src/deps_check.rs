@@ -7,6 +7,7 @@ use spira_config::deps;
 use std::path::Path;
 
 const EXIT: &str = "re-run install, or set spira.path";
+const FLAKE_EXIT: &str = "fix the release's flake.nix or flake.lock";
 
 /// Where a release's `spira-env` rows resolve.
 #[derive(Debug, Clone, Copy)]
@@ -31,13 +32,13 @@ pub fn problems(rel: &Path, path: &str, env: SpiraEnv) -> Vec<String> {
     };
     let mut out = Vec::new();
     for d in manifest.deps.iter().filter(|d| d.tier == "runtime") {
-        let (searched, missing) = match env {
-            SpiraEnv::Built(bin) if d.provider == "spira-env" => (bin.display().to_string(), "not in the release's spira-env; add it to flake.nix"),
+        let (searched, missing, exit) = match env {
+            SpiraEnv::Built(bin) if d.provider == "spira-env" => (bin.display().to_string(), "not in the release's spira-env", FLAKE_EXIT),
             SpiraEnv::Unbuilt if d.provider == "spira-env" => continue,
-            _ => (path.to_string(), "not on PATH; re-run install, or set spira.path"),
+            _ => (path.to_string(), "not on PATH", EXIT),
         };
         let Some(found) = deps::which(&searched, &d.name) else {
-            out.push(format!("deps: {}: {missing}", d.name));
+            out.push(format!("deps: {}: {missing}; {exit}", d.name));
             continue;
         };
         if d.version_min.is_empty() {
@@ -45,8 +46,8 @@ pub fn problems(rel: &Path, path: &str, env: SpiraEnv) -> Vec<String> {
         }
         match store_version(&found) {
             Some(v) if at_least(&v, &d.version_min) => {}
-            Some(v) => out.push(format!("deps: {}: version {v} is below required {}; {EXIT}", d.name, d.version_min)),
-            None => out.push(format!("deps: {}: {} records no version, required {}; {EXIT}", d.name, found.display(), d.version_min)),
+            Some(v) => out.push(format!("deps: {}: version {v} is below required {}; {exit}", d.name, d.version_min)),
+            None => out.push(format!("deps: {}: {} records no version, required {}; {exit}", d.name, found.display(), d.version_min)),
         }
     }
     out
