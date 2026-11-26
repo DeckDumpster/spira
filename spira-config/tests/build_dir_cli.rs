@@ -353,9 +353,20 @@ fn a_unit_with_no_timestamp_is_removed_and_a_deleted_file_cleans_its_crate() {
     assert_eq!(cargo_log(&b), "clean -q -p crate-b", "a deleted file cleans the crate whatever its units");
 }
 
-fn clean_tree(b: &Box_, dir: &Path) -> String {
+// These spawn the clean script because it is what is under test: the rule exists only in it.
+fn clean_as(b: &Box_, dir: &Path, release: bool) -> String {
     let home = spira_config::resolve::locate_home_for_process().unwrap();
-    spira_config::build_dir::clean(&home.join(spira_config::build_dir::CLEAN_SCRIPT), &b.tree, dir, &b.bin, false).unwrap()
+    spira_config::build_dir::clean(&home.join(spira_config::build_dir::CLEAN_SCRIPT), &b.tree, dir, &b.bin, release).unwrap()
+}
+
+fn clean_tree(b: &Box_, dir: &Path) -> String {
+    clean_as(b, dir, false)
+}
+
+fn backdate(file: &Path, secs: u64) {
+    // clock-safe: sets an mtime in the past; nothing waits on the clock
+    let to = std::time::SystemTime::now() - Duration::from_secs(secs);
+    std::fs::File::options().append(true).create(true).open(file).unwrap().set_modified(to).unwrap();
 }
 
 #[test_id(thvvkjk)]
@@ -389,4 +400,34 @@ fn a_unit_built_before_the_last_recorded_run_stays_warm() {
     assert!(u.exists(), "{said}");
     assert!(!said.contains("built since the last recorded run"), "{said}");
     assert!(!b.log.exists(), "nothing is cleaned: {}", cargo_log(&b));
+}
+
+#[test_id(tiat16m)]
+#[test]
+fn a_release_advances_the_stamp_so_the_next_clean_keeps_the_units_the_lease_built() {
+    let b = setup("bdcli-release-stamps");
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    backdate(&d.join(".unit-tests-built-stamp"), 7200);
+    let built = std::time::SystemTime::now() - Duration::from_secs(3600);
+    let u = unit(&d, "crate-a-0123456789abcdef", Some(built));
+    clean_as(&b, &d, true);
+    let said = clean_tree(&b, &d);
+    assert!(u.exists(), "{said}");
+}
+
+#[test_id(tip5b1u)]
+#[test]
+fn with_no_stamp_the_records_own_time_decides_which_units_are_rebuilt() {
+    let b = setup("bdcli-no-stamp");
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    let _ = std::fs::remove_file(d.join(".unit-tests-built-stamp"));
+    backdate(&d.join(".unit-tests-built-manifest"), 3600);
+    let now = std::time::SystemTime::now();
+    let older = unit(&d, "crate-a-0123456789abcdef", Some(now - Duration::from_secs(7200)));
+    let newer = unit(&d, "crate-a-fedcba9876543210", Some(now - Duration::from_secs(1800)));
+    let said = clean_tree(&b, &d);
+    assert!(older.exists(), "a unit older than the record stays: {said}");
+    assert!(!newer.exists(), "a unit newer than the record is dropped: {said}");
 }

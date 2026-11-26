@@ -9,6 +9,16 @@ use std::process::Command;
 #[test_id(tkp9rdl)]
 #[test]
 fn a_second_run_keeps_the_units_the_first_run_built() {
+    two_runs_keep_the_unit(0);
+}
+
+#[test_id(tsm9nv9)]
+#[test]
+fn a_red_run_exits_with_cargo_tests_status_and_still_keeps_its_units() {
+    two_runs_keep_the_unit(101);
+}
+
+fn two_runs_keep_the_unit(test_exit: i32) {
     let d = testkit::TempDir::new("unit-tests-script");
     let tree = d.path().join("tree");
     std::fs::create_dir_all(tree.join("a/src")).unwrap();
@@ -37,7 +47,7 @@ fn a_second_run_keeps_the_units_the_first_run_built() {
     testkit::write_exe(
         bin.join("cargo"),
         &format!(
-            "#!/bin/sh\n[ \"$1\" = test ] || exit 0\nmkdir -p {0} && touch {0}/invoked.timestamp\n",
+            "#!/bin/sh\n[ \"$1\" = test ] || exit 0\nmkdir -p {0} && touch {0}/invoked.timestamp\nexit {test_exit}\n",
             unit.display()
         ),
     );
@@ -51,7 +61,7 @@ fn a_second_run_keeps_the_units_the_first_run_built() {
             .output()
             .expect("unit-tests.sh runs");
         let said = String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
-        assert!(out.status.success(), "{said}");
+        assert_eq!(out.status.code(), Some(test_exit), "{said}");
         said
     };
     run();
