@@ -188,9 +188,10 @@ fn land(
     OK
 }
 
-/// An abandoned batch's members went back to CERTIFIED; each whose content (its own tip, or the
-/// batch head) is on the landing ref is recorded LANDED, the merge as proof. Err names the
-/// members that could not be proven or recorded; nothing is half-reported.
+/// An abandoned batch's members are requeued (CERTIFIED if certified at an unchanged tip,
+/// otherwise SUBMITTED); each whose content (its own tip, or the batch head) is on the landing
+/// ref is recorded LANDED, the merge as proof. Err names the members that could not be proven
+/// or recorded; nothing is half-reported.
 fn land_members_from_merge(
     w: &World,
     path: &Path,
@@ -301,7 +302,7 @@ fn abandon(
         &c.s.mailbox,
         name,
         "forge batch abandoned (reconciled)",
-        &format!("{why}. Batch abandoned; members {ids} are back to CERTIFIED."),
+        &format!("{why}. Batch abandoned; members {ids} are requeued."),
     );
     w.out(format!(
         "verdict {name}: reconcile: batch abandoned — {why}"

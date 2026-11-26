@@ -245,7 +245,7 @@ pub fn eject(
         if !survivors.is_empty() {
             let s: Vec<&str> = survivors.iter().map(|m| m.id.as_str()).collect();
             w.out(format!(
-                "dry-run: would return survivors to CERTIFIED: {}",
+                "dry-run: would requeue survivors: {}",
                 s.join(" ")
             ));
         }
@@ -282,7 +282,7 @@ pub fn eject(
             }
         }
     }
-    // eject-member requeues the member to CERTIFIED, so the walk to REWORK must follow it: done
+    // eject-member requeues the member, so the walk to REWORK must follow it: done
     // first, the requeue would undo it and the next cut would re-batch the bead.
     if !harness_fault || batch_id.is_empty() {
         failed |= lc_return(w, id, cause == EjectCause::EjectRed).is_err();
@@ -294,9 +294,6 @@ pub fn eject(
     comment.push_str("\n\nFix the failing issue and re-certify before rejoining the queue.");
     w.lib.comment(id, &comment);
 
-    for m in &survivors {
-        w.out(format!("queue.sh eject: {} returned to CERTIFIED", m.id));
-    }
     // The PR is closed and no rebuilt one is opened: the batch row must not outlive it, or its
     // members stay IN_DELIVERY behind a PR that is gone, or an emptied batch stays OPEN.
     if !batch_id.is_empty() {
@@ -306,7 +303,7 @@ pub fn eject(
         match lc_abandon(w, &batch_id, "queue.sh", &r) {
             Ok(()) => {
                 w.out(format!(
-                    "queue.sh eject: {batch_id} abandoned on spira-lc (survivors back to CERTIFIED)"
+                    "queue.sh eject: {batch_id} abandoned on spira-lc (survivors requeued)"
                 ));
                 super::round::retire_menders(w, &c, &batch_id, &format!("{id} ejected"));
             }
@@ -316,6 +313,10 @@ pub fn eject(
             }
         }
     }
+    let requeued: Vec<String> = survivors
+        .iter()
+        .map(|m| report_requeued(w, "eject", &m.id, ""))
+        .collect();
     if failed {
         converge_orphans(w);
     }
@@ -340,16 +341,16 @@ pub fn eject(
         }
     }
 
-    let surv = if survivors.is_empty() {
+    let surv = if requeued.is_empty() {
         "<none>".to_string()
     } else {
-        crate::model::render_members(&survivors)
+        requeued.join(" ")
     };
     let mut body = format!("{id} ejected from PR {pr} by {actor}.");
     if !reason.is_empty() {
         body.push_str(&format!(" Reason: {reason}"));
     }
-    body.push_str(&format!("\nSurvivors returned to CERTIFIED: {surv}"));
+    body.push_str(&format!("\nSurvivors requeued: {surv}"));
     w.lib.notify(
         &c.s.mailbox,
         &c.r.name,
@@ -437,6 +438,23 @@ pub fn abandon(w: &World, repo: Option<&str>, reason: &Text, dry_run: bool) -> i
     abandon_locked(w, &c, &path, &reason, &actor, dry_run, "abandon")
 }
 
+/// Reports where a member's row stands now that its batch let it go, and returns its
+/// `id:STATE` token. The state is read, never assumed: a requeue has more than one target.
+fn report_requeued(w: &World, verb: &str, id: &str, colon: &str) -> String {
+    match w.lc.bead_row(id) {
+        Some(r) => {
+            w.out(format!("queue.sh {verb}: {id}{colon} returned to {}", r.state));
+            format!("{id}:{}", r.state)
+        }
+        None => {
+            w.out(format!(
+                "queue.sh {verb}: {id}: state unknown (spira-lc could not say)"
+            ));
+            format!("{id}:UNKNOWN")
+        }
+    }
+}
+
 /// The abandon itself, with the repo's queue lock already held by the caller.
 fn abandon_locked(
     w: &World,
@@ -504,11 +522,8 @@ fn abandon_locked(
                     audit.push(format!("{}:{st}", m.id));
                 }
                 None => {
-                    w.out(format!(
-                        "dry-run: {}: return to CERTIFIED at {}",
-                        m.id, m.tip
-                    ));
-                    audit.push(format!("{}:CERTIFIED", m.id));
+                    w.out(format!("dry-run: {}: requeue at {}", m.id, m.tip));
+                    audit.push(format!("{}:REQUEUED", m.id));
                 }
             }
         }
@@ -537,6 +552,9 @@ fn abandon_locked(
         return OK;
     }
 
+    // Read before the abandon: afterwards a REWORK may be the requeue's own doing.
+    let left: Vec<Option<String>> = members.iter().map(|m| kept(&m.id)).collect();
+
     if !batch_id.is_empty() {
         let r = bounded_text(reason);
         match lc_abandon(w, &batch_id, "queue.sh", &r) {
@@ -564,16 +582,13 @@ fn abandon_locked(
         w.forge.pr_close(&c.s.forge, path, &pr);
     }
     let mut audit = Vec::new();
-    for m in &members {
-        match kept(&m.id) {
+    for (m, left) in members.iter().zip(left) {
+        match left {
             Some(st) => {
                 w.out(format!("queue.sh {label}: {}: left as {st}", m.id));
                 audit.push(format!("{}:{st}", m.id));
             }
-            None => {
-                w.out(format!("queue.sh {label}: {}: returned to CERTIFIED", m.id));
-                audit.push(format!("{}:CERTIFIED", m.id));
-            }
+            None => audit.push(report_requeued(w, label, &m.id, ":")),
         }
     }
     let audit = if audit.is_empty() {
