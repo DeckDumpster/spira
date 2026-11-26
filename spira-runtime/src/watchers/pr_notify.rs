@@ -264,7 +264,7 @@ fn transitions(repo: &str, open: &[OpenPr], obs: &RepoObs, now: u64, rc: &mut Re
         if *heard == Heard::default() {
             rc.said.remove(&p.number);
         }
-        let at = old.filter(|o| o.status == p.status).map_or(now, |o| o.at);
+        let at = old.filter(|o| o.status == p.status && o.at > 0).map_or(now, |o| o.at);
         cur.insert(p.number, Tracked { status: p.status.clone(), title: p.title.clone(), at });
     }
     for (m, t) in &prev {
@@ -593,6 +593,15 @@ mod tests {
         assert!(carried_topics(&c).is_empty());
         let said = hear(&mut Carry::default(), &result(9, "closed")).unwrap();
         assert_eq!(said.topics(5)["pr/r/9"]["state"], "CLOSED");
+    }
+
+    #[test_id(tpiiq79)]
+    #[test]
+    fn a_pr_carried_without_a_time_is_stamped_at_the_next_answered_poll() {
+        let old: Tracked = serde_json::from_str(r#"{"status":"green","title":"t7"}"#).unwrap();
+        let carry = Carry { repos: BTreeMap::from([("r".into(), RepoCarry { prs: BTreeMap::from([(7, old)]), ..RepoCarry::default() })]) };
+        let (c, say) = decide(&cfg(), &carry, &one(open(vec![pr(7, "green", "")])), 1000);
+        assert_eq!((carried_topics(&c)["pr/r/7"]["at"].as_u64(), say), (Some(1000), Said::default()));
     }
 
     #[test_id(tvl145q)]

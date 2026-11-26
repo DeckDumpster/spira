@@ -56,11 +56,10 @@ fn recorded(path: &Path) -> Option<Band> {
 
 fn record(path: &Path, band: &Band) -> Result<(), String> {
     let text = serde_json::to_string(band).map_err(|e| e.to_string())?;
-    path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| {
-        let next = path.with_extension("tmp");
-        std::fs::write(&next, text).and_then(|()| std::fs::rename(&next, path))
-    })
-    .map_err(|e| format!("cannot record the band in {}: {e}", path.display()))
+    path.parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| spira_config::write_atomic(path, &text))
+        .map_err(|e| format!("cannot record the band in {}: {e}", path.display()))
 }
 
 pub struct Pressure {

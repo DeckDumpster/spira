@@ -10,7 +10,7 @@ use runtime::ports::{SeededRng, VirtualClock};
 use spira_pub::{Options, Publisher};
 use testkit::broker::Broker;
 use testkit::TempDir;
-use watchtower::pressure_topic::{record_path, Lines, Pressure, TOPIC};
+use watchtower::pressure_topic::{record_path, run_pass, Lines, Pressure, CPU_LINE_KEY, IO_LINE_KEY, TOPIC};
 
 const LINES: Lines = Lines { cpu: 20.0, io: 30.0 };
 
@@ -36,11 +36,16 @@ fn a_pass_over_the_line_publishes_and_an_identical_pass_publishes_nothing() {
     let (broker, d) = (Broker::up(), TempDir::new("psi"));
     psi(d.path(), "1.00", "45.50");
     let p = pressure(&broker, d.path());
-    p.pass(d.path(), &LINES, 100).unwrap();
+    let cfg = |key: &str| match key {
+        CPU_LINE_KEY => Ok("20".to_string()),
+        IO_LINE_KEY => Ok("45".to_string()),
+        other => Err(format!("{other} is not declared")),
+    };
+    run_pass(Ok(&p), d.path(), &cfg, 100);
     let first = serde_json::json!({"cpu": 1.0, "io": 45.5, "cpu_over": false, "io_over": true, "at": 100});
     assert_eq!(held(&broker), std::slice::from_ref(&first));
 
-    p.pass(d.path(), &LINES, 200).unwrap();
+    run_pass(Ok(&p), d.path(), &cfg, 200);
     assert_eq!(held(&broker), [first], "a second publish would carry at=200");
     assert!(record_path(d.path()).is_file());
     assert_eq!(std::fs::read_dir(d.path().join("conditions")).unwrap().count(), 1, "one file, overwritten");

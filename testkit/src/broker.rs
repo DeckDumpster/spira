@@ -1,11 +1,13 @@
 //! A throwaway MQTT broker: the PATH `mosquitto`, running the shipped config on a socket in its
 //! own [`TempDir`]. A missing `mosquitto` panics; a test that needs one never skips.
 
-use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixDatagram;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+
+use rumqttc::{Client, Connection, Event, MqttOptions, Packet, Publish, QoS, Transport};
 
 use crate::{ChildGuard, TempDir};
 
@@ -71,26 +73,19 @@ impl Broker {
 
     /// What a subscriber arriving now is handed for `filter`: each retained `(topic, payload)`.
     pub fn retained(&self, filter: &str) -> Vec<(String, String)> {
-        let mut publish = Command::new("mosquitto_pub");
-        publish.arg("--unix").arg(&self.socket).args(["-t", END_TOPIC, "-m", "end", "-r", "-q", "1"]);
-        assert!(publish.status().expect("run mosquitto_pub").success(), "mosquitto_pub failed");
-        // The broker sends retained values in the order of the subscription's filters, so
-        // the end marker follows everything `filter` holds.
-        let mut subscribe = Command::new("mosquitto_sub");
-        subscribe.arg("--unix").arg(&self.socket).args(["-v", "-q", "1", "-t", filter, "-t", END_TOPIC]);
-        subscribe.args(["-W", &FAILSAFE.as_secs().to_string()]).stdin(Stdio::null()).stdout(Stdio::piped());
-        let mut child = ChildGuard::spawn(&mut subscribe);
-        let out = BufReader::new((child.0).stdout.take().expect("piped stdout"));
+        let mut subscriber = Subscriber::open(&self.socket);
+        subscriber.client.publish(END_TOPIC, QoS::AtLeastOnce, true, "end").expect("queue the end marker");
+        // The broker sends retained values in the order the filters were subscribed, so the
+        // end marker follows everything `filter` holds.
+        subscriber.add(&[filter, END_TOPIC]);
         let mut held = Vec::new();
-        for line in out.lines() {
-            let line = line.expect("read mosquitto_sub");
-            let (topic, payload) = line.split_once(' ').expect("mosquitto_sub -v prints topic then payload");
-            if topic == END_TOPIC {
+        loop {
+            let p = subscriber.next();
+            if p.topic == END_TOPIC {
                 return held;
             }
-            held.push((topic.to_string(), payload.to_string()));
+            held.push((p.topic, String::from_utf8_lossy(&p.payload).into_owned()));
         }
-        panic!("mosquitto_sub ended before the end marker");
     }
 
     fn start(&mut self) {
@@ -107,5 +102,48 @@ impl Broker {
     pub fn restart(&mut self) {
         self.stop();
         self.start();
+    }
+}
+
+/// A subscriber that owes nothing to the library under test.
+pub struct Subscriber {
+    client: Client,
+    connection: Connection,
+}
+
+impl Subscriber {
+    fn open(socket: &Path) -> Subscriber {
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let id = format!("testkit-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed));
+        let mut options = MqttOptions::new(id, socket.to_str().expect("a UTF-8 socket path"), 0);
+        options.set_transport(Transport::Unix);
+        options.set_keep_alive(Duration::ZERO);
+        let (client, connection) = Client::new(options, 32);
+        Subscriber { client, connection }
+    }
+
+    /// Subscribes to `filters`, in order.
+    pub fn subscribe(socket: &Path, filters: &[&str]) -> Subscriber {
+        let subscriber = Subscriber::open(socket);
+        subscriber.add(filters);
+        subscriber
+    }
+
+    fn add(&self, filters: &[&str]) {
+        for f in filters {
+            self.client.subscribe(*f, QoS::AtLeastOnce).expect("queue a subscription");
+        }
+    }
+
+    /// The next message delivered.
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> Publish {
+        loop {
+            match self.connection.recv_timeout(FAILSAFE) {
+                Ok(Ok(Event::Incoming(Packet::Publish(p)))) => return p,
+                Ok(Ok(_)) => {}
+                other => panic!("no message arrived: {other:?}"),
+            }
+        }
     }
 }

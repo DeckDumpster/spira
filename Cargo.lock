@@ -2916,6 +2916,7 @@ name = "testkit"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "rumqttc",
  "spira-test-id",
  "system-paths",
  "toml",
