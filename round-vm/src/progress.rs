@@ -47,6 +47,11 @@ fn counts_of(results_dir: &Path, file: &str) -> Option<Counts> {
     Some((k.min(m), m, w.map(str::to_string).collect()))
 }
 
+/// The tests a progress file says have run.
+pub fn tests_in(results_dir: &Path, file: &str) -> Option<u64> {
+    counts_of(results_dir, file).map(|(k, _, _)| k as u64)
+}
+
 pub fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
