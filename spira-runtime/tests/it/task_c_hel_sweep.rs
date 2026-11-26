@@ -439,29 +439,38 @@ fn a_leg_that_fails_after_the_budget_closed_the_pass_is_still_recorded() {
     assert!(c.refused.contains_key("spira:spira/sp-a"), "{c:?}");
 }
 
-#[test_id(tevkajf)]
+// A real repository: the sha must resolve from git's own ref files, in the layout git writes.
+#[test_id(twsfrjs)]
 #[test]
-fn the_observed_base_carries_the_land_refs_commit_and_moves_with_it() {
+fn an_observes_inputs_carry_the_land_refs_commit_which_moves_with_it() {
     let dir = testkit::TempDir::new("hel-sweep-base");
     let git = |args: &[&str]| testkit::git(dir.path(), args);
     git(&["init", "-q", "-b", "main"]);
     git(&["commit", "-q", "--allow-empty", "-m", "one"]);
-    let observed = || task::observed_base(dir.path(), hel::ports::Base { landref: "main".into(), landrefs: vec![], remote: None }).sha;
-    let first = observed();
-    assert_eq!(first, git(&["rev-parse", "main"]));
+    let read = |rows: Result<std::collections::BTreeMap<String, String>, String>| {
+        let mut s = Snapshot::default();
+        s.read_inputs(dir.path(), hel::ports::Base { landref: "main".into(), landrefs: vec![], remote: None }, None, false, Some("spira/sp-d"), rows);
+        s
+    };
+    let first = read(Ok([("sp-a".to_string(), "SUBMITTED".to_string())].into()));
+    assert_eq!((first.base.sha.clone(), first.inputs_unread, first.rows.len()), (git(&["rev-parse", "main"]), false, 1));
+    assert_eq!((first.resumed_after.as_str(), first.cut_at.as_str()), ("", ""), "a walk to the end is not cut");
     git(&["commit", "-q", "--allow-empty", "-m", "two"]);
-    assert_eq!(observed(), git(&["rev-parse", "main"]));
-    assert_ne!(observed(), first);
+    let second = read(Err("the store did not answer".into()));
+    assert_eq!(second.base.sha, git(&["rev-parse", "main"]));
+    assert_ne!(second.base.sha, first.base.sha);
+    assert!(second.inputs_unread, "unread rows leave the inputs unknown");
 }
 
-#[test_id(twr6ep2)]
+#[test_id(tffnc3e)]
 #[test]
-fn an_observes_window_is_what_it_resumed_after_and_where_it_was_cut() {
+fn a_resumed_and_cut_observe_names_its_window_and_an_unresolved_land_ref_is_unread() {
+    let dir = testkit::TempDir::new("hel-sweep-window");
+    testkit::git(dir.path(), &["init", "-q", "-b", "main"]);
     let mut s = Snapshot::default();
-    s.set_window(Some("spira/sp-b"), true, Some("spira/sp-d"));
+    s.read_inputs(dir.path(), hel::ports::Base { landref: "gone".into(), landrefs: vec![], remote: None }, Some("spira/sp-b"), true, Some("spira/sp-d"), Ok(Default::default()));
     assert_eq!((s.resumed_after.as_str(), s.cut_at.as_str()), ("spira/sp-b", "spira/sp-d"));
-    s.set_window(None, false, Some("spira/sp-d"));
-    assert_eq!((s.resumed_after.as_str(), s.cut_at.as_str()), ("", ""));
+    assert!(s.inputs_unread);
 }
 
 #[test_id(tfnm3rz)]
@@ -487,4 +496,29 @@ fn an_input_that_could_not_be_read_has_not_moved() {
     assert_eq!(c.tally.refused, 1);
     let (_, acts) = pass(&c, same());
     assert!(acts.is_empty(), "the record kept its inputs: {acts:?}");
+}
+
+#[test_id(t7z8utv)]
+#[test]
+fn a_failure_naming_a_job_no_longer_carried_is_charged_to_no_other() {
+    let (c, _) = pass(&Carry::default(), with_second(same()));
+    let (c, _) = step(&c, Input::Ran(leg_ran(0)));
+    let (c, _) = step(&c, answer(task::SEND, false, " [spira:spira/sp-a:abc123]"));
+    assert!(c.refused.is_empty(), "{c:?}");
+    assert_eq!((c.jobs.keys().collect::<Vec<_>>(), c.tally.failed), (vec![&"spira:spira/sp-b:abc123".to_string()], 0), "sp-b still waits on its own leg");
+}
+
+#[test_id(t566ds2)]
+#[test]
+fn every_leg_failing_past_twice_the_budget_is_recorded_and_counted() {
+    let cfg = t::handler::<H>(SET).cfg;
+    let (mut c, _) = pass(&Carry::default(), with_second(same()));
+    for id in ["sp-a", "sp-b"] {
+        let ran = UnitRan { handle: UnitHandle::of(task::NAME, &format!("spira:spira/{id}:abc123")).unwrap(), exit: Exit::Code(1), duration_ms: 1 };
+        let acts;
+        (c, acts) = task::decide(&cfg, &c, &Input::Ran(ran), AT_35 + 1_801_000).unwrap();
+        assert!(acts.is_empty(), "{acts:?}");
+    }
+    assert_eq!(c.refused.keys().collect::<Vec<_>>(), ["spira:spira/sp-a", "spira:spira/sp-b"], "{c:?}");
+    assert_eq!(c.tally.failed, 2);
 }

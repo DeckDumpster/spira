@@ -215,8 +215,13 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    /// What a scan resumed after `cursor`, and cut after its `last` branch or not, listed.
-    pub fn set_window(&mut self, cursor: Option<&str>, cut: bool, last: Option<&str>) {
+    /// The facts a refusal is later judged against: the base and its commit, the row states,
+    /// and what a scan resumed after `cursor`, and cut after its `last` branch or not, listed.
+    pub fn read_inputs(&mut self, root: &std::path::Path, base: hel::ports::Base, cursor: Option<&str>, cut: bool, last: Option<&str>, rows: Result<BTreeMap<String, String>, String>) {
+        let sha = spira_config::git_refs::sha_of(root, &base.landref).or_else(|| hel::git::Git(root).rev_parse(&base.landref)).unwrap_or_default();
+        self.inputs_unread = rows.is_err() || sha.is_empty();
+        self.rows = rows.unwrap_or_default();
+        self.base = Base { landref: base.landref, landrefs: base.landrefs, remote: base.remote.unwrap_or_default(), sha };
         self.resumed_after = cursor.unwrap_or_default().to_string();
         self.cut_at = last.filter(|_| cut).unwrap_or_default().to_string();
     }
@@ -534,16 +539,20 @@ fn settle(mut next: Carry, repo: &str, mut acts: Vec<Act>) -> Result<(Carry, Vec
 
 /// The job an outcome of `effect` answers, and whether that is certain: the one `body` names, or
 /// the only one in flight. Otherwise the first, which ends a wait but is recorded against nothing.
+/// A body naming a job no longer carried answers none.
 fn answered_job(jobs: &BTreeMap<String, Job>, effect: &str, body: &str) -> Option<(String, bool)> {
     let of_effect = || jobs.iter().filter(|(_, j)| j.effect == effect).map(|(k, _)| k);
     if let Some(k) = of_effect().find(|k| body.trim() == k.as_str() || body.contains(&format!("[{k}]"))) {
         return Some((k.clone(), true));
     }
+    if body.trim_end().ends_with(']') {
+        return None;
+    }
     let first = of_effect().next()?;
     Some((first.clone(), of_effect().nth(1).is_none()))
 }
 
-/// An answer to a pass past its budget: it issues and tallies nothing, but a failure is still recorded.
+/// An answer to a pass past its budget issues nothing, but a failure is still counted and recorded.
 fn drain(carry: &mut Carry, input: &Input<Snapshot>) {
     let (key, failed) = match input {
         Input::Ran(r) => (r.key_for(NAME), !matches!(r.exit, runtime::units::Exit::Code(0 | 2))),
@@ -555,6 +564,7 @@ fn drain(carry: &mut Carry, input: &Input<Snapshot>) {
         _ => (None, false),
     };
     if let Some(j) = key.and_then(|k| carry.jobs.remove(&k)).filter(|_| failed) {
+        carry.tally.failed += 1;
         record_failure(&mut carry.refused, &j);
     }
 }
@@ -569,7 +579,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             // A pass far past its budget whose answers never came is forgotten, not waited on.
             let mut spent = Carry { phase: Phase::BudgetSpent, pass: None, ..carry.clone() };
             drain(&mut spent, input);
-            let next = if now_ms >= started + 2 * budget { Carry { last_fired: spent.last_fired, tally: spent.tally, refused: spent.refused, ..Carry::default() } } else { spent };
+            let next = if now_ms >= started + 2 * budget { Carry { phase: Phase::Idle, ..spent } } else { spent };
             if matches!(input, Input::Observed(_)) && next.phase == Phase::Idle {
                 return decide(cfg, &next, input, now_ms);
             }
@@ -768,12 +778,9 @@ pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, p: &
         Err(hel::sweep::ScanError::Store(e)) => return Err(store_failure(&r.name, &e)),
     };
     park_cursor(real, &r.name, cut, branches.last().map(|b| b.br.as_str()));
-    snap.base = observed_base(root, base);
-    snap.set_window(cursor.as_deref(), cut, branches.last().map(|b| b.br.as_str()));
     let ids: Vec<String> = branches.iter().map(|b| b.id.clone()).chain(orphans.iter().map(|o| o.id.clone())).collect();
-    let rows = spira_store::lc_state::list_ids_on(lc, &ids);
-    snap.inputs_unread = rows.is_err() || snap.base.sha.is_empty();
-    snap.rows = rows.map(|rs| rs.into_iter().map(|r| (r.bead_id, r.state)).collect()).unwrap_or_default();
+    let rows = spira_store::lc_state::list_ids_on(lc, &ids).map(|rs| rs.into_iter().map(|r| (r.bead_id, r.state)).collect()).map_err(|e| e.to_string());
+    snap.read_inputs(root, base, cursor.as_deref(), cut, branches.last().map(|b| b.br.as_str()), rows);
     for b in branches {
         if let Some(why) = &b.held {
             snap.holders.insert(b.id.clone(), why.clone());
@@ -807,12 +814,6 @@ pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, p: &
         clear_cursor_when_idle(real, &p.submitted_label, &snap)?;
     }
     serde_json::to_string(&snap).map_err(|e| e.to_string())
-}
-
-/// The scan's base with the commit its land ref names now.
-pub fn observed_base(root: &std::path::Path, base: hel::ports::Base) -> Base {
-    let sha = spira_config::git_refs::sha_of(root, &base.landref).or_else(|| hel::git::Git(root).rev_parse(&base.landref)).unwrap_or_default();
-    Base { landref: base.landref, landrefs: base.landrefs, remote: base.remote.unwrap_or_default(), sha }
 }
 
 /// An observe cut by its time slice resumes after the last branch it judged. One that walked to
