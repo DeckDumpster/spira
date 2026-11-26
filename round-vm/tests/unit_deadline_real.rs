@@ -50,3 +50,34 @@ fn a_hung_unit_test_is_terminated_at_its_deadline_and_named_while_the_other_test
     assert!(err.contains("PASS") && err.matches("quick").count() >= 2, "the other tests ran to a result: {err}");
     assert_eq!(std::fs::read_to_string(dir.join("progress")).unwrap().trim_end().rsplit_once(' ').map(|x| x.1), Some("t::hangs"), "named in the progress record");
 }
+
+#[test_id(t2hscjd)]
+#[test]
+fn a_tests_target_outlives_the_unit_deadline_under_the_rounds_nextest_config() {
+    let cargo_home = std::env::var("CARGO_HOME").unwrap_or_else(|_| format!("{}/.cargo", std::env::var("HOME").unwrap()));
+    let tmp = testkit::TempDir::new("integration-deadline-real");
+    let dir = tmp.path().to_path_buf();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[features]\nintegration = []\n[profile.unittest]\ninherits = \"dev\"\n").unwrap();
+    std::fs::write(dir.join("src/lib.rs"), "").unwrap();
+    std::fs::write(dir.join("tests/long.rs"), "#[test] fn outlives_the_unit_deadline() { std::thread::sleep(std::time::Duration::from_secs(4)); }\n").unwrap();
+    std::fs::write(dir.join("rust-toolchain.toml"), include_str!("../../rust-toolchain.toml")).unwrap();
+    let script = format!(
+        "export CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\n{}\n{}\nwrite_unit_nextest_config 1 2 \"$PWD/round-nextest.toml\"\nunit_env {}\n",
+        function("unit_env"),
+        function("write_unit_nextest_config"),
+        spira_config::unit_tier::integration_words("\"$PWD/round-nextest.toml\"", Some("unittest"), "--workspace"),
+    );
+    let mut cmd = Command::new("bash");
+    cmd.arg("-c").arg(&script).current_dir(&dir).env_clear().env("HOME", std::env::var("HOME").unwrap()).env("PATH", format!("{cargo_home}/bin:/usr/local/bin:/usr/bin:/bin"));
+    for k in ["RUSTUP_TOOLCHAIN", "RUSTUP_HOME"] {
+        if let Some(v) = std::env::var_os(k) {
+            cmd.env(k, v);
+        }
+    }
+    let out = cmd.output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    assert!(err.contains("1 passed"), "the tests/ target ran to a pass: {err}");
+}
