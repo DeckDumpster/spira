@@ -1684,7 +1684,7 @@ mod pr_snapshot_tests {
     }
 
     fn tracking(n: u64) -> Carry {
-        let rc = RepoCarry { prs: BTreeMap::from([(n, Tracked { status: "green".into(), title: "t".into() })]), ..Default::default() };
+        let rc = RepoCarry { prs: BTreeMap::from([(n, Tracked { status: "green".into(), title: "t".into(), ..Default::default() })]), ..Default::default() };
         Carry { repos: BTreeMap::from([("r".to_string(), rc)]) }
     }
 

@@ -190,6 +190,10 @@ rendering anything when a tail segment resolves inside a release or a checkout.
 dwarf (they are transient units with no file in the unit directory) and never restarts a
 oneshot mid-run, and a dwarf's tools stay on disk in its release. So there is no guard.
 
+A completed activation publishes the retained topic `release/active` with `{sha, at, restarted}`
+and flushes it before the process exits. A publish that fails is logged and never fails the
+activation. A failed activation publishes nothing, and neither does `rollback`.
+
 ### config delta
 
 Every registry key is required and the typed config refuses unknown fields, so a release that

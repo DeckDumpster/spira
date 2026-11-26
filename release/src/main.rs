@@ -463,7 +463,7 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
                 Ok::<_, String>(release::spira_env::Collector { units: u.as_ref(), profile_bin, run_dir })
             });
             let gc = gc.map_err(|e| eprintln!("release: WARN: nix garbage will not be collected: {e}")).ok();
-            let ctx = Ctx { cfg: &cfg, reads: &activate::RealReads(&cfg), sc: &sc, nix: &release::spira_env::RealNix, git: &RealGit, repo: repo(), landed_ref: a.landed_ref.clone(), settle: a.settle, drain: a.drain, steady: a.steady, warm_wait: a.warm_wait, warm_pause: Duration::from_secs(1), unit_ensure: &activate::ensure_new_units, report: &|l| eprintln!("{l}"), gc };
+            let ctx = Ctx { cfg: &cfg, reads: &activate::RealReads(&cfg), sc: &sc, nix: &release::spira_env::RealNix, git: &RealGit, repo: repo(), landed_ref: a.landed_ref.clone(), settle: a.settle, drain: a.drain, steady: a.steady, warm_wait: a.warm_wait, warm_pause: Duration::from_secs(1), unit_ensure: &activate::ensure_new_units, report: &|l| eprintln!("{l}"), gc, publisher: &|| spira_pub::Publisher::new("release") };
             if cmd == "activate" {
                 want(1)?;
                 if activate::current(&cfg).as_deref() != Some(rest[0].as_str()) {
