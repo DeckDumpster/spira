@@ -107,7 +107,7 @@
 
 use std::collections::BTreeMap;
 
-use runtime::event::EventKindTag;
+use runtime::event::{EffectSpec, EventKindTag};
 use serde::{Deserialize, Serialize};
 
 use crate::tasks::b::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
@@ -210,6 +210,8 @@ pub struct Snapshot {
     pub cut_at: String,
     /// The repository's branches could not be read.
     pub unread: bool,
+    /// The row states or the land ref's sha could not be read: no input can be seen to move.
+    pub inputs_unread: bool,
 }
 
 impl Snapshot {
@@ -217,6 +219,11 @@ impl Snapshot {
     pub fn set_window(&mut self, cursor: Option<&str>, cut: bool, last: Option<&str>) {
         self.resumed_after = cursor.unwrap_or_default().to_string();
         self.cut_at = last.filter(|_| cut).unwrap_or_default().to_string();
+    }
+
+    /// Whether `b` stands as it did when `recorded` failed; an input that could not be read has not moved.
+    fn unmoved(&self, recorded: &str, b: &Branch) -> bool {
+        self.inputs_unread || recorded == inputs_of(self, &b.id, &b.tip)
     }
 
     /// Whether this observe would have listed `br` had it existed: only then is its absence "gone".
@@ -413,9 +420,15 @@ fn job_key(kind: &str, repo: &str, id: &str) -> String {
     format!("{kind}:{repo}:{id}")
 }
 
-/// A failed runner's text names its job, so the failure is never charged to another branch.
-pub fn naming_job(err: String, key: &str) -> String {
-    format!("{err} [{key}]")
+/// A failure names the job its request was for, a timeout included, so it is never charged to
+/// another branch.
+fn name_job(request: &EffectSpec, body: &str) -> String {
+    let key = if request.name == SEND {
+        serde_json::from_str::<Send>(&request.input).ok().map(|s| leg_key(&s.repo, &s.br, &s.tip))
+    } else {
+        serde_json::from_str::<Target>(&request.input).ok().map(|t| job_key(&request.name, &t.repo, &t.id))
+    };
+    key.map_or_else(|| body.to_string(), |k| format!("{body} [{k}]"))
 }
 
 fn refusal_key(repo: &str, br: &str) -> String {
@@ -455,7 +468,7 @@ fn plan_labelled(label: &str, s: &Snapshot, refused: &BTreeMap<String, String>, 
             continue;
         }
         let inputs = inputs_of(s, &b.id, &b.tip);
-        if refused.get(&refusal_key(&s.repo, &b.br)) == Some(&inputs) {
+        if refused.get(&refusal_key(&s.repo, &b.br)).is_some_and(|r| s.unmoved(r, b)) {
             held_back += 1;
             continue;
         }
@@ -563,7 +576,8 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             return Ok((next, vec![]));
         }
     }
-    if carry.phase == Phase::BudgetSpent && matches!(input, Input::Ran(_) | Input::Outcome { .. }) {
+    // With no pass open, a job still carried is one the budget left behind, whichever tick came since.
+    if carry.pass.is_none() && carry.phase != Phase::Acting && matches!(input, Input::Ran(_) | Input::Outcome { .. }) {
         let mut next = carry.clone();
         drain(&mut next, input);
         if next != *carry {
@@ -586,7 +600,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                 next.jobs.clear();
             }
             next.refused.retain(|key, inputs| match key.split_once(':').filter(|(repo, _)| *repo == s.repo) {
-                Some((_, br)) => s.branches.iter().find(|b| b.br == br).map_or(!s.covers(br), |b| *inputs == inputs_of(s, &b.id, &b.tip)),
+                Some((_, br)) => s.branches.iter().find(|b| b.br == br).map_or(!s.covers(br), |b| s.unmoved(inputs, b)),
                 None => true,
             });
             let mut jobs = BTreeMap::new();
@@ -757,7 +771,9 @@ pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, p: &
     snap.base = observed_base(root, base);
     snap.set_window(cursor.as_deref(), cut, branches.last().map(|b| b.br.as_str()));
     let ids: Vec<String> = branches.iter().map(|b| b.id.clone()).chain(orphans.iter().map(|o| o.id.clone())).collect();
-    snap.rows = spira_store::lc_state::list_ids_on(lc, &ids).map(|rs| rs.into_iter().map(|r| (r.bead_id, r.state)).collect()).unwrap_or_default();
+    let rows = spira_store::lc_state::list_ids_on(lc, &ids);
+    snap.inputs_unread = rows.is_err() || snap.base.sha.is_empty();
+    snap.rows = rows.map(|rs| rs.into_iter().map(|r| (r.bead_id, r.state)).collect()).unwrap_or_default();
     for b in branches {
         if let Some(why) = &b.held {
             snap.holders.insert(b.id.clone(), why.clone());
@@ -853,23 +869,19 @@ pub fn pr_tip(real: &hel::real::Real, input: &str) -> Result<String, String> {
 /// first when asked, then the leg (`hel reap-landed-branch`, the verified deletion) started
 /// as a transient unit named for `repo:br:tip`; it ends on that unit's `unit.ran`.
 pub fn send(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, units: Option<&dyn runtime::units::Units>, p: &Pinned, release: &str, input: &str) -> Result<String, String> {
-    let s: Send = serde_json::from_str(input).map_err(|e| e.to_string())?;
-    run_send(real, lc, units, p, release, &s).map_err(|e| naming_job(e, &leg_key(&s.repo, &s.br, &s.tip)))
-}
-
-fn run_send(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, units: Option<&dyn runtime::units::Units>, p: &Pinned, release: &str, s: &Send) -> Result<String, String> {
     use hel::ports::World;
     let units = units.ok_or("no unit manager configured")?;
+    let s: Send = serde_json::from_str(input).map_err(|e| e.to_string())?;
     let root = root_of(real, &s.repo)?;
     if let Some(held) = real.witness(&s.id) {
-        return Err(format!("{}: {held} (mid-send)", s.id));
+        return Err(format!("{}: {held} (mid-send) — {}", s.id, leg_key(&s.repo, &s.br, &s.tip)));
     }
     if s.proof {
         let base = real.base(&root).ok_or_else(|| format!("{}: the land ref does not resolve", s.repo))?;
         let sha = hel::git::Git(&root).rev_parse(&base.landref).unwrap_or_default();
         record_content_on_base(lc, &s.id, &sha)?;
     }
-    let started = start_leg(units, release, &real.run(), &root, s)?;
+    let started = start_leg(units, release, &real.run(), &root, &s)?;
     mark_handled(real, &s.repo, &s.br);
     real.rest(p.pace);
     Ok(started)
@@ -922,21 +934,15 @@ pub fn close_on_land(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient
 /// with the job key so the send leg chains.
 pub fn archive(real: &hel::real::Real, input: &str) -> Result<String, String> {
     let t: Target = serde_json::from_str(input).map_err(|e| e.to_string())?;
-    let key = job_key(ARCHIVE, &t.repo, &t.id);
-    root_of(real, &t.repo).and_then(|root| hel::sweep::archive_tip(&root, &t.br, &t.tip)).map_err(|e| naming_job(e, &key))?;
-    Ok(key)
+    hel::sweep::archive_tip(&root_of(real, &t.repo)?, &t.br, &t.tip)?;
+    Ok(format!("{ARCHIVE}:{}:{}", t.repo, t.id))
 }
 
 /// The runner of [`FREE_WORKTREE`] and [`ORPHAN_WORKTREE`]: `reap::destroy_worktree` through
 /// the hel world (fence, witnesses, salvage); answers with the job key.
 pub fn destroy_worktree(real: &hel::real::Real, kind: &str, input: &str) -> Result<String, String> {
-    let t: Target = serde_json::from_str(input).map_err(|e| e.to_string())?;
-    let key = job_key(kind, &t.repo, &t.id);
-    run_destroy(real, kind, &t).map(|()| key.clone()).map_err(|e| naming_job(e, &key))
-}
-
-fn run_destroy(real: &hel::real::Real, kind: &str, t: &Target) -> Result<(), String> {
     use hel::ports::World;
+    let t: Target = serde_json::from_str(input).map_err(|e| e.to_string())?;
     let root = root_of(real, &t.repo)?;
     if kind == ORPHAN_WORKTREE && hel::git::Git(&root).branch_exists(&t.br) {
         return Err(format!("{}: branch {} exists again — not an orphan", t.id, t.br));
@@ -946,7 +952,7 @@ fn run_destroy(real: &hel::real::Real, kind: &str, t: &Target) -> Result<(), Str
         if kind == FREE_WORKTREE {
             mark_handled(real, &t.repo, &t.br);
         }
-        Ok(())
+        Ok(format!("{kind}:{}:{}", t.repo, t.id))
     } else {
         Err(format!("{}: worktree {} was not removed — see {}", t.id, t.path, real.reaplog_path().display()))
     }
@@ -964,7 +970,7 @@ pub fn prune(real: &hel::real::Real, input: &str) -> Result<String, String> {
 
 const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("last_fired"), runtime::rows::Part::Field("pass"), runtime::rows::Part::Field("tally"), runtime::rows::Part::Map { name: "jobs", drop: &[] }, runtime::rows::Part::Map { name: "refused", drop: &[] }];
 
-crate::tasks::b::hosted!(HelSweep, catch_up = catch_up);
+crate::tasks::b::hosted!(HelSweep, catch_up = catch_up, failure = name_job);
 
 #[cfg(test)]
 mod tests {

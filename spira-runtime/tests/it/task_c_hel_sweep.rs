@@ -361,15 +361,6 @@ fn a_resumed_repo_with_nothing_to_act_on_clears_its_cursor_and_one_with_work_kee
     assert_eq!(real.resume_after("spira"), None);
 }
 
-/// One pass over `sp-a` and `sp-b`, both planning `effect`, in which `result` answers `sp-b`'s.
-fn second_of_two_fails(world: Snapshot, effect: &str, result: Input<Snapshot>) {
-    let (c, acts) = pass(&Carry::default(), world);
-    assert_eq!(names(&acts), [effect, effect]);
-    let (c, _) = step(&c, result);
-    assert_eq!(c.refused.keys().collect::<Vec<_>>(), ["spira:spira/sp-b"], "{effect}: {c:?}");
-    assert!(c.jobs.keys().all(|k| k.contains("sp-a")), "{effect}: {c:?}");
-}
-
 fn with_second(mut world: Snapshot) -> Snapshot {
     let b = Branch { id: "sp-b".into(), br: "spira/sp-b".into(), worktree: world.branches[0].worktree.as_ref().map(|_| "run/worktree/sp-b".into()), ..world.branches[0].clone() };
     world.branches.push(b);
@@ -382,12 +373,34 @@ fn with_second(mut world: Snapshot) -> Snapshot {
     world
 }
 
-#[test_id(tc9kd78)]
+#[test_id(t79frd9)]
 #[test]
-fn a_failure_is_recorded_against_the_job_its_text_names() {
-    for (world, effect, job) in [(same(), task::SEND, "spira:spira/sp-b:abc123".to_string()), (unbeaded(), task::ARCHIVE, format!("{}:spira:sp-b", task::ARCHIVE)), (superseded_unsafe(), task::FREE_WORKTREE, format!("{}:spira:sp-b", task::FREE_WORKTREE))] {
-        second_of_two_fails(with_second(world), effect, answer(effect, false, &task::naming_job("sp-b: refused".into(), &job)));
+fn a_runners_failure_is_recorded_against_the_branch_it_was_asked_for() {
+    for (world, effect) in [(same(), task::SEND), (unbeaded(), task::ARCHIVE), (superseded_unsafe(), task::FREE_WORKTREE)] {
+        let world = json(&with_second(world));
+        // `sp-b` sorts after `sp-a`, so a failure charged by position would land on `sp-a`.
+        let only_b_fails = move |input: &str| if input.contains("sp-b") { Err("the store did not answer".to_string()) } else { Ok(format!("{effect}:spira:sp-a")) };
+        // A succeeded archive chains `sp-a`'s send; the later double of one name is the one kept.
+        let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.clone())).double(task::SEND, |_| Ok("started".into())).double(effect, only_b_fails);
+        let (_, stream, kind) = H::boot();
+        r.tick(stream, kind).unwrap();
+        r.tick(stream, runtime::event::EventKind::new(task::TICK, FIRE)).unwrap();
+        let c = t::recorded::<H>(&r).unwrap();
+        assert_eq!(c.refused.keys().collect::<Vec<_>>(), ["spira:spira/sp-b"], "{effect}: {c:?}");
     }
+}
+
+#[test_id(tzg1crb)]
+#[test]
+fn an_effect_that_times_out_is_recorded_against_each_branch_it_was_asked_for() {
+    let world = json(&with_second(same()));
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.clone())).hanging(task::SEND);
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r.tick(stream, runtime::event::EventKind::new(task::TICK, FIRE)).unwrap();
+    r.advance(121_000).unwrap();
+    let c = t::recorded::<H>(&r).unwrap();
+    assert_eq!(c.refused.keys().collect::<Vec<_>>(), ["spira:spira/sp-a", "spira:spira/sp-b"], "{c:?}");
 }
 
 #[test_id(t203xra)]
@@ -399,17 +412,6 @@ fn a_failure_that_names_none_of_two_jobs_is_recorded_against_neither() {
         assert!(c.refused.is_empty(), "{effect}: {c:?}");
         assert_eq!((c.jobs.len(), c.tally.failed), (1, 1), "the pass still counts it and waits on one less");
     }
-}
-
-#[test_id(tfhywgc)]
-#[test]
-fn a_failed_runner_names_its_job() {
-    let dir = testkit::TempDir::new("hel-sweep-named");
-    let target = r#"{"repo":"nowhere","id":"sp-a","br":"spira/sp-a","tip":"abc123","path":""}"#;
-    let e = task::archive(&real_in(dir.path()), target).unwrap_err();
-    assert!(e.ends_with("[hel.sweep.archive:nowhere:sp-a]"), "{e}");
-    let e = task::destroy_worktree(&real_in(dir.path()), task::FREE_WORKTREE, target).unwrap_err();
-    assert!(e.ends_with("[hel.sweep.free_worktree:nowhere:sp-a]"), "{e}");
 }
 
 #[test_id(t2tlhk4)]
@@ -460,4 +462,29 @@ fn an_observes_window_is_what_it_resumed_after_and_where_it_was_cut() {
     assert_eq!((s.resumed_after.as_str(), s.cut_at.as_str()), ("spira/sp-b", "spira/sp-d"));
     s.set_window(None, false, Some("spira/sp-d"));
     assert_eq!((s.resumed_after.as_str(), s.cut_at.as_str()), ("", ""));
+}
+
+#[test_id(tfnm3rz)]
+#[test]
+fn a_leg_that_answers_after_the_tick_following_a_spent_budget_issues_nothing() {
+    let cfg = t::handler::<H>(SET).cfg;
+    for (code, recorded) in [(0, false), (1, true)] {
+        let (c, _) = pass(&Carry::default(), same());
+        let (c, _) = task::decide(&cfg, &c, &answer(task::SEND, true, "started"), AT_35 + 901_000).unwrap();
+        let (c, _) = step(&c, Input::Fire);
+        let (c, acts) = step(&c, Input::Ran(leg_ran(code)));
+        assert!(acts.is_empty(), "{code}: {acts:?}");
+        assert_eq!((c.phase, c.refused.contains_key("spira:spira/sp-a")), (Phase::Observing, recorded), "{code}: {c:?}");
+    }
+}
+
+#[test_id(tal70ct)]
+#[test]
+fn an_input_that_could_not_be_read_has_not_moved() {
+    let unreadable = Snapshot { rows: Default::default(), base: Base::default(), inputs_unread: true, ..same() };
+    let (c, acts) = pass(&send_failed(), unreadable);
+    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(c.tally.refused, 1);
+    let (_, acts) = pass(&c, same());
+    assert!(acts.is_empty(), "the record kept its inputs: {acts:?}");
 }
