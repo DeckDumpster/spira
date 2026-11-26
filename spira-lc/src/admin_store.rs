@@ -1,11 +1,16 @@
-//! `admin-store <sub>`: the one door install, deploy and operator tooling reach the beads
-//! binary through. It runs in the caller's process, never over the socket, and passes bd's
-//! stdout, stderr and exit code through unchanged so callers keep parsing bd's own text.
+//! `admin-store <sub>`: the one door install, deploy and operator tooling reach the beads store
+//! through. It runs in the caller's process, never over the socket. `sql`, `ping` and `config`
+//! run on the beads server; the rest exec bd, passing its output and exit code through unchanged.
 
+use std::collections::BTreeSet;
 use std::os::unix::process::CommandExt;
 use crate::proc::Command;
 
-use crate::CANNOT_TELL;
+use serde_json::Value;
+
+use crate::rows::escape;
+use crate::db::{Conn, DbError};
+use crate::{CANNOT_TELL, REFUSED};
 
 pub(crate) const SUBCOMMANDS: &str = "migrate | migrate-status | ping | version | dolt-start | init | config get|set <types.custom|status.custom> [value] | sql [--json] (statement on stdin)";
 const CONFIG_KEYS: [&str; 2] = ["types.custom", "status.custom"];
@@ -19,35 +24,130 @@ pub(crate) struct Plan {
     pub with_path: bool,
 }
 
-fn plan(argv: &[&str], in_store_dir: bool, with_path: bool) -> Plan {
-    Plan { argv: argv.iter().map(|s| s.to_string()).collect(), in_store_dir, with_path }
+/// What one subcommand does: exec bd, or run on the beads server.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Ask {
+    Bd(Plan),
+    Sql { statement: String, json: bool },
+    ConfigGet(String),
+    ConfigSet(String, String),
 }
 
-pub(crate) fn plan_of(args: &[String], stdin: &mut dyn FnMut() -> Result<String, String>) -> Result<Plan, String> {
+fn plan(argv: &[&str], in_store_dir: bool, with_path: bool) -> Ask {
+    Ask::Bd(Plan { argv: argv.iter().map(|s| s.to_string()).collect(), in_store_dir, with_path })
+}
+
+pub(crate) fn ask_of(args: &[String], stdin: &mut dyn FnMut() -> Result<String, String>) -> Result<Ask, String> {
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     match words.as_slice() {
         ["migrate"] => Ok(plan(&["migrate", "schema"], false, false)),
         ["migrate-status"] => Ok(plan(&["migrate", "status"], false, false)),
-        ["ping"] => Ok(plan(&["sql", "select 1;"], false, false)),
+        ["ping"] => Ok(Ask::Sql { statement: "select 1".to_string(), json: false }),
         ["version"] => Ok(plan(&["version"], false, true)),
         ["dolt-start"] => Ok(plan(&["dolt", "start"], false, false)),
         ["init"] => Ok(plan(&["init", "--non-interactive", "--prefix", "sp", "--skip-agents", "--skip-hooks", "-q"], true, false)),
-        ["config", "get", key] if CONFIG_KEYS.contains(key) => Ok(plan(&["config", "get", key], false, false)),
-        ["config", "set", key, value] if CONFIG_KEYS.contains(key) => Ok(plan(&["config", "set", key, value], false, false)),
+        ["config", "get", key] if CONFIG_KEYS.contains(key) => Ok(Ask::ConfigGet(key.to_string())),
+        ["config", "set", key, value] if CONFIG_KEYS.contains(key) => Ok(Ask::ConfigSet(key.to_string(), value.to_string())),
         ["sql"] | ["sql", "--json"] => {
             let statement = stdin()?;
             let statement = statement.trim();
             if statement.is_empty() {
                 return Err("admin-store sql: the statement is read from stdin and was empty".into());
             }
-            let mut p = plan(&["sql"], false, false);
-            if words.len() == 2 {
-                p.argv.push("--json".into());
-            }
-            p.argv.push(statement.to_string());
-            Ok(p)
+            Ok(Ask::Sql { statement: statement.to_string(), json: words.len() == 2 })
         }
         _ => Err(format!("admin-store: not a subcommand of the closed list: {SUBCOMMANDS}")),
+    }
+}
+
+/// `--json`: an array of row objects. Plain: a header, a rule, a line per row, or nothing.
+fn render(rows: &[Value], json: bool) -> String {
+    if json {
+        return format!("{}\n", Value::from(rows.to_vec()));
+    }
+    let Some(Value::Object(first)) = rows.first() else { return String::new() };
+    let line = |cells: Vec<&str>| format!("{}\n", cells.iter().map(|c| c.replace(['\r', '\n'], " ")).collect::<Vec<_>>().join(" | "));
+    let mut out = line(first.keys().map(String::as_str).collect());
+    out.push_str(&vec!["---"; first.len()].join("+"));
+    out.push('\n');
+    for row in rows {
+        out.push_str(&line(first.keys().map(|c| row[c.as_str()].as_str().unwrap_or_default()).collect()));
+    }
+    out
+}
+
+fn said(e: DbError) -> String {
+    let DbError::CannotTell(m) = e;
+    m
+}
+
+fn config_get(admin: &Conn, db: &str, key: &str) -> Result<String, String> {
+    let rows = admin.query(&format!("SELECT value FROM {db}.config WHERE `key` = '{}'", escape(key))).map_err(said)?;
+    Ok(match rows.first().and_then(|r| r["value"].as_str()) {
+        Some(v) => format!("{v}\n"),
+        None => format!("{key} (not set)\n"),
+    })
+}
+
+/// A create reads `types.custom` from the `custom_types` table too where the store has one, so
+/// the two are written in one transaction.
+fn config_set(admin: &Conn, db: &str, key: &str, value: &str) -> Result<String, String> {
+    let mut script = vec!["START TRANSACTION".to_string(), format!("REPLACE INTO {db}.config (`key`, value) VALUES ('{}', '{}')", escape(key), escape(value))];
+    if key == "types.custom" {
+        let schema = db.trim_matches('`');
+        let table = admin.query(&format!("SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = 'custom_types'")).map_err(said)?;
+        if !table.is_empty() {
+            script.push(format!("DELETE FROM {db}.custom_types"));
+            let names: BTreeSet<&str> = value.split(',').map(str::trim).filter(|n| !n.is_empty()).collect();
+            if !names.is_empty() {
+                let rows = names.iter().map(|n| format!("('{}')", escape(n))).collect::<Vec<_>>().join(", ");
+                script.push(format!("INSERT INTO {db}.custom_types (name) VALUES {rows}"));
+            }
+        }
+    }
+    script.push("COMMIT".to_string());
+    admin.execute(&script.join("; ")).map_err(said)?;
+    Ok(format!("Set {key} = {value}\n"))
+}
+
+/// The administrator on the beads server, with the content database selected so a caller's
+/// unqualified table names resolve to it.
+fn administrator() -> Result<(Conn, &'static str), String> {
+    let settings = crate::content_sql::Settings::from_config()?;
+    let db = crate::plan::content_db()?;
+    let (user, password) = crate::admin_drop::local_administrator()?;
+    let mut admin = Conn::administrator(&settings.host, settings.port, &user, password);
+    admin.database = db.trim_matches('`').to_string();
+    Ok((admin, db))
+}
+
+/// The text a server subcommand prints, or the server's error.
+fn answer(admin: &Conn, db: &str, ask: &Ask) -> Result<String, String> {
+    match ask {
+        Ask::Sql { statement, json } => admin.query(statement).map(|rows| render(&rows, *json)).map_err(said),
+        Ask::ConfigGet(key) => config_get(admin, db, key),
+        Ask::ConfigSet(key, value) => config_set(admin, db, key, value),
+        Ask::Bd(_) => Err("a bd subcommand is not run on the server".to_string()),
+    }
+}
+
+fn on_server(ask: &Ask) -> i32 {
+    let (admin, db) = match administrator() {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("admin-store: {e}");
+            return CANNOT_TELL;
+        }
+    };
+    match answer(&admin, db, ask) {
+        Ok(out) => {
+            print!("{out}");
+            0
+        }
+        Err(e) => {
+            eprintln!("admin-store: {e}");
+            REFUSED
+        }
     }
 }
 
@@ -74,15 +174,16 @@ fn resolved_path(bd: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Runs `args` (the words after `admin-store`). Returns only on a refusal or a failure to
-/// start bd; otherwise bd takes this process over, so a caller's `timeout` reaches bd itself.
+/// Runs `args` (the words after `admin-store`). A bd subcommand returns only on a refusal or a
+/// failure to start bd; otherwise bd takes this process over, so a caller's `timeout` reaches it.
 pub fn run(args: &[String]) -> i32 {
     let mut stdin = || {
         let mut t = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut t).map(|_| t).map_err(|e| e.to_string())
     };
-    let p = match plan_of(args, &mut stdin) {
-        Ok(p) => p,
+    let p = match ask_of(args, &mut stdin) {
+        Ok(Ask::Bd(p)) => p,
+        Ok(ask) => return on_server(&ask),
         Err(e) => {
             eprintln!("{e}");
             return CANNOT_TELL;
@@ -138,6 +239,13 @@ mod tests {
         assert_eq!(run(&words(&["config", "set", "types.custom"])), 2);
     }
 
+    fn bd_plan(args: &[&str]) -> Plan {
+        match ask_of(&words(args), &mut || Err("no stdin".to_string())) {
+            Ok(Ask::Bd(p)) => p,
+            other => panic!("{args:?} is not bd's: {other:?}"),
+        }
+    }
+
     #[test_id(twxoo9a)]
     #[test]
     fn admin_store_execs_bd_with_the_stores_argv() {
@@ -148,22 +256,13 @@ mod tests {
         let (bd, db) = (stub.to_str().unwrap(), dir.join("store"));
         std::fs::create_dir(&db).unwrap();
         let db = db.to_str().unwrap();
-        let mut none = || Err("no stdin".to_string());
-        for args in [vec!["migrate"], vec!["dolt-start"], vec!["config", "set", "status.custom", "a,b"]] {
-            let p = plan_of(&words(&args), &mut none).unwrap();
-            assert!(command(&p, bd, db).unwrap().status().unwrap().success());
+        for args in [vec!["migrate"], vec!["dolt-start"], vec!["init"]] {
+            assert!(command(&bd_plan(&args), bd, db).unwrap().status().unwrap().success());
         }
-        let mut sql = || Ok("select 1\n".to_string());
-        let p = plan_of(&words(&["sql", "--json"]), &mut sql).unwrap();
-        assert!(command(&p, bd, db).unwrap().status().unwrap().success());
-        let p = plan_of(&words(&["init"]), &mut none).unwrap();
-        assert!(command(&p, bd, db).unwrap().status().unwrap().success());
         let seen = std::fs::read_to_string(&log).unwrap();
         let want = [
             format!("[-C][{db}][migrate][schema]"),
             format!("[-C][{db}][dolt][start]"),
-            format!("[-C][{db}][config][set][status.custom][a,b]"),
-            format!("[-C][{db}][sql][--json][select 1]"),
             format!("{db}\n[init][--non-interactive][--prefix][sp][--skip-agents][--skip-hooks][-q]"),
         ];
         for w in &want {
@@ -209,12 +308,11 @@ mod tests {
         let dir = testkit::TempDir::new("admin-store-version");
         let stub = dir.join("bd");
         testkit::write_exe(&stub, "#!/bin/sh\necho 'bd version 9.9'\necho second\n");
-        let mut none = || Err("no stdin".to_string());
-        let p = plan_of(&["version".to_string()], &mut none).unwrap();
+        let p = bd_plan(&["version"]);
         let out = command(&p, stub.to_str().unwrap(), "").unwrap().output().unwrap();
         assert!(String::from_utf8_lossy(&out.stdout).starts_with("bd version 9.9"));
         assert_eq!(resolved_path(stub.to_str().unwrap()), stub.to_str().unwrap());
         let mut empty = || Ok("  \n".to_string());
-        assert!(plan_of(&["sql".to_string()], &mut empty).is_err());
+        assert!(ask_of(&["sql".to_string()], &mut empty).is_err());
     }
 }

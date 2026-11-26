@@ -33,6 +33,12 @@ pub(crate) fn provisioned() -> Result<Option<(String, String)>, String> {
     Ok(Some(("root".to_string(), password.trim().to_string())))
 }
 
+/// [`administrator`] from this process's environment, else root with the password in the admin
+/// credential file, or none where there is no file: what a verb on the local beads server logs in as.
+pub(crate) fn local_administrator() -> Result<(String, String), String> {
+    administrator(|k| std::env::var(k).ok(), || Ok(Some(provisioned()?.unwrap_or_else(|| ("root".to_string(), String::new())))))
+}
+
 /// A database name safe to put between backticks.
 fn plain_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
