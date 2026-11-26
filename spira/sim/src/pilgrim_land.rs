@@ -220,6 +220,8 @@ impl RunTests for CargoTests {
     fn run(&self, tree: &Path, skip_fns: &[String]) -> Result<TestRun, String> {
         let mut cmd = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
         cmd.current_dir(tree).args(["test", "--offline", "--workspace", "--target-dir"]).arg(tree.join("target")).arg("--");
+        // Empty, not removed: removed leaves a cargo config's wrapper in force.
+        cmd.env("RUSTC_WRAPPER", "").env("RUSTC_WORKSPACE_WRAPPER", "");
         for f in skip_fns {
             cmd.args(["--skip", f]);
         }
