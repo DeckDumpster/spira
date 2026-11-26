@@ -121,6 +121,8 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
     std::fs::create_dir(&wiki).unwrap();
     git(&wiki, &["init", "-q", "-b", "main"], 1);
     std::fs::write(wiki.join("page.md"), "page").unwrap();
+    std::fs::create_dir_all(wiki.join("wiki/notes")).unwrap();
+    std::fs::write(wiki.join(STATUTE_PAGE), "### law-one\n").unwrap();
     git(&wiki, &["add", "."], 1);
     commit(&wiki, "page", LANDED_S);
 
@@ -339,7 +341,10 @@ pub fn plan_row(id: &str) -> String {
 pub const IDLE_TASK_PROGRAMS: [&str; 5] = ["mail-health.sh", "bash", "bead.sh", "schema.sh", "spira-sendmail"];
 pub const DATE_RUNS_PER_OPEN_EPOCH: usize = 4;
 pub const ENSURE_UNIT: &str = spira_runtime::tasks::g::cockpit_ensure::UNIT;
-pub const LOGGED_PROGRAMS: [&str; 24] = [
+pub const STATUTE_PAGE: &str = "wiki/notes/common-law.md";
+pub const LOGGED_PROGRAMS: [&str; 26] = [
+    "drift.sh",
+    "tsd-query.sh",
     "yield.sh",
     "tmux",
     "spira-claim",
@@ -404,6 +409,11 @@ pub fn make_ready(f: &Fixture, id: &str) {
 pub fn strand_rows(f: &Fixture) -> Vec<String> {
     let snap: serde_json::Value = serde_json::from_str(&last_output(f, "sentinel-pass.observe")).unwrap_or_default();
     snap["strand"].as_array().into_iter().flatten().filter_map(|r| r.as_str().map(str::to_string)).collect()
+}
+
+pub fn cockpit_600s_every_probe() -> &'static str {
+    let probes = spira_runtime::tasks::g::cockpit_tier_600s::PROBES.iter().map(|(name, ms)| format!(r#"{{"name":"{name}","timeout_ms":{ms}}}"#)).collect::<Vec<_>>().join(",");
+    format!(r#"{{"probes":[{probes}],"config":{{}}}}"#).leak()
 }
 
 pub const COCKPIT_UNSENT: &str = r#"{"probes":[{"name":"cockpit.unsent","timeout_ms":300000}],"config":{}}"#;

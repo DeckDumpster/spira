@@ -1495,7 +1495,7 @@ pub fn statute_keys(cfg: &Cfg) -> Kv {
         serde_json::from_str::<Value>(s.trim()).ok()
     }).and_then(|v| v.as_object().map(|m| m.iter().filter(|(k, v)| v.is_string() && k.starts_with("law-")).count()));
 
-    let page_n: Option<usize> = io::git(Path::new(&wiki), &["show", "HEAD:wiki/notes/common-law.md"])
+    let page_n: Option<usize> = io::git_held(Path::new(&wiki), &["show", "HEAD:wiki/notes/common-law.md"])
         .map(|s| s.lines().filter(|l| l.starts_with("### ")).count());
 
     statute_skew_keys(db_n, page_n)
