@@ -1090,7 +1090,7 @@ fn cmd_blocked(bead_id: &str, args: &[String]) -> (i32, String) {
         return (CANNOT_TELL, "work blocked: --default <default> is required".into());
     };
     let required = |name: &str| {
-        flag(args, name).filter(|v| !v.trim().is_empty()).ok_or_else(|| (CANNOT_TELL, format!("work blocked: {name} is required; {BLOCKED_USAGE}")))
+        flag(args, name).filter(|v| !v.trim().is_empty() && !v.starts_with("--")).ok_or_else(|| (CANNOT_TELL, format!("work blocked: {name} is required; {BLOCKED_USAGE}")))
     };
     let (class, class_basis) = match (required("--class"), required("--class-basis")) {
         (Ok(c), Ok(b)) => (c, b),
@@ -2928,9 +2928,19 @@ mod tests {
     fn a_blocked_call_without_its_class_or_basis_is_refused_before_anything_is_sent() {
         let dir = testkit::TempDir::new("blocked-no-mail");
         let _env = testkit::env(&[("SPIRA_MAIL_SH", Some(&dir.path().join("mail").to_string_lossy()))]);
-        let base = ["Has the Control run passed?", "--default", "wait for it", "--actor", "builder"];
-        for extra in [&[][..], &["--class", "policy"], &["--class-basis", "it is policy"], &["--class", "", "--class-basis", "it is policy"], &["--class", "policy", "--class-basis", " "]] {
-            let args: Vec<String> = base.iter().chain(extra).map(|a| a.to_string()).collect();
+        let base = ["Has the Control run passed?", "--default", "wait for it"];
+        let calls: [&[&str]; 7] = [
+            &[],
+            &["--class", "policy"],
+            &["--class-basis", "it is policy"],
+            &["--class", "", "--class-basis", "it is policy"],
+            &["--class", "policy", "--class-basis", " "],
+            &["--class", "policy", "--class-basis"],
+            &["--class", "--class-basis", "it is policy"],
+        ];
+        for extra in calls {
+            // The client appends --actor after the caller's own arguments.
+            let args: Vec<String> = base.iter().chain(extra).chain(&["--actor", "builder"]).map(|a| a.to_string()).collect();
             let (code, out) = super::cmd_blocked("sp-x", &args);
             assert_eq!(code, super::CANNOT_TELL, "{extra:?}: {out}");
             assert!(out.contains("--class <permissions|policy|destructive|design>") && out.contains("--class-basis \""), "{extra:?}: {out}");
