@@ -38,7 +38,7 @@
 //!
 //! Same pure core as [[batcher-local]] (`batcher/src/core.rs:44-717`, `drive.rs:296`) minus pacing, plus
 //! `pr_record` / `opened_event` (`batcher/src/core.rs`) and the held-page rule: page once per change of the
-//! waiting CERTIFIED set while disabled (`main.rs:1235-1254`). Carry: per repo machine state, held set,
+//! waiting set (certified and provisional) while disabled (`main.rs:1235-1254`). Carry: per repo machine state, held set,
 //! base-moved, conflict streaks. Fixtures: as [[batcher-local]], plus `main.rs` `drive_pass`/`plan` tests.
 //!
 //! **States:** `Idle`, `Disabled`, `Settling`, `Assembling`, `Corpus`, `Attributing`, `Opening`, `Open`.
@@ -155,7 +155,7 @@ pub const ACTS: &[(&str, u64)] = &[
 pub const EMITS: &[EventKindTag] = &[SETTLE_WANTED];
 /// Hand-offs that wake it at once, besides its tick: a submission sifted, a batch settled.
 pub const WAKES: &[EventKindTag] = &[kit::WORK_SUBMITTED, super::queue_step::CUT_WANTED];
-pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, ARM, FETCH, ASSEMBLE, CORPUS, WITHDRAW, SHOTS, BATCH_OPEN, FILE, VERDICT_WRITE, INBOX_APPEND, NOTE_LEFT_OUT];
+pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, ARM, FETCH, ASSEMBLE, CORPUS, WITHDRAW, SHOTS, BATCH_OPEN, FILE, VERDICT_WRITE, NOTE_LEFT_OUT, INBOX_APPEND];
 pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
     "SPIRA_DB",
@@ -205,26 +205,9 @@ pub struct Repo {
     pub left_out: Vec<batcher_cut::io::LeftOut>,
 }
 
-/// One repository as the probe read it: a provisional member stays SUBMITTED, so the cut ranks it
-/// after the certified ones. The pool's tips are the sifted ones: a forge cut asks no sift.
+/// One repository as the probe read it. The pool's tips are the sifted ones: a forge cut asks no sift.
 pub fn observed_repo(certified: Vec<core::Member>, left_out: Vec<batcher_cut::io::LeftOut>, open_batch: Option<Batch>, base_sha: String) -> Repo {
-    let pool: Vec<Member> = certified
-        .into_iter()
-        .map(|m| Member {
-            state: if m.provisional { "SUBMITTED" } else { "CERTIFIED" }.into(),
-            sifted_tip: Some(m.tip.clone()),
-            title: m.title.clone(),
-            priority: m.priority.unwrap_or(u8::MAX),
-            deps: m.blocked_by.clone(),
-            stack: m.stack.iter().map(|(i, t)| format!("{i}:{t}")).collect(),
-            base_fix: m.base_fix,
-            express: m.express,
-            certified_at: m.certified_at,
-            id: m.id,
-            tip: m.tip,
-            ..Member::default()
-        })
-        .collect();
+    let pool: Vec<Member> = certified.into_iter().map(|m| { let tip = m.tip.clone(); Member::read(m, Some(tip)) }).collect();
     let blockers = pool.iter().flat_map(|m| m.deps.clone()).collect();
     let branch_tips = pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
     Repo { pool, blockers, open_batch, branch_tips, base_sha, base_confirmed: true, left_out, ..Repo::default() }
@@ -304,7 +287,7 @@ pub static TABLE: &[(State, Trigger, State)] = &[
 pub struct RepoCarry {
     pub state: State,
     pub round_key: Option<String>,
-    /// The waiting CERTIFIED set last paged while disabled: page once per change of it.
+    /// The waiting set last paged while disabled: page once per change of it.
     pub held: Vec<String>,
     pub base_moved: Option<(String, u64)>,
     pub conflict_streaks: BTreeMap<String, u32>,
@@ -402,10 +385,10 @@ impl Machine<'_> {
     fn observe(&mut self, policy: &Policy, enabled: bool, repo: &Repo) {
         if !enabled && matches!(self.rc.state, State::Idle | State::Disabled) {
             self.go(Trigger::ForgeDisabled);
-            // `page_held` (`main.rs:1235-1254`): once per change of the waiting CERTIFIED set.
-            let waiting: Vec<String> = repo.pool.iter().filter(|m| m.state == "CERTIFIED").map(|m| m.id.clone()).collect();
+            // `page_held` (`main.rs:1235-1254`): once per change of the waiting set, the whole pool.
+            let waiting: Vec<String> = repo.pool.iter().map(|m| m.id.clone()).collect();
             if !waiting.is_empty() && waiting != self.rc.held {
-                let text = format!("BATCHES HELD {}: SPIRA_BATCHER_FORGE_ENABLE=0 with CERTIFIED work waiting: {}", self.repo, waiting.join(","));
+                let text = format!("BATCHES HELD {}: SPIRA_BATCHER_FORGE_ENABLE=0 with certified or provisional work waiting: {}", self.repo, waiting.join(","));
                 self.acts.push(Act::new(INBOX_APPEND, text.clone()).with_input(page_line(self.now_ms, &text)));
             }
             self.rc.held = waiting;
@@ -438,7 +421,11 @@ impl Machine<'_> {
             return;
         }
         let (selected, selection_out) = select_split(&repo.local(), policy.max_members);
-        let left = repo.left_out.iter().cloned().chain(selection_out).collect();
+        let held = match &selected {
+            Ok((pool, key)) if self.rc.held_keys.contains(key) => pool.iter().map(|m| batcher_cut::io::LeftOut { id: m.id.clone(), tip: m.tip.clone(), cause: batcher_cut::io::Cause::RoundHeld { key: key.clone() } }).collect(),
+            _ => vec![],
+        };
+        let left = repo.left_out.iter().cloned().chain(selection_out).chain(held).collect();
         self.acts.extend(left_out_note(self.repo, &mut self.rc.left_noted, left).map(|leg| leg.act(NOTE_LEFT_OUT)));
         match selected {
             Ok((pool, key)) if !self.rc.held_keys.contains(&key) => {
@@ -666,11 +653,17 @@ pub mod edge {
     use batcher_cut::io;
 
     use super::super::batcher_local::edge::{env, leg};
-    use super::{Batch, Opened, Snapshot};
+    use super::{Batch, Opened, Repo, Snapshot};
     use crate::{Effects, EffectSpec};
 
     fn json<T: serde::Serialize>(v: &T) -> Result<String, String> {
         serde_json::to_string(v).map_err(|e| e.to_string())
+    }
+
+    /// One repo's pool read, as the probe puts it in the snapshot.
+    pub fn pool_snapshot(env: &io::Env, repo: &io::Repo) -> Result<Repo, String> {
+        let (certified, left_out) = io::certified_pool_left_out(env, repo)?;
+        Ok(super::observed_repo(certified, left_out, None, io::resolve_base_sha(repo)?))
     }
 
     /// The probe: every `queue` repo's certified pool and open batch PR.
@@ -682,9 +675,9 @@ pub mod edge {
         let mut snap = Snapshot { enabled, now_ms: spira_config::vtime::now_epoch() * 1000, ..Snapshot::default() };
         for name in reg.names().into_iter().filter(|n| reg.land(n) == "queue") {
             let repo = batcher_cut::find_repo(&env, &name)?;
-            let (certified, left_out) = io::certified_pool_left_out(&env, &repo)?;
+            let read = pool_snapshot(&env, &repo)?;
             let open_batch = io::read_open_batch(&env, &name)?.map(|b| Batch { pr: b.pr.trim_start_matches('#').parse().unwrap_or_default(), head: String::new(), members: b.members.into_iter().map(|(id, _)| id).collect() });
-            snap.repos.insert(name, super::observed_repo(certified, left_out, open_batch, io::resolve_base_sha(&repo)?));
+            snap.repos.insert(name, Repo { open_batch, ..read });
         }
         json(&snap)
     }

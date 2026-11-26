@@ -55,7 +55,8 @@ fn t3_batch_open_in_open_is_refused_naming_open() {
 #[test]
 fn t3_the_recorded_carry_is_the_carry_read() {
     let mut r = rig(1, busy());
-    r.advance(CADENCE_MS).unwrap();
+    // The first held tick notes its round, changing the carry after that probe was asked.
+    r.advance(2 * CADENCE_MS).unwrap();
     kit::assert_unpoisoned(&r, STREAM);
     kit::assert_read_equals_record::<Carry>(&r, STATE, OBSERVE);
 }
@@ -293,4 +294,25 @@ fn an_open_batch_notes_nothing() {
     snap.repos.get_mut("deckdumpster").unwrap().open_batch = Some(Batch { pr: 12, head: "h1".into(), members: vec![] });
     let (_, acts) = decide(&Carry::default(), &snap);
     assert!(named(&acts).is_empty(), "{acts:?}");
+}
+
+#[test_id(tz74dm7)]
+#[test]
+fn a_disabled_repo_pages_marked_work_that_waits() {
+    let (_, acts) = decide(&Carry::default(), &Snapshot { enabled: false, ..observed(vec![read("dd-a", true)], vec![]) });
+    assert!(acts.iter().any(|a| a.effect == INBOX_APPEND && a.input.contains("dd-a")), "{acts:?}");
+}
+
+#[test_id(tz0gzx7)]
+#[test]
+fn a_member_whose_round_is_held_is_noted_with_that_cause() {
+    let snap = observed(vec![read("dd-a", true)], vec![]);
+    let (carry, acts) = decide(&Carry::default(), &snap);
+    let leg = serde_json::from_str(&acts[1].input).unwrap();
+    let (carry, _) = on_outcome(&carry, ASSEMBLE, true, r#"{"merged":[]}"#, &leg, NOW);
+    let (carry, acts) = decide(&carry, &snap);
+    assert!(acts.iter().all(|a| a.effect != ASSEMBLE), "a held round is not cut again: {acts:?}");
+    let noted: Vec<_> = named(&acts).concat().into_iter().map(|l| (l.id.clone(), l.tag())).collect();
+    assert_eq!(noted, [("dd-a".to_string(), "round-held".to_string())], "{acts:?}");
+    assert!(named(&decide(&carry, &snap).1).is_empty(), "once per change");
 }

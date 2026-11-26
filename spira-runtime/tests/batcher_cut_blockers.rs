@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use batcher_cut::io::{self, Env, Hypervisor, Land, Repo};
 use serde_json::{json, Value};
+use spira_runtime::tasks::a::batcher_forge;
 use spira_store::lc_call::{LcClient, Reply, Transport};
 use store_view::Projection;
 
@@ -211,6 +212,13 @@ fn a_certified_item_blocked_by_a_finished_item_is_cut_and_one_blocked_by_a_certi
             item("sp-dec", "decision", "closed", None),
         ],
     };
+    let delta_dir = repo_dir.clone();
+    let delta = |id: &str| with_repo(row(id, "SUBMITTED", &tip, "{}"), "delta");
+    let mut marked = delta("sp-marked");
+    marked["reason"] = json!("gate-certifies-nothing");
+    git(&delta_dir, &["branch", "spira/sp-marked"]);
+    store.rows.extend([marked, delta("sp-unmarked")]);
+    store.items.push(item("sp-marked", "task", "open", None));
     store.rows.extend(gamma_rows);
     store.items.extend(gamma_items);
     let frozen = Arc::new(Mutex::new(std::time::Instant::now()));
@@ -242,6 +250,11 @@ fn a_certified_item_blocked_by_a_finished_item_is_cut_and_one_blocked_by_a_certi
     refused.sort();
     assert_eq!(refused, [("sp-on-sp-live", "sp-other"), ("sp-on-sp-weird", "sp-weird")], "a state the machine does not know stays live");
     assert!(left.iter().any(|l| l.id == "sp-on-sp-live" && l.cause == io::Cause::Blocked { dep: "sp-other".into() }), "{left:?}");
+
+    let forge = Repo { name: "delta".into(), path: delta_dir, base: "main".into(), forge: "forge".into(), land: Land::Forge };
+    let read = batcher_forge::edge::pool_snapshot(&env, &forge).expect("the forge pool reads");
+    assert_eq!(read.pool.iter().map(|m| (m.id.as_str(), m.state.as_str())).collect::<Vec<_>>(), [("sp-marked", "SUBMITTED")]);
+    assert_eq!(read.left_out.iter().map(|l| (l.id.as_str(), l.cause.clone())).collect::<Vec<_>>(), [("sp-unmarked", io::Cause::Uncertified)]);
 
     let mut env = env;
     env.commit = Ok(gamma_commit);

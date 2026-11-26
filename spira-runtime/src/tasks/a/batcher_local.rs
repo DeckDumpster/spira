@@ -253,6 +253,25 @@ pub struct Member {
 }
 
 impl Member {
+    /// A member of the pool as the store read gave it, its version unread: a provisional one
+    /// stays SUBMITTED, so the cut ranks it after the certified ones.
+    pub fn read(m: core::Member, sifted_tip: Option<String>) -> Member {
+        Member {
+            state: if m.provisional { "SUBMITTED" } else { "CERTIFIED" }.into(),
+            sifted_tip,
+            title: m.title,
+            priority: m.priority.unwrap_or(u8::MAX),
+            deps: m.blocked_by,
+            stack: m.stack.iter().map(|(i, t)| format!("{i}:{t}")).collect(),
+            base_fix: m.base_fix,
+            express: m.express,
+            certified_at: m.certified_at,
+            id: m.id,
+            tip: m.tip,
+            ..Member::default()
+        }
+    }
+
     /// The pure core's view of this member; `blockers` are the repo's unlanded beads.
     pub fn core(&self, blockers: &[String]) -> core::Member {
         let stack = self.stack.iter().map(|s| s.split_once(':').map_or((s.clone(), String::new()), |(i, t)| (i.to_string(), t.to_string()))).collect();
@@ -3241,23 +3260,7 @@ pub mod edge {
     fn observe_repo(env: &Env, repo: &batcher_cut::io::Repo, units: Option<&dyn runtime::units::Units>) -> Result<Repo, String> {
         let sifted = io::sifted_tips(env)?;
         let (certified, left_out) = io::certified_pool_left_out(env, repo)?;
-        let pool: Vec<Member> = certified
-            .into_iter()
-            .map(|m| Member {
-                state: if m.provisional { "SUBMITTED" } else { "CERTIFIED" }.into(),
-                sifted_tip: sifted.get(&m.id).cloned(),
-                title: m.title.clone(),
-                priority: m.priority.unwrap_or(u8::MAX),
-                deps: m.blocked_by.clone(),
-                stack: m.stack.iter().map(|(i, t)| format!("{i}:{t}")).collect(),
-                base_fix: m.base_fix,
-                express: m.express,
-                certified_at: m.certified_at,
-                id: m.id,
-                tip: m.tip,
-                ..Member::default()
-            })
-            .collect();
+        let pool: Vec<Member> = certified.into_iter().map(|m| { let sifted = sifted.get(&m.id).cloned(); Member::read(m, sifted) }).collect();
         let blockers = pool.iter().flat_map(|m| m.deps.clone()).collect();
         let branch_tips = pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
         let mut open = io::open_rounds(env, repo)?.into_iter().map(|r| {
