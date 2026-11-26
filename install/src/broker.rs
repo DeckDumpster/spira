@@ -3,7 +3,10 @@
 use crate::values::HostValues;
 use std::path::Path;
 
-pub use release::broker::{CONF_FILE, UNIT};
+pub use release::broker::CONF_FILE;
+
+/// The unit template that reads the config.
+pub const UNIT: &str = "spira-broker.service";
 
 /// [`release::broker::place_conf`] with this host's socket and run directory.
 pub fn place_conf(templates_dir: &Path, host: &HostValues) -> Result<bool, String> {

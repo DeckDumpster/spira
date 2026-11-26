@@ -815,7 +815,7 @@ mod tests {
             let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
             crate::ensure::run(&ctx, false);
             sc.set(unit, FakeUnit { active: started_by_hand, enabled: Some("disabled".into()), ..Default::default() });
-            testkit::write_exe(&base.join("tool"), "");
+            testkit::write_exe(base.join("tool"), "");
 
             let r = run(&ctx);
 

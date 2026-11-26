@@ -253,7 +253,7 @@ pub(crate) mod tests {
         assert!(first.missing_target.iter().any(|m| m.starts_with(DEFERRED)), "{:?}", first.missing_target);
         assert!(first.enabled_started.is_empty() && sc.enabled_now.borrow().is_empty());
 
-        testkit::write_exe(&base.join("tool"), "");
+        testkit::write_exe(base.join("tool"), "");
         let second = run(&ctx, false);
         assert_eq!(second.enabled_started, [DEFERRED]);
         assert_eq!(sc.enabled_now.borrow().as_slice(), [DEFERRED]);
@@ -271,7 +271,7 @@ pub(crate) mod tests {
         let (h, sc, no_suspend) = (host(), FakeSystemctl::default(), |_: &str| false);
         let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
         run(&ctx, false);
-        testkit::write_exe(&base.join("tool"), "");
+        testkit::write_exe(base.join("tool"), "");
         assert_eq!(run(&ctx, false).enabled_started, [DEFERRED]);
 
         sc.set(DEFERRED, crate::systemctl::FakeUnit { active: false, enabled: Some("disabled".into()), ..Default::default() });

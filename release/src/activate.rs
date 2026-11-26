@@ -452,7 +452,7 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
 
     // Before the new release's unit-ensure: it writes the same file, and a write made there
     // would never be seen here and so never restart the broker.
-    let broker_unit = broker::UNIT.replace(".service", &format!("-{instance}.service"));
+    let broker_unit = broker::installed_unit(&instance);
     let conf = if rendered.iter().any(|r| r.0 == broker_unit) {
         match follow_broker_conf(cfg, &rel, &host) {
             Ok(replaced) => replaced,

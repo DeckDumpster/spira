@@ -4,8 +4,11 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-/// The unit template that reads the config.
-pub const UNIT: &str = "spira-broker.service";
+/// The installed unit that reads the config.
+pub fn installed_unit(instance: &str) -> String {
+    spira_config::unit::unit_name("broker", "service", instance)
+}
+
 /// The config's template name, and its file name in the run directory.
 pub const CONF_FILE: &str = "mosquitto.conf";
 
