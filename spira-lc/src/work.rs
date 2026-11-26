@@ -1070,6 +1070,8 @@ fn not_a_question(text: &str) -> Option<String> {
     (text.trim().is_empty() || text.starts_with("--")).then(|| format!("{text:?} is not a question"))
 }
 
+const BLOCKED_USAGE: &str = "usage: work blocked \"<the question>\" --default \"<what you would do>\" --class <permissions|policy|destructive|design> --class-basis \"<why it is that class>\"";
+
 fn cmd_blocked(bead_id: &str, args: &[String]) -> (i32, String) {
     let actor = match require_actor(args) {
         Ok(a) => a,
@@ -1082,16 +1084,20 @@ fn cmd_blocked(bead_id: &str, args: &[String]) -> (i32, String) {
         return (CANNOT_TELL, "work blocked: missing \"<question>\"".into());
     };
     if let Some(e) = not_a_question(question) {
-        return (CANNOT_TELL, format!("work blocked: {e}; usage: work blocked \"<the question>\" --default \"<what you would do>\""));
+        return (CANNOT_TELL, format!("work blocked: {e}; {BLOCKED_USAGE}"));
     }
     let Some(default) = flag(args, "--default") else {
         return (CANNOT_TELL, "work blocked: --default <default> is required".into());
     };
-    // mail's own "question" kind requires a filled "## Question" and "## Default"
-    // section in the body (every "## " heading in its template is a required section,
-    // not just the X-Spira-Default header) — a bare question string is refused.
-    let body = format!("## Question\n{question}\n\n## Default\n{default}\n");
-    if let Err(e) = crate::bd::ask_operator(&format!("{actor} <{actor}@spira>"), question, &default, bead_id, &body) {
+    let required = |name: &str| {
+        flag(args, name).filter(|v| !v.trim().is_empty() && !v.starts_with("--")).ok_or_else(|| (CANNOT_TELL, format!("work blocked: {name} is required; {BLOCKED_USAGE}")))
+    };
+    let (class, class_basis) = match (required("--class"), required("--class-basis")) {
+        (Ok(c), Ok(b)) => (c, b),
+        (Err(e), _) | (_, Err(e)) => return e,
+    };
+    let body = blocked_ask_body(question, &default, &class_basis);
+    if let Err(e) = crate::bd::ask_operator_classed(&format!("{actor} <{actor}@spira>"), question, &default, Some(&class), bead_id, &body) {
         return (REFUSED, format!("refused: work blocked: the question could not be delivered, so no hold was applied: {e}"));
     }
     let hold = BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(question.clone()) };
@@ -1099,6 +1105,10 @@ fn cmd_blocked(bead_id: &str, args: &[String]) -> (i32, String) {
         (0, _) => (0, format!("ask filed; hold applied for {bead_id}")),
         (code, e) => (code, format!("the question WAS delivered (do not ask again), but the ask hold on {bead_id} was not applied: {e}")),
     }
+}
+
+fn blocked_ask_body(question: &str, default: &str, class_basis: &str) -> String {
+    format!("## Question\n{question}\n\n## Default\n{default}\n\n## Class basis\n{class_basis}\n")
 }
 
 /// A hold write whose reply was lost may still have applied: read the row back before
@@ -2900,6 +2910,41 @@ mod tests {
         assert_eq!(bare_id_lines(&unlanded), Vec::<String>::new(), "{unlanded}");
         assert!(unlanded.contains("No landing commit"));
         assert!(!bare_id_lines("## Question\nsp-old1 sp-new2?\n").is_empty(), "POSITIVE CONTROL: the lint shape catches a bare-id line");
+    }
+
+    #[test_id(t17aspn)]
+    #[test]
+    fn a_blocked_ask_is_one_mail_delivers_to_the_operator() {
+        let (question, default) = ("Has the Control run passed?", "wait for it");
+        let body = super::blocked_ask_body(question, default, "retiring a running unit is policy");
+        assert_eq!(mail::cmds::operator_refusal("question", default, "policy", &body, ""), None, "{body}");
+        let kinds = spira_config::resolve::locate_home_for_process().unwrap().join("mail/kinds");
+        let input = mail::lint::LintInput { kind: "question", subject: question, default, from: "builder <builder@spira>", urgent: false, body: &body, digest: false };
+        assert_eq!(mail::lint::lint_check(&input, &kinds, "sp"), Ok(()), "{body}");
+    }
+
+    #[test_id(tfh9r32)]
+    #[test]
+    fn a_blocked_call_without_its_class_or_basis_is_refused_before_anything_is_sent() {
+        let dir = testkit::TempDir::new("blocked-no-mail");
+        let _env = testkit::env(&[("SPIRA_MAIL_SH", Some(&dir.path().join("mail").to_string_lossy()))]);
+        let base = ["Has the Control run passed?", "--default", "wait for it"];
+        let calls: [&[&str]; 7] = [
+            &[],
+            &["--class", "policy"],
+            &["--class-basis", "it is policy"],
+            &["--class", "", "--class-basis", "it is policy"],
+            &["--class", "policy", "--class-basis", " "],
+            &["--class", "policy", "--class-basis"],
+            &["--class", "--class-basis", "it is policy"],
+        ];
+        for extra in calls {
+            // The client appends --actor after the caller's own arguments.
+            let args: Vec<String> = base.iter().chain(extra).chain(&["--actor", "builder"]).map(|a| a.to_string()).collect();
+            let (code, out) = super::cmd_blocked("sp-x", &args);
+            assert_eq!(code, super::CANNOT_TELL, "{extra:?}: {out}");
+            assert!(out.contains("--class <permissions|policy|destructive|design>") && out.contains("--class-basis \""), "{extra:?}: {out}");
+        }
     }
 
     #[test_id(tj4gi7f)]
