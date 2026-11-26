@@ -71,6 +71,28 @@ pub fn failed_tests(out: &str) -> Vec<String> {
     seen
 }
 
+/// The package each of [`failed_tests`] belongs to: the one its nextest binary id opens with,
+/// or the one cargo's rerun line after a libtest failure names; `None` when neither says.
+pub fn failed_test_packages(out: &str) -> Vec<(String, Option<String>)> {
+    let lines: Vec<&str> = out.lines().map(str::trim).collect();
+    failed_tests(out)
+        .into_iter()
+        .map(|test| {
+            let nextest = lines.iter().find_map(|l| {
+                let (binary, name) = spira_config::unit_tier::nextest_red_in(l)?;
+                (name == test).then(|| binary.split("::").next().unwrap_or(binary).to_string())
+            });
+            let libtest = || {
+                let at = lines.iter().position(|l| l.strip_prefix("test ").and_then(|r| r.strip_suffix(" ... FAILED")) == Some(test.as_str()))?;
+                let rerun = cargo_reruns(&lines[at..].join("\n")).into_iter().next()?;
+                rerun.strip_prefix("-p ")?.split(' ').next().map(str::to_string)
+            };
+            let package = nextest.or_else(libtest);
+            (test, package)
+        })
+        .collect()
+}
+
 /// The failing tests of `out` that nextest named, in order, unique.
 pub fn failed_nextest(out: &str) -> Vec<String> {
     let mut seen: Vec<String> = Vec::new();
@@ -501,6 +523,16 @@ mod tests {
         assert_eq!(failed_tests(nx), vec!["t::sleeper".to_string(), "t::bad".to_string()]);
         let padded = "        FAIL [   0.1s] ( 3/12) fx t::padded\n  SIGSEGV [   0.1s] (12/12) fx t::crashed\n";
         assert_eq!(failed_tests(padded), vec!["t::padded".to_string(), "t::crashed".to_string()]);
+    }
+
+    #[test_id(txon81y)]
+    #[test]
+    fn a_failed_test_belongs_to_its_nextest_binarys_package_or_cargos_rerun_package() {
+        let nextest = "        FAIL [   0.1s] (1/2) queue::bin/helpers t::a\n        FAIL [   0.1s] (2/2) spira-pub t::b\n";
+        let libtest = "test t::c ... FAILED\nfailures:\nerror: test failed, to rerun pass `-p sim --test git_idle`\ntest t::d ... FAILED\n";
+        let owner = |o: &str| failed_test_packages(o).into_iter().map(|(t, p)| format!("{t}={}", p.unwrap_or_default())).collect::<Vec<_>>();
+        assert_eq!(owner(nextest), ["t::a=queue", "t::b=spira-pub"]);
+        assert_eq!(owner(libtest), ["t::c=sim", "t::d="]);
     }
 
     #[test_id(t6b98wu)]

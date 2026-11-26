@@ -345,12 +345,12 @@ pub fn stage(
         return FAIL;
     }
     round_event(
+        w,
         &c.s.run,
         "stage",
         &repo_name,
         &batch,
         by,
-        w.clock.now(),
         &[
             ("behind", parent.to_string()),
             ("head", head.to_string()),
@@ -532,12 +532,12 @@ pub fn stage_test(w: &World, by: &str, repo: Option<&str>) -> i32 {
         return FAIL;
     }
     round_event(
+        w,
         &c.s.run,
         "stage-green",
         &c.r.name,
         &batch,
         by,
-        w.clock.now(),
         &[("head", head.to_string()), ("tree", tree.to_string())],
     );
     w.out(format!(
@@ -592,12 +592,12 @@ pub(super) fn discard_staged(
         reason,
     );
     round_event(
+        w,
         &c.s.run,
         "discard",
         &c.r.name,
         &batch,
         by,
-        w.clock.now(),
         &[("reason", one_line(reason))],
     );
     Ok(())
@@ -831,12 +831,12 @@ pub fn promote(w: &World, by: &str, repo: Option<&str>) -> i32 {
         w.git.branch_delete_sanctioned(&path, &branch_of(&batch));
         mark_running(&c, &batch);
         round_event(
+            w,
             &c.s.run,
             "promote",
             &repo_name,
             &batch,
             by,
-            w.clock.now(),
             &[
                 ("head", head.to_string()),
                 ("base", base_sha.to_string()),
@@ -868,12 +868,12 @@ pub fn promote(w: &World, by: &str, repo: Option<&str>) -> i32 {
                 super::round::LeaseCheck::Inside,
             );
             round_event(
+                w,
                 &c.s.run,
                 "attest",
                 &repo_name,
                 &batch,
                 by,
-                w.clock.now(),
                 &[
                     ("head", head.to_string()),
                     ("tree", tree.to_string()),

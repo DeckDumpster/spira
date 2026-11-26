@@ -265,6 +265,7 @@ cost / members; percentage integer.
 | `…/<repo>/divergence-alarmed` | queue, in process (sp-hwjsq, "wave 4.32") | queue, in process |
 | `$SPIRA_RUN/landstate/<id>` | eject, abandon, publish (tips), in-delivery | lib.sh `land_mark` / `bead_reopen` only |
 | `$SPIRA_RUN/landing.log` | stats | submit, abandon, open-batch, publish, land-local `QUEUE UNGATED` (append) |
+| `$SPIRA_RUN/rounds/<batch>.event` (an open round's current event, republished to `round/<repo>/<batch>` on connect) | every round event | every round event; removed when the round ends |
 | `$SPIRA_RUN/queue-protected-<repo>` | — | protect |
 | `$SPIRA_RUN/queue-stuck-<repo>` | — | open-batch (removed) |
 | `$SPIRA_RELEASES/current` (is a release in force?), `$SPIRA_RELEASES/<sha>` | land-local, rollback-local | `release build` / `release activate` only (§8 D13) |

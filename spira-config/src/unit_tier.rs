@@ -253,6 +253,11 @@ fn per_test(line: &str) -> Option<(String, f64)> {
 /// The test name of a nextest red status line: `FAIL|TIMEOUT|SIG*|LEAK-FAIL|EXEC-FAIL [ <secs>]
 /// (<k>/<n>) <binary> <name>`.
 pub fn nextest_red(l: &str) -> Option<&str> {
+    nextest_red_in(l).map(|(_, name)| name)
+}
+
+/// [`nextest_red`] with the binary id ahead of the name.
+pub fn nextest_red_in(l: &str) -> Option<(&str, &str)> {
     let (status, rest) = l.split_once(' ')?;
     if !matches!(status, "FAIL" | "TIMEOUT" | "LEAK-FAIL" | "EXEC-FAIL") && !status.starts_with("SIG") {
         return None;
@@ -263,8 +268,8 @@ pub fn nextest_red(l: &str) -> Option<&str> {
         None => after,
     };
     let mut words = after.split_whitespace();
-    let (_binary, name) = (words.next()?, words.next()?);
-    words.next().is_none().then_some(name)
+    let (binary, name) = (words.next()?, words.next()?);
+    words.next().is_none().then_some((binary, name))
 }
 
 /// Whether `l` is one of nextest's per-test status lines, of any status.
