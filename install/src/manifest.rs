@@ -75,8 +75,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     // is gone from this list (scheduler-consolidation-2026-11-03 §1, §3 P5), and the install
     // that drops one retires it from a host that has it (`install_units::retire_dropped_units`).
     // What remains is the scheduler, its outside watchdog, the store and its door, the sources
-    // the scheduler does not yet host, the clients (loom, the pane, the metrics stack,
-    // exec-census) and the Concierge's own timers.
+    // the scheduler does not yet host, the clients (loom, the pane, the metrics stack) and the
+    // Concierge's own timers.
     // spira-watch@.service is the template, not an installed unit — never enabled directly.
     m.units.push(t("spira-watch@.service", false));
     m.units.push(t("cockpit-ensure.service", false));
@@ -87,7 +87,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("lc-backup.timer", true));
     m.units.push(t("lc-backup-drill.service", false));
     m.units.push(t("lc-backup-drill.timer", true));
-    m.units.push(t("spira-exec-census.service", true));
     m.units.push(t("spira-runtime.service", true));
     // The one timer outside the scheduler (S15): it restarts and pages when the scheduler is
     // wedged or absent. Rendered from watchdog::render, not from a template file.
@@ -323,11 +322,12 @@ mod tests {
         let union = union_template_names();
         let mut names: Vec<String> = RETIRED_BY_THE_SCHEDULER.iter().flat_map(|b| [format!("spira-{b}.service"), format!("spira-{b}.timer")]).collect();
         names.push("spira-submission.service".into());
+        names.push("spira-exec-census.service".into());
         for n in &names {
             assert!(!union.contains(n), "{n} is still in the manifest");
             assert!(!dir.join(n).exists(), "{n} is still a template");
         }
-        for keep in ["spira-runtime.service", "spira-watchdog.timer", "spira-unit-run-dbus.service", "spira-loom.service", "spira-exec-census.service", "concierge.timer", "cockpit-ensure.timer"] {
+        for keep in ["spira-runtime.service", "spira-watchdog.timer", "spira-unit-run-dbus.service", "spira-loom.service", "concierge.timer", "cockpit-ensure.timer"] {
             assert!(union.iter().any(|n| n == keep), "positive control: {keep} is still shipped");
         }
     }
