@@ -112,3 +112,33 @@ fn a_comment_only_containerfile_edit_plans_a_skip_and_a_run_edit_plans_the_full_
     assert!(out.contains("plan=skip\n") && out.contains("touched=\n"), "{out}");
     assert!(plan("HEAD~2", "HEAD").contains("plan=full\n"));
 }
+
+#[test_id(tzccjyz)]
+#[test]
+fn the_config_is_read_with_the_trees_delta_staged_and_the_layers_are_removed() {
+    let tmp = testkit::TempDir::new("preflight-staged-config");
+    let spira = tmp.path().join("tree/spira");
+    let bin = tmp.path().join("bin");
+    let scratch = tmp.path().join("release-config-1");
+    let staged = scratch.join("layer/staged.toml");
+    for d in [&spira, &bin, &scratch.join("layer")] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    std::fs::write(&staged, "").unwrap();
+    std::fs::write(spira.join("round-image-preflight.sh"), HOST).unwrap();
+    std::fs::write(spira.join("conf.sh"), "echo \"conf.sh read $SPIRA_TOML\"\n").unwrap();
+    testkit::write_exe(bin.join("release"), &format!("#!/bin/bash\n[ \"$1\" = config-stage ] && [ \"$SPIRA_TOML\" = box.toml ] && [ \"$2\" -ef '{}' ] && echo '{}'\n", spira.parent().unwrap().display(), staged.display()));
+    testkit::write_exe(bin.join("round-vm"), "#!/bin/bash\nprintf 'plan=skip\\nnpaths=1\\n'\n");
+    let o = std::process::Command::new("bash")
+        .arg(spira.join("round-image-preflight.sh"))
+        .args(["--base", "HEAD"])
+        .env_clear()
+        .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+        .env("SPIRA_TOML", "box.toml")
+        .output()
+        .unwrap();
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(o.status.success(), "{out}{}", String::from_utf8_lossy(&o.stderr));
+    assert!(out.contains(&format!("conf.sh read {}", staged.display())), "{out}");
+    assert!(!scratch.exists(), "the staged layers are removed");
+}
