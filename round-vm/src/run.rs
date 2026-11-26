@@ -701,6 +701,7 @@ prune_superseded_unit() {
 write_unit_nextest_config() {
     printf '"#, spira_config::unit_tier_config_printf!(), r#"' "$1" "$2" > "$3"
     printf '%s' "${4:-}" >> "$3"
+    printf '"#, spira_config::unit_tier_config_integration_printf!(), r#"' >> "$3"
 }
 unit_nextest() {
     unit_env "#, spira_config::unit_tier_unit!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#"

@@ -2912,7 +2912,7 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
     let cfg = f.unit_config.borrow().clone();
     assert_eq!(cfg.len(), 1, "{cfg:?}");
     assert!(cfg[0].0.ends_with("target/gate-unit-nextest.toml"), "the nextest config lives under the trial tree's target directory: {cfg:?}");
-    assert_eq!(cfg[0].1, "[profile.default]\nslow-timeout = { period = \"60s\", terminate-after = 2 }\nstatus-level = \"skip\"\n");
+    assert_eq!(cfg[0].1, "[profile.default]\nslow-timeout = { period = \"60s\", terminate-after = 2 }\nstatus-level = \"skip\"\n[[profile.default.overrides]]\nfilter = \"kind(test)\"\nslow-timeout = { period = \"60s\", terminate-after = 2 }\n");
     assert!(f.stderr().contains(
         "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for 2 crates: queue spira-config (touched: spira-config)"
     ));

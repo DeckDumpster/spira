@@ -66,6 +66,15 @@ macro_rules! unit_tier_config_printf {
     };
 }
 
+/// The config's tail: the `tests/` targets (integration and sim) keep two minutes, whatever the
+/// unit deadline is. A `printf` format, and last in the file: a key after it would join the override.
+#[macro_export]
+macro_rules! unit_tier_config_integration_printf {
+    () => {
+        "[[profile.default.overrides]]\\nfilter = \"kind(test)\"\\nslow-timeout = { period = \"60s\", terminate-after = 2 }\\n"
+    };
+}
+
 fn profile_words(profile: Option<&str>, flag: &str) -> String {
     match profile {
         Some(p) => {
@@ -187,11 +196,12 @@ impl DenyList {
     }
 }
 
-/// The nextest config of one deadline: `secs` per period, terminated after `periods`.
+/// The nextest config: unit tests run `secs` per period, terminated after `periods`.
 pub fn nextest_config(secs: u64, periods: u64, deny: &DenyList) -> String {
     format!(
-        "[profile.default]\nslow-timeout = {{ period = \"{secs}s\", terminate-after = {periods} }}\nstatus-level = \"skip\"\n{}",
-        deny.config_filter_line()
+        "[profile.default]\nslow-timeout = {{ period = \"{secs}s\", terminate-after = {periods} }}\nstatus-level = \"skip\"\n{}{}",
+        deny.config_filter_line(),
+        unit_tier_config_integration_printf!().replace("\\n", "\n")
     )
 }
 
@@ -377,7 +387,8 @@ mod tests {
             .replace("\\n", "\n")
             .replacen("%s", "7", 1)
             .replacen("%s", "3", 1);
-        assert_eq!(fmt, nextest_config(7, 3, &DenyList::default()));
+        let tail = unit_tier_config_integration_printf!().replace("\\n", "\n");
+        assert_eq!(fmt + &tail, nextest_config(7, 3, &DenyList::default()));
     }
 
     const TWO: &str = "# test-registry deny-list at=1 rows=2\ndisabled\ttest:t0aaaaa\tsp-1\t-\nquarantined\ttest:t0bbbbb\tsp-2\t5\n";
@@ -387,7 +398,7 @@ mod tests {
     fn an_empty_deny_list_composes_no_filter_and_todays_config() {
         let d = DenyList::default();
         assert_eq!(d.nextest_filter(), None);
-        assert_eq!(nextest_config(7, 3, &d), "[profile.default]\nslow-timeout = { period = \"7s\", terminate-after = 3 }\nstatus-level = \"skip\"\n");
+        assert_eq!(nextest_config(7, 3, &d), "[profile.default]\nslow-timeout = { period = \"7s\", terminate-after = 3 }\nstatus-level = \"skip\"\n[[profile.default.overrides]]\nfilter = \"kind(test)\"\nslow-timeout = { period = \"60s\", terminate-after = 2 }\n");
         assert_eq!(DenyList::parse("# test-registry deny-list at=1 rows=0\n").unwrap(), d);
     }
 
@@ -396,7 +407,7 @@ mod tests {
     fn two_test_rows_of_either_state_give_the_exact_filter_expression() {
         let d = DenyList::parse(TWO).unwrap();
         assert_eq!(d.nextest_filter().unwrap(), "not (test(/::t0aaaaa$/) | test(/::t0bbbbb$/))");
-        assert!(nextest_config(7, 3, &d).ends_with("default-filter = \"not (test(/::t0aaaaa$/) | test(/::t0bbbbb$/))\"\n"));
+        assert!(nextest_config(7, 3, &d).contains("status-level = \"skip\"\ndefault-filter = \"not (test(/::t0aaaaa$/) | test(/::t0bbbbb$/))\"\n[[profile.default.overrides]]\n"));
         assert_eq!(DenyList::parse(&d.render()).unwrap().render(), d.render(), "render keeps state and test, not the bead");
     }
 

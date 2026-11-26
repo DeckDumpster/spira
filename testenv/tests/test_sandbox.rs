@@ -315,6 +315,16 @@ fn the_nextest_config_is_the_unit_deadline_defaults() {
     assert_eq!(fs::read_to_string(workspace().join(".config/nextest.toml")).unwrap(), want);
 }
 
+#[test_id(tewojri)]
+#[test]
+fn the_integration_and_sim_targets_keep_a_two_minute_deadline_in_the_nextest_config() {
+    let config: toml::Table = fs::read_to_string(workspace().join(".config/nextest.toml")).unwrap().parse().unwrap();
+    let overrides = config["profile"]["default"].get("overrides").and_then(|o| o.as_array()).expect("an override scopes the tests/ targets");
+    let tests = overrides.iter().find(|o| o["filter"].as_str() == Some("kind(test)")).expect("an override for kind(test)");
+    assert_eq!(tests["slow-timeout"]["period"].as_str(), Some("60s"));
+    assert_eq!(tests["slow-timeout"]["terminate-after"].as_integer(), Some(2));
+}
+
 struct Fixture {
     _tmp: testkit::TempDir,
     root: PathBuf,
@@ -431,6 +441,15 @@ fn a_tee_that_dies_mid_stream_cannot_cut_a_stream() {
 fn silence_is_bounded_by_the_file_period_times_terminate_after_not_by_one_period() {
     let f = bounded_fixture();
     fs::write(f.root.join(".config/nextest.toml"), "[profile.default]\nslow-timeout = { period = \"1s\", terminate-after = 3 }\n").unwrap();
+    let out = f.run("pause", "sleep 1.5; echo fin", false);
+    assert_eq!((out.status.code(), &out.stdout[..]), (Some(0), &b"fin\n"[..]));
+}
+
+#[test_id(tav3w5w)]
+#[test]
+fn silence_is_bounded_by_the_longest_deadline_in_the_file_wherever_it_sits() {
+    let f = bounded_fixture();
+    fs::write(f.root.join(".config/nextest.toml"), "[profile.default]\nslow-timeout = { period = \"1s\", terminate-after = 3 }\n[[profile.default.overrides]]\nfilter = \"kind(lib)\"\nslow-timeout = { period = \"1s\", terminate-after = 1 }\n").unwrap();
     let out = f.run("pause", "sleep 1.5; echo fin", false);
     assert_eq!((out.status.code(), &out.stdout[..]), (Some(0), &b"fin\n"[..]));
 }
