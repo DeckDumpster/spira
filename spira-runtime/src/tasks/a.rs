@@ -195,7 +195,7 @@ pub static TASKS: &[Task] = &[
         effects: gate_check::EFFECTS,
         runners: {
             use gate_check::*;
-            &[(OBSERVE, |e, _, _| observe(e)), (DISCOVER, |e, k, s| discover(e, k, &s.input)), (RESOLVE, |e, k, s| resolve(e, k, &s.input)), (CI_FAILED, |e, _, s| ci_failed(e, &s.input))]
+            &[(OBSERVE, |_, _, _| observe()), (RESOLVE, |e, k, s| resolve(e, k, &s.input)), (CI_FAILED, |e, _, s| ci_failed(e, &s.input))]
         },
         keys: &[gate_check::KEYS],
         build: |s| gate_check::GateCheck::from_settings(s).registration(),

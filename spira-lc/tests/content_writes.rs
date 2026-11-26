@@ -813,6 +813,42 @@ fn purge_alerts_deletes_the_alerts_rows_in_sql_and_unblocks_what_they_blocked() 
     }
 }
 
+#[test_id(tl0szaj)]
+#[test]
+fn purge_alerts_with_no_writer_key_is_refused_by_the_key_and_starts_no_process() {
+    let Some(store) = Store::up() else { return };
+    let alert = store.create_bead();
+    store.sql(&format!("INSERT INTO labels (issue_id, label) VALUES ('{alert}', 'alert')"));
+    let mut lc = Lc::new(&store, "pu", "");
+    let bdq_log = lc.dir.join("bdq-argv.log");
+    recording_program(&lc.dir.join("release/bin/bdq"), &bdq_log);
+    provision(&lc);
+
+    // Direct mode (an empty socket) first: no process guard hides a delete that forks.
+    let direct = lc.dir.join("direct.toml");
+    let served = std::fs::read_to_string(&lc.toml).unwrap();
+    let socket = format!("\"{}\"", lc.dir.join("s").display());
+    assert!(served.contains(&socket), "no socket to empty in {served}");
+    std::fs::write(&direct, served.replace(&socket, "\"\"")).unwrap();
+    let ran = lc.command().env("SPIRA_TOML", &direct).args(["content", "purge-alerts", "--apply"]).output().expect("spira-lc runs");
+    let said = String::from_utf8_lossy(&ran.stderr).into_owned();
+    assert!(!bdq_log.exists(), "bdq was started for the delete: {said}");
+    assert!(!ran.status.success() && said.contains("spira.beads_sql_writer_password_file"), "not refused by the key: {said}");
+
+    // The export is named to the second and never overwritten, so the next leg needs it gone.
+    for export in std::fs::read_dir(lc.dir.join("run")).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with("purge-alerts-")) {
+        std::fs::remove_file(export.path()).unwrap();
+    }
+
+    lc.serve();
+    let (rc, out, children) = lc.refused_of("content", &["content", "purge-alerts", "--apply"], None);
+    assert_ne!(rc, 0, "the purge was accepted: {out}");
+    assert_eq!(children, 0, "the purge started a process: {out}");
+    assert!(!bdq_log.exists(), "bdq was started for a refused purge");
+    assert!(out.contains("spira.beads_sql_writer_password_file"), "the refusal did not name the key: {out}");
+    assert!(lc.shows(&alert).contains(&alert), "a refused purge deleted the alert");
+}
+
 /// Two beads whose `is_blocked` flags disagree with the graph: `blocked` has a blocker and a
 /// flag of 0, `free` has no blocker and a flag of 1.
 fn stale_pair(store: &Store, lc: &Lc) -> (String, String, String) {
@@ -853,8 +889,12 @@ fn a_gate_check_over_a_github_gate_is_refused_rather_than_forked() {
 /// A `bd` that records every argv it is run with and refuses: nothing under test may start it.
 fn recording_bd(dir: &Path, log: &Path) -> String {
     let path = dir.join("recording-bd");
-    testkit::write_exe(&path, &format!("#!/bin/sh\necho \"$@\" >> '{}'\nexit 1\n", log.display()));
+    recording_program(&path, log);
     path.display().to_string()
+}
+
+fn recording_program(path: &Path, log: &Path) {
+    testkit::write_exe(path, &format!("#!/bin/sh\necho \"$@\" >> '{}'\nexit 1\n", log.display()));
 }
 
 #[test_id(tu3jyzu)]

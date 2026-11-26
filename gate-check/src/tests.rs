@@ -2,38 +2,6 @@
 
 use super::*;
 
-// ------------------------------------------------------------------------ discover_branches()
-
-#[test_id(ti290a9)]
-#[test]
-fn discover_branches_from_open_unbound_gh_run_gates() {
-    let json = r#"[
-        {"await_type":"gh:run","await_id":"","metadata":{"branch":"spira/sp-1"}},
-        {"await_type":"gh:run","await_id":"","metadata":{"branch":"spira/sp-2"}},
-        {"await_type":"gh:run","await_id":"","metadata":{"branch":"spira/sp-1"}},
-        {"await_type":"gh:run","await_id":"12345","metadata":{"branch":"spira/sp-3"}},
-        {"await_type":"other","await_id":"","metadata":{"branch":"spira/sp-4"}}
-    ]"#;
-    assert_eq!(discover_branches(json), vec!["spira/sp-1", "spira/sp-2"]);
-}
-
-#[test_id(tvfwz6u)]
-#[test]
-fn discover_branches_tolerates_null_and_non_array() {
-    assert_eq!(discover_branches("null"), Vec::<String>::new());
-    assert_eq!(discover_branches("not json"), Vec::<String>::new());
-    // A single object, not wrapped in an array (the bash's `[] if gates is None else [gates]`).
-    let json = r#"{"await_type":"gh:run","await_id":"","metadata":{"branch":"x"}}"#;
-    assert_eq!(discover_branches(json), vec!["x"]);
-}
-
-#[test_id(tfedjvk)]
-#[test]
-fn discover_branches_skips_entries_missing_a_branch() {
-    let json = r#"[{"await_type":"gh:run","await_id":"","metadata":{}}]"#;
-    assert!(discover_branches(json).is_empty());
-}
-
 // ------------------------------------------------------------------------------ stuck_count()
 
 #[test_id(tfvpeqq)]

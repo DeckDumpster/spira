@@ -44,20 +44,13 @@ pub fn is_served(verb: &str) -> bool {
     OWN.contains(&verb) || (callers::is_verb(verb) && !CALLER_SIDE.contains(&verb))
 }
 
-/// The bead-content store: reads (SQL, `content_sql`), the narrow writes (bd) `bd-note`/`bd-supersede` and the
+/// The bead-content store: reads (`content_sql`), the narrow writes `bd-note`/`bd-supersede` and the
 /// `content` door make, and the alert purge's delete.
 pub trait Content {
     fn read(&self, args: &[String]) -> Result<String, ReadError>;
     fn write(&self, args: &[&str]) -> Result<String, String>;
-    /// A `content` write: bd's own argv, and the request body as its stdin when there is one.
+    /// A `content` write: bd's argv, and the request body when there is one.
     fn write_stdin(&self, args: &[String], stdin: Option<&str>) -> Result<String, String>;
-    /// [`Content::write_stdin`] run in `cwd`; a double that cannot run elsewhere refuses.
-    fn write_stdin_in(&self, args: &[String], stdin: Option<&str>, cwd: Option<&std::path::Path>) -> Result<String, String> {
-        match cwd {
-            None => self.write_stdin(args, stdin),
-            Some(dir) => Err(format!("cannot run bd in {}", dir.display())),
-        }
-    }
     /// A door write lc-serve applies itself in one SQL transaction. The default refuses, so a
     /// double that cannot apply it says so rather than forking bd.
     fn mutate(&self, _: &crate::content_write::Mutation) -> Result<String, String> {
@@ -99,7 +92,7 @@ impl From<crate::content_sql::Failure> for ReadError {
     }
 }
 
-/// bd itself, as this process's configuration declares it.
+/// The bead store, as this process's configuration declares it.
 pub struct LiveContent;
 
 impl Content for LiveContent {
@@ -112,20 +105,11 @@ impl Content for LiveContent {
     fn write_stdin(&self, args: &[String], stdin: Option<&str>) -> Result<String, String> {
         crate::bd::write_stdin(args, stdin)
     }
-    fn write_stdin_in(&self, args: &[String], stdin: Option<&str>, cwd: Option<&std::path::Path>) -> Result<String, String> {
-        crate::bd::write_stdin_in(args, stdin, cwd)
-    }
     fn mutate(&self, m: &crate::content_write::Mutation) -> Result<String, String> {
         crate::bd::write_stdin(&m.argv, m.body.as_deref())
     }
     fn delete(&self, ids: &[String]) -> Result<(), String> {
-        if let Some(done) = crate::content_write::delete(ids) {
-            return done;
-        }
-        match crate::bd::tool("bdq", &[&["delete".to_string()][..], ids, &["--force".to_string()]].concat(), None, "purge-alerts", 120) {
-            (0, _) => Ok(()),
-            (rc, out) => Err(format!("bdq delete exited {rc}: {out}")),
-        }
+        crate::content_write::delete(ids).unwrap_or_else(|| Err(crate::bd::no_writer("delete")))
     }
     fn ask_label(&self) -> Result<String, String> {
         spira_config::process::cfg("SPIRA_ASK_LABEL")
@@ -238,7 +222,7 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
             };
             let target_of = |id: &str| bead::parse_show_row(&content.read(&["show".to_string(), id.to_string(), "--json".to_string()]).ok()?);
             let incident_label = || content.incident_label();
-            let guards = crate::content::Guards { caller, ask_label: &ask_label, registry: &registry, policy: &policy, repo_of: &repo_of, target_of: &target_of, incident_label: &incident_label, now, forced: Default::default(), cwd: Default::default() };
+            let guards = crate::content::Guards { caller, ask_label: &ask_label, registry: &registry, policy: &policy, repo_of: &repo_of, target_of: &target_of, incident_label: &incident_label, now, forced: Default::default() };
             let (m, bd) = (std::cell::RefCell::new(m), std::cell::RefCell::new(bd));
             let mut guard = |a: &mut Vec<String>, body: &mut Option<String>| crate::content::guard(a, body, &guards, &mut **m.borrow_mut());
             let mut after = |a: &[String], out: &str| {
@@ -250,43 +234,15 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
                 }
                 report
             };
-            crate::content::run(rest, stdin, &mut guard, &mut after, &|a| content.read(a), &|a, body| {
-                let cwd = guards.cwd.take();
-                if crate::plan::serving() && a.starts_with(&["gate".to_string(), "discover".to_string()]) {
-                    return recorded_write(a, body, cwd.as_deref());
-                }
-                match (crate::content_write::Mutation::of(a, body), &cwd) {
-                    (Some(m), None) => content.mutate(&m),
-                    _ => content.write_stdin_in(a, body, cwd.as_deref()),
-                }
+            crate::content::run(rest, stdin, &mut guard, &mut after, &|a| content.read(a), &|a, body| match crate::content_write::Mutation::of(a, body) {
+                Some(m) => content.mutate(&m),
+                None => content.write_stdin(a, body),
             })
         }
         "close-epic" => callers::close_epic(rest, m, bd),
         "drop" => callers::drop_cmd(rest, m, bd),
         v if is_served(v) => callers::run(v, rest, m),
         v => Answer { code: callers::CANNOT_TELL, stderr: format!("cannot tell: {v} is not a composed verb\n"), ..Default::default() },
-    }
-}
-
-/// The verb a `content` write is recorded under; its argv is `[CONTENT_WRITE, <cwd or empty>, bd's argv...]`.
-pub const CONTENT_WRITE: &str = "content-write";
-
-/// A `content` write that runs bd, recorded for the scheduler: lc-serve starts no program for it.
-fn recorded_write(args: &[String], body: Option<&str>, cwd: Option<&std::path::Path>) -> Result<String, String> {
-    let mut argv = vec![CONTENT_WRITE.to_string(), cwd.map(|c| c.display().to_string()).unwrap_or_default()];
-    argv.extend(args.iter().cloned());
-    match crate::work::record_argv("-", "content", &argv, body, crate::work::exec_bound_ms("content")) {
-        (0, queued) => Ok(queued),
-        (_, e) => Err(e),
-    }
-}
-
-/// Runs a request recorded by [`recorded_write`], here in the scheduler's process.
-pub fn run_recorded(argv: &[String], body: Option<&str>) -> (i32, String) {
-    let cwd = argv.get(1).filter(|c| !c.is_empty()).map(std::path::Path::new);
-    match crate::bd::write_stdin_in(&argv[2.min(argv.len())..], body, cwd) {
-        Ok(out) => (0, out),
-        Err(e) => (1, e),
     }
 }
 
