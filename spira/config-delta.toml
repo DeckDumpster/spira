@@ -434,6 +434,7 @@ otel_day_max_mb = 2048
 conditions_max_file = 5
 czar_outcome_lookback_hours = 24
 dolt_unit = "dolt-beads.service"
+gate_target_cap_mib = 81920
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok
