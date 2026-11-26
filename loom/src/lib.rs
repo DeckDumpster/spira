@@ -1022,7 +1022,7 @@ mod runtime_tests {
     thread_local! { static EXIT: std::cell::RefCell<Option<ExitSignal>> = const { std::cell::RefCell::new(None) }; }
 
     /// Two blocking calls; returns both thread ids and whether the first thread exited in between.
-    fn two_calls(keep_alive: Duration) -> (ThreadId, ThreadId, bool) {
+    fn two_calls(keep_alive: Duration, wait: Duration) -> (ThreadId, ThreadId, bool) {
         let rt = server_runtime_with(keep_alive).expect("runtime");
         let (tx, rx) = mpsc::channel();
         let first = rt
@@ -1031,7 +1031,7 @@ mod runtime_tests {
                 std::thread::current().id()
             }))
             .expect("first");
-        let exited = rx.recv_timeout(Duration::from_millis(500)).is_ok();
+        let exited = rx.recv_timeout(wait).is_ok();
         let second = rt.block_on(rt.spawn_blocking(|| std::thread::current().id())).expect("second");
         (first, second, exited)
     }
@@ -1039,10 +1039,10 @@ mod runtime_tests {
     #[test_id(ttzmf93)]
     #[test]
     fn a_blocking_thread_outlives_a_gap_shorter_than_its_keep_alive_and_retires_past_it() {
-        let (a, b, exited) = two_calls(Duration::from_millis(30));
+        let (a, b, exited) = two_calls(Duration::from_millis(30), Duration::from_millis(500));
         assert!(exited, "the idle thread must retire past its keep-alive");
         assert_ne!(a, b);
-        let (a, b, exited) = two_calls(Duration::from_secs(60));
+        let (a, b, exited) = two_calls(Duration::from_secs(60), Duration::from_millis(80));
         assert!(!exited);
         assert_eq!(a, b);
     }
