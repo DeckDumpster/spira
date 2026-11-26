@@ -872,3 +872,38 @@ fn a_truncated_record_makes_the_next_online_pass_sync_every_database_and_rewrite
     assert_eq!(synced, ["spira", "spira_aux"]);
     assert_eq!(read_state(&layout(&w)).unwrap().start_ms, now + 120_000);
 }
+
+fn op_records(w: &World) -> Vec<Vec<(String, serde_json::Value)>> {
+    spira_otel::logs::read_all(&spira_otel::dir_of(&w.cfg.run), "store-persist")
+}
+
+fn attr(rec: &[(String, serde_json::Value)], k: &str) -> String {
+    rec.iter().find(|(n, _)| n == k).map(|(_, v)| v["stringValue"].as_str().unwrap_or_default().to_string()).unwrap_or_default()
+}
+
+#[test_id(tlrrxpr)]
+#[test]
+fn a_squash_that_ran_sends_one_store_squash_op_with_the_database_as_subject() {
+    let w = compactable();
+    w.dolt.log.set(500);
+    compact(&w.cfg, &w.dolt).unwrap();
+    let recs = op_records(&w);
+    let squashes: Vec<_> = recs.iter().filter(|r| attr(r, "operation") == "store-squash").collect();
+    assert_eq!(squashes.len(), 1);
+    assert!(squashes.iter().any(|r| attr(r, "subject") == "spira" && attr(r, "result") == "ok"));
+}
+
+#[test_id(tbbg3sk)]
+#[test]
+fn a_failed_squash_sends_a_failed_op_and_a_log_within_the_bound_sends_none() {
+    let w = compactable();
+    w.dolt.log.set(500);
+    w.dolt.fail_graft.set(true);
+    compact(&w.cfg, &w.dolt).unwrap();
+    assert!(op_records(&w).iter().all(|r| attr(r, "result") == "failed"));
+    assert!(!op_records(&w).is_empty());
+    let w = compactable();
+    w.dolt.log.set(w.cfg.history_keep + 1);
+    compact(&w.cfg, &w.dolt).unwrap();
+    assert!(op_records(&w).is_empty());
+}

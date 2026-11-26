@@ -642,6 +642,21 @@ fn rebuild(l: &Layout, cfg: &Config, dolt: &dyn Dolt, conn: &Conn, db: &str, fre
     fs::remove_dir_all(fresh).map_err(|e| format!("cannot remove the superseded copy {}: {e}", fresh.display()))
 }
 
+fn squash_op(db: &str, start: std::time::SystemTime, duration: std::time::Duration, ok: bool, cost: Option<spira_otel::ops::Cost>) -> spira_otel::ops::Op {
+    spira_otel::ops::Op {
+        operation: "store-squash".into(),
+        phase: None,
+        subject: db.into(),
+        repo: None,
+        start,
+        duration,
+        result: if ok { "ok" } else { "failed" }.into(),
+        cost,
+        tests: None,
+        place: None,
+    }
+}
+
 /// Bounds one database's history to `cfg.history_keep`. The side branch is built unlocked; only the move onto it holds the
 /// persist lock, so no sync reads the ancestry mid-rewrite. A rewritten history shares no chunks
 /// with the copy's, so the caller rebuilds the copy when this returns true.
@@ -656,10 +671,15 @@ fn squash_history(cfg: &Config, l: &Layout, dolt: &dyn Dolt, conn: &Conn, db: &s
     if !history::needs_squash(len, cfg.history_keep) {
         return Ok(false);
     }
+    let (start, began, before) = (std::time::SystemTime::now(), std::time::Instant::now(), spira_otel::cgroup::Mark::own());
     let rewrite = dolt.squash_history(conn, &cfg.data, db, cfg.history_keep).and_then(|tip| {
         let _lock = lock(l)?;
         dolt.graft_history(conn, &cfg.data, db, &tip)
     });
+    let cost = before.zip(spira_otel::cgroup::Mark::own()).map(|(b, a)| a.cost_since(&b));
+    if !cfg.run.as_os_str().is_empty() {
+        spira_otel::ops::emit(&cfg.run, "store-persist", &squash_op(db, start, began.elapsed(), rewrite.is_ok(), cost));
+    }
     match rewrite {
         Ok(()) => {
             let now = dolt.history_len(conn, &cfg.data, db).map_or_else(|e| format!("unreadable ({e})"), |n| n.to_string());

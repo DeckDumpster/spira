@@ -93,6 +93,56 @@ impl Drop for Cleanup {
     }
 }
 
+struct PhaseTimer {
+    start: std::time::SystemTime,
+    began: std::time::Instant,
+    before: Option<spira_otel::cgroup::Mark>,
+}
+
+struct Phase {
+    start: std::time::SystemTime,
+    duration: std::time::Duration,
+    ok: bool,
+    cost: Option<spira_otel::ops::Cost>,
+}
+
+impl PhaseTimer {
+    fn start() -> Self {
+        PhaseTimer { start: std::time::SystemTime::now(), began: std::time::Instant::now(), before: spira_otel::cgroup::Mark::own() }
+    }
+
+    fn finish(self, ok: bool) -> Phase {
+        let cost = self.before.zip(spira_otel::cgroup::Mark::own()).map(|(b, a)| a.cost_since(&b));
+        Phase { start: self.start, duration: self.began.elapsed(), ok, cost }
+    }
+}
+
+fn release_ops(sha: &str, build: &Phase, publish: Option<&Phase>) -> Vec<spira_otel::ops::Op> {
+    let op = |phase: &str, p: &Phase, result: &str| spira_otel::ops::Op {
+        operation: "release-build".into(),
+        phase: Some(phase.into()),
+        subject: sha.into(),
+        repo: None,
+        start: p.start,
+        duration: p.duration,
+        result: result.into(),
+        cost: p.cost.clone(),
+        tests: None,
+        place: None,
+    };
+    let mut ops = vec![op("build", build, if build.ok { "ok" } else { "failed" })];
+    ops.extend(publish.map(|p| op("publish", p, if p.ok { "stored" } else { "not-stored" })));
+    ops
+}
+
+fn emit_phases(cfg: &Config, sha: &str, build: &Phase, publish: Option<&Phase>) {
+    if let Some(run) = &cfg.run {
+        for op in release_ops(sha, build, publish) {
+            spira_otel::ops::emit(run, "release", &op);
+        }
+    }
+}
+
 pub fn build(cfg: &Config, git: &dyn Git, cargo: &dyn Cargo, o: &BuildOpts) -> Result<Built, String> {
     let sha = git.resolve(o.repo, o.commit)?;
     let dir = cfg.releases.join(&sha);
@@ -168,20 +218,36 @@ pub fn build(cfg: &Config, git: &dyn Git, cargo: &dyn Cargo, o: &BuildOpts) -> R
                     };
                     fs::create_dir_all(&target).map_err(|e| format!("cannot create {}: {e}", target.display()))?;
                     eprintln!("release: building {sha} (target {})", target.display());
-                    cargo.build(&stage, &target)?;
+                    let timer = PhaseTimer::start();
+                    let built = cargo.build(&stage, &target);
+                    let build_phase = timer.finish(built.is_ok());
+                    if built.is_err() {
+                        emit_phases(cfg, &sha, &build_phase, None);
+                    }
+                    built?;
                     let out = target.join("release");
+                    let mut publish_phase = None;
                     if let Some((k, a)) = &key {
-                        let tree = git.tree(o.repo, &sha)?;
+                        let tree = match git.tree(o.repo, &sha) {
+                            Ok(t) => t,
+                            Err(e) => {
+                                emit_phases(cfg, &sha, &build_phase, None);
+                                return Err(e);
+                            }
+                        };
+                        let timer = PhaseTimer::start();
                         let stored = artifacts::scratch_dir(&cfg.releases, "put").and_then(|s| {
                             let r = artifacts::publish(a.dav, k, &tree, &a.toolchain, &out, &s);
                             let _ = fsutil::remove_tree(&s);
                             r
                         });
+                        publish_phase = Some(timer.finish(stored.is_ok()));
                         match stored {
                             Ok(()) => eprintln!("release: artifacts: stored {k}"),
                             Err(e) => eprintln!("release: artifacts: not stored ({e})"),
                         }
                     }
+                    emit_phases(cfg, &sha, &build_phase, publish_phase.as_ref());
                     (out, guard)
                 }
             }
@@ -303,4 +369,25 @@ pub fn clashes(rel: &Path, system_dirs: &[PathBuf]) -> Vec<String> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod op_tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    fn phase(ok: bool) -> Phase {
+        Phase { start: SystemTime::UNIX_EPOCH, duration: Duration::from_secs(2), ok, cost: None }
+    }
+
+    #[test_id(tz2ghvg)]
+    #[test]
+    fn a_cache_miss_with_a_key_sends_a_build_and_a_publish_record_and_a_failed_build_only_the_build() {
+        let ops = release_ops("abc123", &phase(true), Some(&phase(false)));
+        let seen: Vec<_> = ops.iter().map(|o| (o.operation.as_str(), o.phase.as_deref().unwrap(), o.subject.as_str(), o.result.as_str())).collect();
+        assert_eq!(seen, [("release-build", "build", "abc123", "ok"), ("release-build", "publish", "abc123", "not-stored")]);
+        let ops = release_ops("abc123", &phase(false), None);
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].result, "failed");
+    }
 }
