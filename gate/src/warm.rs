@@ -528,6 +528,58 @@ mod tests {
         assert!(d.join(".fingerprint/plain-bbbb").is_dir() && d.join("deps/libplain-bbbb.rlib").is_file());
     }
 
+    #[test_id(t6rm0qf)]
+    #[test]
+    fn a_directory_adopted_at_another_path_ages_unchanged_sources_and_drops_only_units_bound_to_the_donors_path() {
+        let t = testkit::TempDir::new("gate-warm-adopted-elsewhere");
+        let root = t.path().join("root");
+        let tree = t.path().join("tree");
+        fs::create_dir_all(&tree).unwrap();
+        git(&tree, &["init", "-q"]);
+        fs::write(tree.join("changed.rs"), "1").unwrap();
+        fs::write(tree.join("unchanged.rs"), "1").unwrap();
+        git(&tree, &["add", "."]);
+        git(&tree, &["commit", "-qm", "base"]);
+        let base = git(&tree, &["rev-parse", "HEAD"]);
+        fs::write(tree.join("changed.rs"), "2").unwrap();
+        git(&tree, &["commit", "-qam", "change"]);
+        let donor_built_by = |slot: &str, at: &Path| {
+            let d = root.join(slot).join("debug");
+            for (unit, env) in [("bound-aaaa", format!("CARGO_MANIFEST_DIR={}/pin", at.display())), ("plain-bbbb", "CARGO_PKG_NAME=plain".into())] {
+                let (name, hash) = unit.split_once('-').unwrap();
+                fs::create_dir_all(d.join(".fingerprint").join(unit)).unwrap();
+                fs::create_dir_all(d.join("deps")).unwrap();
+                fs::write(d.join(format!("deps/{unit}.d")), format!("deps/x: src/lib.rs\n\n# env-dep:{env}\n")).unwrap();
+                fs::write(d.join(format!("deps/lib{name}-{hash}.rlib")), "x").unwrap();
+            }
+            assert!(donate(&root, "r", &d, &base, at));
+        };
+        let adopted_into = |slot: &str| {
+            let d = root.join(slot).join("debug");
+            fs::create_dir_all(&d).unwrap();
+            let (adopted, line) = warm_start(&root, "r", &d, &tree).unwrap();
+            assert_eq!(adopted, Adopted::From(base.clone()), "{line}");
+            assert!(line.starts_with(WARM_FROM), "{line}");
+            (d, line)
+        };
+        let holds = |d: &Path, unit: &str, lib: &str| (d.join(".fingerprint").join(unit).exists(), d.join("deps").join(lib).exists());
+
+        donor_built_by("tree-a", &t.path().join("donor-tree"));
+        let (b, line) = adopted_into("tree-b");
+        assert!(line.contains("1 unchanged files aged, 1 units rebuilt"), "{line}");
+        assert_eq!(holds(&b, "bound-aaaa", "libbound-aaaa.rlib"), (false, false), "{line}");
+        assert_eq!(holds(&b, "plain-bbbb", "libplain-bbbb.rlib"), (true, true), "{line}");
+        // clock-safe: compares file mtimes against a stamp set an hour back; no duration is measured
+        assert!(mtime(&tree.join("unchanged.rs")) < SystemTime::now() - Duration::from_secs(3600), "an unchanged source must be aged");
+        // clock-safe: compares file mtimes against a stamp set an hour back; no duration is measured
+        assert!(mtime(&tree.join("changed.rs")) > SystemTime::now() - Duration::from_secs(3600), "a changed source must stay new");
+
+        donor_built_by("tree-c", &tree);
+        let (d, line) = adopted_into("tree-d");
+        assert!(line.contains("0 units rebuilt"), "{line}");
+        assert_eq!(holds(&d, "bound-aaaa", "libbound-aaaa.rlib"), (true, true), "{line}");
+    }
+
     fn fill(dir: &Path, mib: usize) {
         fs::create_dir_all(dir.join("deps")).unwrap();
         fs::write(dir.join("deps/libbig.rlib"), vec![7u8; mib << 20]).unwrap();
