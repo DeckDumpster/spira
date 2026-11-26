@@ -20,7 +20,5 @@ spira-pub = { path = "../spira-pub" }
 
 [dev-dependencies]
 ports = { path = "../ports" }
-# TLS off: the broker is a Unix socket.
-rumqttc = { version = "0.25.1", default-features = false }
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }

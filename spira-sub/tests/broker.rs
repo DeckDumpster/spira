@@ -11,10 +11,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ports::{SeededRng, VirtualClock};
-use rumqttc::{Client, Connection, Event, MqttOptions, Packet, QoS, Transport};
 use serde_json::{json, Value};
 use spira_pub::{Options, Publisher};
-use testkit::broker::{Broker, Process};
+use testkit::broker::{Broker, Process, Subscriber};
 use testkit::{ChildGuard, TempDir};
 
 /// Bounds each wait on the broker or a child so a broken one fails the test instead of hanging.
@@ -65,9 +64,9 @@ impl World {
 
     /// `run`, returned once `subscriber/concierge` reads up.
     fn run(&self, broker: &Path) -> ChildGuard {
-        let mut watching = Raw::subscribe(broker, "subscriber/concierge");
+        let mut watching = Subscriber::to(broker, &["subscriber/concierge"]);
         let run = ChildGuard::spawn(&mut self.command(&["run", "--as", "concierge"]));
-        watching.until(|v| v["state"] == "up");
+        until(&mut watching, "up");
         run
     }
 
@@ -111,42 +110,9 @@ impl Follow {
     }
 }
 
-/// A subscriber that owes nothing to what is under test.
-struct Raw {
-    _client: Client,
-    connection: Connection,
-}
-
-impl Raw {
-    fn subscribe(socket: &Path, filter: &str) -> Raw {
-        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let id = format!("raw-{}", N.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-        let mut options = MqttOptions::new(id, socket.to_str().unwrap(), 0);
-        options.set_transport(Transport::Unix);
-        options.set_keep_alive(Duration::ZERO);
-        let (client, connection) = Client::new(options, 32);
-        client.subscribe(filter, QoS::AtLeastOnce).unwrap();
-        let mut raw = Raw { _client: client, connection };
-        while !matches!(raw.event(), Event::Incoming(Packet::SubAck(_))) {}
-        raw
-    }
-
-    fn event(&mut self) -> Event {
-        match self.connection.recv_timeout(FAILSAFE) {
-            Ok(Ok(event)) => event,
-            other => panic!("the watching client heard nothing: {other:?}"),
-        }
-    }
-
-    fn until(&mut self, want: impl Fn(&Value) -> bool) {
-        loop {
-            if let Event::Incoming(Packet::Publish(p)) = self.event() {
-                if serde_json::from_slice(&p.payload).is_ok_and(|v| want(&v)) {
-                    return;
-                }
-            }
-        }
-    }
+/// Reads `watching` until `subscriber/concierge` says `state`.
+fn until(watching: &mut Subscriber, state: &str) {
+    while !serde_json::from_slice::<Value>(&watching.recv().payload).is_ok_and(|v| v["state"] == state) {}
 }
 
 fn publisher(name: &str, socket: &Path) -> Publisher {
@@ -242,11 +208,11 @@ fn a_killed_client_reads_gone_and_a_restarted_one_resubscribes_from_its_set_file
     let world = World::new(broker.socket());
     let run = world.run(broker.socket());
     world.ok(&["add", "release/active", "--note", "kept"]);
-    let mut watching = Raw::subscribe(broker.socket(), "subscriber/concierge");
+    let mut watching = Subscriber::to(broker.socket(), &["subscriber/concierge"]);
 
     // Keep-alive is 0, so only the closed socket can tell the broker.
     drop(run);
-    watching.until(|v| v["state"] == "gone");
+    until(&mut watching, "gone");
     let saved = std::fs::read_to_string(world.set_file()).unwrap();
     assert!(saved.contains("release/active"), "{saved}");
 
@@ -295,7 +261,7 @@ fn after_a_broker_restart_the_client_reconnects_and_holds_the_same_state_values(
     assert_eq!(follow.next(), "[sub:s1] release/active release=r1");
 
     broker.restart();
-    Raw::subscribe(broker.socket(), "subscriber/concierge").until(|v| v["state"] == "up");
+    until(&mut Subscriber::to(broker.socket(), &["subscriber/concierge"]), "up");
     // The republished value is the one already delivered, so the next line is the new topic.
     let gate = publisher("g", broker.socket());
     publish(&gate, "gate/r/sp-a", json!({"rc": 0}));

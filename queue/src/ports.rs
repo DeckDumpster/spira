@@ -833,6 +833,7 @@ pub struct World<'a> {
     pub clock: &'a dyn Clock,
     pub env: &'a dyn Env,
     pub io: &'a dyn Emit,
+    pub rounds: &'a crate::round_bus::RoundBus,
 }
 
 impl World<'_> {

@@ -13,6 +13,8 @@ const TEMPLATE: &str = include_str!("../../systemd/mosquitto.conf");
 const SOCKET_SLOT: &str = "@SPIRA_BROKER_SOCKET@";
 /// Bounds each wait on the broker, so a broken one fails the test instead of hanging it.
 const FAILSAFE: Duration = Duration::from_secs(30);
+/// Marks the end of what [`Broker::retained`] reads.
+const END_TOPIC: &str = "testkit/end";
 
 /// One `mosquitto` process running a config the caller placed; killed when dropped.
 pub struct Process(ChildGuard);
@@ -53,6 +55,62 @@ impl Process {
     }
 }
 
+/// A subscriber that owes nothing to the library that publishes.
+pub struct Subscriber {
+    client: rumqttc::Client,
+    connection: rumqttc::Connection,
+}
+
+/// One delivered message.
+#[derive(Debug)]
+pub struct Delivered {
+    pub topic: String,
+    pub payload: Vec<u8>,
+    pub retain: bool,
+}
+
+impl Subscriber {
+    /// Subscribes to `filters` and returns once the broker has acknowledged them all, so
+    /// nothing published afterwards is missed.
+    pub fn to(socket: &Path, filters: &[&str]) -> Subscriber {
+        use rumqttc::{Client, Event, MqttOptions, Packet, QoS, Transport};
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let id = format!("sub-{}", N.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        let mut options = MqttOptions::new(id, socket.to_str().expect("a UTF-8 socket path"), 0);
+        options.set_transport(Transport::Unix);
+        options.set_keep_alive(Duration::ZERO);
+        let (client, mut connection) = Client::new(options, 64);
+        for f in filters {
+            client.subscribe(*f, QoS::AtLeastOnce).expect("queue the subscription");
+        }
+        let mut acked = 0;
+        while acked < filters.len() {
+            match connection.recv_timeout(FAILSAFE) {
+                Ok(Ok(Event::Incoming(Packet::SubAck(_)))) => acked += 1,
+                // A retained value ahead of a later acknowledgement would be lost here.
+                Ok(Ok(Event::Incoming(Packet::Publish(p)))) => panic!("delivered before the subscriptions stood: {}", p.topic),
+                Ok(Ok(_)) => {}
+                other => panic!("the broker never acknowledged the subscription: {other:?}"),
+            }
+        }
+        Subscriber { client, connection }
+    }
+
+    /// The next message; panics when none arrives.
+    pub fn recv(&mut self) -> Delivered {
+        use rumqttc::{Event, Packet};
+        loop {
+            match self.connection.recv_timeout(FAILSAFE) {
+                Ok(Ok(Event::Incoming(Packet::Publish(p)))) => {
+                    return Delivered { topic: p.topic, payload: p.payload.to_vec(), retain: p.retain }
+                }
+                Ok(Ok(_)) => {}
+                other => panic!("no message arrived: {other:?}"),
+            }
+        }
+    }
+}
+
 pub struct Broker {
     child: Option<Process>,
     socket: PathBuf,
@@ -75,6 +133,24 @@ impl Broker {
     /// The socket it listens on, the same one across [`restart`](Broker::restart).
     pub fn socket(&self) -> &Path {
         &self.socket
+    }
+
+    /// What a subscriber arriving now is handed for `filter`: each retained `(topic, payload)`.
+    pub fn retained(&self, filter: &str) -> Vec<(String, String)> {
+        use rumqttc::QoS;
+        let mut subscriber = Subscriber::to(&self.socket, &[filter]);
+        // The broker works through one connection in order, so what `filter` holds is sent
+        // ahead of a marker published and subscribed to after its acknowledgement.
+        subscriber.client.publish(END_TOPIC, QoS::AtLeastOnce, true, "end").expect("queue the end marker");
+        subscriber.client.subscribe(END_TOPIC, QoS::AtLeastOnce).expect("queue the end subscription");
+        let mut held = Vec::new();
+        loop {
+            let got = subscriber.recv();
+            if got.topic == END_TOPIC {
+                return held;
+            }
+            held.push((got.topic, String::from_utf8_lossy(&got.payload).into_owned()));
+        }
     }
 
     fn start(&mut self) {

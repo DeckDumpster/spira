@@ -151,6 +151,8 @@ pub trait World {
     fn yield_sh(&self, yield_sh: &Path, run: &str, args: &[&str]);
     /// Pushes the finished trial's metrics; a world with no metrics store pushes nothing.
     fn push_metrics(&self, _run: &crate::telemetry::GateRun) {}
+    /// Publishes a finished trial's messages; a world with no broker publishes nothing.
+    fn publish(&self, _messages: &[(String, serde_json::Value)]) {}
     /// This process's cgroup counters now; `None` where they cannot be read.
     fn cgroup_mark(&self) -> Option<spira_otel::cgroup::Mark> {
         None

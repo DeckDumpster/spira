@@ -22,7 +22,6 @@ spira-world = { path = "../spira-world" }
 regex = "1"
 
 [dev-dependencies]
-rumqttc = { version = "0.25.1", default-features = false }
 serde_json = "1"
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }

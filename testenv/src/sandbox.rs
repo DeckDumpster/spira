@@ -347,58 +347,7 @@ pub struct Ran {
     pub stopped: Option<Stopped>,
 }
 
-/// A signal that stopped a run from outside, as the supervisor read its sender the moment it arrived.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Stopped {
-    pub sig: i32,
-    pub by_pid: Option<u32>,
-    pub cmd: String,
-    pub cgroup: String,
-}
-
-const STOPPED_PREFIX: &str = "testenv: stopped from outside: sig=";
-const PID_UNRESOLVED: &str = "? (outside the sandbox's namespace)";
-
-impl Stopped {
-    fn line(&self) -> String {
-        let pid = self.by_pid.map_or_else(|| PID_UNRESOLVED.to_string(), |p| p.to_string());
-        format!("{STOPPED_PREFIX}{} from pid={pid} cmd={} cgroup={}", self.sig, self.cmd, self.cgroup)
-    }
-
-    fn parse(line: &str) -> Option<Stopped> {
-        let rest = line.strip_prefix(STOPPED_PREFIX)?;
-        let (sig, rest) = rest.split_once(" from pid=")?;
-        let (pid, rest) = rest.split_once(" cmd=")?;
-        let (cmd, cgroup) = rest.rsplit_once(" cgroup=")?;
-        Some(Stopped { sig: sig.parse().ok()?, by_pid: pid.parse().ok(), cmd: cmd.into(), cgroup: cgroup.into() })
-    }
-
-    /// The sender's program name: the basename of its command's first word.
-    pub fn comm(&self) -> &str {
-        let first = self.cmd.split_whitespace().next().unwrap_or("?");
-        let first = first.strip_prefix('[').and_then(|f| f.strip_suffix(']')).unwrap_or(first);
-        first.rsplit('/').next().unwrap_or(first)
-    }
-
-    /// The systemd unit or scope the sender ran in: the cgroup path's last component.
-    pub fn unit(&self) -> &str {
-        self.cgroup.trim_end_matches('/').rsplit('/').next().unwrap_or("?")
-    }
-
-    fn by(&self) -> String {
-        format!("{}:{}", self.by_pid.map_or_else(|| "?".to_string(), |p| p.to_string()), self.comm())
-    }
-
-    /// The `sandbox-metrics` line's field.
-    pub fn metrics_field(&self) -> String {
-        format!("stopped=outside sig={} by={}", self.sig, self.by())
-    }
-
-    /// The `VERDICT RED` line's field.
-    pub fn verdict_field(&self) -> String {
-        format!("{} cgroup={}", self.metrics_field(), self.unit())
-    }
-}
+pub use gate::stopped::Stopped;
 
 /// Where the supervisor records a stop for the run whose output is `out`: a file the sandbox
 /// cannot write, so nothing the tests print passes for a sender.

@@ -812,6 +812,9 @@ impl World for Real {
     fn push_metrics(&self, run: &crate::telemetry::GateRun) {
         crate::telemetry::push_metrics(&crate::telemetry::metrics_sink(), run);
     }
+    fn publish(&self, messages: &[(String, serde_json::Value)]) {
+        crate::publish::send(spira_pub::Publisher::new("gate"), messages);
+    }
     fn cgroup_mark(&self) -> Option<spira_otel::cgroup::Mark> {
         spira_otel::cgroup::Mark::own()
     }

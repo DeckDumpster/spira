@@ -140,6 +140,12 @@ duplication is exactly what let a timer added after a hand list was written esca
   PSI `full avg60` at `SPIRA_PSI_FULL_AVG60` for `SPIRA_PSI_SUSTAIN_SECS`; release trees over
   `SPIRA_RELEASES_KEEP` + `SPIRA_RELEASE_STORE_SLACK`.
 - Writes: `$SPIRA_RUN/conditions/{filed,pending}/<probe>/<key>`, `failed-runs.tally`.
+- `host/pressure` (`pressure_topic.rs`, run by this pass and by the sentinel's in-process one):
+  cpu and io PSI `full avg300` against `SPIRA_PRESSURE_CPU_AVG300` and
+  `SPIRA_PRESSURE_IO_AVG300`, published only when either changes side. The band the broker took
+  is kept in `conditions/pressure-band.json` and republished on reconnect. A failure is logged
+  and never fails the pass. The kernel reports system-wide cpu `full` as zero, so on
+  `/proc/pressure` only io can cross a positive line.
 
 ### Sweep (default / `--show`)
 Unchanged field list and heredoc layout from the bash (see `render::render` doc comment for

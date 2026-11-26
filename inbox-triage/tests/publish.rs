@@ -4,14 +4,9 @@
 extern crate spira_test_id;
 
 use std::process::{Command, Stdio};
-use std::time::Duration;
 
-use rumqttc::{Client, Event, MqttOptions, Packet, QoS, Transport};
 use serde_json::{json, Value};
 use testkit::broker::Broker;
-
-/// Bounds each wait on the broker so a broken one fails the test instead of hanging.
-const FAILSAFE: Duration = Duration::from_secs(30);
 
 #[test_id(tjzfbv2)]
 #[test]
@@ -34,24 +29,13 @@ fn append_publishes_the_unread_count_past_watchds_cursor_under_its_own_name() {
     let out = Command::new(testkit::bin_exe("inbox-triage")).args(["append", "a new thing"]).env_clear().envs(env).stdin(Stdio::null()).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 
-    let mut options = MqttOptions::new("watching", broker.socket().to_str().unwrap(), 0);
-    options.set_transport(Transport::Unix);
-    options.set_keep_alive(Duration::ZERO);
-    let (client, mut connection) = Client::new(options, 8);
-    client.subscribe("concierge/inbox", QoS::AtLeastOnce).unwrap();
-    client.subscribe("publisher/inbox-triage", QoS::AtLeastOnce).unwrap();
-    let mut next = || -> (String, Value) {
-        loop {
-            match connection.recv_timeout(FAILSAFE) {
-                Ok(Ok(Event::Incoming(Packet::Publish(p)))) => return (p.topic, serde_json::from_slice(&p.payload).unwrap()),
-                Ok(Ok(_)) => {}
-                other => panic!("nothing retained arrived: {other:?}"),
-            }
-        }
+    let held = |topic: &str| -> Value {
+        let held = broker.retained(topic);
+        let [(_, payload)] = held.as_slice() else { panic!("one retained {topic} value: {held:?}") };
+        serde_json::from_str(payload).unwrap()
     };
-    let (topic, value) = next();
-    assert_eq!(topic, "concierge/inbox");
+    let value = held("concierge/inbox");
     assert_eq!(value["unread"], 1, "{value}");
     assert!(value["oldest"].as_str().is_some_and(|l| l.ends_with("a new thing")), "{value}");
-    assert_eq!(next(), ("publisher/inbox-triage".to_string(), json!({"state": "gone"})));
+    assert_eq!(held("publisher/inbox-triage"), json!({"state": "gone"}));
 }

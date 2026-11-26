@@ -14,6 +14,7 @@ pub mod ports;
 pub mod publish_range;
 pub mod real;
 pub mod records;
+pub mod round_bus;
 pub mod seam;
 pub mod stats;
 pub mod telemetry;

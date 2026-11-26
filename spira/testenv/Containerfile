@@ -267,6 +267,12 @@ RUN useradd -m -s /bin/bash -u 1001 spirauser && \
          > /etc/sudoers.d/spirauser-systemctl && \
     chmod 0440 /etc/sudoers.d/spirauser-systemctl
 
+# Where spira-broker.service renders its ExecStart (spira_config::SPIRA_ENV_REL).
+RUN _home="$(getent passwd spirauser | cut -d: -f6)" && \
+    mkdir -p "$_home/.local/lib/spira-env/bin" && \
+    ln -s /usr/local/bin/mosquitto "$_home/.local/lib/spira-env/bin/mosquitto" && \
+    chown -R spirauser:spirauser "$_home/.local"
+
 # CARGO_HOME outside any user home directory so the volume path avoids a literal
 # that inventory.sh would flag. The directory is created owned by spirauser so it
 # is writable from the container's first command without a privilege step.

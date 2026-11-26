@@ -12,6 +12,7 @@ use crate::machine::{self, GateState, Run};
 use crate::parse::{self, Attribution};
 use crate::ports::{Ctx, Merge, World};
 use crate::stall;
+use crate::stopped::Stopped;
 use crate::tier::{self, Tier};
 use crate::toolkey;
 use spira_config::GateMode;
@@ -42,7 +43,7 @@ pub struct Verdict {
 /// A build directory is sound to reuse when the gate judged the tree or was cut at a cap; a
 /// refusal means the target itself is suspect.
 pub(crate) fn hands_on_build(vd: &Verdict) -> bool {
-    vd.status != NOVERDICT || matches!(vd.reason.as_str(), "phase-cap" | "budget" | "deadline" | "timeout")
+    vd.status != NOVERDICT || crate::publish::is_cap_reason(&vd.reason)
 }
 
 fn v(status: i32, reason: &str, msg: impl Into<String>) -> Verdict {
@@ -114,6 +115,10 @@ struct State {
     slowest_step: Option<(String, u64)>,
     /// `<test>:<red|timeout>/<green|red|timeout|unrun>` per test the gate ran once more.
     reruns: Vec<String>,
+    /// The tests the branch trial saw red, as the finish publishes them.
+    red_tests: Vec<crate::publish::RedTest>,
+    /// A command the trial ran calls testenv, so a `VERDICT` line in its output is testenv's.
+    ran_testenv: bool,
     /// The branch trial's whole output, kept as a file when the verdict is not a PASS.
     gate_out: String,
     changed: Vec<String>,
@@ -1061,6 +1066,7 @@ impl<'w, W: World> Trial<'w, W> {
         let fkey = self.fences_key(&want_tree, &limits.deny);
         let mut mark_err: Option<String> = None;
         let tiers_file = self.s.tiers_file.clone();
+        self.s.ran_testenv = build_phase.is_some() || !re.required.is_empty() || compose::gate_string(&comp, &cmd).0.contains("testenv");
         let (rc, out, ph, tiers) = {
             let (run_dir, machine, op_marks) = (Path::new(&self.s.run), &mut self.s.machine, &mut self.s.op_marks);
             let mut mark = |to: GateState, why: &str| {
@@ -1119,6 +1125,8 @@ impl<'w, W: World> Trial<'w, W> {
             self.s.slowest_step = parse::longest(steps);
         }
         self.s.gate_out = out.clone();
+        // Read now: the base trial checks the base out over this tree.
+        self.s.red_tests = self.red_tests(&out, &ctx, &repo, &base_rev, &rev, &tree);
         self.s.tools_from = match tools.as_ref() {
             Some(t) if t.release => "release",
             Some(_) => "tree",
@@ -1910,6 +1918,33 @@ impl<'w, W: World> Trial<'w, W> {
         self.w.checkout(repo, tree, rev, want)
     }
 
+    /// Each test `out` shows red that carries a test id, once.
+    fn red_tests(&self, out: &str, ctx: &Ctx, repo: &Path, base: &str, rev: &str, tree: &Path) -> Vec<crate::publish::RedTest> {
+        let failed = parse::failed_test_packages(out);
+        if failed.is_empty() {
+            return Vec::new();
+        }
+        let w = self.w;
+        let changed = w.diff_raw(repo, base, rev).ok();
+        let members = crate::telemetry::members(w, ctx, tree).ok();
+        let mut reds: Vec<crate::publish::RedTest> = Vec::new();
+        for (test, package) in failed {
+            let Some(id) = crate::ports::flip_test_id(&test).and_then(|i| i.strip_prefix("test:").map(String::from)) else {
+                w.eprint(&format!("gate: red test {test} carries no test id; no test/ topic for it"));
+                continue;
+            };
+            if reds.iter().any(|r| r.id == id) {
+                continue;
+            }
+            let touches_crate = package.and_then(|p| {
+                let members = members.as_deref().filter(|m| m.iter().any(|m| m.name == p))?;
+                Some(crate::publish::touches(changed.as_deref()?, members, &p))
+            });
+            reds.push(crate::publish::RedTest { id, touches_crate });
+        }
+        reds
+    }
+
     /// `self.s.changed` entries are `<status>\t<path>`; the ejection record keys on paths alone.
     fn changed_paths(&self) -> Vec<String> {
         self.s.changed.iter().map(|e| e.rsplit('\t').next().unwrap_or(e).to_string()).collect()
@@ -2334,6 +2369,9 @@ impl<'w, W: World> Trial<'w, W> {
                 crate::telemetry::keep_report(w, &self.s.run, &ts, html);
             }
             crate::telemetry::append(w, &self.s.run, &ts, &run);
+            // The branch's own run names its sender ahead of a later base run's.
+            let killed_by = self.s.ran_testenv.then(|| Stopped::in_verdict(&self.s.gate_out).or_else(|| Stopped::in_verdict(&vd.msg))).flatten();
+            w.publish(&crate::publish::messages(&run, killed_by.as_ref(), &self.s.branch_tree, &self.s.red_tests, w.stamp()));
             w.push_metrics(&run);
             self.emit_ops(&run);
             if let Some(y) = w.which("yield.sh") {

@@ -7,7 +7,7 @@
 #[macro_use]
 extern crate spira_test_id;
 use watchtower::process::{self, getenv, getenv_i64, lib_sh_dir, resolved_incident_sh};
-use watchtower::{host_real, conditions, czar_outcome, deploy_fault, drift, git, load_fence, lock_holders, log, pr_stall, probes, release_skew, sccache_wedge, dolt_drop, slow_query, sweep, throttle};
+use watchtower::{host_real, conditions, czar_outcome, deploy_fault, drift, git, load_fence, lock_holders, log, pr_stall, pressure_topic, probes, release_skew, sccache_wedge, dolt_drop, slow_query, sweep, throttle};
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -344,6 +344,7 @@ fn main() {
             };
             conditions::reconcile(n, &ctx, "content-drift", probes::content_drift(&drift_cfg));
             ctx.end_pass();
+            log::log(&pressure_topic::run_pass(pressure_topic::Pressure::configured(&run).as_ref(), std::path::Path::new(&cfg.psi_dir), &spira_config::process::cfg, n as u64));
             match host_real::cfg_of(&run, getenv("SPIRA_TMP_PROBE_PATH"), getenv("SPIRA_PSI_DIR")).and_then(|c| host_real::pass(n as u64, &c, &run)) {
                 Ok(m) => log::log(&m),
                 Err(e) => log::log(&format!("watchtower: host section refused — {e}")),
