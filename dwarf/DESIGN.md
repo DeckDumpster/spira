@@ -366,7 +366,8 @@ own process group, so its trap ran with 143 and skipped the verdict block — sa
 Each beat also publishes the session's own marks (`decide::session_marks`, `session_feed`):
 `session/<bead>/age/<15m|30m|60m>`, and `session/<bead>/state` = `lingering` once the session
 has run `SPIRA_SESSION_LINGER_SECS` past the first refused renewal that did not stop it (exit
-1 or 3; "cannot tell" is not a refusal). The run publishes `started` and `ended` around the
+1, "not this holder's WORKING row"; neither "cannot tell" nor a refused event on a row still
+WORKING says the item left). The run publishes `started` and `ended` around the
 launch, as publisher `dwarf-<bead>`. A failed publish changes nothing.
 
 ### 4.2a Phase and disposition on the row

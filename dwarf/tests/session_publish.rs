@@ -7,7 +7,6 @@ extern crate spira_test_id;
 use std::collections::BTreeMap;
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
@@ -137,11 +136,6 @@ struct Outcome {
     log: String,
 }
 
-fn git(dir: &Path, args: &[&str]) {
-    let o = Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
-    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
-}
-
 /// `Run::main` over a fresh run directory and repository, publishing to `socket`;
 /// `during` is the model session.
 fn run(socket: &Path, store: &Store, clock: &AtomicI64, during: impl Fn() + Send + Sync) -> Outcome {
@@ -153,8 +147,8 @@ fn run(socket: &Path, store: &Store, clock: &AtomicI64, during: impl Fn() + Send
         std::fs::create_dir_all(d).unwrap();
     }
     std::fs::write(home.join("runes/builder.md"), "You are a builder.").unwrap();
-    git(&repo, &["init", "-q", "-b", "main"]);
-    git(&repo, &["commit", "-q", "--allow-empty", "-m", "base"]);
+    testkit::git(&repo, &["init", "-q", "-b", "main"]);
+    testkit::git(&repo, &["commit", "-q", "--allow-empty", "-m", "base"]);
     let map = dir.join("repos");
     std::fs::write(&map, format!("shared {} pr main\n", repo.display())).unwrap();
     let bin = dir.join("model-bin");
@@ -260,7 +254,7 @@ fn a_run_publishes_its_session_started_then_ended_and_runs_the_same_with_the_bro
 
 #[test_id(tk4kxi3)]
 #[test]
-fn a_runs_heartbeat_publishes_its_age_and_lingering_the_configured_time_after_the_first_refused_renewal() {
+fn a_runs_heartbeat_publishes_its_age_and_lingering_the_configured_time_after_the_item_is_first_seen_to_have_left_working() {
     let _one = ONE_RUN.lock().unwrap_or_else(|e| e.into_inner());
     let broker = Broker::up();
     let socket = broker.socket().to_path_buf();
@@ -272,23 +266,27 @@ fn a_runs_heartbeat_publishes_its_age_and_lingering_the_configured_time_after_th
     };
     // The fixture configures the linger time as 301, not the shipped 300.
     let linger = 301;
+    let left = 910;
     let seen = Mutex::new(Vec::new());
     let outcome = run(&socket, &store, &clock, || {
         let mut age = Subscriber::to(&socket, &["session/sp-x/age/15m"]);
         at(900);
         let aged = next(&mut age);
-        // Cannot tell is not a refusal; the item leaves WORKING at the refusal that follows.
+        // Neither "cannot tell" nor a refused event says the item left WORKING; exit 1 does.
         renewals_exit(2);
+        renewals_exit(3);
+        at(left);
+        store.await_renewals(2);
         renewals_exit(1);
         // An unsteady store afterwards does not restart the wait.
         renewals_exit(2);
         at(1000);
         store.await_renewals(2);
         renewals_exit(3);
-        at(900 + linger - 1);
+        at(left + linger - 1);
         store.await_renewals(2);
         let before = retained_state(&socket);
-        at(900 + linger);
+        at(left + linger);
         store.await_renewals(2);
         *seen.lock().unwrap() = vec![aged, before, retained_state(&socket)];
     });
@@ -296,7 +294,7 @@ fn a_runs_heartbeat_publishes_its_age_and_lingering_the_configured_time_after_th
     assert_eq!(seen.len(), 3, "{}", outcome.log);
     assert_eq!(seen[0], json!({"at": NOW + 900, "sessions": 4}));
     assert_eq!(seen[1]["state"], "started", "not before: {}", seen[1]);
-    assert_eq!(seen[2], json!({"state": "lingering", "at": NOW + 900 + linger, "sessions": 4}));
+    assert_eq!(seen[2], json!({"state": "lingering", "at": NOW + left + linger, "sessions": 4}));
 }
 
 #[test_id(twonu66)]

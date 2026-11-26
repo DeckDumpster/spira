@@ -1587,12 +1587,13 @@ impl<'a> Run<'a> {
             feed.started(launched, sessions);
         }
         let rc = self.d.launcher.run(&spec, &self.stop);
-        if let Some((sim, world)) = &pilgrim {
-            pilgrim_world::down(self.d.exec, sim, world);
-        }
         let exited = self.now();
+        // Before any teardown: the heartbeat is still beating, and nothing may follow the exit.
         if let Some(feed) = &self.s.feed {
             feed.ended(exited, rc, (exited - launched).max(0));
+        }
+        if let Some((sim, world)) = &pilgrim {
+            pilgrim_world::down(self.d.exec, sim, world);
         }
         self.s.session_exited_at = Some(exited);
         self.s.session_wall_s = Some((exited - launched).max(0));
@@ -1864,10 +1865,10 @@ impl Beat for RealBeat<'_> {
         decide::sent_back(row.as_ref(), refused)
     }
     fn renewal_outcome(&self) -> Renewal {
-        // 1: the row is not this holder's WORKING row. 3: the machine refused the event.
+        // Only 1 says the row left this holder's WORKING; 3 refuses an event on a row still read as it.
         match *self.renew_rc.lock().unwrap_or_else(|e| e.into_inner()) {
             claim::LC_APPLIED => Renewal::Applied,
-            1 | claim::LC_REFUSED => Renewal::Refused,
+            1 => Renewal::Refused,
             _ => Renewal::Unjudged,
         }
     }
