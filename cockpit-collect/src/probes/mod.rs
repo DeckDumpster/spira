@@ -2156,7 +2156,7 @@ mod livelock_tests {
     #[test_id(tc6slhw)]
     #[test]
     fn each_detector_row_reaches_its_own_count_and_an_allowed_row_counts_in_neither() {
-        let ll = "LIVELOCK sp-a unclaimable — x\nLIVELOCK sp-b ci-stuck — y";
+        let ll = "LIVELOCK sp-a ask-no-overseer — x\nLIVELOCK sp-b ci-stuck — y";
         let ic = "INVALID-CLOSED sp-c — r\nUNFILED-FOLLOW sp-d — r\nALLOWED-IC sp-e — ok";
         let kv = livelock_report(ll, Some(ic), || false);
         assert_eq!(val(&kv, "SP_LIVELOCKED"), "2");
