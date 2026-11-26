@@ -117,6 +117,8 @@ pub struct State {
     /// add nothing (sp-iku03, sp-al5ng).
     pub session_start_tip: String,
     pub lc_model_restricted: bool,
+    /// The raise time of an ask hold a directed claim found already on the row.
+    pub inherited_ask: Option<i64>,
     /// The stronger model this claim runs on, and the rejection history its brief carries.
     pub model_override: Option<String>,
     pub rejection_brief: String,
@@ -816,6 +818,9 @@ impl<'a> Run<'a> {
         match self.blocking_holds(&c.id) {
             claim::Holds::Known(held) if !held.is_empty() && matches!(self.mode, Mode::Directed(_)) => {
                 self.log(&format!("{who}: directed claim of {} keeps its {} hold(s)", c.id, held.join(",")));
+                if held.iter().any(|h| h == "ask") {
+                    self.s.inherited_ask = self.ask_raised(&c.id);
+                }
             }
             claim::Holds::Known(held) if !held.is_empty() => {
                 self.release();

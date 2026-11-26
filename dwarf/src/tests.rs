@@ -158,6 +158,9 @@ pub(crate) mod verdict_run {
         holds: &'static [&'static str],
         rejections: &'static str,
         holder: Mutex<String>,
+        /// The row's state once it leaves WORKING, and when its ask hold was last raised.
+        left: Mutex<Option<&'static str>>,
+        ask_since: Mutex<i64>,
         calls: Mutex<Vec<Vec<String>>>,
     }
     impl Claimable {
@@ -175,7 +178,7 @@ pub(crate) mod verdict_run {
                 ("spira-claim", Some("stack")) => Out::ok(self.proposal),
                 ("spira-claim", Some("rejections")) => Out::ok(self.rejections),
                 ("spira-lc", Some("list")) => Out::ok("[]"),
-                ("spira-lc", Some("show")) => Out::ok(serde_json::json!({"bead": {"bead_id": "sp-x", "state": "WORKING", "holder": *self.holder.lock().unwrap(), "holds": self.holds}}).to_string()),
+                ("spira-lc", Some("show")) => Out::ok(serde_json::json!({"bead": {"bead_id": "sp-x", "state": self.left.lock().unwrap().unwrap_or("WORKING"), "holder": *self.holder.lock().unwrap(), "holds": self.holds, "ask_since": *self.ask_since.lock().unwrap()}}).to_string()),
                 _ => Out::ok(""),
             }
         }
@@ -195,6 +198,10 @@ pub(crate) mod verdict_run {
     /// `Run::claim()` of sp-x as `dwarf direct`; returns the log lines and the ledger. The run
     /// ends at the repository lookup, past every gate that could turn the claim away.
     fn directed_claim(store: &Claimable) -> (Vec<String>, String) {
+        directed_claim_then(store, |_| {})
+    }
+
+    fn directed_claim_then(store: &Claimable, then: impl FnOnce(&mut Run)) -> (Vec<String>, String) {
         let dir = testkit::TempDir::new("dwarf-directed-claim");
         let mut vars = super::complete_vars();
         vars.insert("SPIRA_RUN".into(), dir.path().display().to_string());
@@ -207,6 +214,7 @@ pub(crate) mod verdict_run {
             r.claim_bin = "spira-claim".into();
             r.ledger = Ledger { path: ledger.clone(), dry: false };
             let _ = r.claim();
+            then(r);
         });
         let lines = sink.0.lock().unwrap().clone();
         (lines, std::fs::read_to_string(&ledger).unwrap_or_default())
@@ -247,6 +255,34 @@ pub(crate) mod verdict_run {
         assert_claim_kept(&store, &ledger);
         assert!(store.called(&["spira-lc", "hold"]).is_empty() && !ledger.contains("escalation-hold"), "{ledger}");
         assert!(lines.iter().any(|l| l.contains("escalation-ceiling") && l.contains("directed")), "{lines:?}");
+    }
+
+    /// The log of a directed session on an ask-held row that ends SUBMITTED, its ask hold
+    /// last raised at `raised` (100 when claimed).
+    fn teardown_of_an_ask_held_directed_run(raised: i64) -> Vec<String> {
+        let store = Claimable { proposal: UNSTACKED, holds: &["ask"], ask_since: Mutex::new(100), ..Default::default() };
+        directed_claim_then(&store, |r| {
+            *store.left.lock().unwrap() = Some("SUBMITTED");
+            *store.ask_since.lock().unwrap() = raised;
+            r.s.session_started = true;
+            r.hb_done.store(true, std::sync::atomic::Ordering::SeqCst);
+            r.teardown(0);
+        })
+        .0
+    }
+
+    #[test_id(twobh5b)]
+    #[test]
+    fn an_ask_hold_the_directed_claim_inherited_is_not_read_as_this_sessions_question() {
+        let lines = teardown_of_an_ask_held_directed_run(100);
+        assert!(!lines.iter().any(|l| l.contains("operator-wait")), "{lines:?}");
+    }
+
+    #[test_id(tu1gb9g)]
+    #[test]
+    fn a_question_asked_during_a_directed_session_over_an_inherited_ask_is_still_seen() {
+        let lines = teardown_of_an_ask_held_directed_run(200);
+        assert!(lines.iter().any(|l| l.contains("operator-wait")), "{lines:?}");
     }
 
     fn ready_set_call(express: Option<&str>) -> Vec<String> {
@@ -699,12 +735,19 @@ pub(crate) mod verdict_run {
         let fence_out: String = (0..2000).map(|i| format!("line {i}\n")).collect();
         let (seam, exec) = (Seams(Default::default()), FenceRed { lc: Default::default(), fact_fails, fence_rc, fence_out: fence_out.clone() });
         let notes = Notes(Default::default());
-        with_run_launching(vars, &notes, CleanGit, &exec, &|| 0, &seam, &Mute::default(), &NoLaunch, "", |r| {
-            r.s.bead = "sp-a".into();
-            r.s.work = Some(work.clone());
-            r.s.repo = work.clone();
-            r.teardown(0);
-        });
+        {
+            // The teardown moves the process into `work`, which this test then deletes.
+            let _cwd_owner = OTEL.lock().unwrap_or_else(|e| e.into_inner());
+            let cwd = std::env::current_dir().unwrap();
+            with_run_launching(vars, &notes, CleanGit, &exec, &|| 0, &seam, &Mute::default(), &NoLaunch, "", |r| {
+                r.s.bead = "sp-a".into();
+                r.s.work = Some(work.clone());
+                r.s.repo = work.clone();
+                r.hb_done.store(true, std::sync::atomic::Ordering::SeqCst);
+                r.teardown(0);
+            });
+            std::env::set_current_dir(cwd).unwrap();
+        }
         let note = notes.0.lock().unwrap().iter().filter(|a| a[0] == "note").map(|a| a[2].clone()).collect::<Vec<_>>().join("\n");
         let reopen = seam.0.lock().unwrap().iter().find(|(f, _)| f == "bead_reopen").map(|(_, a)| a.join("\n")).unwrap_or_default() + &note;
         let lc = exec.lc.lock().unwrap().clone();

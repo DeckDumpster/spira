@@ -118,11 +118,16 @@ impl Rig {
     }
 
     fn claim_directed(&self, id: &str) -> (i32, String) {
+        self.claim_directed_stacked(id, json!({}))
+    }
+
+    fn claim_directed_stacked(&self, id: &str, stack: Value) -> (i32, String) {
         let lease = self.now() + 60;
+        let depth = u32::from(stack.as_object().is_some_and(|s| !s.is_empty()));
         self.event(
             id,
-            json!({ "Claim": { "holder": "dwarf-1", "lease_until": lease, "stack": {},
-                "stack_depth": 0, "stack_max_depth": 4,
+            json!({ "Claim": { "holder": "dwarf-1", "lease_until": lease, "stack": stack,
+                "stack_depth": depth, "stack_max_depth": 4,
                 "directed": { "by": "op", "reason": "r", "previous_holder": null } } }),
         )
     }
@@ -464,6 +469,17 @@ fn a_directed_claim_takes_a_held_rework_record_and_leaves_its_holds() {
     r.assert_directed_claim("sp-a");
     assert_eq!(r.row("sp-a")["holds"], held);
     assert!(held.to_string().contains("manual"), "{held}");
+}
+
+#[test_id(t0vzsz5)]
+#[test]
+fn a_directed_claim_compares_no_blocker_gate_even_for_a_stacked_prerequisite_that_moved() {
+    let r = Rig::new();
+    r.certified("sp-b", TIP);
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    let (code, out) = r.claim_directed_stacked("sp-a", json!({ "sp-b": TIP2 }));
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(r.state("sp-a"), "WORKING");
 }
 
 #[test_id(t6jw9jk)]

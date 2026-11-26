@@ -151,7 +151,7 @@ bead: `dwarf direct <rune> <bead-id> --by concierge --reason "<why the normal pa
 It runs with the rune prompt, hooks, fences, build-directory lease and `work submit` of any
 dwarf, started even when the caps are full; while it lives it counts in the fleet ceiling and its rune's count, so adjust no pool for it, and the cockpit shows it as directed. It claims any
 READY, REWORK or WORKING bead whatever its holds, blockers or readiness verdict; the holds stay on the
-row. A bead a
+row, except a `wait` hold, which every claim clears. A bead a
 dwarf holds is taken over: that dwarf is stopped with its branch and worktree kept, and the
 directed dwarf continues on the same branch. The claim event records you, the reason and the
 dwarf it replaced. When it reaches SUBMITTED, drive it with `queue round open --members ... --by concierge` and land as for any bead.

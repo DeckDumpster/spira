@@ -324,8 +324,9 @@ impl Run<'_> {
         // through `work ask`/`work blocked`, whose broker places an `ask` hold on this bead's
         // row. A pool claim releases a bead already carrying a non-wait hold (run.rs
         // blocking_holds), so its ask hold was placed during this session, or raced the claim
-        // unseen when the store could not tell (sp-druc64). A directed claim's may predate it.
-        let asked = lc.as_ref().is_some_and(|r| r.held("ask"));
+        // unseen when the store could not tell (sp-druc64). One a directed claim inherited
+        // counts only once it is raised again.
+        let asked = lc.as_ref().is_some_and(|r| r.held("ask")) && self.s.inherited_ask.is_none_or(|at| self.ask_raised(&id) != Some(at));
         let disposition = lc.as_ref().and_then(|r| r.disposition.as_deref());
         let disposition_note = lc.as_ref().and_then(|r| r.disposition_note.clone()).unwrap_or_default();
         let logf = self.s.logf.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
