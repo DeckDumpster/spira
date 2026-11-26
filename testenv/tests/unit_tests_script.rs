@@ -40,6 +40,9 @@ fn two_runs_keep_the_unit(test_exit: i32) {
     for script in ["unit-tests.sh", "target-clean.sh"] {
         std::fs::copy(home.join(script), tree.join("spira").join(script)).unwrap();
     }
+    // The sandbox entry needs bwrap; this stand-in only runs what follows `--around`.
+    std::fs::create_dir_all(tree.join("tools/test-sandbox")).unwrap();
+    testkit::write_exe(tree.join("tools/test-sandbox/runner"), "#!/bin/sh\nshift\nexec \"$@\"\n");
     let target = d.path().join("cargo-target");
     let unit = target.join("debug/.fingerprint/crate-a-0123456789abcdef");
     let bin = d.path().join("bin");
