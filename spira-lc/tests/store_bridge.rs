@@ -23,6 +23,7 @@ use testkit::broker::Broker;
 /// Bounds each wait on the server or the broker, so a broken one fails instead of hanging.
 const FAILSAFE: Duration = Duration::from_secs(30);
 const PINNED_NOW: i64 = 1_800_000_000;
+const TIP: &str = "0123456789abcdef0123456789abcdef01234567";
 const PUBLISHER: &str = "publisher/lc-serve";
 
 struct Server {
@@ -41,7 +42,7 @@ impl Drop for Server {
 
 impl Server {
     /// A server on a new store, which `seed` writes to first.
-    fn start(broker: &Broker, seed: impl FnOnce(&Path)) -> Server {
+    fn start(broker: &Broker, metrics: &str, seed: impl FnOnce(&Path)) -> Server {
         let dir = testkit::TempDir::new("spira-lc-store-bridge");
         let run_dir = dir.join("run");
         std::fs::create_dir_all(&run_dir).unwrap();
@@ -59,6 +60,7 @@ impl Server {
                 ("SPIRA_LC_SOCKET", &sock),
                 ("SPIRA_VICTORIALOGS_URL", "http://127.0.0.1:9"),
                 ("SPIRA_BROKER_SOCKET", broker.socket().to_str().unwrap()),
+                ("SPIRA_METRICS_ENDPOINT", metrics),
             ],
         );
         std::fs::create_dir_all(dir.join("release/bin")).unwrap();
@@ -180,7 +182,7 @@ impl Subscriber {
 
 /// A server whose bridge the broker has seen come up.
 fn bridged(broker: &Broker) -> Server {
-    watched(Server::start(broker, |_| {}), broker)
+    watched(Server::start(broker, "", |_| {}), broker)
 }
 
 fn watched(server: Server, broker: &Broker) -> Server {
@@ -231,11 +233,18 @@ fn a_refused_transition_publishes_nothing() {
 #[test]
 fn a_restarted_broker_is_handed_every_open_beads_state_again_and_no_terminal_one() {
     let mut broker = Broker::up();
-    let server = watched(Server::start(&broker, |store| seed_dropped(store, "sp-brgone")), &broker);
+    let sink = testkit::otlp::Sink::start();
+    let server = watched(Server::start(&broker, &sink.addr, |store| seed_dropped(store, "sp-brgone")), &broker);
     let mut before = Subscriber::to(broker.socket(), &["bead/+/state", "bead/+/sessions"]);
     server.create("sp-bropen");
     server.claim("sp-bropen");
-    let held = before.until(&["bead/sp-bropen/state", "bead/sp-bropen/sessions"]);
+    let (code, out) = server.event("sp-bropen", "WORKING", 1, "dwarf-1", json!({"Submit": {"tip": TIP}}));
+    assert_eq!(code, 0, "{out}");
+    let mut held = before.until(&["bead/sp-bropen/state", "bead/sp-bropen/sessions"]);
+    while held["bead/sp-bropen/state"]["state"] != "SUBMITTED" {
+        let (topic, value) = before.next();
+        held.insert(topic, value);
+    }
     let (code, out) = server.call(&["show", "sp-brgone"]);
     assert!(code == 0 && out.contains("DROPPED"), "the terminal record is there to be left out: {code} {out}");
 
@@ -247,13 +256,13 @@ fn a_restarted_broker_is_handed_every_open_beads_state_again_and_no_terminal_one
     server.claim("sp-brlast");
     again.extend(after.until(&["bead/sp-brlast/state"]));
 
-    assert_eq!(again["bead/sp-bropen/state"]["state"], held["bead/sp-bropen/state"]["state"]);
-    assert_eq!(again["bead/sp-bropen/state"]["at"], held["bead/sp-bropen/state"]["at"]);
+    assert_eq!(again["bead/sp-bropen/state"], held["bead/sp-bropen/state"]);
     assert_eq!(again["bead/sp-bropen/sessions"], held["bead/sp-bropen/sessions"]);
     assert!(!again.contains_key("bead/sp-brgone/state"), "a terminal bead was republished: {again:?}");
 
     let mut late = Subscriber::to(broker.socket(), &["bead/sp-bropen/state"]);
-    assert_eq!(late.next().1["state"], "WORKING");
+    assert_eq!(late.next().1, held["bead/sp-bropen/state"]);
+    sink.expect(&["spira_lc_republished", "spira_lc_republish_seconds"], FAILSAFE);
 }
 
 #[test_id(t6vqm9u)]
