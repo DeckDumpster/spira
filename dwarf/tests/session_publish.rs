@@ -29,12 +29,12 @@ const SESSION_RC: i32 = 7;
 const STATE: &str = "session/sp-x/state";
 
 fn next(s: &mut Subscriber) -> Value {
-    serde_json::from_slice(&s.receive().payload).unwrap()
+    serde_json::from_slice(&s.recv().payload).unwrap()
 }
 
 /// The retained state a subscriber arriving now is handed.
 fn retained_state(socket: &Path) -> Value {
-    next(&mut Subscriber::subscribe(socket, &[STATE]))
+    next(&mut Subscriber::to(socket, &[STATE]))
 }
 
 /// The lifecycle store, the claim, and the seam of one directed claim of sp-x.
@@ -240,7 +240,7 @@ static ONE_RUN: Mutex<()> = Mutex::new(());
 fn a_run_publishes_its_session_started_then_ended_and_runs_the_same_with_the_broker_stopped() {
     let _one = ONE_RUN.lock().unwrap_or_else(|e| e.into_inner());
     let mut broker = Broker::up();
-    let watching = Mutex::new(Subscriber::watch(broker.socket(), STATE));
+    let watching = Mutex::new(Subscriber::to(broker.socket(), &[STATE]));
     let seen = Mutex::new(Vec::new());
     let clock = AtomicI64::new(NOW);
     let up = run(broker.socket(), &Store::default(), &clock, || seen.lock().unwrap().push(next(&mut watching.lock().unwrap())));
@@ -274,7 +274,7 @@ fn a_runs_heartbeat_publishes_its_age_and_lingering_the_configured_time_after_th
     let linger = 301;
     let seen = Mutex::new(Vec::new());
     let outcome = run(&socket, &store, &clock, || {
-        let mut age = Subscriber::watch(&socket, "session/sp-x/age/15m");
+        let mut age = Subscriber::to(&socket, &["session/sp-x/age/15m"]);
         at(900);
         let aged = next(&mut age);
         // Cannot tell is not a refusal; the item leaves WORKING at the refusal that follows.

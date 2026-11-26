@@ -6,8 +6,6 @@ publish = false
 description = "testkit — test scaffolding shared across the workspace: write an executable without an ETXTBSY race (dev-dependency only)."
 
 [features]
-# `broker::Subscriber`; off by default so only broker tests build an MQTT client.
-subscriber = ["dep:rumqttc"]
 integration = ["system-paths/integration", "spira-test-id/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
@@ -15,7 +13,6 @@ libc = "0.2"
 # TLS off: the broker is a Unix socket.
 rumqttc = { version = "0.25.1", default-features = false }
 toml = "0.8"
-rumqttc = { version = "0.25.1", default-features = false, optional = true }
 
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }

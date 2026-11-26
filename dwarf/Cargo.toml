@@ -32,7 +32,7 @@ sha2 = "0.10"
 
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
-testkit = { path = "../testkit", features = ["subscriber"] }
+testkit = { path = "../testkit" }
 lifecycle = { path = "../lifecycle" }
 spira-claim = { path = "../spira-claim" }
 

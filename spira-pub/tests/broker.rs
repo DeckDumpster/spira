@@ -11,9 +11,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ports::{SeededRng, VirtualClock};
+use rumqttc::{Client, Connection, Event, MqttOptions, Packet, Publish, QoS, Transport};
 use serde_json::{json, Value};
 use spira_pub::{Class, Options, PubError, Publisher};
-use testkit::broker::{Broker, Subscriber};
+use testkit::broker::Broker;
 
 /// Bounds each wait on the broker or a child so a broken one fails the test instead of hanging.
 const FAILSAFE: Duration = Duration::from_secs(30);
@@ -21,21 +22,46 @@ const NOW_MS: u64 = 7_000;
 const CHILD_SOCKET: &str = "SPIRA_PUB_TEST_CHILD_SOCKET";
 const CHILD_UP: &str = "child-publisher-is-up";
 
-/// The next message, its payload parsed: (topic, payload, retained).
-trait NextValue {
-    fn next_value(&mut self) -> (String, Value, bool);
+/// A subscriber that owes nothing to the library under test.
+struct Raw {
+    _client: Client,
+    connection: Connection,
 }
 
-impl NextValue for Subscriber {
+impl Raw {
+    /// Subscribes to `filters`, in order.
+    fn subscribe(socket: &Path, filters: &[&str]) -> Raw {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let id = format!("raw-{}", N.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        let mut options = MqttOptions::new(id, socket.to_str().unwrap(), 0);
+        options.set_transport(Transport::Unix);
+        options.set_keep_alive(Duration::ZERO);
+        let (client, connection) = Client::new(options, 32);
+        for f in filters {
+            client.subscribe(*f, QoS::AtLeastOnce).unwrap();
+        }
+        Raw { _client: client, connection }
+    }
+
+    fn next(&mut self) -> Publish {
+        loop {
+            match self.connection.recv_timeout(FAILSAFE) {
+                Ok(Ok(Event::Incoming(Packet::Publish(p)))) => return p,
+                Ok(Ok(_)) => {}
+                other => panic!("no message arrived: {other:?}"),
+            }
+        }
+    }
+
     fn next_value(&mut self) -> (String, Value, bool) {
-        let p = self.receive();
+        let p = self.next();
         (p.topic, serde_json::from_slice(&p.payload).unwrap(), p.retain)
     }
 }
 
 /// What a subscriber arriving now is handed for `topic`.
 fn retained(socket: &Path, topic: &str) -> Value {
-    let (got, value, retain) = Subscriber::subscribe(socket, &[topic]).next_value();
+    let (got, value, retain) = Raw::subscribe(socket, &[topic]).next_value();
     assert!(retain && got == topic, "not a retained {topic}: {got} {value} retain={retain}");
     value
 }
@@ -72,7 +98,7 @@ fn a_published_state_is_retained_for_a_later_subscriber_and_chatter_is_not() {
 
     assert_eq!(retained(broker.socket(), "release/active"), json!({"release": "r1"}));
     // Retained messages arrive in subscription order, so a retained progress would be first.
-    let (topic, ..) = Subscriber::subscribe(broker.socket(), &["progress/sp-a", "release/active"]).next_value();
+    let (topic, ..) = Raw::subscribe(broker.socket(), &["progress/sp-a", "release/active"]).next_value();
     assert_eq!(topic, "release/active", "chatter was retained");
 }
 
@@ -120,7 +146,7 @@ fn a_killed_publishers_will_says_gone_with_no_keep_alive_to_wait_out() {
     let up = BufReader::new(child.stdout.take().unwrap()).lines().map_while(Result::ok).any(|l| l == CHILD_UP);
     assert!(up, "the child never connected");
 
-    let mut watching = Subscriber::subscribe(broker.socket(), &["publisher/t"]);
+    let mut watching = Raw::subscribe(broker.socket(), &["publisher/t"]);
     assert_eq!(watching.next_value().1["state"], "up");
     child.kill().unwrap();
     child.wait().unwrap();
@@ -156,9 +182,9 @@ fn after_a_broker_restart_on_connect_republishes_and_an_idle_publisher_needs_no_
 
     // The new broker holds nothing, so whatever arrives was republished. Wait for it live or
     // retained, then read it as a fresh subscriber does.
-    assert_eq!(Subscriber::subscribe(broker.socket(), &["release/active"]).next_value().1, before);
+    assert_eq!(Raw::subscribe(broker.socket(), &["release/active"]).next_value().1, before);
     assert_eq!(retained(broker.socket(), "release/active"), before);
-    assert_eq!(Subscriber::subscribe(broker.socket(), &["publisher/t"]).next_value().1["state"], "up");
+    assert_eq!(Raw::subscribe(broker.socket(), &["publisher/t"]).next_value().1["state"], "up");
 }
 
 #[test_id(tbvwg01)]
