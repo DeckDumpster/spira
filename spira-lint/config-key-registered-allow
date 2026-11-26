@@ -77,7 +77,6 @@ SPIRA_BD_LOG testenv/src/fixture.rs
 SPIRA_BD_TIMING_LOG testenv/src/fixture.rs
 SPIRA_BEAD_LANE_OVERRIDE bead/src/main.rs
 SPIRA_BOUNDARY spira/boundary.sh
-SPIRA_BRANCH_GUARD_SH watchtower/src/process.rs
 SPIRA_BROKER loom/src/lib.rs
 SPIRA_BROKER_BIN spira-config/src/convert.rs
 SPIRA_BROKER_GH broker/src/read.rs

@@ -37,7 +37,6 @@ pub struct Cfg {
     pub closed_stranded_warn_h: i64,
     pub drain_warn_mins: i64,
     pub idle_while_ready_n: usize,
-    pub systemctl: String,
     pub units: std::sync::Arc<dyn runtime::units::Units>,
 
     pub prompt_file: Option<PathBuf>,
@@ -56,7 +55,6 @@ pub struct Cfg {
     pub moot_timeout_s: u64,
     /// `SPIRA_RESOLVE_SH`, else `resolve`.
     pub resolve_bin: String,
-    pub branch_guard_sh: Option<String>,
     /// `spira-lc`: whether an incident bead is unfinished is its lifecycle row's answer.
     pub lc_bin: String,
 }
@@ -132,7 +130,6 @@ impl Cfg {
             closed_stranded_warn_h: 48,
             drain_warn_mins: 15,
             idle_while_ready_n: 5,
-            systemctl: "systemctl".into(),
             units: std::sync::Arc::new(runtime::units::ScriptedUnits::new(std::sync::Arc::new(runtime::ports::VirtualClock::new(0)))),
             prompt_file: None,
             lapsed_dir: None,
@@ -145,7 +142,6 @@ impl Cfg {
             cockpit_db: None,
             moot_timeout_s: 30,
             resolve_bin: "resolve".into(),
-            branch_guard_sh: None,
             lc_bin: "does/not/exist/spira-lc".into(),
         }
     }

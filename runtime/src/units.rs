@@ -278,6 +278,8 @@ pub struct UnitDetail {
     pub invocation_id: Option<String>,
     /// `ExecMainStartTimestamp`, wall-clock milliseconds.
     pub exec_main_start_ms: Option<u64>,
+    /// `ControlGroup`: the unit's cgroup path under the hierarchy root, while it has one.
+    pub control_group: Option<String>,
     /// `Environment=`, one `NAME=value` per entry.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub environment: Vec<String>,
@@ -917,6 +919,7 @@ fn run_detail(name: &str, started_ms: u64, pid: Option<u32>, ended: Option<(Exit
         n_restarts: Some(0),
         invocation_id: None,
         exec_main_start_ms: Some(started_ms),
+        control_group: None,
         environment: Vec::new(),
     }
 }
@@ -1943,6 +1946,7 @@ mod systemd {
             n_restarts: find(ty, "NRestarts").and_then(Val::as_u64).and_then(|n| u32::try_from(n).ok()),
             invocation_id: find(unit, "InvocationID").and_then(Val::as_bytes).filter(|b| b.iter().any(|x| *x != 0)).map(|b| b.iter().map(|x| format!("{x:02x}")).collect()),
             exec_main_start_ms: usec_ms(find(ty, "ExecMainStartTimestamp")),
+            control_group: text(ty, "ControlGroup"),
             environment: strings_of(find(ty, "Environment")),
         }
     }
@@ -3189,7 +3193,7 @@ mod tests {
             let f = Fake::default();
             let p = "/org/freedesktop/systemd1/unit/x";
             f.answer(&format!("GetAll {p} {UNIT}"), vec![dict(&[("LoadState", Val::S("loaded".into())), ("UnitFileState", Val::S("enabled".into())), ("ActiveState", Val::S("active".into())), ("SubState", Val::S("running".into())), ("InvocationID", Val::Arr(vec![Val::U(0xab); 16]))])]);
-            f.answer(&format!("GetAll {p} org.freedesktop.systemd1.Service"), vec![dict(&[("Result", Val::S("success".into())), ("MainPID", Val::U(42)), ("NRestarts", Val::U(2)), ("ExecMainStartTimestamp", Val::U(9_000_000)), ("Environment", Val::Arr(vec![Val::S("SPIRA_RELEASE=/r/abc".into()), Val::S("A=1".into())]))])]);
+            f.answer(&format!("GetAll {p} org.freedesktop.systemd1.Service"), vec![dict(&[("Result", Val::S("success".into())), ("MainPID", Val::U(42)), ("NRestarts", Val::U(2)), ("ExecMainStartTimestamp", Val::U(9_000_000)), ("ControlGroup", Val::S("user.slice/spira-loom.service".into())), ("Environment", Val::Arr(vec![Val::S("SPIRA_RELEASE=/r/abc".into()), Val::S("A=1".into())]))])]);
             let d = f.units().detail(&UnitHandle::named("spira-loom.service")).unwrap();
             assert_eq!(d, UnitDetail {
                 name: "spira-loom.service".into(),
@@ -3205,6 +3209,7 @@ mod tests {
                 n_restarts: Some(2),
                 invocation_id: Some("ab".repeat(16)),
                 exec_main_start_ms: Some(9_000),
+                control_group: Some("user.slice/spira-loom.service".into()),
                 environment: vec!["SPIRA_RELEASE=/r/abc".into(), "A=1".into()],
             });
             assert_eq!(f.units().facts(&UnitHandle::named("spira-loom.service")).unwrap(), d.facts());

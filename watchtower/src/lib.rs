@@ -5,6 +5,7 @@
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
+pub mod branch_guard;
 pub mod conditions;
 pub mod cpu_throttle;
 pub mod czar_outcome;

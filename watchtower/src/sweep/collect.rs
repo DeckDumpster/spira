@@ -1,7 +1,5 @@
 use super::Cfg;
-use crate::{cpu_throttle, disk_mem, env::Env, failed_units, gate_wait, incident, lapsed, lc, log::fmt_compact, seams};
-use std::process::Command;
-
+use crate::{branch_guard, cpu_throttle, disk_mem, env::Env, failed_units, gate_wait, lapsed, lc, log::fmt_compact, seams};
 pub struct Halt {
     pub since: String,
     pub why: Option<String>,
@@ -233,7 +231,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
         warn_pct: cfg.cpu_throttle_warn_pct,
         min_periods: cfg.cpu_throttle_min_periods,
         cgroup_root: cfg.cgroup_root.clone(),
-        systemctl: cfg.systemctl.clone(),
+        manager: cfg.units.clone(),
     };
     let (cpu_throttle_breach, cpu_throttle_disp) = cpu_throttle::summarize(
         &cpu_throttle::gather(&cpu_cfg, &cfg.spira_run.join("cpu-throttle.state")),
@@ -360,15 +358,13 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     };
 
     // MENU / GUARD -----------------------------------------------------------------------------
-    let guard_block = guard_block(cfg);
+    let registry = seams::registry(&cfg.lib_sh_dir);
+    let guard_block = crate::deadline::call("branch guard", move || branch_guard::block(&branch_guard::check(&registry)))
+        .unwrap_or_else(|| "  (unavailable — the branch guard did not answer within its deadline)".to_string());
 
     // RELEASE STATUS (for the hotfix escalation, computed here so escalate.rs need not
-    // spawn `release` a second time).
-    let release_status = spira_config::release_env::tool("release")
-        .ok()
-        .and_then(|release| crate::deadline::output("release status", Command::new(release).arg("status")).ok())
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+    // ask `release` a second time).
+    let release_status = release_status();
 
     SweepData {
         now,
@@ -461,24 +457,11 @@ pub(super) fn czar_block(env: &Env) -> String {
     s
 }
 
-fn guard_block(cfg: &Cfg) -> String {
-    let guard_sh = cfg.branch_guard_sh.clone().or_else(|| incident::which("branch-guard.sh"));
-    let Some(sh) = guard_sh.filter(|p| incident::is_usable(p)) else {
-        return "  (unavailable — branch-guard.sh is missing or unreadable)".to_string();
-    };
-    // FORK-EDGE: branch-guard.sh is 211 lines of shell
-    match crate::deadline::output("branch guard", Command::new("bash").arg(&sh).arg("check")) {
-        Ok(o) => {
-            let text = String::from_utf8_lossy(&o.stdout).into_owned()
-                + &String::from_utf8_lossy(&o.stderr);
-            match o.status.code() {
-                Some(0) => format!("  {}", text.trim_end()),
-                Some(3) => "  (no registered repositories — nothing to audit)".to_string(),
-                _ => text.lines().map(|l| format!("  {l}")).collect::<Vec<_>>().join("\n"),
-            }
-        }
-        Err(_) => "  (unavailable — branch-guard.sh is missing or unreadable)".to_string(),
-    }
+/// What `release status` prints; `None` when it cannot answer.
+fn release_status() -> Option<String> {
+    use release::config::{process_env, Config, Flags};
+    let cfg = Config::resolve(&Flags::default(), &process_env()).ok()?;
+    release::activate::status(&cfg).ok()
 }
 
 /// A rune with ready work whose last N calls ALL came back "idle", no dwarf of it is

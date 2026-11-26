@@ -29,7 +29,7 @@ required-features = ["integration"]
 test-bins = ["spira-lc", "spira-config", "testenv"]
 
 [features]
-integration = ["install/integration", "system-paths/integration", "spira-claim/integration", "forge/integration", "reconciler-engine/integration", "spira-desired-state/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-ctrl/integration", "strand/integration", "testkit/integration", "cockpit-ops/integration", "spira-test-id/integration", "testenv/integration", "incident/integration"]
+integration = ["install/integration", "system-paths/integration", "spira-claim/integration", "forge/integration", "reconciler-engine/integration", "spira-desired-state/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-ctrl/integration", "strand/integration", "testkit/integration", "cockpit-ops/integration", "spira-test-id/integration", "testenv/integration", "incident/integration", "release/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 install = { path = "../install" }
@@ -40,6 +40,8 @@ spira-config = { path = "../spira-config" }
 spira-store = { path = "../spira-store" }
 spira-ctrl = { path = "../spira-ctrl" }
 strand = { path = "../strand" }
+release = { path = "../release" }
+spira-claim = { path = "../spira-claim" }
 runtime = { path = "../runtime" }
 spira-desired-state = { path = "../desired-state" }
 reconciler-engine = { path = "../reconciler-engine" }
@@ -58,5 +60,4 @@ path = "src/main.rs"
 
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
-spira-claim = { path = "../spira-claim" }
 testkit = { path = "../testkit" }

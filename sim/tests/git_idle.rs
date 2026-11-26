@@ -13,6 +13,9 @@ use fixture::*;
 #[test]
 fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_reads() {
     let f = fixture(testkit::env);
+    for shared in [&f.local, &f.pr] {
+        per_worktree_config(shared);
+    }
     spira_config::process::with_fresh(|| {
     assert_traps_and_double_are_live(&f);
     assert_stubs_log(&f);
@@ -29,7 +32,9 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     }
     let runs = || std::fs::read_to_string(&ran).unwrap_or_default().lines().count();
     let mut applied: std::collections::BTreeMap<&str, usize> = Default::default();
-    let names = ["watch.throughput.observe", "landing.observe", "overrides.apply", "inbox.notify.observe", "asks.ideas.observe", "batcher.local.observe", "cockpit-tier-60s.observe", "cr-cadence.observe"];
+    let (mut sweep_at_warm, mut sweep_at_idle, mut guard_at_warm, mut towers_at_warm, mut towers_at_idle) = (Vec::new(), Vec::new(), (0, 0), 0, 0);
+    let towers = |f: &Fixture| f.seen.lock().unwrap().iter().filter(|(n, _)| n == spira_runtime::tasks::d::watch_tower::OBSERVE).count();
+    let names = ["watch.throughput.observe", "landing.observe", "overrides.apply", "inbox.notify.observe", "asks.ideas.observe", "batcher.local.observe", "cockpit-tier-60s.observe", "cr-cadence.observe", spira_runtime::tasks::d::watch_tower::OBSERVE];
     let sentinel = ["sentinel-pass.observe"];
     let reads = ["test-registry", "podman", "date", "timeout 5 date"];
     let counts = |f: &Fixture| reads.map(|p| started(f, p));
@@ -51,6 +56,9 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
             applied.insert("warm", runs());
             (at_warm, programs_at_warm) = (logged(&f).len(), logged_programs(&f).len());
             reads_at_warm = counts(&f);
+            sweep_at_warm = started_by_the_sweep(&f);
+            guard_at_warm = (guard_reads(&logged(&f), &f.local), guard_reads(&logged(&f), &f.pr));
+            towers_at_warm = towers(&f);
         }
         t if t == before_hour => drop(applied.insert("idle", runs())),
         t if t == quiet_a => {
@@ -92,6 +100,8 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
         t if t == warm + HOUR => {
             applied.insert("boundary", runs());
             tower_at_boundary = started_by_the_watchtower_checks(&f);
+            sweep_at_idle = started_by_the_sweep(&f);
+            towers_at_idle = towers(&f);
             at_idle = logged(&f).len();
             programs_at_idle = logged_programs(&f);
             reads_at_idle = counts(&f);
@@ -118,6 +128,12 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
         }
     });
     assert_only_the_double_answered(&f);
+    assert!(towers_at_idle >= towers_at_warm + 2, "the watchtower swept {towers_at_warm} then {towers_at_idle} times, so the idle hour proves nothing");
+    assert_eq!(sweep_at_idle, sweep_at_warm, "an idle hour of sweeps started programs:\n{}", sweep_at_idle[sweep_at_warm.len().min(sweep_at_idle.len())..].join("\n"));
+    let sweep_output: serde_json::Value = serde_json::from_str(&last_output(&f, spira_runtime::tasks::d::watch_tower::OBSERVE)).unwrap_or_else(|e| panic!("the sweep answered no snapshot ({e}): {}", last_output(&f, spira_runtime::tasks::d::watch_tower::OBSERVE)));
+    assert!(sweep_output["rendered"].as_str().unwrap_or_default().contains("branch-guard: clean"), "the guard answered: {sweep_output}");
+    assert_eq!(guard_at_warm, (1, 1), "warm-up read each checkout's base tip once");
+    assert_eq!((guard_reads(&logged(&f), &f.local), guard_reads(&logged(&f), &f.pr)), (2, 1), "the commit on the landing ref is one more guard read of that repo, and none of the other");
     let c = |k: &str| applied[k];
     assert!(c("warm") >= 1, "the override was never applied: {applied:?}");
     assert_eq!(c("idle"), c("warm"), "idle minutes started overrides.sh: {applied:?}");
@@ -175,6 +191,30 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     })
     .unwrap();
 }
+#[test_id(tbsxtno)]
+#[test]
+fn the_sweeps_in_process_reads_reach_its_snapshot() {
+    let f = fixture(testkit::env);
+    spira_config::process::with_fresh(|| {
+        let rune = spira_config::process::cfg("SPIRA_RUNES").unwrap().split_whitespace().next().expect("a rune").to_string();
+        let idle: String = (0..5).map(|i| format!("2026-01-01T00:00:0{i}Z awake {rune} idle\n")).collect();
+        let run = process_run();
+        std::fs::write(run.join("dwarf-ledger.log"), idle).unwrap();
+        std::fs::create_dir_all(run.join("release")).unwrap();
+        let sha = "a".repeat(40);
+        std::fs::write(run.join("release/hotfix"), format!("sha {sha}\nreason urgent\nat 2020-01-01T00:00:00Z\n")).unwrap();
+        let bead = format!("{{\"bead_id\":\"sp-zzzzzz\",\"verdict\":\"claimable\",\"runes\":[\"{rune}\"],\"row\":{},\"content\":{}}}", lc_row("sp-zzzzzz"), plan_row("sp-zzzzzz"));
+        *f.claimable.lock().unwrap() = format!("{{\"beads\":[{bead}]}}");
+        let observe = spira_runtime::tasks::d::watch_tower::OBSERVE;
+        let out = runtime::host::EffectRunner::run(f.effects.as_ref(), "k", &runtime::EffectSpec::keyed(observe, "k", String::new(), 60_000)).expect("the sweep ran");
+        let snap: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(snap["hotfix"].as_str().is_some_and(|h| h.contains(&format!("RUNNING UNLANDED {sha}: urgent"))), "release status: {}", snap["hotfix"]);
+        let references: Vec<&str> = snap["escalations"].as_array().unwrap().iter().filter_map(|e| e["reference"].as_str()).collect();
+        assert!(references.contains(&format!("incident:idle-while-ready:{rune}").as_str()), "ready by rune: {references:?}");
+    })
+    .unwrap();
+}
+
 #[test_id(trx3p6f)]
 #[test]
 fn a_podman_that_fails_to_list_images_is_asked_again_on_the_next_pass() {
