@@ -994,6 +994,60 @@ pub fn router(loom: Arc<Loom>) -> Router {
         .with_state(loom)
 }
 
+/// Must exceed the longest gap between idle requests, so an idle minute retires no
+/// blocking-pool thread only to start another for the next request.
+pub const BLOCKING_KEEP_ALIVE: Duration = Duration::from_secs(3600);
+
+pub fn server_runtime_with(keep_alive: Duration) -> std::io::Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread().enable_all().thread_keep_alive(keep_alive).build()
+}
+
+pub fn server_runtime() -> std::io::Result<tokio::runtime::Runtime> {
+    server_runtime_with(BLOCKING_KEEP_ALIVE)
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    use super::server_runtime_with;
+    use std::sync::mpsc;
+    use std::thread::ThreadId;
+    use std::time::Duration;
+
+    struct ExitSignal(mpsc::Sender<()>);
+    impl Drop for ExitSignal {
+        fn drop(&mut self) {
+            let _ = self.0.send(());
+        }
+    }
+    thread_local! { static EXIT: std::cell::RefCell<Option<ExitSignal>> = const { std::cell::RefCell::new(None) }; }
+
+    /// Two blocking calls; returns both thread ids and whether the first thread exited in between.
+    fn two_calls(keep_alive: Duration) -> (ThreadId, ThreadId, bool) {
+        let rt = server_runtime_with(keep_alive).expect("runtime");
+        let (tx, rx) = mpsc::channel();
+        let first = rt
+            .block_on(rt.spawn_blocking(move || {
+                EXIT.with(|e| *e.borrow_mut() = Some(ExitSignal(tx)));
+                std::thread::current().id()
+            }))
+            .expect("first");
+        let exited = rx.recv_timeout(Duration::from_millis(500)).is_ok();
+        let second = rt.block_on(rt.spawn_blocking(|| std::thread::current().id())).expect("second");
+        (first, second, exited)
+    }
+
+    #[test_id(ttzmf93)]
+    #[test]
+    fn a_blocking_thread_outlives_a_gap_shorter_than_its_keep_alive_and_retires_past_it() {
+        let (a, b, exited) = two_calls(Duration::from_millis(30));
+        assert!(exited, "the idle thread must retire past its keep-alive");
+        assert_ne!(a, b);
+        let (a, b, exited) = two_calls(Duration::from_secs(60));
+        assert!(!exited);
+        assert_eq!(a, b);
+    }
+}
+
 #[cfg(test)]
 mod shot_path_tests {
     use super::shot_path;
