@@ -838,3 +838,4 @@ margin_token_file
 conditions_max_file
 cr_size_unit_lines
 dolt_unit
+broker_socket

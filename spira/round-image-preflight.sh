@@ -28,6 +28,12 @@ while [ $# -gt 0 ]; do
     esac
 done
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# conf.sh resolves this tree's keys, and the box declares a new one only once activation applies the tree's delta.
+# Staging gets a scratch of its own, so cleanup cannot remove layers the caller staged.
+log="" list="" stage="$(mktemp -d)" || exit 75
+trap 'rm -rf "$stage"; rm -f ${log:+"$log"} ${list:+"$list"}' EXIT
+_t="$(TMPDIR="$stage" release config-stage "$HERE/..")" || { echo 'round-image-preflight: cannot stage the tree config delta' >&2; exit 75; }
+export SPIRA_TOML="$_t"
 . "$HERE/conf.sh"
 IMAGE="${SPIRA_PREFLIGHT_BASE_IMAGE:-docker.io/library/ubuntu:26.04}"
 LIMIT="${SPIRA_PREFLIGHT_TIMEOUT:-1500}"
@@ -91,7 +97,7 @@ esac
 CACHE="$ROOT/cache"
 mkdir -p "$CACHE/registry" "$CACHE/target" "$CACHE/apt" "$CACHE/toolchains" "$ROOT/storage" "$ROOT/run" "$ROOT/tmp" || exit 75
 export TMPDIR="$ROOT/tmp"
-log="$(mktemp)"; list="$(mktemp)"; trap 'rm -f "$log" "$list"' EXIT
+log="$(mktemp)"; list="$(mktemp)"
 git -C "$TREE" ls-files -z --cached --others --exclude-standard \
     | while IFS= read -r -d '' f; do if [ -e "$TREE/$f" ] || [ -L "$TREE/$f" ]; then printf '%s\0' "$f"; fi; done > "$list" \
     || { echo "round-image-preflight: cannot list the tree's source files" >&2; exit 1; }

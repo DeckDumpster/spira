@@ -15,6 +15,7 @@ mod cells;
 pub use release::spira_env::NIX_GC_UNIT_TASK;
 
 pub mod bootstrap;
+pub mod broker;
 pub mod checkout_drift;
 pub mod checks;
 pub mod decide;
