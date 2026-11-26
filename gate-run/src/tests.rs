@@ -84,6 +84,21 @@ fn unmanaged_excludes_self_and_non_gate_processes() {
     assert_eq!(find_unmanaged("spira/sp-9", 999, &procs), None);
 }
 
+// -------------------------------------------------------------------------- stop_target()
+
+#[test_id(tnflivr)]
+#[test]
+fn stop_target_never_names_a_pid_that_would_signal_beyond_one_process_tree() {
+    // 4294967295 truncates to -1 as a pid_t.
+    let signalled: Vec<_> = ["-1", "0", "1", "", "x", "4294967295"]
+        .into_iter()
+        .filter_map(|text| stop_target(text, |_| None).map(|target| (text, target)))
+        .collect();
+    assert_eq!(signalled, [], "pidfiles that must not be signalled");
+    assert_eq!(stop_target("4242", |_| Some(4242)), Some((4242, true)));
+    assert_eq!(stop_target("4242", |_| None), Some((4242, false)));
+}
+
 // -------------------------------------------------------------------------- extract_suites()
 
 #[test_id(tev8s2y)]
