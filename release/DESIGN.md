@@ -110,9 +110,10 @@ Passes only if all hold, and reports every failure, not just the first:
 
 **pre-activate's environment (sp-vrn3v).** The dependency check and `pre-activate.sh` resolve
 binaries against a PATH built from the release, so both run with `SPIRA_RELEASE` and `PATH` set from
-the release **under verification** — `<rel>/bin:<rel>/spira:<system dirs><tail>`
-(`release_path_with_tail`, the box's own tool tail from `Config::path_tail`) — never
-inherited from the caller. Before this, the child ran with whatever `PATH` the caller's
+the release **under verification** — `<rel>/bin:<rel>/spira:<spira-env bin>:<system dirs><tail>`,
+the shape every unit runs with (`release_path_with_env_and_tail`; the env bin is under the
+config's `HOME`, the box's own tool tail from `Config::path_tail`) — never inherited from the
+caller. Before this, the child ran with whatever `PATH` the caller's
 shell had; at cutover that was the old checkout's `spira-config`, which lacked
 `path-tail`, and verify failed judging binaries that were never the release's own. Every
 other inherited variable is left alone: only `SPIRA_RELEASE` and `PATH` are ever ambiguous
