@@ -13,7 +13,7 @@ const NEW_TAG: &str = "spira-release-spira-20260917T053803Z";
 const PRIOR: &str = "spira-20260901T000000Z";
 const DRAFT_TAG: &str = "spira-release-spira-20260918T000000Z";
 const OLD_PROD: &str = "old-checkout/spira";
-const STUB_NAMES: &[&str] = &["gh", "world.sh", "release", "install.sh", "layout.sh", "doctor.sh", "skew.sh", "slay.sh", "spira-lc", "systemctl", "ctrl"];
+const STUB_NAMES: &[&str] = &["sleep", "gh", "world.sh", "release", "install.sh", "layout.sh", "doctor.sh", "skew.sh", "slay.sh", "spira-lc", "systemctl", "ctrl"];
 
 const STUBS: &str = r#"#!/bin/bash
 n="$(basename "$0")"
@@ -46,7 +46,13 @@ doctor.sh)
         printf '  FAIL  %s\n' "${DOCTOR_FAIL_MSG:-injected failure}"; exit 1
     fi ;;
 skew.sh) [ -z "${SKEW_OUT:-}" ] || { printf '%s\n' "$SKEW_OUT"; exit "${SKEW_EXIT:-1}"; } ;;
-spira-lc) [ -z "${MIGRATE_FAIL:-}" ] || { echo "database is at v61, binary knows up to v53"; exit 1; } ;;
+spira-lc)
+    [ "$*" = "admin-store check" ] || exit 0
+    if [ -n "${STORE_DOWN_UNTIL_STARTED:-}" ] && ! grep -q '^systemctl --user start dolt-beads.service' "$CALL_LOG"; then
+        echo "admin-store: the beads store is unreachable at 127.0.0.1:4406: Connection refused" >&2; exit 2
+    fi
+    [ -z "${STORE_DOWN:-}" ] || { echo "admin-store: the beads store is unreachable at 127.0.0.1:4406: Connection refused" >&2; exit 2; }
+    [ -z "${STORE_GAP:-}" ] || { echo "$STORE_GAP"; exit 1; } ;;
 systemctl)
     case "$*" in
     *list-unit-files*--no-legend*) [ -z "${SC_UNIT_FILES:-}" ] || printf '%s\n' "$SC_UNIT_FILES" ;;
@@ -157,7 +163,6 @@ fn run(s: Spec) -> Run {
         ("SPIRA_CONF", path(&d.join("no-conf"))),
         ("SPIRA_TOML", path(&toml)),
         ("SPIRA_REPO", path(&repo)),
-        ("SPIRA_DOCTOR", "1".into()),
         ("SPIRA_SYSTEMCTL", stub("systemctl")),
         ("SPIRA_WORLD_SH", stub("world.sh")),
         ("SPIRA_ACTIVATE_SH", stub("release")),
@@ -196,13 +201,13 @@ fn together(specs: Vec<Spec>) -> Vec<Run> {
 }
 
 // covers: UC-instance-lifecycle-12
-#[test_id(tkahfe0)]
+#[test_id(t1z2lij)]
 #[test]
 fn deploy_resolves_latest_and_refuses_a_draft_the_current_release_a_migration_mismatch_and_a_failed_doctor_before_any_disruptive_step() {
     let mixed = format!("[{{\"tagName\":\"{NEW_TAG}\",\"isDraft\":false}},{{\"tagName\":\"{DRAFT_TAG}\",\"isDraft\":true}}]");
     let mut already = spec(&[NEW_TAG]);
     already.already_current = true;
-    let mut migrating = spec(&[NEW_TAG]).prior().env("MIGRATE_FAIL", "1");
+    let mut migrating = spec(&[NEW_TAG]).prior().env("STORE_GAP", "issues.row_lock");
     migrating.db = true;
     let r = together(vec![
         spec(&["latest"]).prior().env("GH_RELEASE_LIST", &mixed),
@@ -228,13 +233,34 @@ fn deploy_resolves_latest_and_refuses_a_draft_the_current_release_a_migration_mi
     assert!(!current.log.contains("release download"), "{}", current.log);
 
     assert_ne!(migration.code, 0, "{}", migration.out);
-    assert!(migration.out.contains("migration mismatch"), "{}", migration.out);
+    assert!(migration.out.contains("migration mismatch") && migration.out.contains("issues.row_lock"), "{}", migration.out);
+    assert!(!migration.log.contains("start dolt-beads.service"), "a gap is the store's own answer: {}", migration.log);
     assert!(before_any_disruption(migration), "{}", migration.log);
 
     assert_ne!(doctor.code, 0, "{}", doctor.out);
     assert!(doctor.out.contains("hooks-path-missing"), "{}", doctor.out);
     assert!(before_any_disruption(doctor), "{}", doctor.log);
     assert_eq!(doctor.current().as_deref(), Some(PRIOR));
+}
+
+// covers: UC-instance-lifecycle-12
+#[test_id(td5pak5)]
+#[test]
+fn deploy_starts_the_dolt_unit_for_an_unreachable_store_and_refuses_as_unreachable_if_it_stays_down() {
+    let mut started = spec(&[NEW_TAG]).prior().env("STORE_DOWN_UNTIL_STARTED", "1");
+    started.db = true;
+    let mut down = spec(&[NEW_TAG]).prior().env("STORE_DOWN", "1");
+    down.db = true;
+    let r = together(vec![started, down]);
+    let [started, down] = &r[..] else { unreachable!() };
+
+    assert_eq!(started.code, 0, "{}", started.out);
+    assert!(started.log.contains("systemctl --user start dolt-beads.service"), "{}", started.log);
+
+    assert_eq!(down.code, 1, "{}", down.out);
+    assert!(down.out.contains("Dolt server unreachable at 127.0.0.1:4406"), "{}", down.out);
+    assert!(!down.out.contains("migration mismatch"), "{}", down.out);
+    assert!(!down.log.contains("world.sh drain") && !down.log.contains("release install-tarball"), "{}", down.log);
 }
 
 // covers: UC-instance-lifecycle-13

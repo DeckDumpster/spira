@@ -19,7 +19,7 @@ statement = "dwarf-fence refuses a dwarf's direct `bd`, `bd-embedded` or `bdq` c
 [[use_case]]
 id = "UC-safety-fences-13"
 tier = "T1"
-statement = "`DELETE FROM schema_migrations` is refused at `bdq create` (case- and whitespace-insensitive) even with the ask label, and the refusal points at `bd migrate schema`"
+statement = "`DELETE FROM schema_migrations` is refused at `bdq create` (case- and whitespace-insensitive) even with the ask label, and the refusal points at `spira-lc admin-store check`"
 
 [[use_case]]
 id = "UC-safety-fences-15"

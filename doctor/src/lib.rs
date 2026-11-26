@@ -1040,22 +1040,16 @@ pub fn check_operator_channel(w: &dyn World) -> Vec<Line> {
     if let Some(g) = go_found {
         out.push(ok(format!("go — {g}")));
     } else {
-        let bd_ver = w.bd_version();
-        let bd_tag = w.env("SPIRA_BD_TAG").unwrap_or_default().trim_start_matches('v').to_string();
-        let bd_ok = bd_ver.as_deref() == Some(bd_tag.as_str()) && !bd_tag.is_empty();
         let arch = w.arch();
         let prebuilt = matches!(arch.as_str(), "x86_64" | "aarch64");
-        if !bd_ok && !prebuilt {
+        let bd = w.env("SPIRA_BD").filter(|b| !b.is_empty()).unwrap_or_else(|| "bd".to_string());
+        if !prebuilt && w.which(&bd).is_none() {
             out.push(make(
                 format!("go is not on PATH — {}", w.spira_bin_purpose("go")),
-                format!("bd is mismatched (need {bd_tag}) and no prebuilt exists for {arch}. Install Go: https://go.dev/dl/ or use $HOME/.local/go/bin/go"),
+                format!("{bd} is not a program here and no prebuilt exists for {arch}. Install Go: https://go.dev/dl/ or use $HOME/.local/go/bin/go"),
             ));
         } else {
-            out.push(ok(format!(
-                "go absent — bd {}; prebuilt {} for {arch}",
-                if bd_ok { "current" } else { "mismatched" },
-                if prebuilt { "available" } else { "unavailable" }
-            )));
+            out.push(ok(format!("go absent — prebuilt bd {} for {arch}", if prebuilt { "available" } else { "unavailable, one is installed" })));
         }
     }
 

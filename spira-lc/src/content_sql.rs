@@ -730,12 +730,16 @@ pub fn show_text(sql: &dyn Sql, db: &str, id: &str) -> Res<Option<String>> {
     Ok(Some(out))
 }
 
-/// The layout check: the `table.column` names the reads query that the beads database lacks.
-pub fn layout_gaps(sql: &dyn Sql, db: &str) -> Res<Vec<String>> {
+/// Every `(table, column)` the database `db` has, lowercased.
+pub fn columns(sql: &dyn Sql, db: &str) -> Res<BTreeSet<(String, String)>> {
     let schema = db.trim_matches('`');
     let rows = sql.rows(&format!("SELECT table_name AS t, column_name AS c FROM information_schema.columns WHERE table_schema = '{}'", escape(schema)))?;
-    let have: BTreeSet<(String, String)> = rows.iter().filter_map(|r| Some((cell(r, "t")?.to_lowercase(), cell(r, "c")?.to_lowercase()))).collect();
-    Ok(crate::plan::missing_columns(&have))
+    Ok(rows.iter().filter_map(|r| Some((cell(r, "t")?.to_lowercase(), cell(r, "c")?.to_lowercase()))).collect())
+}
+
+/// The layout check: the `table.column` names the reads query that the beads database lacks.
+pub fn layout_gaps(sql: &dyn Sql, db: &str) -> Res<Vec<String>> {
+    Ok(crate::plan::missing_columns(&columns(sql, db)?))
 }
 
 /// The `table.column` names of [`crate::admin_indexes::WINDOW_INDEXES`] that no index of the beads database leads with.

@@ -24,6 +24,11 @@ name = "acceptance_host"
 path = "tests/acceptance_host.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "pre_activate_store"
+path = "tests/pre_activate_store.rs"
+required-features = ["integration"]
+
 [features]
 integration = ["runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "state-store/integration", "system-paths/integration", "testkit/integration", "spira-test-id/integration", "bead/integration"]
 [dependencies]
