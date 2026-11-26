@@ -132,14 +132,12 @@ compose_brief() {
         "$(rune_get "$RUNE" RUNE_MEMORY_PREFIXES law-)" "" \
         "$core_merged")" || statutes=""
     if [ -z "$statutes" ]; then
-        # render_memories swallows bd's stderr, so empty output means either "bd could not
-        # reach the store" or "the store answered and there is genuinely nothing" — and
-        # those call for opposite diagnoses. `bd ping` tells them apart before either is
-        # reported: a down database and an empty statute book cost a whole session to
-        # distinguish by hand once (sp-n93br).
-        local ping_err
-        if ! ping_err="$(bd -C "${SPIRA_DB:?}" ping 2>&1 >/dev/null)"; then
-            echo "concierge: cannot reach the statute book database at $SPIRA_DB: $ping_err" >&2
+        # render_memories swallows the read's stderr, so empty output means either "the book
+        # could not be reached" or "it answered and holds nothing", which call for opposite
+        # diagnoses. One content read tells them apart before either is reported.
+        local read_err
+        if ! read_err="$(spira-lc content memories --json 2>&1 >/dev/null)"; then
+            echo "concierge: cannot reach the statute book: $read_err" >&2
             return 1
         fi
         echo "concierge: the statute book rendered empty — refusing to start without it" >&2

@@ -21,7 +21,7 @@
 //! | pipeline counters `SP_*` | `run/cockpit/cockpit.env` (`collect.rs:192-217`) | the cockpit projection (S7b) |
 //! | last landing, WORKING / SUBMITTED rows | `spira-lc list --state X` (`lc.rs:48-72`, `collect.rs:220,301`) | `LcClient` list (S7a) |
 //! | gate wait / slow / silence | `run/gate.log` (`collect.rs:228-232`) | file read |
-//! | yield | `bash yield.sh report` (`collect.rs:235-246`) | port into the task, or `(unverified)` keep |
+//! | yield | `strand::yield_report` over `run/gate-yield/*` and `run/gate.log` | file read |
 //! | no-verdict streaks | `run/noverdict/*` (`collect.rs:268-287`) | file read |
 //! | dwarves live / ready by rune | `bash -c '. lib.sh; spira_runes; dwarf_count; bd ready'` (`seams.rs:31-59`, `collect.rs:291`) + `run/dwarf-ledger.log` | ready counts projection (S7b) + `spira-claim` library |
 //! | disk / mem / tmp | `df /`, `df /tmp`, `/proc/meminfo` (`collect.rs:313-314,413`) | statvfs + procfs |
@@ -78,7 +78,7 @@
 //!   - `systemctl` ×2 (`failed_units.rs:33`, `cpu_throttle.rs:105`)
 //!   - `spira-lc` (`lc.rs:49`)
 //!   - `bdq` (`escalate.rs:47`)
-//!   - `bash` ×6: yield.sh, pipeline probe, suites.sh, branch-guard, incident.sh, moot-sweep.sh (`collect.rs:239,454,472`, `seams.rs:53`, `incident.rs:133`, `escalate.rs:388`)
+//!   - `bash` ×5: pipeline probe, suites.sh, branch-guard, incident.sh, moot-sweep.sh (`collect.rs:239,454,472`, `seams.rs:53`, `incident.rs:133`, `escalate.rs:388`)
 //!   - `testenv` (`collect.rs:457`)
 //!   - `release` (`collect.rs:356`)
 //!   - `df` ×2 (`collect.rs:413`, `disk_mem.rs:45`)

@@ -203,6 +203,10 @@ impl Config {
         nonempty_opt(self.env.get(key))
     }
 
+    pub fn home(&self) -> Result<PathBuf, String> {
+        self.env("HOME").map(PathBuf::from).ok_or_else(|| "HOME is unset".to_string())
+    }
+
     /// The instance suffix of per-instance unit names (`SPIRA_INSTANCE`).
     pub fn instance(&self) -> String {
         self.instance.clone()

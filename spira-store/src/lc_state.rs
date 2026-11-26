@@ -80,6 +80,8 @@ pub struct Row {
     pub reason: Option<String>,
     /// When the row entered its current state, epoch seconds.
     pub since: Option<i64>,
+    /// When the ask hold was last raised; every raise restamps it.
+    pub ask_since: Option<i64>,
 }
 
 impl Row {
@@ -197,6 +199,7 @@ pub fn row_of(r: &Value) -> Result<Row, String> {
         version: scalar(r.get("version")).filter(|v| !v.is_empty()),
         reason: scalar(r.get("reason")).filter(|x| !x.is_empty()),
         since: scalar(r.get("since")).and_then(|x| x.trim().parse().ok()),
+        ask_since: scalar(r.get("ask_since")).and_then(|x| x.trim().parse().ok()),
         bead_id: id,
     })
 }

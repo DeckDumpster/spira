@@ -105,10 +105,10 @@ through bash — as it did when one bash process ran the whole sweep. **Since sp
 (wave 4.20) the ops are only what has not moved to Rust**: context (settings and
 repositories, family U), base (`spira_landref`/`spira_landrefs`/`ref_remote`, family W),
 bead (`bdjson show`, family A/B), status (`spira_db_reachable` + `spira_bead_status` in one
-call — the one bd question `reap::holder_witnesses` cannot answer itself), close-on-land
-(`spira-lc close-on-land`, family R), label-add/label-remove (`bdq label add|remove`, family
+call — the one bd question `reap::holder_witnesses` cannot answer itself), label-add/label-remove (`bdq label add|remove`, family
 A). Witness, send, destroy-worktree and prune are gone from this seam: `World for Real`
-calls `reap.rs` in-process for all four now. lib.sh's own output (`log` lines) is still
+calls `reap.rs` in-process for all four now. `close_on_land` is in-process too: it records a
+`ContentOnBase` bead event over the store socket (`lifecycle_row::record_landed_on`). lib.sh's own output (`log` lines) is still
 passed through in order for the ops that remain.
 
 ## 5. Decisions
@@ -156,7 +156,7 @@ passed through in order for the ops that remain.
   `send_disposition`/`send_branch` directly; those are unit tests now
   (`every_branch_gets_the_shells_disposition`, `mid_send_hold_queue_and_failure`).
 - **Kept as it was:** a HELD or CERTIFIED/BATCHED answer at the mid-send recheck still
-  lets `spira-lc close-on-land` run for a landed arm (the work did land; only the ref stays),
+  lets the landing be recorded (`close_on_land`) for a landed arm (the work did land; only the ref stays),
   and the content-landed evidence is written before a delete that may then be refused.
 - **Intended differences, named:** (1) OFF mode writes the `content-landed` label (§2);
   (2) the reap log's caller chain names `hel.seam.sh` where it named `hel.sh`;

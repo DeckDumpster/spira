@@ -37,7 +37,7 @@ them back at the installed copy would make the gate test the code already in for
 
 ## Tests
 
-The tree carries no shell suite: tests are Rust (`cargo test`, `tests/` under `--features
+The tree carries no shell suite: tests are Rust (`tools/test-sandbox/runner --around cargo test`, `tests/` under `--features
 integration`, and `sim/` for behaviour over time). `no-new-shell-suite` refuses a new
 `spira/test-*.sh`, and an empty suite corpus selects nothing rather than refusing.
 

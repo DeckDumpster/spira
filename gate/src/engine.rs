@@ -1022,9 +1022,15 @@ impl<'w, W: World> Trial<'w, W> {
         ) else {
             return v(NOVERDICT, "config", "gate: SPIRA_UNIT_TEST_DEADLINE_SECS and SPIRA_UNIT_TEST_DEADLINE_PERIODS must be positive numbers — refusing to run unit tests with no per-test deadline.");
         };
+        let (Some(test_secs), Some(test_periods)) = (
+            key::digits(ctx.var("SPIRA_INTEGRATION_TEST_DEADLINE_SECS")).filter(|n| *n > 0),
+            key::digits(ctx.var("SPIRA_INTEGRATION_TEST_DEADLINE_PERIODS")).filter(|n| *n > 0),
+        ) else {
+            return v(NOVERDICT, "config", "gate: SPIRA_INTEGRATION_TEST_DEADLINE_SECS and SPIRA_INTEGRATION_TEST_DEADLINE_PERIODS must be positive numbers — refusing to run the tests/ targets with no per-test deadline.");
+        };
         self.s.deny_label = format!("{at}/{}", &key::sha256_hex(deny_text.as_bytes())[..12]);
         w.eprint(&format!("gate: deny list {} ({} rows)", self.s.deny_label, deny.render().lines().count()));
-        let limits = Limits { deadline, budget, stall, unit_deadline: (secs, periods), deny, deny_text, test_bin_files: self.s.test_bin_files.clone() };
+        let limits = Limits { deadline, budget, stall, unit_deadline: (secs, periods), integration_deadline: (test_secs, test_periods), deny, deny_text, test_bin_files: self.s.test_bin_files.clone() };
         let by_deadline = key::digits(&timeout).is_none_or(|t| deadline <= t);
         let eff = |spent: u64| {
             let rem = deadline.saturating_sub(spent).max(1);
@@ -2493,6 +2499,8 @@ pub struct Limits {
     pub stall: u64,
     /// One unit test's deadline: the period in seconds and the periods before it is terminated.
     pub unit_deadline: (u64, u64),
+    /// The same pair for one test of a `tests/` target.
+    pub integration_deadline: (u64, u64),
     pub deny: spira_config::unit_tier::DenyList,
     /// The registry's own text of that list, beads kept: what the lint's row rules read.
     pub deny_text: String,
@@ -2982,7 +2990,7 @@ pub fn run_composed<W: World>(
             let file = tree.join(compose::NEXTEST_CONFIG);
             if let (Some(dir), Some(name)) = (file.parent(), file.file_name().and_then(|n| n.to_str())) {
                 w.mkdir_p(dir);
-                w.write_atomic(dir, name, &spira_config::unit_tier::nextest_config(limits.unit_deadline.0, limits.unit_deadline.1, &limits.deny));
+                w.write_atomic(dir, name, &spira_config::unit_tier::nextest_config(limits.unit_deadline, limits.integration_deadline, &limits.deny));
             }
         }
         let hermetic;

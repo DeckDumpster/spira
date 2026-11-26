@@ -946,7 +946,7 @@ pub fn flow_lines(snap: &Snapshot) -> Vec<String> {
     vec![row("WHERE ", "SP_TSD_WHERE"), row("REWORK", "SP_TSD_REWORK"), row("TESTS ", "SP_TSD_TESTS")]
 }
 
-/// `standing_lines` — the fixed-height figures: ATTN, SEND, BEADS, LAND, LOCK, GATE, SUITES,
+/// `standing_lines` — the fixed-height figures: ATTN, SEND, BEADS, LAND, LOCK, GATE,
 /// BOX, MAIL, OPS. Always emitted in full; never part of the elastic share.
 fn pools_row(snap: &Snapshot) -> String {
     let seg = |pool: &str| {
@@ -1190,16 +1190,6 @@ pub fn standing_lines(snap: &Snapshot, cols: i64) -> Vec<String> {
     out.push(format!(
         "        {DIM}cost{RST} {solo} solo \u{b7} {conc} with another gate overlapping {DIM}(median){RST}"
     ));
-
-    let st_sum = match snap.get("SP_SUITE_LAST_SUM") {
-        Some(v) if v != "?" => format!("{v}s"),
-        _ => "?".to_string(),
-    };
-    let st_wall = match snap.get("SP_SUITE_LAST_WALL") {
-        Some(v) if v != "?" => format!("{v}s"),
-        _ => "?".to_string(),
-    };
-    out.push(format!(" {DIM}SUITES{RST} {DIM}sum{RST} {st_sum}  {DIM}wall{RST} {st_wall}"));
 
     // "disk /" names the root mount; the value (with its own trailing "%" from `num`'s
     // label) follows directly, same for "workspaces".

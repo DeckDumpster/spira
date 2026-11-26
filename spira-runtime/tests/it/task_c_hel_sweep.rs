@@ -2,8 +2,8 @@
 //! Acceptance section of `wiki/projects/spira/designs/tasks/hel-sweep.md`. Red until ported.
 
 use runtime::units::{Exit, UnitHandle, UnitRan};
-use spira_runtime::tasks::b::kit::{names, testing as t, Input};
-use spira_runtime::tasks::c::hel_sweep::{self as task, Branch, Carry, HelSweep as H, Pass, Phase, Snapshot};
+use spira_runtime::tasks::b::kit::{names, testing as t, Act, Input};
+use spira_runtime::tasks::c::hel_sweep::{self as task, Base, Bead, Branch, Carry, HelSweep as H, Pass, Phase, Snapshot};
 
 const SPEC: &str = "*-*-* *:35:00";
 const SET: &[(&str, &str)] = &[(task::CADENCE_KEY, SPEC), (task::JITTER_KEY, "300"), (task::BUDGET_KEY, "900")];
@@ -96,6 +96,148 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     for key in ["phase", "last_fired", "pass", "tally", "jobs/spira:spira/sp-a:abc123"] {
         assert!(rows.iter().any(|k| k == key), "{key} in {rows:?}");
     }
+    let mut r = acting_on_a_started_leg();
+    r.deliver(task::STREAM, leg_ran(1).event_kind()).unwrap();
+    let rows = kit::assert_kept_as_rows(&r, task::NAME);
+    assert!(rows.iter().any(|k| k == "refused/spira:spira/sp-a"), "{rows:?}");
+}
+
+fn leg_ran(code: i32) -> UnitRan {
+    UnitRan { handle: UnitHandle::of(task::NAME, "spira:spira/sp-a:abc123").unwrap(), exit: Exit::Code(code), duration_ms: 30_000 }
+}
+
+/// The branch `sp-a`, content landed, with the three inputs a refusal is recorded against.
+fn landed(tip: &str, row: &str, base: &str) -> Snapshot {
+    let b = Branch { tip: tip.into(), ..branch("sp-a", true) };
+    Snapshot { branches: vec![b], rows: [("sp-a".to_string(), row.to_string())].into(), base: Base { sha: base.into(), ..Base::default() }, ..keep() }
+}
+
+fn same() -> Snapshot {
+    landed("abc123", "SUBMITTED", "base1")
+}
+
+/// `sp-a` with no bead and no row: the sweep archives it.
+fn unbeaded() -> Snapshot {
+    Snapshot { rows: Default::default(), branches: vec![branch("sp-a", false)], ..same() }
+}
+
+/// `sp-a` superseded with unlanded work in a worktree: the sweep frees the worktree.
+fn superseded_unsafe() -> Snapshot {
+    let b = Branch { worktree: Some("run/worktree/sp-a".into()), ..branch("sp-a", false) };
+    Snapshot { branches: vec![b], beads: [("sp-a".to_string(), Bead { supersedes: vec!["supersedes".into()], ..Bead::default() })].into(), ..same() }
+}
+
+fn step(carry: &Carry, input: Input<Snapshot>) -> (Carry, Vec<Act>) {
+    task::decide(&t::handler::<H>(SET).cfg, carry, &input, AT_35).unwrap()
+}
+
+fn pass(carry: &Carry, world: Snapshot) -> (Carry, Vec<Act>) {
+    let (c, _) = step(carry, Input::Fire);
+    step(&c, Input::Observed(world))
+}
+
+fn answer(effect: &str, ok: bool, body: &str) -> Input<Snapshot> {
+    Input::Outcome { effect: effect.into(), ok, body: body.into() }
+}
+
+/// A pass over `world` that plans `effect`, ended by `result`.
+fn failed(world: Snapshot, effect: &str, result: Input<Snapshot>) -> Carry {
+    let (c, acts) = pass(&Carry::default(), world);
+    assert_eq!(names(&acts), [effect]);
+    let (c, _) = step(&c, result);
+    assert_eq!((c.phase, c.tally.failed), (Phase::Idle, 1));
+    c
+}
+
+fn send_failed() -> Carry {
+    failed(same(), task::SEND, Input::Ran(leg_ran(1)))
+}
+
+#[test_id(txljyo3)]
+#[test]
+fn a_failed_leg_is_not_retried_while_the_tip_row_state_and_base_stand() {
+    let (c, acts) = pass(&send_failed(), same());
+    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(c.tally.refused, 1);
+    assert!(c.refused.contains_key("spira:spira/sp-a"), "{c:?}");
+}
+
+#[test_id(tgpsqzx)]
+#[test]
+fn a_moved_tip_row_state_or_base_drops_the_record_and_sends_again() {
+    for moved in [landed("def456", "SUBMITTED", "base1"), landed("abc123", "CERTIFIED", "base1"), landed("abc123", "SUBMITTED", "base2")] {
+        let (c, acts) = pass(&send_failed(), moved.clone());
+        assert_eq!(names(&acts), [task::SEND], "{moved:?}");
+        assert!(c.refused.is_empty(), "{moved:?}: {c:?}");
+        assert_eq!(c.tally.refused, 0);
+    }
+}
+
+#[test_id(tql5ali)]
+#[test]
+fn a_send_that_failed_to_start_a_failed_archive_and_a_failed_free_are_not_retried() {
+    for (world, effect) in [(same(), task::SEND), (unbeaded(), task::ARCHIVE), (superseded_unsafe(), task::FREE_WORKTREE)] {
+        let c = failed(world.clone(), effect, answer(effect, false, "refused"));
+        let (c, acts) = pass(&c, world.clone());
+        assert!(acts.is_empty(), "{effect}: {acts:?}");
+        assert_eq!(c.tally.refused, 1, "{effect}");
+        let (c, acts) = pass(&c, Snapshot { base: Base { sha: "base2".into(), ..Base::default() }, ..world });
+        assert_eq!(names(&acts), [effect]);
+        assert!(c.refused.is_empty(), "{effect}: {c:?}");
+    }
+}
+
+#[test_id(tz49mwj)]
+#[test]
+fn the_leg_chained_on_an_archive_records_its_failure_against_the_observed_inputs() {
+    let (c, _) = pass(&Carry::default(), unbeaded());
+    let (c, acts) = step(&c, answer(task::ARCHIVE, true, "archive:spira:sp-a"));
+    assert_eq!(names(&acts), [task::SEND]);
+    let (c, _) = step(&c, Input::Ran(leg_ran(1)));
+    let (c, acts) = pass(&c, unbeaded());
+    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(c.tally.refused, 1);
+}
+
+#[test_id(t7ticwb)]
+#[test]
+fn a_queued_leg_records_nothing_and_a_successful_act_clears_the_record() {
+    let (c, _) = pass(&Carry::default(), same());
+    let (c, _) = step(&c, Input::Ran(leg_ran(2)));
+    assert!(c.refused.is_empty(), "{c:?}");
+    for (world, effect, result) in [(same(), task::SEND, Input::Ran(leg_ran(0))), (superseded_unsafe(), task::FREE_WORKTREE, answer(task::FREE_WORKTREE, true, ""))] {
+        let (mut c, _) = pass(&Carry::default(), world);
+        c.refused.insert("spira:spira/sp-a".into(), "stale".into());
+        let (c, _) = step(&c, result);
+        assert!(c.refused.is_empty(), "{effect}: {c:?}");
+    }
+}
+
+#[test_id(ty02i2x)]
+#[test]
+fn a_record_is_dropped_when_its_branch_is_gone_but_not_when_the_observe_did_not_reach_it() {
+    let gone = Snapshot { branches: vec![], ..same() };
+    let (c, _) = pass(&send_failed(), gone.clone());
+    assert!(c.refused.is_empty(), "{c:?}");
+    for partial in [
+        Snapshot { resumed_after: "spira/sp-b".into(), ..gone.clone() },
+        Snapshot { cut_at: "spira/sp-0".into(), ..gone.clone() },
+        Snapshot { unread: true, base: Base::default(), ..gone.clone() },
+        Snapshot { repo: "other".into(), ..gone.clone() },
+    ] {
+        let (c, _) = pass(&send_failed(), partial.clone());
+        assert!(c.refused.contains_key("spira:spira/sp-a"), "{partial:?}: {c:?}");
+    }
+}
+
+#[test_id(th594qx)]
+#[test]
+fn a_pass_forgotten_past_twice_its_budget_keeps_the_records() {
+    let (mut c, _) = pass(&Carry::default(), same());
+    c.refused.insert("spira:spira/sp-z".into(), "t|-|b".into());
+    let (c, _) = task::decide(&t::handler::<H>(SET).cfg, &c, &answer(task::SEND, true, ""), AT_35 + 1_801_000).unwrap();
+    assert_eq!(c.phase, Phase::Idle);
+    assert!(c.refused.contains_key("spira:spira/sp-z"), "{c:?}");
 }
 
 #[test_id(teg1c3p)]
@@ -217,4 +359,166 @@ fn a_resumed_repo_with_nothing_to_act_on_clears_its_cursor_and_one_with_work_kee
     assert_eq!(real.resume_after("spira").as_deref(), Some("spira/sp-a"), "a landed branch is still to be sent");
     task::clear_cursor_when_idle(&real, "submitted", &keep()).unwrap();
     assert_eq!(real.resume_after("spira"), None);
+}
+
+fn with_second(mut world: Snapshot) -> Snapshot {
+    let b = Branch { id: "sp-b".into(), br: "spira/sp-b".into(), worktree: world.branches[0].worktree.as_ref().map(|_| "run/worktree/sp-b".into()), ..world.branches[0].clone() };
+    world.branches.push(b);
+    if let Some(row) = world.rows.get("sp-a").cloned() {
+        world.rows.insert("sp-b".into(), row);
+    }
+    if let Some(bead) = world.beads.get("sp-a").cloned() {
+        world.beads.insert("sp-b".into(), bead);
+    }
+    world
+}
+
+#[test_id(t79frd9)]
+#[test]
+fn a_runners_failure_is_recorded_against_the_branch_it_was_asked_for() {
+    for (world, effect) in [(same(), task::SEND), (unbeaded(), task::ARCHIVE), (superseded_unsafe(), task::FREE_WORKTREE)] {
+        let world = json(&with_second(world));
+        // `sp-b` sorts after `sp-a`, so a failure charged by position would land on `sp-a`.
+        let only_b_fails = move |input: &str| if input.contains("sp-b") { Err("the store did not answer".to_string()) } else { Ok(format!("{effect}:spira:sp-a")) };
+        // A succeeded archive chains `sp-a`'s send; the later double of one name is the one kept.
+        let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.clone())).double(task::SEND, |_| Ok("started".into())).double(effect, only_b_fails);
+        let (_, stream, kind) = H::boot();
+        r.tick(stream, kind).unwrap();
+        r.tick(stream, runtime::event::EventKind::new(task::TICK, FIRE)).unwrap();
+        let c = t::recorded::<H>(&r).unwrap();
+        assert_eq!(c.refused.keys().collect::<Vec<_>>(), ["spira:spira/sp-b"], "{effect}: {c:?}");
+    }
+}
+
+#[test_id(tzg1crb)]
+#[test]
+fn an_effect_that_times_out_is_recorded_against_each_branch_it_was_asked_for() {
+    let world = json(&with_second(same()));
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.clone())).hanging(task::SEND);
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r.tick(stream, runtime::event::EventKind::new(task::TICK, FIRE)).unwrap();
+    r.advance(121_000).unwrap();
+    let c = t::recorded::<H>(&r).unwrap();
+    assert_eq!(c.refused.keys().collect::<Vec<_>>(), ["spira:spira/sp-a", "spira:spira/sp-b"], "{c:?}");
+}
+
+#[test_id(t203xra)]
+#[test]
+fn a_failure_that_names_none_of_two_jobs_is_recorded_against_neither() {
+    for (world, effect) in [(same(), task::SEND), (unbeaded(), task::ARCHIVE)] {
+        let (c, _) = pass(&Carry::default(), with_second(world));
+        let (c, _) = step(&c, answer(effect, false, ""));
+        assert!(c.refused.is_empty(), "{effect}: {c:?}");
+        assert_eq!((c.jobs.len(), c.tally.failed), (1, 1), "the pass still counts it and waits on one less");
+    }
+}
+
+#[test_id(t2tlhk4)]
+#[test]
+fn a_failure_that_answers_past_the_budget_is_recorded_and_issues_nothing() {
+    for late in [901_000, 1_801_000] {
+        let (c, _) = pass(&Carry::default(), same());
+        let (c, acts) = task::decide(&t::handler::<H>(SET).cfg, &c, &Input::Ran(leg_ran(1)), AT_35 + late).unwrap();
+        assert!(acts.is_empty(), "{late}: {acts:?}");
+        let (c, acts) = pass(&c, same());
+        assert!(acts.is_empty(), "{late}: {acts:?}");
+        assert_eq!(c.tally.refused, 1, "{late}");
+    }
+}
+
+#[test_id(tj9dl8m)]
+#[test]
+fn a_leg_that_fails_after_the_budget_closed_the_pass_is_still_recorded() {
+    let cfg = t::handler::<H>(SET).cfg;
+    let (c, _) = pass(&Carry::default(), same());
+    let (c, _) = task::decide(&cfg, &c, &answer(task::SEND, true, "started"), AT_35 + 901_000).unwrap();
+    assert_eq!(c.phase, Phase::BudgetSpent);
+    let (c, acts) = task::decide(&cfg, &c, &Input::Ran(leg_ran(1)), AT_35 + 950_000).unwrap();
+    assert!(acts.is_empty(), "{acts:?}");
+    assert!(c.refused.contains_key("spira:spira/sp-a"), "{c:?}");
+}
+
+// A real repository: the sha must resolve from git's own ref files, in the layout git writes.
+#[test_id(twsfrjs)]
+#[test]
+fn an_observes_inputs_carry_the_land_refs_commit_which_moves_with_it() {
+    let dir = testkit::TempDir::new("hel-sweep-base");
+    let git = |args: &[&str]| testkit::git(dir.path(), args);
+    git(&["init", "-q", "-b", "main"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "one"]);
+    let read = |rows: Result<std::collections::BTreeMap<String, String>, String>| {
+        let mut s = Snapshot::default();
+        s.read_inputs(dir.path(), hel::ports::Base { landref: "main".into(), landrefs: vec![], remote: None }, None, false, Some("spira/sp-d"), rows);
+        s
+    };
+    let first = read(Ok([("sp-a".to_string(), "SUBMITTED".to_string())].into()));
+    assert_eq!((first.base.sha.clone(), first.inputs_unread, first.rows.len()), (git(&["rev-parse", "main"]), false, 1));
+    assert_eq!((first.resumed_after.as_str(), first.cut_at.as_str()), ("", ""), "a walk to the end is not cut");
+    git(&["commit", "-q", "--allow-empty", "-m", "two"]);
+    let second = read(Err("the store did not answer".into()));
+    assert_eq!(second.base.sha, git(&["rev-parse", "main"]));
+    assert_ne!(second.base.sha, first.base.sha);
+    assert!(second.inputs_unread, "unread rows leave the inputs unknown");
+}
+
+#[test_id(tffnc3e)]
+#[test]
+fn a_resumed_and_cut_observe_names_its_window_and_an_unresolved_land_ref_is_unread() {
+    let dir = testkit::TempDir::new("hel-sweep-window");
+    testkit::git(dir.path(), &["init", "-q", "-b", "main"]);
+    let mut s = Snapshot::default();
+    s.read_inputs(dir.path(), hel::ports::Base { landref: "gone".into(), landrefs: vec![], remote: None }, Some("spira/sp-b"), true, Some("spira/sp-d"), Ok(Default::default()));
+    assert_eq!((s.resumed_after.as_str(), s.cut_at.as_str()), ("spira/sp-b", "spira/sp-d"));
+    assert!(s.inputs_unread);
+}
+
+#[test_id(tfnm3rz)]
+#[test]
+fn a_leg_that_answers_after_the_tick_following_a_spent_budget_issues_nothing() {
+    let cfg = t::handler::<H>(SET).cfg;
+    for (code, recorded) in [(0, false), (1, true)] {
+        let (c, _) = pass(&Carry::default(), same());
+        let (c, _) = task::decide(&cfg, &c, &answer(task::SEND, true, "started"), AT_35 + 901_000).unwrap();
+        let (c, _) = step(&c, Input::Fire);
+        let (c, acts) = step(&c, Input::Ran(leg_ran(code)));
+        assert!(acts.is_empty(), "{code}: {acts:?}");
+        assert_eq!((c.phase, c.refused.contains_key("spira:spira/sp-a")), (Phase::Observing, recorded), "{code}: {c:?}");
+    }
+}
+
+#[test_id(tal70ct)]
+#[test]
+fn an_input_that_could_not_be_read_has_not_moved() {
+    let unreadable = Snapshot { rows: Default::default(), base: Base::default(), inputs_unread: true, ..same() };
+    let (c, acts) = pass(&send_failed(), unreadable);
+    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(c.tally.refused, 1);
+    let (_, acts) = pass(&c, same());
+    assert!(acts.is_empty(), "the record kept its inputs: {acts:?}");
+}
+
+#[test_id(t7z8utv)]
+#[test]
+fn a_failure_naming_a_job_no_longer_carried_is_charged_to_no_other() {
+    let (c, _) = pass(&Carry::default(), with_second(same()));
+    let (c, _) = step(&c, Input::Ran(leg_ran(0)));
+    let (c, _) = step(&c, answer(task::SEND, false, " [spira:spira/sp-a:abc123]"));
+    assert!(c.refused.is_empty(), "{c:?}");
+    assert_eq!((c.jobs.keys().collect::<Vec<_>>(), c.tally.failed), (vec![&"spira:spira/sp-b:abc123".to_string()], 0), "sp-b still waits on its own leg");
+}
+
+#[test_id(t566ds2)]
+#[test]
+fn every_leg_failing_past_twice_the_budget_is_recorded_and_counted() {
+    let cfg = t::handler::<H>(SET).cfg;
+    let (mut c, _) = pass(&Carry::default(), with_second(same()));
+    for id in ["sp-a", "sp-b"] {
+        let ran = UnitRan { handle: UnitHandle::of(task::NAME, &format!("spira:spira/{id}:abc123")).unwrap(), exit: Exit::Code(1), duration_ms: 1 };
+        let acts;
+        (c, acts) = task::decide(&cfg, &c, &Input::Ran(ran), AT_35 + 1_801_000).unwrap();
+        assert!(acts.is_empty(), "{acts:?}");
+    }
+    assert_eq!(c.refused.keys().collect::<Vec<_>>(), ["spira:spira/sp-a", "spira:spira/sp-b"], "{c:?}");
+    assert_eq!(c.tally.failed, 2);
 }

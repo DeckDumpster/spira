@@ -259,10 +259,41 @@ fn claim_view_of(r: &Rig, id: &str) -> serde_json::Value {
 }
 
 fn many_rounds<B: Backend>(r: &Rig<B>, from: usize, to: usize, open: &[usize]) {
+    for i in from..to {
+        r.certified(&format!("sp-{i:03}"), T1);
+    }
+    rounds_of_certified(r, from, to, open);
+}
+
+/// `sp-{from..to}` certified in a few writes, each a copy of one bead certified through the verbs.
+fn cloned_certified<B: Backend>(r: &Rig<B>, from: usize, to: usize) {
+    let template = format!("sp-tmpl-{from}");
+    r.certified(&template, T1);
+    let copied: Vec<(String, String)> = [keys::lifecycle(&template), format!("gates/{template}")]
+        .into_iter()
+        .map(|key| {
+            let raw = String::from_utf8(r.s.contract().get(&key).unwrap().unwrap().value.encode()).unwrap();
+            (key, raw)
+        })
+        .collect();
+    let ids: Vec<usize> = (from..to).collect();
+    for chunk in ids.chunks(50) {
+        let mut t = state_store::Txn::new();
+        for (key, raw) in &copied {
+            for i in chunk {
+                let id = format!("sp-{i:03}");
+                t = t.put(&key.replace(&template, &id), state_store::Object::decode(raw.replace(&template, &id).as_bytes()).unwrap());
+            }
+        }
+        assert!(r.s.contract().txn(&t, &r.req()).unwrap().succeeded);
+    }
+}
+
+/// Rounds `b-{from..to}`, one per already-certified `sp-{i}`, cut `100 * i` seconds before `AT`, all but `open` ended.
+fn rounds_of_certified<B: Backend>(r: &Rig<B>, from: usize, to: usize, open: &[usize]) {
     use lifecycle::batch::BatchState;
     for i in from..to {
         let (id, round) = (format!("sp-{i:03}"), format!("b-{i:03}"));
-        r.certified(&id, T1);
         let members = vec![(id, T1.to_string())];
         let cut = Cut { batch_id: &round, at: AT - 100 * i as i64, ..r.cut_spec(&members) };
         let p = r.s.plan_cut(&cut).unwrap();

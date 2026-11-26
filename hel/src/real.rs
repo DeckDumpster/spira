@@ -284,8 +284,8 @@ impl World for Real {
         }
     }
     fn close_on_land(&self, id: &str, sha: &str) {
-        if let Ok(c) = self.lc() {
-            let _ = c.call(&["close-on-land", id, sha]);
+        if let Err(e) = self.lc().and_then(|c| spira_store::lifecycle_row::record_landed_on(&c, id, sha, "hel")) {
+            self.log(&format!("close_on_land {id}: {e}"));
         }
     }
     fn destroy_worktree(&self, id: &str, w: &Path, repo: &Path, why: &str) -> bool {
@@ -483,7 +483,7 @@ mod tests {
         assert!(r.lc_landed("sp-a"));
         assert_eq!(
             *store.seen.lock().unwrap(),
-            vec!["content update sp-a --remove-label branch:x", "close-on-land sp-a abc", "show sp-a", r#"event bead sp-a --expect SUBMITTED --version 3 --actor hel --kind {"ContentOnBase":{"proof":"proof"}}"#, "state sp-a"]
+            vec!["content update sp-a --remove-label branch:x", "show sp-a", r#"event bead sp-a --expect SUBMITTED --version 3 --actor hel --kind {"ContentOnBase":{"proof":"landed:abc"}}"#, "show sp-a", r#"event bead sp-a --expect SUBMITTED --version 3 --actor hel --kind {"ContentOnBase":{"proof":"proof"}}"#, "state sp-a"]
         );
     }
 

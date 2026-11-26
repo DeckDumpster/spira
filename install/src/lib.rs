@@ -12,12 +12,11 @@
 extern crate spira_test_id;
 #[cfg(test)]
 mod cells;
-/// The task name of the garbage-collection unit an install starts; no scheduler task owns it, so every task
-/// ignores its `unit.ran`.
-pub const NIX_GC_UNIT_TASK: &str = "nix-gc";
+pub use release::spira_env::NIX_GC_UNIT_TASK;
 
 pub mod bootstrap;
 pub mod broker;
+pub mod checkout_drift;
 pub mod checks;
 pub mod decide;
 pub mod ensure;

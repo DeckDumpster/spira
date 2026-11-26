@@ -374,12 +374,17 @@ bead = "sp-vpwykr"
 [[use_case]]
 id = "UC-landing-merge-queue-52"
 tier = "T1"
-statement = "`gate-check` discovers `--branch` once per distinct unbound-gate branch and never calls a bare discover or discovers for push repos. It then runs `gate check`. It reports a gate with no await_id as stuck. It parses ESCALATE lines for any `SPIRA_ID_PREFIX`. Its stderr is silent on a clean pass."
+statement = "`gate-check` runs `gate check`. It reports a gate with no await_id as stuck. It parses ESCALATE lines for any `SPIRA_ID_PREFIX`. Its stderr is silent on a clean pass."
 
 [[use_case]]
 id = "UC-landing-merge-queue-53"
 tier = "T1"
 statement = "`gate-check` asks for each unbound gate's branch in every pr repo that has a checkout, by repo name, and in no other. A gated bead's readiness is the lifecycle's, not bd's."
+
+[use_case.uncovered]
+reason = "behaviour retired, not ported: `content gate discover` is gone, so no service or tool runs bd in a repo checkout to match a gate to a CI run"
+date = "2026-11-26"
+bead = "sp-kf9sp2"
 
 [[use_case]]
 id = "UC-landing-merge-queue-54"

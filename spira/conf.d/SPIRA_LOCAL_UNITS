@@ -1,8 +1,8 @@
 TYPE=string
 GROUP=drift
-DOC=THE MANIFEST OF DECLARED OPERATOR-LOCAL UNIT FILES drift.sh units accepts instead of reporting.
+DOC=THE MANIFEST OF DECLARED OPERATOR-LOCAL UNIT FILES the unit drift check accepts instead of reporting.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # THE MANIFEST OF DECLARED OPERATOR-LOCAL UNIT FILES drift.sh units accepts instead of
+    # THE MANIFEST OF DECLARED OPERATOR-LOCAL UNIT FILES the unit drift check accepts instead of
     # reporting: [[unit]] tables of path (relative to the unit directory), reason, and the
     # bead that retires it. An absent file declares nothing.
     : "${SPIRA_LOCAL_UNITS:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/local-units.toml}"

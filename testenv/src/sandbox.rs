@@ -191,6 +191,7 @@ impl Profile {
         // name a real file when the next run's worktree lives somewhere else.
         a.extend(["--bind".into(), s(&self.tree), TREE_MOUNT.into()]);
         a.extend(["--bind".into(), s(&self.target), TARGET_MOUNT.into()]);
+        a.extend(["--ro-bind-try".into(), s(&self.tree.join(CARGO_CONFIG_INSIDE)), format!("{TREE_MOUNT}/.cargo/config.toml")]);
         if let Some(c) = &self.cache {
             a.extend(["--bind".into(), s(&c.dir), s(&c.dir)]);
         }
@@ -206,6 +207,10 @@ impl Profile {
 /// Where the run's tree is inside the sandbox, the same for every run: under the sandbox's own
 /// tmpfs /tmp, since the read-only root cannot take a new mountpoint.
 pub const TREE_MOUNT: &str = system_paths::guest::TMP_SANDBOX_TREE;
+
+/// The cargo config a test sees: the workspace's without its target runner, so cargo inside the
+/// sandbox launches each test binary directly (`tools/test-sandbox/runner --around` is the entry).
+const CARGO_CONFIG_INSIDE: &str = "tools/test-sandbox/cargo-config.toml";
 
 /// Where the run's cargo target is inside the sandbox, the same for every branch: sccache keys on
 /// `CARGO_TARGET_DIR`, so one path is what lets branches share compiled dependencies.
@@ -682,6 +687,16 @@ mod tests {
         assert_eq!(rw, ["h/u/.cargo/registry", "tmp/spira-testenv-x/tree", "r/t/spira-unit-cargo-target-b"]);
         assert!(pairs(&a, "--bind").contains(&("tmp/spira-testenv-x/tree".into(), TREE_MOUNT.into())), "the tree is bound at the fixed path: {a:?}");
         assert!(pairs(&a, "--ro-bind").contains(&("h/u/repo/.git".into(), "h/u/repo/.git".into())), "the repo's git dir is read-only: {a:?}");
+    }
+
+    #[test_id(tdojaxd)]
+    #[test]
+    fn the_sandbox_binds_the_runner_less_cargo_config_over_the_trees_after_the_tree_bind() {
+        let a = profile().bwrap_args();
+        let tree = a.iter().position(|x| x == TREE_MOUNT).unwrap();
+        let want = ["--ro-bind-try", "tmp/spira-testenv-x/tree/tools/test-sandbox/cargo-config.toml", &format!("{TREE_MOUNT}/.cargo/config.toml")];
+        let at = a.windows(3).position(|w| w == want).unwrap_or_else(|| panic!("{want:?} missing: {a:?}"));
+        assert!(at > tree, "the overlay lands on top of the tree: {a:?}");
     }
 
     #[test_id(tsupdwx)]

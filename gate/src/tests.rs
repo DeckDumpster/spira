@@ -231,6 +231,8 @@ fn ctx() -> Ctx {
         ("SPIRA_GATE_TARGET_CAP_MIB", "12288"),
         ("SPIRA_UNIT_TEST_DEADLINE_SECS", "60"),
         ("SPIRA_UNIT_TEST_DEADLINE_PERIODS", "2"),
+        ("SPIRA_INTEGRATION_TEST_DEADLINE_SECS", "60"),
+        ("SPIRA_INTEGRATION_TEST_DEADLINE_PERIODS", "2"),
     ] {
         vars.insert(k.to_string(), v.to_string());
     }
@@ -2929,6 +2931,17 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
     );
 }
 
+#[test_id(tavr7sp)]
+#[test]
+fn the_configured_integration_deadline_bounds_the_tests_targets_in_the_gates_nextest_config() {
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    f.put_var("SPIRA_INTEGRATION_TEST_DEADLINE_SECS", "90");
+    f.put_var("SPIRA_INTEGRATION_TEST_DEADLINE_PERIODS", "3");
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let cfg = f.unit_config.borrow().clone();
+    assert_eq!(cfg[0].1, "[profile.default]\nslow-timeout = { period = \"60s\", terminate-after = 2 }\nstatus-level = \"skip\"\n[[profile.default.overrides]]\nfilter = \"kind(test)\"\nslow-timeout = { period = \"90s\", terminate-after = 3 }\n");
+}
+
 const TESTKIT_MISSING: &str = "        FAIL [   0.010s] (1/1) testkit t::a_standing\n  stderr ───\n    a_standing_condition_is_raised_once::tpdcn1g at testkit/src/lib.rs:295 ... binary testenv is not built at /srv/ssd-b/dwarf-build/dir.5/debug/testenv\n\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped\n        FAIL [   0.010s] (1/1) testkit t::a_standing";
 
 fn vanished_fake(answers: &[&[&str]]) -> Fake {
@@ -4098,7 +4111,7 @@ fn a_crate_the_base_lacks_is_not_tested_on_the_base() {
 #[test_id(tdqm59l)]
 #[test]
 fn a_gate_with_no_unit_test_deadline_is_no_verdict_config() {
-    for var in ["SPIRA_UNIT_TEST_DEADLINE_SECS", "SPIRA_UNIT_TEST_DEADLINE_PERIODS"] {
+    for var in ["SPIRA_UNIT_TEST_DEADLINE_SECS", "SPIRA_UNIT_TEST_DEADLINE_PERIODS", "SPIRA_INTEGRATION_TEST_DEADLINE_SECS", "SPIRA_INTEGRATION_TEST_DEADLINE_PERIODS"] {
         for value in [None, Some("0")] {
             let f = unit_fake(&["gate/src/x.rs"]);
             match value {

@@ -89,8 +89,8 @@ impl Op {
     }
 }
 
-/// A door write lc-serve applies itself; `argv` and `body` are kept for the bd fork a store
-/// with no writer configured still takes.
+/// A door write lc-serve applies itself; `argv` and `body` are what a store with no writer
+/// configured is refused by.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Mutation {
     pub argv: Vec<String>,
@@ -1401,7 +1401,7 @@ mod tests {
     #[test_id(ttklzic)]
     #[test]
     fn a_verb_the_port_does_not_make_exactly_stays_bds() {
-        for argv in [&["set-state", "sp-a", "branch="][..], &["set-state", "sp-a", "=x"], &["duplicate", "sp-a"], &["gate", "check"], &["gate", "discover", "--branch", "b", "--repo", "r"], &["kv", "set", "k"], &["remember", "--key"]] {
+        for argv in [&["set-state", "sp-a", "branch="][..], &["set-state", "sp-a", "=x"], &["duplicate", "sp-a"], &["gate", "check"], &["kv", "set", "k"], &["remember", "--key"]] {
             assert!(Mutation::of(&v(argv), None).is_none(), "{argv:?}");
         }
         assert!(Mutation::of(&v(&["recompute-blocked"]), Some("stdin")).is_none());

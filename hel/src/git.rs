@@ -63,16 +63,34 @@ impl Git<'_> {
     /// The `spira/*` branches whose tip is an ancestor of <base>, in one call. A failed read is
     /// the empty set, never "all of them": nothing is then judged landed without proof.
     pub fn spira_merged_into(&self, base: &str) -> std::collections::BTreeSet<String> {
+        self.merged_under(base, "refs/heads/spira/*")
+    }
+
+    /// [`Git::spira_merged_into`] over every local branch.
+    pub fn branches_merged_into(&self, base: &str) -> std::collections::BTreeSet<String> {
+        self.merged_under(base, "refs/heads")
+    }
+
+    fn merged_under(&self, base: &str, pattern: &str) -> std::collections::BTreeSet<String> {
         let merged = format!("--merged={base}");
-        self.out(&["for-each-ref", merged.as_str(), "--format=%(refname:short)", "refs/heads/spira/*"])
+        self.out(&["for-each-ref", merged.as_str(), "--format=%(refname:short)", pattern])
             .map(|s| s.lines().filter(|l| !l.is_empty()).map(String::from).collect())
             .unwrap_or_default()
     }
 
     /// The tree `merge-tree` writes for merging <br> into <base>; None when the merge conflicts or fails.
     pub fn merged_tree(&self, base: &str, br: &str) -> Option<String> {
-        let out = self.out(&["-c", &format!("attr.tree={base}"), "merge-tree", "--write-tree", base, br])?;
-        Some(out.lines().next().unwrap_or("").to_string())
+        self.try_merged_tree(base, br).flatten()
+    }
+
+    /// [`Git::merged_tree`] telling a conflict (`Some(None)`, exit 1) from git not answering (`None`).
+    pub fn try_merged_tree(&self, base: &str, br: &str) -> Option<Option<String>> {
+        let o = self.cmd(&["-c", &format!("attr.tree={base}"), "merge-tree", "--write-tree", base, br]).output().ok()?;
+        match o.status.code()? {
+            0 => Some(Some(String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").to_string())),
+            1 => Some(None),
+            _ => None,
+        }
     }
 
     /// <base> already holds every change <br> makes: an ancestor, or a merge whose tree is the
@@ -154,9 +172,13 @@ impl Git<'_> {
     /// Without one an empty diff proves nothing — any branch's diff against the base can be
     /// empty.
     pub fn has_own_commit(&self, base: &str, br: &str, id: &str) -> bool {
+        self.try_has_own_commit(base, br, id).unwrap_or(false)
+    }
+
+    pub fn try_has_own_commit(&self, base: &str, br: &str, id: &str) -> Option<bool> {
         let range = format!("{base}..{br}");
         let grep = format!("--grep={id}");
-        self.out(&["log", "--format=%s", "-F", grep.as_str(), range.as_str()]).is_some_and(|s| {
+        self.out(&["log", "--format=%s", "-F", grep.as_str(), range.as_str()]).map(|s| {
             s.lines().any(|l| l.match_indices(id).any(|(i, _)| !l[i + id.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '.' || c == '-')))
         })
     }
@@ -164,9 +186,13 @@ impl Git<'_> {
     /// A commit on <base> itself names <id>: a squash merge carries the bead id on the landing
     /// ref, not on the branch's own commits.
     pub fn base_names(&self, base: &str, id: &str, window: u32) -> bool {
+        self.try_base_names(base, id, window).unwrap_or(false)
+    }
+
+    pub fn try_base_names(&self, base: &str, id: &str, window: u32) -> Option<bool> {
         let n = format!("-n{window}");
         let grep = format!("--grep={id}");
-        self.out(&["log", "--format=%s", n.as_str(), "-F", grep.as_str(), base]).is_some_and(|s| {
+        self.out(&["log", "--format=%s", n.as_str(), "-F", grep.as_str(), base]).map(|s| {
             s.lines().any(|l| l.match_indices(id).any(|(i, _)| !l[i + id.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '.' || c == '-')))
         })
     }
@@ -174,39 +200,51 @@ impl Git<'_> {
     /// Every commit in `base..br` is the claim-time stacked-base merge, which carries no change
     /// of its own; false when there are none.
     pub fn only_stacked_base(&self, base: &str, br: &str) -> bool {
+        self.try_only_stacked_base(base, br).unwrap_or(false)
+    }
+
+    pub fn try_only_stacked_base(&self, base: &str, br: &str) -> Option<bool> {
         let range = format!("{base}..{br}");
         self.out(&["log", "--format=%s", range.as_str()])
-            .is_some_and(|s| !s.trim().is_empty() && s.lines().all(|l| l.starts_with("stacked base: merge ")))
+            .map(|s| !s.trim().is_empty() && s.lines().all(|l| l.starts_with("stacked base: merge ")))
     }
 
     /// `git cherry base br` has a `+` line: a commit unique to <br> with no patch-equivalent
     /// on <base>.
     pub fn cherry_unapplied(&self, base: &str, br: &str) -> bool {
-        self.out(&["cherry", base, br]).is_some_and(|s| s.lines().any(|l| l.starts_with('+')))
+        self.try_cherry_unapplied(base, br).unwrap_or(false)
+    }
+
+    pub fn try_cherry_unapplied(&self, base: &str, br: &str) -> Option<bool> {
+        self.out(&["cherry", base, br]).map(|s| s.lines().any(|l| l.starts_with('+')))
     }
 
     /// A queue cut rewrites hashes, so `cherry` cannot see a landed commit. Landed by name:
     /// <base> holds commits naming <id> (within the last `window`) that between them touch
     /// every path <br> changes since the merge base, so no path of the branch's own is unlanded.
     pub fn landed_by_subject(&self, base: &str, br: &str, id: &str, window: u32) -> bool {
+        self.try_landed_by_subject(base, br, id, window).unwrap_or(false)
+    }
+
+    pub fn try_landed_by_subject(&self, base: &str, br: &str, id: &str, window: u32) -> Option<bool> {
         let n = format!("-n{window}");
         let grep = format!("--grep={id}");
-        let Some(log) = self.out(&["log", "--format=%H %s", n.as_str(), "-F", grep.as_str(), base]) else { return false };
+        let log = self.out(&["log", "--format=%H %s", n.as_str(), "-F", grep.as_str(), base])?;
         let named = |s: &str| s.match_indices(id).any(|(i, _)| !s[i + id.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '.' || c == '-'));
         let shas: Vec<&str> = log.lines().filter(|l| named(l.split_once(' ').map_or("", |x| x.1))).filter_map(|l| l.split(' ').next()).collect();
         if shas.is_empty() {
-            return false;
+            return Some(false);
         }
-        let Some(mb) = self.out(&["merge-base", base, br]) else { return false };
-        let Some(mut own) = self.out(&["diff", "--name-only", mb.trim(), br]).map(|s| s.lines().map(String::from).collect::<Vec<_>>()) else { return false };
+        let mb = self.out(&["merge-base", base, br])?;
+        let mut own: Vec<String> = self.out(&["diff", "--name-only", mb.trim(), br])?.lines().map(String::from).collect();
         if own.is_empty() {
-            return false;
+            return Some(false);
         }
         for sha in shas {
-            let Some(files) = self.out(&["show", "--name-only", "--format=", sha]) else { return false };
+            let files = self.out(&["show", "--name-only", "--format=", sha])?;
             own.retain(|p| !files.lines().any(|f| f == p));
         }
-        own.is_empty()
+        Some(own.is_empty())
     }
 
     /// The first five paths `diff --name-only base br` names.

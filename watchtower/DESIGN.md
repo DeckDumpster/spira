@@ -55,7 +55,7 @@ bash's `[ -r "$X" ] || { log …; exit 0; }` guards).
 
 ## 3. What moved, and what stayed bash
 
-`incident.sh`, `ctrl.sh`, `world.sh`, `yield.sh`, `testenv`, `branch-guard.sh`,
+`incident.sh`, `ctrl.sh`, `world.sh`, `testenv`, `branch-guard.sh`,
 `release`, `cockpit/moot-sweep.sh` are **not in this bead's scope** (other rewrite waves, or
 not yet scheduled) and stay bash/binary dependencies called exactly as the bash called them:
 by bare name (or `SPIRA_*_SH` override) on the release PATH, same argv, same env, same
@@ -188,7 +188,7 @@ fake systemctl).
 
 - **Not a second timer list.** §3.
 - **Not the collector.** `collect.sh`/`cockpit.sh` write `cockpit.env`; this only reads it.
-- **Not the yield meter.** `yield.sh` computes `YIELD_*`; this shells to it exactly as the
-  bash did (out of scope this bead).
+- **Not the yield meter.** `strand::yield_report` computes `YIELD_*` from the records
+  `yield.sh record` writes and from `gate.log`; this only calls it.
 - **Not incident.sh's dedup.** That logic (lookback window, `SPIRA_FENRIR_EXEMPT`) lives in
   incident.sh; this crate only calls it with the same `SPIRA_INCIDENT_*` env the bash used.

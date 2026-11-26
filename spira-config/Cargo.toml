@@ -42,6 +42,11 @@ path = "tests/process_refusal_not_kept.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "registry_pin"
+path = "tests/registry_pin.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "registry_codegen"
 path = "tests/registry_codegen.rs"
 required-features = ["integration"]

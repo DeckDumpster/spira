@@ -109,36 +109,60 @@ pub struct RepoScan {
 
 /// The reads of a pass, in-process: each configured repository's worktrees under
 /// `w.worktrees()` (dot-names skipped), with the live cwd under `proc_root`, the state
-/// `state_of` gives, the land ref the branch is merged into, and the idle age.
+/// `state_of` gives and the idle age. `merged_into`, the land ref the branch is merged into,
+/// is asked of git only where [`decide`] can read it: an unfinished tree on a branch, idle for
+/// at least [`MERGED_GRACE_SECS`]. A repository with no such tree has no merge read, and one with no
+/// tree at all has no land refs either.
 pub fn scan(w: &dyn World, repos: &[Repo], proc_root: &Path, state_of: &dyn Fn(&str) -> Option<String>) -> Vec<RepoScan> {
     let root_dir = w.worktrees();
     let mut out = vec![];
     for r in repos {
         let Some(root) = r.root.as_deref() else { continue };
         let g = Git(root);
-        let landrefs = w.base(root).map(|b| b.landrefs).unwrap_or_default();
-        let mut trees = vec![];
-        for (path, branch) in g.worktrees() {
-            if !path.starts_with(&root_dir) || path == root_dir {
-                continue;
-            }
-            let Some(id) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else { continue };
-            if id.starts_with('.') {
-                continue;
-            }
-            let live_pid = live_cwd(proc_root, &path);
-            let (state, merged_into, idle_secs) = if live_pid.is_some() {
-                (None, None, 0)
-            } else {
-                let merged = branch.as_deref().and_then(|b| landrefs.iter().find(|lr| g.is_ancestor(b, lr)).cloned());
-                let idle = last_activity(&path).and_then(|m| SystemTime::now().duration_since(m).ok()).unwrap_or_default();
-                (state_of(&id), merged, idle.as_secs())
-            };
-            trees.push(TreeScan { id, path, branch, live_pid, state, merged_into, idle_secs });
-        }
+        let mine: Vec<(String, PathBuf, Option<String>)> = g
+            .worktrees()
+            .into_iter()
+            .filter(|(path, _)| path.starts_with(&root_dir) && *path != root_dir)
+            .filter_map(|(path, branch)| Some((path.file_name()?.to_string_lossy().into_owned(), path, branch)))
+            .filter(|(id, _, _)| !id.starts_with('.'))
+            .collect();
+        let mut trees: Vec<TreeScan> = mine
+            .into_iter()
+            .map(|(id, path, branch)| {
+                let live_pid = live_cwd(proc_root, &path);
+                let (state, idle_secs) = if live_pid.is_some() {
+                    (None, 0)
+                } else {
+                    let state = state_of(&id);
+                    let idle = last_activity(&path).and_then(|m| SystemTime::now().duration_since(m).ok()).unwrap_or_default();
+                    (state, idle.as_secs())
+                };
+                TreeScan { id, path, branch, live_pid, state, merged_into: None, idle_secs }
+            })
+            .collect();
+        let landrefs = if trees.is_empty() { vec![] } else { merged_reads(w, &g, root, &mut trees) };
         out.push(RepoScan { name: r.name.clone(), root: root.to_path_buf(), landrefs, trees });
     }
     out
+}
+
+fn undecided(t: &TreeScan) -> bool {
+    let finished = t.state.as_deref().is_some_and(|s| s == "closed" || spira_store::lc_state::is_terminal(s));
+    t.branch.is_some() && t.live_pid.is_none() && !finished && t.idle_secs >= MERGED_GRACE_SECS
+}
+
+/// Fills `merged_into` of the undecided trees from one merged read per land ref, and answers
+/// the land refs: empty, and no git asked, when nothing is undecided.
+fn merged_reads(w: &dyn World, g: &Git, root: &Path, trees: &mut [TreeScan]) -> Vec<String> {
+    if !trees.iter().any(undecided) {
+        return vec![];
+    }
+    let landrefs = w.base(root).map(|b| b.landrefs).unwrap_or_default();
+    let merged: Vec<_> = landrefs.iter().map(|lr| (lr, g.branches_merged_into(lr))).collect();
+    for t in trees.iter_mut().filter(|t| undecided(t)) {
+        t.merged_into = t.branch.as_ref().and_then(|b| merged.iter().find(|(_, set)| set.contains(b))).map(|(lr, _)| (*lr).clone());
+    }
+    landrefs
 }
 
 /// A scanned tree's verdict: a live cwd keeps it; a tree with no bead has the shorter

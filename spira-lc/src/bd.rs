@@ -97,9 +97,6 @@ fn sync_claim_inputs(ids: &[String]) {
     }
 }
 
-const WRITE_SECS: u64 = 60;
-
-// A write runs the schema gate and a Dolt commit; the 5 s read cap kills it mid-commit though it lands.
 fn run_write(args: &[&str]) -> Result<String, String> {
     let owned: Vec<String> = args.iter().map(|a| a.to_string()).collect();
     stamped(args, sql_only(&owned, None))
@@ -112,13 +109,18 @@ fn sql_only(args: &[String], stdin: Option<&str>) -> Result<String, String> {
         return res;
     }
     if !crate::content_write::configured()? {
-        return Err(format!("no content writer is provisioned: set spira.beads_sql_writer_password_file (refusing `bd {}`, which this process no longer forks)", args.first().map(String::as_str).unwrap_or("")));
+        return Err(no_writer(args.first().map(String::as_str).unwrap_or("")));
     }
     Err(format!("`bd {}` is not a write the SQL writer serves", args.join(" ")))
 }
 
+/// The refusal of a write to a store with no writer provisioned.
+pub(crate) fn no_writer(verb: &str) -> String {
+    format!("no content writer is provisioned: set spira.beads_sql_writer_password_file (refusing `bd {verb}`, which this process no longer forks)")
+}
+
 /// The write as one SQL transaction, when it is a verb the SQL writer serves and a writer is
-/// provisioned; `None` leaves it to bd.
+/// provisioned; `None` otherwise.
 fn sql_write(args: &[String], stdin: Option<&str>) -> Option<Result<String, String>> {
     let m = crate::content_write::Mutation::of(args, stdin)?;
     let started = std::time::Instant::now();
@@ -138,37 +140,10 @@ pub fn write(args: &[&str]) -> Result<String, String> {
     run_write(args)
 }
 
-/// A write with `stdin` as bd's stdin (`note --stdin`, `create --body-file -`), under the
-/// write bound and stamped like every planning write.
+/// A write with the request body (`note --stdin`, `create --body-file -`), stamped like every
+/// planning write.
 pub fn write_stdin(args: &[String], stdin: Option<&str>) -> Result<String, String> {
-    write_stdin_in(args, stdin, None)
-}
-
-/// [`write_stdin`] run in `cwd`: the one verb (`gate discover`) that reads the repo it is run in.
-pub fn write_stdin_in(args: &[String], stdin: Option<&str>, cwd: Option<&std::path::Path>) -> Result<String, String> {
-    let Some(dir) = cwd else {
-        return stamped(args, sql_only(args, stdin));
-    };
-    let started = std::time::Instant::now();
-    let res = write_in_repo(args, stdin, dir);
-    let words: Vec<&str> = args.iter().map(String::as_str).collect();
-    record_call(&words, started, res.is_ok());
-    stamped(args, res)
-}
-
-fn write_in_repo(args: &[String], stdin: Option<&str>, dir: &std::path::Path) -> Result<String, String> {
-    let mut cmd = crate::proc::command("timeout")?;
-    cmd.current_dir(dir);
-    cmd.arg(WRITE_SECS.to_string()).arg(bd_bin()?);
-    let db = spira_config::process::cfg("SPIRA_DB")?;
-    if !db.is_empty() {
-        cmd.args(["-C", &db]);
-    }
-    cmd.args(args);
-    match spawn(cmd, stdin, "bd") {
-        (0, out) => Ok(out),
-        (_, out) => Err(out),
-    }
+    stamped(args, sql_only(args, stdin))
 }
 
 /// A close whose bd call failed is still done when the bead reads closed afterwards: bd can
@@ -183,7 +158,7 @@ fn settled(res: Result<(), String>, id: &str, still_open: impl FnOnce() -> Resul
     }
 }
 
-/// Runs `ask` on the content store's read-only connection: lc-serve forks bd for writes only.
+/// Runs `ask` on the content store's read-only connection.
 pub(crate) fn store<T>(ask: impl FnOnce(&dyn Sql, &str) -> Result<T, Failure>) -> Result<T, String> {
     crate::content_sql::served()?.with(ask).map_err(|f| f.text().to_string())
 }
@@ -236,7 +211,7 @@ fn is_external(b: &Bead) -> bool {
     b.external_ref.as_deref().is_some_and(|r| !r.trim().is_empty())
 }
 
-/// The live [`crate::callers::Bd`]: reads from the content store, writes through bd.
+/// The live [`crate::callers::Bd`]: reads from the content store, writes through the SQL writer.
 pub struct LiveBd;
 
 impl crate::callers::Bd for LiveBd {
@@ -433,13 +408,17 @@ pub fn ask_operator_classed(from: &str, subject: &str, default: &str, class: Opt
     // binary-override seam.
     let mail_sh = std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail".to_string());
     // An ask files its decision bead, so it is a filing and waits as one.
-    let mut cmd = crate::proc::bounded_for(&mail_sh, FILING_SECS)?;
+    ask_via((&mail_sh, FILING_SECS), from, subject, default, class, bead_id, body)
+}
+
+fn ask_via((mail_sh, secs): (&str, &str), from: &str, subject: &str, default: &str, class: Option<&str>, bead_id: &str, body: &str) -> Result<String, String> {
+    let mut cmd = crate::proc::bounded_for(mail_sh, secs)?;
     cmd.args(["send", "operator", "--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id]);
     if let Some(c) = class {
         cmd.args(["--class", c]);
     }
     use std::io::Write;
-    let out = state_store::phases::child(&mail_sh, || {
+    let out = state_store::phases::child(mail_sh, || {
         let mut child = cmd
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -651,11 +630,12 @@ mod filing_tests {
     fn an_ask_whose_mail_files_past_the_plain_call_deadline_is_delivered() {
         let dir = testkit::TempDir::new("ask-slow-mail");
         let p = dir.path().join("mail");
-        let plain: u64 = spira_config::bounded::CALL_TIMEOUT_SECS.parse().unwrap();
-        testkit::write_exe(&p, &format!("#!/bin/sh\ncat >/dev/null\necho 'mail: blocking edge refused — wiring relates_to instead (override: SPIRA_MAIL_ALLOW_BLOCKING=1)' >&2\nsleep {}\n", plain + 1));
-        let _env = testkit::env(&[("SPIRA_MAIL_SH", Some(&p.to_string_lossy()))]);
-        let r = ask_operator_classed("dwarf <dwarf@spira>", "Retire as superseded by sp-b?", "supersede", Some("policy"), "sp-a", "## Question\nq\n");
-        assert!(r.is_ok(), "an ask mail still filing at the plain call deadline was cut and read as undelivered: {r:?}");
+        testkit::write_exe(&p, "#!/bin/sh\ncat >/dev/null\necho 'mail: blocking edge refused — wiring relates_to instead (override: SPIRA_MAIL_ALLOW_BLOCKING=1)' >&2\nsleep 0.3\n");
+        let prog = p.to_string_lossy().into_owned();
+        let ask = |secs| ask_via((&prog, secs), "dwarf <dwarf@spira>", "Retire as superseded by sp-b?", "supersede", Some("policy"), "sp-a", "## Question\nq\n");
+        assert!(ask("0.1").is_err(), "a mail outliving its deadline must be cut");
+        let r = ask("2");
+        assert!(r.is_ok(), "an ask mail still filing at its deadline was cut and read as undelivered: {r:?}");
     }
 
     #[test_id(t72boqm)]

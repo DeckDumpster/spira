@@ -1,11 +1,12 @@
 //! Pure logic behind the `rule` binary. Contract: DESIGN.md. Kept separate from `main.rs`
-//! (which does the `bd`/hook subprocess work) so it is unit-testable with no database, no
+//! (which does the hook and wiki subprocess work) so it is unit-testable with no database, no
 //! filesystem and no subprocess.
 
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
 pub mod audit;
+pub mod book;
 pub mod code;
 pub mod hook;
 pub mod memories;
@@ -222,7 +223,7 @@ pub fn list_line(key: &str, text: &str) -> String {
 }
 
 /// `list`'s full body: every `law-`-prefixed string value, sorted by key, one [`list_line`]
-/// each, then the trailing count line. `memories` is the parsed `bd memories --json` object.
+/// each, then the trailing count line. `memories` is the parsed `content memories --json` object.
 pub fn list_body(memories: &BTreeMap<String, serde_json::Value>) -> String {
     let laws: Vec<(&String, &str)> = memories
         .iter()

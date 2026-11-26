@@ -68,14 +68,16 @@ fn run_in(tmp: &testkit::TempDir, cargo_home: &str, list: &str) -> (Option<i32>,
     let dir = tmp.path().to_path_buf();
     let deny = spira_config::unit_tier::DenyList::parse(list).unwrap();
     let script = format!(
-        "export CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\n{}\n{}\n{}\n{}\n{}\nwrite_unit_nextest_config 10 1 \"$PWD/round-nextest.toml\" \"$1\"\nunit_cargo || exit 90\nunit_nextest > run.log 2>&1\nrc=$?\ncat run.log >&2\nprintf '%s' \"$2\" > round-deny-list\nunit_registry_skips round-deny-list run.log\nexit $rc\n",
+        "export CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\n{}\n{}\n{}\n{}\n{}\nwrite_unit_nextest_config 10 1 60 2 \"$PWD/round-nextest.toml\" \"$1\"\ntest_env() {{ : > entered-test-env; unit_env \"$@\"; }}\nunit_cargo || exit 90\nunit_nextest > run.log 2>&1\nrc=$?\ncat run.log >&2\nprintf '%s' \"$2\" > round-deny-list\nunit_registry_skips round-deny-list run.log\nexit $rc\n",
         function("unit_registry_skips"),
         function("unit_env"),
         function("write_unit_nextest_config"),
         function("unit_cargo"),
         function("unit_nextest").replace("$HOME/round-nextest.toml", "$PWD/round-nextest.toml"),
     );
-    bash_in_code2(&dir, cargo_home, &script, &deny.config_filter_line(), list)
+    let out = bash_in_code2(&dir, cargo_home, &script, &deny.config_filter_line(), list);
+    assert!(dir.join("entered-test-env").exists(), "the round's unit run goes through test_env: {}", out.1);
+    out
 }
 
 #[test_id(tr9w5nw)]
@@ -142,7 +144,7 @@ fn gate_unit_run_in(tmp: &testkit::TempDir, cargo_home: &str, list: &str) -> Str
     let cmds = gate::compose::unit_test_commands(&["tiny".to_string()], gate::compose::Targets { lib: true, bin: false, test: false }, &deny);
     let unit = cmds.iter().find_map(|c| c.find("cargo nextest run").map(|i| &c[i..])).unwrap_or_else(|| panic!("no nextest command: {cmds:?}"));
     std::fs::create_dir_all(dir.join("target")).unwrap();
-    std::fs::write(dir.join(gate::compose::NEXTEST_CONFIG), spira_config::unit_tier::nextest_config(10, 1, &deny)).unwrap();
+    std::fs::write(dir.join(gate::compose::NEXTEST_CONFIG), spira_config::unit_tier::nextest_config((10, 1), (60, 2), &deny)).unwrap();
     let script = format!("export CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\n{unit}\n");
     bash_in(&dir, cargo_home, &script, "")
 }
@@ -294,7 +296,7 @@ fn a_unit_test_disabled_by_id_stays_out_of_the_gate_and_round_runs_after_a_renam
 
 fn integration_nextest_run(dir: &std::path::Path, cargo_home: &str, list: &str) -> (Option<i32>, String) {
     let deny = spira_config::unit_tier::DenyList::parse(list).unwrap();
-    std::fs::write(dir.join("nx.toml"), spira_config::unit_tier::nextest_config(10, 1, &deny)).unwrap();
+    std::fs::write(dir.join("nx.toml"), spira_config::unit_tier::nextest_config((10, 1), (60, 2), &deny)).unwrap();
     let script = "export CARGO_HOME=\"$2\" RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\ncargo nextest run --config-file nx.toml --no-fail-fast --offline --test '*' > test.log 2>&1\nrc=$?\nexit $rc\n";
     let (code, err) = bash_in_code2(dir, cargo_home, script, "", cargo_home);
     (code, format!("{err}{}", std::fs::read_to_string(dir.join("test.log")).unwrap_or_default()))

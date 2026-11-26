@@ -1495,7 +1495,7 @@ pub fn statute_keys(cfg: &Cfg) -> Kv {
         serde_json::from_str::<Value>(s.trim()).ok()
     }).and_then(|v| v.as_object().map(|m| m.iter().filter(|(k, v)| v.is_string() && k.starts_with("law-")).count()));
 
-    let page_n: Option<usize> = io::git(Path::new(&wiki), &["show", "HEAD:wiki/notes/common-law.md"])
+    let page_n: Option<usize> = io::git_held(Path::new(&wiki), &["show", "HEAD:wiki/notes/common-law.md"])
         .map(|s| s.lines().filter(|l| l.starts_with("### ")).count());
 
     statute_skew_keys(db_n, page_n)
@@ -1526,7 +1526,7 @@ fn statute_skew_keys(db_n: Option<usize>, page_n: Option<usize>) -> Kv {
 // drift_keys
 // ---------------------------------------------------------------------------------------
 
-/// `OK`, `<dirty>:<n>` counting `finding_prefix` lines, or `?` when `drift.sh` could not run.
+/// `OK`, `<dirty>:<n>` counting `finding_prefix` lines, or `?` when the check could not run.
 pub fn drift_value(code: Option<i32>, out: &str, dirty: &str, finding_prefix: &str) -> String {
     match code {
         Some(0) => "OK".to_string(),
@@ -1535,36 +1535,27 @@ pub fn drift_value(code: Option<i32>, out: &str, dirty: &str, finding_prefix: &s
     }
 }
 
+/// The checkout the drift probe reads: `SPIRA_REPO` when set, else the checkout holding `home`.
+fn drift_repo(repo: Option<String>, home: &Path) -> std::path::PathBuf {
+    let env = repo.map(|r| ("SPIRA_REPO".to_string(), r)).into_iter().collect();
+    spira_config::resolve::derive_home_repo(home, &env)
+}
+
 pub fn drift_keys() -> Kv {
-    let drift_sh = io::home_dir().join("drift.sh");
-    let repo = spira_config::process::cfg("SPIRA_REPO").ok().filter(|s| !s.is_empty());
-    let child_env = spira_config::release_env::child_path_env_for_process();
-    let run_one = |args: &[&str]| {
-        let Ok(envs) = child_env.clone() else { return (None, String::new()) };
-        // batch-job: runs a gate, build or forge script that takes as long as its work
-        // FORK-EDGE: script drift.sh (179 lines), ported with the drift task.
-        std::process::Command::new("bash")
-            .envs(envs)
-            .arg(&drift_sh)
-            .args(args)
-            .stdin(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .output()
-            .ok()
-            .map(|o| (o.status.code(), String::from_utf8_lossy(&o.stdout).into_owned()))
-            .unwrap_or((None, String::new()))
-    };
+    use install::checkout_drift::Probe;
+    use install::unit_drift::UnitDrift;
+    let repo = io::try_home_dir().ok().map(|home| drift_repo(std::env::var("SPIRA_REPO").ok(), &home));
     let mut out = Kv::new();
-    let mut co_args = vec!["checkout"];
-    if let Some(r) = repo.as_deref() {
-        co_args.push(r);
-    }
-    let (rc, text) = run_one(&co_args);
+    let (rc, text) = match repo.map_or(Probe::Unreadable, |r| install::checkout_drift::checkout(&r.to_string_lossy())) {
+        Probe::Clean => (Some(0), String::new()),
+        Probe::Drift(t) => (Some(1), t),
+        Probe::Unreadable => (None, String::new()),
+    };
     push(&mut out, "SP_CHECKOUT_DRIFT", drift_value(rc, &text, "DIRTY", "DIRTY "));
     let (rc, text) = match install::unit_drift::units_drift(&install::unit_drift::default_unit_dir()) {
-        install::unit_drift::UnitDrift::Clean => (Some(0), String::new()),
-        install::unit_drift::UnitDrift::Drift(t) => (Some(1), t),
-        install::unit_drift::UnitDrift::Unreadable => (None, String::new()),
+        UnitDrift::Clean => (Some(0), String::new()),
+        UnitDrift::Drift(t) => (Some(1), t),
+        UnitDrift::Unreadable => (None, String::new()),
     };
     push(&mut out, "SP_UNIT_DRIFT", drift_value(rc, &text, "UNSHIPPED", "UNSHIPPED "));
     out
@@ -2055,7 +2046,20 @@ mod tests {
 
 #[cfg(test)]
 mod drift_tests {
-    use super::drift_value;
+    use super::{drift_repo, drift_value};
+
+    #[test_id(tx0ite6)]
+    #[test]
+    fn the_checkout_read_is_spira_repo_or_else_the_one_holding_home() {
+        let d = testkit::TempDir::new("drift-repo");
+        std::fs::create_dir_all(d.join(".git")).unwrap();
+        std::fs::create_dir_all(d.join("spira")).unwrap();
+        let checkout = d.path().canonicalize().unwrap();
+        for unset in [None, Some(String::new())] {
+            assert_eq!(drift_repo(unset, &d.join("spira")), checkout);
+        }
+        assert_eq!(drift_repo(Some("elsewhere".into()), &d.join("spira")), std::path::PathBuf::from("elsewhere"));
+    }
 
     #[test_id(tep1yzh)]
     #[test]
@@ -2156,7 +2160,7 @@ mod livelock_tests {
     #[test_id(tc6slhw)]
     #[test]
     fn each_detector_row_reaches_its_own_count_and_an_allowed_row_counts_in_neither() {
-        let ll = "LIVELOCK sp-a unclaimable — x\nLIVELOCK sp-b ci-stuck — y";
+        let ll = "LIVELOCK sp-a ask-no-overseer — x\nLIVELOCK sp-b ci-stuck — y";
         let ic = "INVALID-CLOSED sp-c — r\nUNFILED-FOLLOW sp-d — r\nALLOWED-IC sp-e — ok";
         let kv = livelock_report(ll, Some(ic), || false);
         assert_eq!(val(&kv, "SP_LIVELOCKED"), "2");

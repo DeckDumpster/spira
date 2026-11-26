@@ -79,7 +79,6 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("czar.status", Host),
     ("design-asks.observe", Host),
     ("gate.check.ci_failed", Store),
-    ("gate.check.discover", Store),
     ("gate.check.observe", Store),
     ("gate.check.resolve", Store),
     ("gate.worker.claim", Store),

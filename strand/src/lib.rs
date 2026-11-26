@@ -25,3 +25,4 @@ pub mod probe;
 pub mod state;
 pub mod timefmt;
 pub mod unrostered;
+pub mod yield_report;

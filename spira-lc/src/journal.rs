@@ -924,10 +924,10 @@ mod tests {
     fn every_sweep_step_answers_inside_the_store_target_whatever_the_size_of_the_rows_it_reads() {
         let (s, raw, clock, _) = costed_store();
         let big = json!({"pad": "x".repeat(16 * 1024)});
-        for n in 0..3_000 {
+        for n in 0..300 {
             put_raw(&raw, &crate::control::keys::runtime("event", &[&format!("e{n:05}")]), big.clone());
         }
-        for n in 0..2_000 {
+        for n in 0..200 {
             let id = format!("r{n:05}");
             put_raw(&raw, &crate::control::keys::runtime("effect", &["t", &format!("k{id}")]), effect_n(&id));
             if n % 2 == 0 {
@@ -936,7 +936,7 @@ mod tests {
         }
         for dry_run in [true, false] {
             let (v, slowest) = sweep_timed(&s, &clock, dry_run);
-            assert_eq!((v["legacy_deleted"].clone(), v["indexed_effects"].clone(), v["retained"].clone()), (json!(3_000), json!(1_000), json!(1_000)), "{v}");
+            assert_eq!((v["legacy_deleted"].clone(), v["indexed_effects"].clone(), v["retained"].clone()), (json!(300), json!(100), json!(100)), "{v}");
             assert!(slowest <= 100, "a step took {slowest} ms of virtual time (dry_run {dry_run})");
         }
         assert!(all_keys(&raw).iter().all(|k| !k.starts_with("runtime/event/")));

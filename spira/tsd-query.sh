@@ -29,9 +29,6 @@
 #                                                           quantile 0.9 instead of 0.5 —
 #                                                           what gate-budget-select.sh read; suite-select
 #                                                           computes the same P90 itself (sp-wx2tw)
-#   tsd-query.sh last-run                                  most recent run_id: sum(wall_secs)
-#                                                           over its suites, and its __batch__
-#                                                           row's wall_secs
 #   tsd-query.sh slow-in-branch <branch> <n>                the <n> slowest suite-timing rows
 #                                                           (raw, not deduped) for <branch>
 #
@@ -79,7 +76,6 @@ usage:
   tsd-query.sh suite-p50     <suite> <n>
   tsd-query.sh suite-medians <n>
   tsd-query.sh suite-p90s    <n>
-  tsd-query.sh last-run
   tsd-query.sh slow-in-branch <branch> <n>
   tsd-query.sh where|rework|time|slots|sentinel [<hours>]
   tsd-query.sh bead          <id>
@@ -281,21 +277,6 @@ case "$cmd" in
             WHERE rn <= $n
             GROUP BY suite
             ORDER BY suite;
-        "
-        ;;
-    last-run)
-        path="$(_check_family suite-timing)" || exit $?
-        duckdb -json -c "
-            WITH latest AS (
-                SELECT run_id FROM read_ndjson_auto('$path') ORDER BY ts DESC LIMIT 1
-            )
-            SELECT
-                (SELECT run_id FROM latest) AS run_id,
-                (SELECT CAST(COALESCE(sum(wall_secs), 0) AS BIGINT) FROM read_ndjson_auto('$path')
-                    WHERE run_id = (SELECT run_id FROM latest) AND suite != '__batch__') AS sum_wall,
-                (SELECT wall_secs FROM read_ndjson_auto('$path')
-                    WHERE run_id = (SELECT run_id FROM latest) AND suite = '__batch__'
-                    LIMIT 1) AS batch_wall;
         "
         ;;
     slow-in-branch)

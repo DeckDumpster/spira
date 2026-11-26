@@ -13,7 +13,9 @@
 //! - **Warm start.** A new lease takes the most recently idled directory that holds anything
 //!   (the lock file's mtime is the idle time: a release stamps it), and the shared selective clean
 //!   ([`CLEAN_SCRIPT`]) then cleans only the workspace crates whose bytes differ from the tree that
-//!   directory was last made consistent with. A submitted builder's release reserves its slot
+//!   directory was last made consistent with. Any clean but a release's also drops each workspace
+//!   unit built after that last recorded run (`.unit-tests-built-stamp`): the record cannot name
+//!   what such a build was made from. A submitted builder's release reserves its slot
 //!   (`dir.<n>.gate`, naming the bead) for that bead's gate: a reserved idle slot is taken only
 //!   when no unreserved one is idle, and any take or eviction removes the reservation. A release judges every crate changed since that
 //!   record by unit: a `.fingerprint` unit stamped after the newest mtime and ctime of the crate's
@@ -554,6 +556,7 @@ pub fn owned(var: Option<std::ffi::OsString>, bases: &[PathBuf]) -> Option<PathB
 }
 
 const BUILT_RECORD: &str = ".unit-tests-built-manifest";
+const BUILT_STAMP: &str = ".unit-tests-built-stamp";
 
 /// Run the shared selective clean (`script`, [`CLEAN_SCRIPT`]) for the tree at `root` against
 /// the build directory `dir`: only the workspace crates whose bytes differ from the tree the
@@ -564,6 +567,7 @@ pub fn clean(script: &Path, root: &Path, dir: &Path, path: &str, release: bool) 
     let r = run_clean(script, root, dir, path, release);
     if release && r.is_err() {
         let _ = std::fs::remove_file(dir.join(BUILT_RECORD));
+        let _ = std::fs::remove_file(dir.join(BUILT_STAMP));
     }
     r
 }

@@ -1,29 +1,26 @@
 #!/usr/bin/env bash
-# runner — cargo's target runner (.cargo/config.toml): every test binary runs under bubblewrap,
-# where it cannot see the caller's installation.
+# runner — enters the test sandbox once per run: CMD runs inside one bubblewrap, where it cannot
+# see the caller's installation, and every test binary it spawns is launched directly.
 #
-#   runner BINARY [ARGS...]               what cargo calls
-#   runner --print-args BINARY [ARGS...]  the bwrap command line, one argument per line
-#   runner --around CMD [ARGS...]         CMD once inside one such sandbox (the gate's nextest run),
-#                                         its environment kept and each target/<d> link destination
-#                                         writable; every test binary it spawns then finds itself held
+#   runner --around CMD [ARGS...]               CMD once inside the sandbox
+#   runner --print-args --around CMD [ARGS...]  the bwrap command line, one argument per line
 #
 # The policy is testenv's sandbox unit runner's (testenv/src/sandbox.rs, Profile::bwrap_args):
 # read-only root; tmpfs /tmp, /run and home; the toolchain bound back; the workspace and
-# CARGO_TARGET_DIR writable; the environment cleared to an allow-list; no network. `--around` adds
-# one writable bind per target/<d> link destination and keeps the caller's environment. Every directory the home already holds comes back
-# empty and writable, so a write to the install lands in tmpfs and never on disk. It differs in
-# hiding both $HOME and the passwd entry's home.
+# CARGO_TARGET_DIR writable; the environment cleared to an allow-list, applied once to CMD; no
+# network. It adds one writable bind per target/<d> link destination and binds cargo-config.toml,
+# which is .cargo/config.toml without its target runner, over the workspace's, so cargo inside
+# resolves no runner. Every directory the home already holds comes back empty and writable, so a
+# write to the install lands in tmpfs and never on disk. It differs in hiding both $HOME and the
+# passwd entry's home.
 #
-# No fallback: without an executable bwrap it refuses and runs nothing. The one binary run as
-# is, is a `cargo run` artifact, which cargo places beside .fingerprint (test harnesses live in
-# deps/).
+# Called as cargo's target runner (the overlay missing) it refuses every test binary: one is never
+# sandboxed alone. Only a `cargo run` artifact, which is no test, runs as it is. No fallback: without an executable bwrap it refuses and runs nothing.
 set -uo pipefail
 
 die() { echo "test-sandbox: $*" >&2; exit 2; }
 
-# Resolve a directory's physical path into REPLY without a subshell: this runner starts once per
-# test binary, so every fork here is multiplied by every binary of every gate.
+# Resolve a directory's physical path into REPLY without a subshell.
 physdir() {
     local back="$PWD"
     builtin cd -P -- "$1" 2>/dev/null || return 1
@@ -33,18 +30,12 @@ physdir() {
 print="" around=""
 if [ "${1:-}" = "--print-args" ]; then print=1; shift; fi
 if [ "${1:-}" = "--around" ]; then around=1; shift; fi
-[ $# -ge 1 ] || die "usage: runner [--print-args] BINARY [ARGS...] | runner [--print-args] --around CMD [ARGS...]"
-bin="$1"
+[ $# -ge 1 ] || die "usage: runner [--print-args] --around CMD [ARGS...]"
 if [ -z "$around" ]; then
-    [ -x "$bin" ] || die "$bin is not an executable file"
-    case "$bin" in */*) bindir="${bin%/*}" ;; *) bindir=. ;; esac
-    physdir "${bindir:-/}" || die "cannot resolve the directory of $bin"
-    bindir="$REPLY"
-    bin="$bindir/${bin##*/}"
-
-    if [ -z "$print" ] && [ -d "$bindir/.fingerprint" ]; then
-        exec "$@"
-    fi
+    # A `cargo run` artifact sits beside .fingerprint and is no test; harnesses live in deps/.
+    case "$1" in */*) d="${1%/*}" ;; *) d=. ;; esac
+    [ -z "$print" ] && [ -d "${d:-/}/.fingerprint" ] && exec "$@"
+    die "$1 runs outside the test sandbox; run the tests through tools/test-sandbox/runner --around cargo …"
 fi
 
 [ -n "${HOME:-}" ] && [ "${HOME#/}" != "$HOME" ] || die "HOME is not an absolute path; it names the tree to hide"
@@ -82,88 +73,18 @@ held() {
     done < /proc/net/dev
 }
 
-# RUST_TEST_THREADS=1 prints no hung line, so silence is bounded too.
-bounded() {
-    local w1 w2 tmp pid rc=0 limit="" each line name="" why="" now last act start
-    tmp="$(mktemp -d)" || die "cannot make a scratch directory"
-    mkfifo "$tmp/tick" && exec 9<>"$tmp/tick" || die "cannot make a wait fifo"
-    if [ -r "$workspace/.config/nextest.toml" ]; then
-        while IFS= read -r line; do
-            # A binary's kind is unknown here, so the longest deadline in the file bounds them all.
-            [[ $line =~ period\ *=\ *\"([0-9]+)s\".*terminate-after\ *=\ *([0-9]+) ]] || continue
-            each=$((BASH_REMATCH[1] * BASH_REMATCH[2] * 1000000))
-            [ -n "$limit" ] && [ "$limit" -ge "$each" ] || limit=$each
-        done < "$workspace/.config/nextest.toml"
-    fi
-    printf '%s' "${EPOCHREALTIME/./}" > "$tmp/act"
-    # Each watcher forwards its stream itself: uutils tee asserts a full tee(2) into a pipe the
-    # kernel sizes down when the user nears pipe-user-pages-soft, and dies mid-stream.
-    local watch='eol=$'"'"'\n'"'"'
-    while IFS= read -r l || { [ -n "$l" ] && eol=""; }; do
-        printf "%s%s" "$l" "$eol"
-        [[ $l =~ ^test\ (.*)\ has\ been\ running\ for\ over\ [0-9]+\ seconds$ ]] && printf "%s" "${BASH_REMATCH[1]}" > "$2/hung"
-        printf "%s" "${EPOCHREALTIME/./}" > "$2/act"
-    done'
-    mkfifo "$tmp/out" "$tmp/err" || die "cannot make the stream fifos"
-    bash -c "$watch" _ x "$tmp" < "$tmp/out" &
-    w1=$!
-    bash -c "$watch" _ x "$tmp" < "$tmp/err" >&2 &
-    w2=$!
-    setsid "$@" <&0 > "$tmp/out" 2> "$tmp/err" &
-    pid=$!
-    kill_tree() {
-        local p all=("$pid") i=0
-        while [ $i -lt ${#all[@]} ]; do
-            for p in $(ps -o pid= --ppid "${all[$i]}" 2>/dev/null); do all+=("$p"); done
-            i=$((i + 1))
-        done
-        kill -KILL -- "-$pid" "${all[@]}" 2>/dev/null
-    }
-    trap 'kill_tree; rm -rf "$tmp"; exit 143' TERM INT HUP
-    start=${EPOCHREALTIME/./}
-    last=$start
-    while kill -0 "$pid" 2>/dev/null; do
-        if [ -s "$tmp/hung" ]; then why=libtest; IFS= read -r name < "$tmp/hung" || true; break; fi
-        if [ -n "$limit" ]; then
-            now=${EPOCHREALTIME/./}
-            # A read between a watcher's truncate and its write is empty: keep the newest stamp.
-            act=""; IFS= read -r act < "$tmp/act" || true
-            [ "$act" -gt "$last" ] 2>/dev/null && last=$act
-            if [ $((now - last)) -ge "$limit" ]; then why=silent; name=-; break; fi
-        fi
-        read -r -t 0.05 -u 9 _ || true
-    done
-    if [ -n "$why" ]; then
-        kill_tree
-        wait "$pid" 2>/dev/null
-        echo "test-sandbox: HUNG test=$name binary=${bin##*/}" >&2
-        rc=124
-    else
-        wait "$pid"; rc=$?
-    fi
-    wait "$w1" "$w2" 2>/dev/null
-    trap - TERM INT HUP
-    rm -rf "$tmp"
-    exit "$rc"
-}
-
 is_held=""
 [ -z "$print" ] && held && is_held=1
 # The command is found on the PATH it was handed, then run by that absolute path: the sandbox's
 # home is a tmpfs, and bwrap's own lookup would not see what was bound back after it.
-if [ -n "$around" ]; then
-    cmd="$(command -v -- "$1")" && [ "${cmd#/}" != "$cmd" ] && [ -x "$cmd" ] && [ ! -d "$cmd" ] ||
-        { echo "test-sandbox: --around: $1 is not on PATH (${PATH:-})" >&2; exit 75; }
-    shift
-    set -- "$cmd" "$@"
-fi
-[ -n "$around" ] && [ -n "$is_held" ] && exec "$@"
-supervise=""
-[ -z "$around" ] && [ -z "$print" ] && [ -z "${NEXTEST:-}" ] && supervise=1
-
+cmd="$(command -v -- "$1")" && [ "${cmd#/}" != "$cmd" ] && [ -x "$cmd" ] && [ ! -d "$cmd" ] ||
+    { echo "test-sandbox: --around: $1 is not on PATH (${PATH:-})" >&2; exit 75; }
+shift
+set -- "$cmd" "$@"
 
 path="$home/.local/lib/spira-env/bin:${CARGO_HOME:+$CARGO_HOME/bin:}/usr/local/bin:/usr/bin:/bin"
 [ -n "${CARGO:-}" ] && path="${CARGO%/*}:$path"
+path="${1%/*}:$path"
 
 here="${BASH_SOURCE[0]}"; case "$here" in */*) here="${here%/*}" ;; *) here=. ;; esac
 physdir "$here" || die "cannot resolve the runner's own directory"
@@ -197,6 +118,14 @@ if [ -n "$is_held" ] && [ -n "${GIT_CONFIG_SYSTEM:-}" ] && [ -r "$GIT_CONFIG_SYS
 fi
 env=()
 setenv() { env+=("$1=$2"); }
+while IFS= read -r k; do
+    case "$k" in
+        CARGO_REGISTRY_TOKEN | CARGO_REGISTRIES_*) ;;
+        CARGO_* | RUSTFLAGS | RUSTDOCFLAGS | RUSTC_* | RUSTUP_HOME | RUSTUP_TOOLCHAIN | LD_LIBRARY_PATH | \
+            RUST_TEST_* | RUST_BACKTRACE | RUST_LIB_BACKTRACE | RUST_MIN_STACK | RUST_LOG)
+            setenv "$k" "${!k}" ;;
+    esac
+done < <(compgen -e)
 setenv PATH "$path"
 setenv HOME "$home"
 setenv USER "${home##*/}"
@@ -207,17 +136,10 @@ setenv CARGO_TERM_COLOR never
 # .cargo/config.toml's [env] value, which cargo does not apply over a caller's exported one.
 setenv SPIRA_HOME "$workspace/spira"
 [ -n "$target" ] && setenv CARGO_TARGET_DIR "$target"
+# With no network sccache cannot start, which fails every rustc probe. Empty, not unset: unset
+# lets the bound cargo config name a wrapper the sandbox hides.
+setenv RUSTC_WRAPPER ""
 setenv GIT_CONFIG_SYSTEM "$gitconfig"
-while IFS= read -r k; do
-    case "$k" in
-        CARGO_HOME | RUSTUP_HOME | RUSTUP_TOOLCHAIN | \
-            CARGO | CARGO_MANIFEST_DIR | CARGO_MANIFEST_PATH | CARGO_CRATE_NAME | CARGO_BIN_NAME | \
-            CARGO_PRIMARY_PACKAGE | CARGO_PKG_* | CARGO_BIN_EXE_* | \
-            LD_LIBRARY_PATH | \
-            RUST_TEST_* | RUST_BACKTRACE | RUST_LIB_BACKTRACE | RUST_MIN_STACK | RUST_LOG)
-            setenv "$k" "${!k}" ;;
-    esac
-done < <(compgen -e)
 
 identity='[user]\n\tname = spirauser\n\temail = spirauser@localhost\n'
 printf -v identity_text "$identity"
@@ -229,7 +151,6 @@ if [ -n "$is_held" ]; then
         mkdir -p "${gitconfig%/*}" && printf "$identity" > "$gitconfig.$$" && mv -f "$gitconfig.$$" "$gitconfig" ||
             die "cannot write $gitconfig in ${gitconfig%/*} as $(id -un)"
     fi
-    [ -n "$supervise" ] && bounded /usr/bin/env -i "${env[@]}" "$@"
     exec /usr/bin/env -i "${env[@]}" "$@"
 fi
 
@@ -239,7 +160,7 @@ ro=() rw=()
 [ -n "${RUSTUP_HOME:-}" ] && ro+=("$RUSTUP_HOME")
 # Cargo's own default home, as cargo resolves it, when the caller declared none.
 cargo_home="${CARGO_HOME:-}"
-[ -z "$cargo_home" ] && [ -n "$around" ] && cargo_home="$home/.cargo"
+[ -z "$cargo_home" ] && cargo_home="$home/.cargo"
 [ -n "$cargo_home" ] && ro+=("$cargo_home/bin") && rw+=("$cargo_home/registry" "$cargo_home/git")
 # The config (profiles, incremental) decides every unit's fingerprint, so a cargo inside must read the box's.
 [ -n "$cargo_home" ] && ro+=("$cargo_home/config.toml" "$cargo_home/config")
@@ -261,10 +182,17 @@ if [ -z "${RUSTUP_HOME:-}" ]; then
     done
     [ -d "$home/.rustup" ] && ro+=("$home/.rustup")
 fi
-if [ -n "$around" ]; then
-    t="$(toolchain_of "$1")" && [ "$t" != "$cargo_home" ] && ro+=("$t")
-fi
+t="$(toolchain_of "$1")" && [ "$t" != "$cargo_home" ] && ro+=("$t")
 ro+=("$home/.local/lib/spira-env")
+prev=""
+for w in "$@"; do
+    # bwrap binds a destination path as given, so a relative one is made absolute first.
+    if [ "$prev" = --config-file ] && [ -f "$w" ]; then
+        case "$w" in */*) d="${w%/*}" ;; *) d=. ;; esac
+        physdir "${d:-/}" && ro+=("$REPLY/${w##*/}")
+    fi
+    prev="$w"
+done
 # bwrap comes from the system directories alone, never the caller's PATH or the toolchain's.
 bwrap=""
 for d in /usr/local/bin /usr/bin /bin; do
@@ -278,18 +206,6 @@ under_tree() { local t; for t in "${trees[@]}"; do under "$1" "$t" && return 0; 
 a=(--die-with-parent --new-session --unshare-user --unshare-pid --unshare-ipc --unshare-uts
    --unshare-net --unshare-cgroup-try
    --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --tmpfs /run)
-# A binary outside the workspace and target (rustdoc's doctests, under TMPDIR) is bound in
-# read-only: before the home tmpfs when it holds a home, after the shadows when under one.
-# A harness in deps/ or examples/ execs its package's binaries from the profile directory above it
-# (CARGO_BIN_EXE_*), so that directory is what comes in, not deps/ alone.
-late_bin=""
-if [ -z "$around" ]; then
-    bindroot="$bindir"
-    case "${bindir##*/}" in deps | examples) bindroot="${bindir%/*}" ;; esac
-    if ! under "$bindir/" "$workspace" && ! { [ -n "$target" ] && under "$bindir" "$target"; }; then
-        if under_tree "$bindir"; then late_bin=1; else a+=(--ro-bind "$bindroot" "$bindroot"); fi
-    fi
-fi
 # Each shadow goes on before what is bound back beneath it.
 shadows=()
 for t in "${trees[@]}"; do
@@ -312,24 +228,14 @@ if [ -f "$workspace/.git" ]; then
 fi
 a+=(--bind "$workspace" "$workspace")
 if [ -n "$target" ] && ! under "$target" "$workspace"; then a+=(--bind "$target" "$target"); fi
-if [ -n "$late_bin" ]; then a+=(--ro-bind "$bindroot" "$bindroot"); fi
+a+=(--ro-bind "$HERE/cargo-config.toml" "$workspace/.cargo/config.toml")
 # The build directories a gate tree links out of its target are written by the cargo run inside.
-if [ -n "$around" ]; then
-    for d in "$workspace"/target/*; do
-        [ -L "$d" ] && l="$(readlink -f "$d")" && [ -d "$l" ] && ! under "$l" "$workspace" && a+=(--bind "$l" "$l")
-    done
-fi
+for d in "$workspace"/target/*; do
+    [ -L "$d" ] && l="$(readlink -f "$d")" && [ -d "$l" ] && ! under "$l" "$workspace" && a+=(--bind "$l" "$l")
+done
 a+=(--chdir "$PWD")
 
-
-# With no network sccache cannot start, which fails every rustc probe. Empty, not unset: unset
-# lets the bound cargo config name a wrapper the sandbox hides.
-if [ -n "$around" ]; then
-    a+=(--setenv RUSTC_WRAPPER "")
-    env=(GIT_CONFIG_SYSTEM="$gitconfig")
-else
-    a+=(--clearenv --setenv RUSTC_WRAPPER "")
-fi
+a+=(--clearenv)
 if [ -n "$print" ]; then
     printf '%s\n' bwrap "${a[@]}"
     for kv in "${env[@]}"; do printf -- '--setenv\n%s\n%s\n' "${kv%%=*}" "${kv#*=}"; done
@@ -338,8 +244,4 @@ if [ -n "$print" ]; then
 fi
 [ -z "$nogit" ] || die "$nogit"
 for kv in "${env[@]}"; do a+=(--setenv "${kv%%=*}" "${kv#*=}"); done
-if [ -n "$supervise" ]; then
-    exec 3< <(printf "$identity")
-    bounded "$bwrap" "${a[@]}" --ro-bind-data 3 "$gitconfig" -- "$@"
-fi
 exec "$bwrap" "${a[@]}" --ro-bind-data 3 "$gitconfig" -- "$@" 3< <(printf "$identity")

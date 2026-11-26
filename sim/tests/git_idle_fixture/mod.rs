@@ -41,6 +41,8 @@ pub struct Fixture {
     pub projects: PathBuf,
     pub published: Arc<Mutex<Vec<String>>>,
     pub checkout_rows: Arc<Mutex<Vec<(String, String)>>>,
+    pub labelled: Arc<Mutex<Option<(String, String)>>>,
+    pub cockpit_input: &'static str,
 }
 
 pub fn real_git() -> PathBuf {
@@ -119,6 +121,8 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
     std::fs::create_dir(&wiki).unwrap();
     git(&wiki, &["init", "-q", "-b", "main"], 1);
     std::fs::write(wiki.join("page.md"), "page").unwrap();
+    std::fs::create_dir_all(wiki.join("wiki/notes")).unwrap();
+    std::fs::write(wiki.join(STATUTE_PAGE), "### law-one\n").unwrap();
     git(&wiki, &["add", "."], 1);
     commit(&wiki, "page", LANDED_S);
 
@@ -161,6 +165,8 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
     let served = published.clone();
     let checkout_rows: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
     let answering_rows = checkout_rows.clone();
+    let labelled: Arc<Mutex<Option<(String, String)>>> = Arc::default();
+    let answering_labelled = labelled.clone();
     std::thread::spawn(move || runtime::socket::answer(&listener, &|argv| {
         asked.lock().unwrap().push(argv.join(" "));
         match argv.first().map(String::as_str) {
@@ -174,7 +180,7 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
             }
             Some("plan") if argv.get(1).map(String::as_str) == Some("items") => Ok(format!("{{\"items\":[{}]}}", bead.lock().unwrap().as_deref().map_or(String::new(), plan_row))),
             Some("plan") => Ok("{\"watermark\":1,\"items\":[]}".into()),
-            Some("content") => Ok("[]".into()),
+            Some("content") => Ok(answering_labelled.lock().unwrap().as_ref().filter(|(label, _)| argv.windows(2).any(|w| w[0] == "--label" && w[1] == *label)).map_or_else(|| "[]".into(), |(_, rows)| rows.clone())),
             Some("list-asks") => Ok("[]".into()),
             Some("section") if argv.get(1).map(String::as_str) == Some("publish-status") => {
                 served.lock().unwrap().push(argv.last().cloned().unwrap_or_default());
@@ -288,6 +294,8 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
         worktrees,
         published,
         checkout_rows,
+        labelled,
+        cockpit_input: COCKPIT_UNSENT,
         units,
         proc_root,
         release,
@@ -333,7 +341,11 @@ pub fn plan_row(id: &str) -> String {
 pub const IDLE_TASK_PROGRAMS: [&str; 5] = ["mail-health.sh", "bash", "bead.sh", "schema.sh", "spira-sendmail"];
 pub const DATE_RUNS_PER_OPEN_EPOCH: usize = 4;
 pub const ENSURE_UNIT: &str = spira_runtime::tasks::g::cockpit_ensure::UNIT;
-pub const LOGGED_PROGRAMS: [&str; 23] = [
+pub const STATUTE_PAGE: &str = "wiki/notes/common-law.md";
+pub const LOGGED_PROGRAMS: [&str; 26] = [
+    "drift.sh",
+    "tsd-query.sh",
+    "yield.sh",
     "tmux",
     "spira-claim",
     "systemctl",
@@ -399,15 +411,23 @@ pub fn strand_rows(f: &Fixture) -> Vec<String> {
     snap["strand"].as_array().into_iter().flatten().filter_map(|r| r.as_str().map(str::to_string)).collect()
 }
 
+pub fn cockpit_600s_every_probe() -> &'static str {
+    spira_runtime::tasks::g::cockpit::probe_input(spira_runtime::tasks::g::cockpit_tier_600s::PROBES, &Default::default()).leak()
+}
+
 pub const COCKPIT_UNSENT: &str = r#"{"probes":[{"name":"cockpit.unsent","timeout_ms":300000}],"config":{}}"#;
+
+pub const COCKPIT_LIVELOCK: &str = r#"{"probes":[{"name":"cockpit.livelock","timeout_ms":300000}],"config":{}}"#;
+
+pub const COCKPIT_DRIFT: &str = r#"{"probes":[{"name":"cockpit.drift","timeout_ms":300000}],"config":{}}"#;
 
 pub fn doubles(f: &Fixture, names: &[&'static str]) -> Arc<sim::doubles::Doubles> {
     let mut d = sim::doubles::service();
     for name in names.iter().copied() {
-        let (e, seen) = (f.effects.clone(), f.seen.clone());
+        let (e, seen, cockpit_input) = (f.effects.clone(), f.seen.clone(), f.cockpit_input);
         d = d.double(name, move |input| {
             use runtime::host::EffectRunner;
-            let input = if name == "cockpit-tier-600s.observe" { COCKPIT_UNSENT } else { input };
+            let input = if name == "cockpit-tier-600s.observe" { cockpit_input } else { input };
             let out = e.run("k", &runtime::EffectSpec::keyed(name, "k", input.to_string(), 60_000));
             seen.lock().unwrap().push((name.to_string(), out.clone().unwrap_or_else(|e| e)));
             out
