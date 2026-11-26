@@ -63,16 +63,17 @@ impl Git<'_> {
     /// The `spira/*` branches whose tip is an ancestor of <base>, in one call. A failed read is
     /// the empty set, never "all of them": nothing is then judged landed without proof.
     pub fn spira_merged_into(&self, base: &str) -> std::collections::BTreeSet<String> {
-        let merged = format!("--merged={base}");
-        self.out(&["for-each-ref", merged.as_str(), "--format=%(refname:short)", "refs/heads/spira/*"])
-            .map(|s| s.lines().filter(|l| !l.is_empty()).map(String::from).collect())
-            .unwrap_or_default()
+        self.merged_under(base, "refs/heads/spira/*")
     }
 
     /// [`Git::spira_merged_into`] over every local branch.
     pub fn branches_merged_into(&self, base: &str) -> std::collections::BTreeSet<String> {
+        self.merged_under(base, "refs/heads")
+    }
+
+    fn merged_under(&self, base: &str, pattern: &str) -> std::collections::BTreeSet<String> {
         let merged = format!("--merged={base}");
-        self.out(&["for-each-ref", merged.as_str(), "--format=%(refname:short)", "refs/heads"])
+        self.out(&["for-each-ref", merged.as_str(), "--format=%(refname:short)", pattern])
             .map(|s| s.lines().filter(|l| !l.is_empty()).map(String::from).collect())
             .unwrap_or_default()
     }

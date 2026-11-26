@@ -110,8 +110,8 @@ pub struct RepoScan {
 /// The reads of a pass, in-process: each configured repository's worktrees under
 /// `w.worktrees()` (dot-names skipped), with the live cwd under `proc_root`, the state
 /// `state_of` gives and the idle age. `merged_into`, the land ref the branch is merged into,
-/// is asked of git only where [`decide`] can read it: an unfinished tree idle for at least
-/// [`MERGED_GRACE_SECS`]. A repository with no such tree has no merge read, and one with no
+/// is asked of git only where [`decide`] can read it: an unfinished tree on a branch, idle for
+/// at least [`MERGED_GRACE_SECS`]. A repository with no such tree has no merge read, and one with no
 /// tree at all has no land refs either.
 pub fn scan(w: &dyn World, repos: &[Repo], proc_root: &Path, state_of: &dyn Fn(&str) -> Option<String>) -> Vec<RepoScan> {
     let root_dir = w.worktrees();
@@ -148,7 +148,7 @@ pub fn scan(w: &dyn World, repos: &[Repo], proc_root: &Path, state_of: &dyn Fn(&
 
 fn undecided(t: &TreeScan) -> bool {
     let finished = t.state.as_deref().is_some_and(|s| s == "closed" || spira_store::lc_state::is_terminal(s));
-    t.live_pid.is_none() && !finished && t.idle_secs >= MERGED_GRACE_SECS
+    t.branch.is_some() && t.live_pid.is_none() && !finished && t.idle_secs >= MERGED_GRACE_SECS
 }
 
 /// Fills `merged_into` of the undecided trees from one merged read per land ref, and answers

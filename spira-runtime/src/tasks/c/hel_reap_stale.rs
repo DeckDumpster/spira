@@ -32,10 +32,10 @@
 //!   consulted. That is a behaviour change, and T5 must show it (a bd-closed bead with a live row
 //!   is no longer reaped on that ground).
 //! - `merged_into` is the first landref, in order, whose merged branches hold the tree's branch.
-//!   Git is asked only for an **undecided** tree (no live cwd, a state that is not finished, idle
+//!   Git is asked only for an **undecided** tree (on a branch, no live cwd, a state that is not finished, idle
 //!   for at least `MERGED_GRACE_SECS`), because decide reads it for no other: one
 //!   `for-each-ref --merged` per landref (`Git::branches_merged_into`) per repository that has an
-//!   undecided tree. Every other tree, and a detached one, carries null. The landrefs are
+//!   undecided tree. Every other tree carries null. The landrefs are
 //!   resolved only for such a repository; otherwise `landrefs` is empty.
 //! - `idle_secs` is the newest mtime of the tree directory and of the admin dir's `HEAD` and
 //!   `index` (`stale.rs:52-66`). It costs no git, and with `bead_state` it is read before

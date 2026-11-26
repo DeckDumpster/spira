@@ -326,18 +326,23 @@ fn the_stale_reaper_asks_git_only_about_a_tree_its_cheap_rules_leave_undecided()
     let marks = [START + 30 * MINUTE, START + 90 * MINUTE, START + 150 * MINUTE];
     let passes = || f.seen.lock().unwrap().iter().filter(|(n, _)| n == names[0]).count();
     let mut at = Vec::new();
-    let mut snapshot = String::new();
+    let (mut snapshot, mut decided_snapshot) = (String::new(), String::new());
     run_hours(&f, &names, (&[], 0), &marks, &mut |t| {
         at.push((logged(&f).len(), passes()));
         if t == marks[1] {
             let lc = spira_store::lc_call::LcClient::configured().unwrap();
             let real = task::world(&f.effects.world.run_dir, f.release.to_str().unwrap(), &lc).unwrap();
-            let before = logged(&f).len();
             snapshot = task::observe(&real, &lc, &f.proc_root).unwrap();
-            at.push((before, logged(&f).len()));
+            let after_first = logged(&f).len();
             for id in ["sp-open01", "sp-merged01"] {
                 git(&f.local, &["worktree", "remove", "--force", root.join(id).to_str().unwrap()], 1);
             }
+            let detached = root.join("sp-detach01");
+            git(&f.local, &["worktree", "add", "-q", "--detach", detached.to_str().unwrap(), "local/main"], 1);
+            age(&detached, std::time::Duration::from_secs(3 * 3600));
+            f.checkout_rows.lock().unwrap().push(("sp-detach01".into(), "READY".into()));
+            decided_snapshot = task::observe(&real, &lc, &f.proc_root).unwrap();
+            at.push((after_first, logged(&f).len()));
         }
     });
     let all = logged(&f);
@@ -353,10 +358,6 @@ fn the_stale_reaper_asks_git_only_about_a_tree_its_cheap_rules_leave_undecided()
     let local = f.local.display().to_string();
     let list = |repo: &str| format!("-C {repo} worktree list --porcelain");
     let merge_read = |base: &str| format!("-C {local} for-each-ref --merged={base} --format=%(refname:short) refs/heads");
-    let tree_words = [root.display().to_string(), "sp-young01".into(), "sp-done01".into(), "sp-open01".into(), "sp-merged01".into()];
-    for l in first.iter().filter(|l| tree_words.iter().any(|w| l.contains(w.as_str()))) {
-        assert!(l.ends_with(&list(&local)) || landrefs.iter().any(|b| l.ends_with(&merge_read(b))), "git named a tree: {l}\n{}", report(first));
-    }
     assert!(first.iter().any(|l| l.ends_with(&merge_read("local/main"))), "an undecided tree is read: {}", report(first));
     for b in landrefs {
         assert!(first.iter().filter(|l| l.ends_with(&merge_read(b))).count() <= 1, "{b} is read once: {}", report(first));
@@ -365,7 +366,9 @@ fn the_stale_reaper_asks_git_only_about_a_tree_its_cheap_rules_leave_undecided()
     assert!(first.iter().all(|l| repos.iter().any(|r| l.ends_with(&list(r))) || landrefs.iter().any(|b| l.ends_with(&merge_read(b)))), "{}", report(first));
     assert_eq!(variant.len(), repos.len(), "with no undecided tree: {}", report(variant));
     for r in &repos {
-        assert!(variant.iter().any(|l| l.ends_with(&list(r))), "no worktree list of {r}: {}", report(variant));
+        for lines in [first, variant] {
+            assert_eq!(lines.iter().filter(|l| l.ends_with(&list(r))).count(), 1, "one worktree list of {r}: {}", report(lines));
+        }
     }
 
     let snap: task::Snapshot = serde_json::from_str(&snapshot).unwrap();
@@ -373,6 +376,13 @@ fn the_stale_reaper_asks_git_only_about_a_tree_its_cheap_rules_leave_undecided()
     assert_eq!(tree("sp-merged01").merged_into.as_deref(), Some("local/main"));
     assert_eq!(tree("sp-open01").merged_into, None);
     assert_eq!(tree("sp-done01").bead_state.as_deref(), Some("LANDED"));
+    let resolved = |json: &str| -> std::collections::BTreeMap<String, (usize, Vec<String>)> {
+        serde_json::from_str::<task::Snapshot>(json).unwrap().repos.into_iter().map(|r| (r.name, (r.worktrees.len(), r.landrefs))).collect()
+    };
+    let refs: Vec<String> = landrefs.map(String::from).to_vec();
+    assert_eq!(resolved(&snapshot)["spira"], (4, refs));
+    assert_eq!(resolved(&snapshot)["prrepo"], (0, vec![]), "a repository with no tree resolves no land ref");
+    assert_eq!(resolved(&decided_snapshot)["spira"], (3, vec![]), "nor does one whose trees are decided, a detached one included");
     use spira_runtime::tasks::b::kit::{testing, Input};
     let handler = testing::handler::<task::HelReapStale>(&[(task::CADENCE_KEY, "3600"), (task::IDLE_HOURS_KEY, "48")]);
     let (_, acts) = task::decide(&handler.cfg, &task::Carry { phase: task::Phase::Observing }, &Input::Observed(snap), START).unwrap();
