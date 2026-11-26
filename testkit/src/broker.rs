@@ -42,6 +42,62 @@ impl Process {
     }
 }
 
+/// A subscriber that owes nothing to the library that publishes.
+pub struct Subscriber {
+    _client: rumqttc::Client,
+    connection: rumqttc::Connection,
+}
+
+/// One delivered message.
+#[derive(Debug)]
+pub struct Delivered {
+    pub topic: String,
+    pub payload: Vec<u8>,
+    pub retain: bool,
+}
+
+impl Subscriber {
+    /// Subscribes to `filters` and returns once the broker has acknowledged them all, so
+    /// nothing published afterwards is missed.
+    pub fn to(socket: &Path, filters: &[&str]) -> Subscriber {
+        use rumqttc::{Client, Event, MqttOptions, Packet, QoS, Transport};
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let id = format!("sub-{}", N.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        let mut options = MqttOptions::new(id, socket.to_str().expect("a UTF-8 socket path"), 0);
+        options.set_transport(Transport::Unix);
+        options.set_keep_alive(Duration::ZERO);
+        let (client, mut connection) = Client::new(options, 64);
+        for f in filters {
+            client.subscribe(*f, QoS::AtLeastOnce).expect("queue the subscription");
+        }
+        let mut acked = 0;
+        while acked < filters.len() {
+            match connection.recv_timeout(FAILSAFE) {
+                Ok(Ok(Event::Incoming(Packet::SubAck(_)))) => acked += 1,
+                // A retained value ahead of a later acknowledgement would be lost here.
+                Ok(Ok(Event::Incoming(Packet::Publish(p)))) => panic!("delivered before the subscriptions stood: {}", p.topic),
+                Ok(Ok(_)) => {}
+                other => panic!("the broker never acknowledged the subscription: {other:?}"),
+            }
+        }
+        Subscriber { _client: client, connection }
+    }
+
+    /// The next message; panics when none arrives.
+    pub fn next(&mut self) -> Delivered {
+        use rumqttc::{Event, Packet};
+        loop {
+            match self.connection.recv_timeout(FAILSAFE) {
+                Ok(Ok(Event::Incoming(Packet::Publish(p)))) => {
+                    return Delivered { topic: p.topic, payload: p.payload.to_vec(), retain: p.retain }
+                }
+                Ok(Ok(_)) => {}
+                other => panic!("no message arrived: {other:?}"),
+            }
+        }
+    }
+}
+
 pub struct Broker {
     child: Option<Process>,
     socket: PathBuf,

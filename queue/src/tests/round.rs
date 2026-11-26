@@ -204,6 +204,90 @@ fn open_certify_land_is_one_round_the_whole_way() {
     );
 }
 
+/// A [`RoundBus`](crate::round_bus::RoundBus) on the throwaway broker at `socket`.
+#[cfg(feature = "integration")]
+fn bus_on(socket: &std::path::Path) -> crate::round_bus::RoundBus {
+    let socket = socket.to_path_buf();
+    crate::round_bus::RoundBus::with(move || {
+        let clock = std::sync::Arc::new(ports::VirtualClock::new(0));
+        spira_pub::Publisher::with("queue", spira_pub::Options::new(&socket, clock, Box::new(ports::SeededRng::new(1))))
+    })
+}
+
+/// The next round message: its topic and event.
+#[cfg(feature = "integration")]
+fn next_round(sub: &mut testkit::broker::Subscriber) -> (String, serde_json::Value) {
+    let m = sub.next();
+    (m.topic, serde_json::from_slice(&m.payload).unwrap())
+}
+
+/// Open, certify and land one green round; each verb's exit code.
+#[cfg(feature = "integration")]
+fn a_green_round(t: &T) -> (String, [i32; 3]) {
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
+    let opened = t.run(&["round", "open", "--members", "sp-a:ta,sp-b"]);
+    let batch = batch_of(t);
+    let certified = t.run(&["round", "certify", &batch]);
+    let landed = t.run(&["round", "land", &batch]);
+    (batch, [opened, certified, landed])
+}
+
+#[cfg(feature = "integration")]
+#[test_id(tnsdhq8)]
+#[test]
+fn a_round_subscriber_sees_open_then_green_then_land() {
+    let broker = testkit::broker::Broker::up();
+    let mut sub = testkit::broker::Subscriber::to(broker.socket(), &["round/#"]);
+    let mut t = round_world();
+    t.rounds = bus_on(broker.socket());
+
+    let (batch, codes) = a_green_round(&t);
+
+    assert_eq!(codes, [0, 0, 0], "{}", t.err());
+    let seen: Vec<(String, serde_json::Value)> = (0..3).map(|_| next_round(&mut sub)).collect();
+    assert!(seen.iter().all(|(topic, _)| *topic == format!("round/spira/{batch}")), "{seen:?}");
+    let kinds: Vec<&str> = seen.iter().map(|(_, e)| e["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["open", "green", "land"]);
+    let land = &seen[2].1;
+    assert_eq!((land["by"].as_str(), land["at"].as_u64(), land["fields"]["head"].as_str()), (Some("batcher"), Some(1000), Some("merged-tb")), "{land}");
+}
+
+#[cfg(feature = "integration")]
+#[test_id(t2v7sq6)]
+#[test]
+fn an_open_round_is_republished_to_a_broker_that_lost_it() {
+    let mut broker = testkit::broker::Broker::up();
+    let mut t = round_world();
+    t.rounds = bus_on(broker.socket());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b"]), 0, "{}", t.err());
+    let topic = format!("round/spira/{}", batch_of(&t));
+
+    broker.restart();
+
+    let (got, event) = next_round(&mut testkit::broker::Subscriber::to(broker.socket(), &[&topic]));
+    assert_eq!((got.as_str(), event["kind"].as_str()), (topic.as_str(), Some("open")));
+}
+
+#[cfg(feature = "integration")]
+#[test_id(t1hoovu)]
+#[test]
+fn a_round_with_the_broker_stopped_ends_as_it_does_with_none() {
+    let mut broker = testkit::broker::Broker::up();
+    broker.stop();
+    let mut stopped = round_world();
+    stopped.rounds = bus_on(broker.socket());
+    let without = round_world();
+
+    let (_, with_codes) = a_green_round(&stopped);
+    let (_, without_codes) = a_green_round(&without);
+
+    assert_eq!((with_codes, without_codes), ([0, 0, 0], [0, 0, 0]), "{}", stopped.err());
+    let log = |t: &T| t.landing_log().replace(&t.dir.display().to_string(), "<dir>");
+    assert_eq!(log(&stopped), log(&without));
+    assert_eq!(stopped.landed_ref(), without.landed_ref());
+}
+
 #[test_id(tz5woec)]
 #[test]
 fn a_land_that_waited_on_the_lock_while_another_lander_landed_the_round_answers_already_landed() {

@@ -64,6 +64,7 @@ fn main() -> ExitCode {
         SysEnv,
         StdEmit::new(),
     );
+    let rounds = queue::round_bus::RoundBus::configured();
     let w = World {
         git: &git,
         bd: &bd,
@@ -75,6 +76,7 @@ fn main() -> ExitCode {
         clock: &clock,
         env: &env,
         io: &io,
+        rounds: &rounds,
     };
     let rc = queue::telemetry::run(
         &queue::telemetry::sink(),

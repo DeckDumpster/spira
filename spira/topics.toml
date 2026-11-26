@@ -22,13 +22,13 @@ fields = ["sessions"]
 family = "round/<repo>/<batch>"
 class = "state"
 publisher = "queue"
-fields = ["event"]
+fields = ["kind", "by", "at", "fields"]
 
 [[topic]]
 family = "gate/<repo>/<bead>"
 class = "state"
 publisher = "gate"
-fields = ["rc", "reason", "killed_by", "over_cap"]
+fields = ["status", "rc", "reason", "over_cap", "killed_by"]
 
 [[topic]]
 family = "session/<bead>/state"
@@ -45,8 +45,8 @@ fields = ["sessions"]
 [[topic]]
 family = "test/<id>/red"
 class = "state"
-publisher = "queue, gate"
-fields = ["at", "tree", "tree_touches_crate"]
+publisher = "gate"
+fields = ["at", "tree", "touches_crate"]
 
 [[topic]]
 family = "release/active"

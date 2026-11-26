@@ -89,6 +89,8 @@ struct Fake {
     err: RefCell<Vec<String>>,
     clock: Cell<u64>,
     signal: Cell<bool>,
+    /// The throwaway broker the trial publishes to; none publishes nothing.
+    broker: RefCell<Option<PathBuf>>,
     // ---- composition (sp-2ghui)
     mode: RefCell<Result<GateMode, String>>,
     touched: RefCell<Result<Vec<Changed>, String>>,
@@ -385,6 +387,7 @@ impl Fake {
             machine: RefCell::default(),
             machine_err: RefCell::default(),
             cancel_at: Cell::new(None),
+            broker: RefCell::default(),
         }
     }
     fn plain_run(&self, tree: &Path, env: &[(String, String)], timeout: &str, cmd: &str) -> (i32, String) {
@@ -957,6 +960,17 @@ impl World for Fake {
     }
     fn now(&self) -> u64 {
         self.clock.get()
+    }
+    fn publish(&self, messages: &[(String, serde_json::Value)]) {
+        let Some(socket) = self.broker.borrow().clone() else { return };
+        #[cfg(feature = "integration")]
+        {
+            let clock = std::sync::Arc::new(ports::VirtualClock::new(0));
+            let options = spira_pub::Options::new(socket, clock, Box::new(ports::SeededRng::new(1)));
+            crate::publish::send(spira_pub::Publisher::with("gate", options), messages);
+        }
+        #[cfg(not(feature = "integration"))]
+        let _ = (socket, messages);
     }
     fn cgroup_mark(&self) -> Option<spira_otel::cgroup::Mark> {
         self.marks.borrow_mut().pop_front()
@@ -6814,4 +6828,99 @@ fn a_branch_that_deletes_the_declaration_the_landing_ref_has_is_not_certified_on
     assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
     assert!(f.verdict_line().contains("reason=certifies-nothing"), "{}", f.verdict_line());
     assert!(cert_written(&f).is_none());
+}
+
+// ---- what a trial publishes
+
+/// A unit red twice on the same tree, in the crate the branch touches.
+#[cfg(feature = "integration")]
+fn published_red_fake() -> Fake {
+    const RED: &str = "        FAIL [   0.010s] (1/1) gate t::t0aaaaa\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped";
+    rerun_fake(RED, Some(RED))
+}
+
+/// The next `n` messages, by topic.
+#[cfg(feature = "integration")]
+fn delivered(sub: &mut testkit::broker::Subscriber, n: usize) -> std::collections::BTreeMap<String, serde_json::Value> {
+    (0..n).map(|_| sub.next()).map(|m| (m.topic, serde_json::from_slice(&m.payload).unwrap())).collect()
+}
+
+#[cfg(feature = "integration")]
+#[test_id(t6e8sv7)]
+#[test]
+fn a_red_trial_publishes_its_result_and_its_red_test() {
+    let broker = testkit::broker::Broker::up();
+    let mut sub = testkit::broker::Subscriber::to(broker.socket(), &["gate/#", "test/#"]);
+    let f = published_red_fake();
+    *f.broker.borrow_mut() = Some(broker.socket().to_path_buf());
+
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+
+    let seen = delivered(&mut sub, 2);
+    assert_eq!(
+        seen.get("gate/spira/sp-a"),
+        Some(&serde_json::json!({"status": "FAIL", "rc": 1, "reason": "branch-red", "over_cap": false, "killed_by": null})),
+        "{seen:?}"
+    );
+    let red = &seen["test/t0aaaaa/red"];
+    assert_eq!((red["tree"].as_str(), red["touches_crate"].as_bool()), (Some("tree-of-spira/sp-a"), Some(true)), "{red}");
+    assert!(red["at"].is_u64(), "{red}");
+}
+
+#[cfg(feature = "integration")]
+#[test_id(t6lsjx1)]
+#[test]
+fn a_trial_whose_testenv_run_was_stopped_publishes_who_sent_the_signal() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    let dir = testkit::TempDir::new("gate-stopped");
+    let record = dir.join("record");
+    let mut supervisor = Command::new(testkit::bin_exe("testenv"))
+        .arg("sandbox-supervise")
+        .arg(&record)
+        .args(["sh", "-c", "echo ready; exec sleep 29.5"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut ready = String::new();
+    BufReader::new(supervisor.stdout.take().unwrap()).read_line(&mut ready).unwrap();
+    assert_eq!(ready.trim(), "ready");
+    let mut killer = Command::new("kill").args(["-TERM", &supervisor.id().to_string()]).spawn().unwrap();
+    supervisor.wait().unwrap();
+    killer.wait().unwrap();
+    let recorded = std::fs::read_to_string(&record).unwrap();
+    let stopped = crate::stopped::Stopped::parse(recorded.lines().next().unwrap()).expect("testenv's record parses");
+
+    let broker = testkit::broker::Broker::up();
+    let mut sub = testkit::broker::Subscriber::to(broker.socket(), &["gate/#"]);
+    let out = format!("VERDICT RED ran=1 red=1 first=unit-tests.sh: exit 143 {}", stopped.verdict_field());
+    let f = flip_fake_with(&out, Ok(vec![]));
+    *f.broker.borrow_mut() = Some(broker.socket().to_path_buf());
+    f.run();
+
+    let result = &delivered(&mut sub, 1)["gate/spira/sp-a"];
+    assert_eq!(
+        result["killed_by"],
+        serde_json::json!({"sig": 15, "by_pid": killer.id(), "cmd": "kill", "cgroup": stopped.unit()}),
+        "{result}"
+    );
+}
+
+#[cfg(feature = "integration")]
+#[test_id(ts0etej)]
+#[test]
+fn a_trial_with_the_broker_stopped_ends_as_it_does_with_none() {
+    let mut broker = testkit::broker::Broker::up();
+    broker.stop();
+    let stopped = published_red_fake();
+    *stopped.broker.borrow_mut() = Some(broker.socket().to_path_buf());
+    let without = published_red_fake();
+
+    assert_eq!((stopped.run(), without.run()), (FAIL, FAIL), "{}", stopped.stderr());
+
+    assert_eq!(stopped.full_verdict_line(), without.full_verdict_line());
+    assert_eq!(*stopped.appended.borrow(), *without.appended.borrow(), "gate.log");
+    assert_eq!(stopped.tsd.borrow().len(), 1);
+    let row = |f: &Fake| f.tsd.borrow()[0].clone();
+    assert_eq!(row(&stopped), row(&without), "the gate-run row");
 }

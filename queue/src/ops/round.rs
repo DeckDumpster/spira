@@ -2384,12 +2384,12 @@ fn open_timed(
     mark_running(&c, &batch);
     steps.lap("record");
     round_event(
+        w,
         &c.s.run,
         "open",
         &repo_name,
         &batch,
         by,
-        w.clock.now(),
         &[("head", head.to_string()), ("members", csv(&merged)), ("steps", steps.field())],
     );
     w.out(format!("steps={}", steps.field()));
@@ -4546,7 +4546,7 @@ fn certify_pass(
             .unwrap_or_else(|| (reds[0].clone(), format!("{}: red", reds[0])));
         fields.push(("phase", phase));
         fields.push(("reason", one_line(&reason)));
-        round_event(&c.s.run, "red", &c.r.name, batch, by, w.clock.now(), &fields);
+        round_event(w, &c.s.run, "red", &c.r.name, batch, by, &fields);
         let verdict = format!(
             "queue.sh {label}: round {batch} is RED at {head}: {}{}",
             reds.join(","),
@@ -4783,12 +4783,12 @@ fn finish_green(
     }
     mark_running(c, batch);
     round_event(
+        w,
         &c.s.run,
         "green",
         &c.r.name,
         batch,
         by,
-        w.clock.now(),
         &[
             ("head", head.to_string()),
             ("tree", tree.to_string()),
@@ -5106,12 +5106,12 @@ fn eject(
         }
         w.lib.comment(bead, &comment);
         round_event(
+            w,
             &c.s.run,
             "eject",
             &c.r.name,
             batch,
             by,
-            w.clock.now(),
             &[
                 ("id", bead.to_string()),
                 ("cause", own_cause.as_str().to_string()),
@@ -5557,12 +5557,12 @@ fn land_round(
         crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, batch);
     }
     round_event(
+        w,
         &c.s.run,
         "land",
         &c.r.name,
         batch,
         by,
-        w.clock.now(),
         &[("head", head.to_string()), ("members", csv(&members))],
     );
     w.out(format!(
@@ -5665,12 +5665,12 @@ fn settle_parent(
     }
     mark_running(c, batch);
     round_event(
+        w,
         &c.s.run,
         "restack",
         &c.r.name,
         batch,
         by,
-        w.clock.now(),
         &[("head", new_head.to_string()), ("base", onto.to_string())],
     );
     w.err(format!("queue.sh {label}: round {batch} was stacked on round {parent}, which changed or ended without landing — rebuilt at {new_head} on {onto}; run `queue round certify {batch}`, it is not landed"));
@@ -5736,12 +5736,12 @@ fn remerge_if_moved(
     }
     mark_running(c, batch);
     round_event(
+        w,
         &c.s.run,
         "remerge",
         &c.r.name,
         batch,
         by,
-        w.clock.now(),
         &[
             ("head", new_head.to_string()),
             ("base", base_now.to_string()),
@@ -6035,12 +6035,12 @@ fn close_abandoned(
         &format!("round {batch} was abandoned: {}", one_line(reason)),
     );
     round_event(
+        w,
         &c.s.run,
         "abandon",
         &c.r.name,
         batch,
         by,
-        w.clock.now(),
         &[("reason", one_line(reason))],
     );
     w.out(format!(
