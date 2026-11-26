@@ -52,6 +52,7 @@ pub struct Registered {
     pub sccache_dav_root: String,
     pub lc_password_file: String,
     pub repo_map: String,
+    pub broker_socket: String,
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +75,7 @@ pub struct Config {
     sccache_dav_root: String,
     lc_password_file: String,
     repo_map: String,
+    broker_socket: String,
     /// `spira.hotfix_alert_hours` from the host config document — `SPIRA_HOTFIX_ALERT_HOURS`
     /// is not a registered key, so this one field is still read from the typed document
     /// rather than `cfg_parse` (see [`Config::hotfix_alert_hours`]).
@@ -133,6 +135,9 @@ impl Config {
             sccache_dav_root: cfg("SPIRA_SCCACHE_DAV_ROOT").unwrap_or_default(),
             lc_password_file: cfg("SPIRA_LC_PASSWORD_FILE")?,
             repo_map: cfg("SPIRA_REPO_MAP")?,
+            // Unregistered in an active release older than the key: empty, which only placing
+            // the broker's config refuses.
+            broker_socket: cfg(spira_config::broker::SOCKET_KEY).unwrap_or_default(),
         };
         Config::resolve_with(flags, env, doc, &reg)
     }
@@ -179,6 +184,7 @@ impl Config {
             sccache_dav_root: reg.sccache_dav_root.clone(),
             lc_password_file: reg.lc_password_file.clone(),
             repo_map: reg.repo_map.clone(),
+            broker_socket: reg.broker_socket.clone(),
             hotfix_alert_hours_toml,
         })
     }
@@ -254,6 +260,8 @@ impl Config {
         let run = self.run.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
         let dav_root = if self.sccache_dav_root.is_empty() && !run.is_empty() { format!("{run}/sccache-dav") } else { self.sccache_dav_root.clone() };
         m.insert("SPIRA_SCCACHE_DAV_ROOT".into(), dav_root);
+        let socket = spira_config::broker::socket_path(&run, &|_| Ok(self.broker_socket.clone()));
+        m.insert(spira_config::broker::SOCKET_KEY.into(), socket.unwrap_or_default());
         m.insert("SPIRA_LC_PASSWORD_FILE".into(), self.lc_password_file.clone());
         // The spec every unit runs under (the one source); empty refuses any template using it.
         m.insert("SPIRA_TOML".into(), self.env("SPIRA_TOML").unwrap_or_default());

@@ -556,6 +556,128 @@ fn a_rollback_whose_slow_unit_comes_up_on_the_second_restart_succeeds() {
     assert_eq!(current_of(&w), A);
 }
 
+// ---------------------------------------------------------------- broker config
+
+const BROKER: &str = "spira-broker-prod.service";
+const BROKER_UNIT: &str = "[Service]\nType=notify\nExecStart=@SPIRA_ENV_PATH@/mosquitto -c @SPIRA_RUN@/mosquitto.conf\n";
+const C: &str = "cccccccccccccccccccccccccccccccccccccccc";
+
+/// Releases `A`, `B` and `C` ship one broker unit; `B`'s `mosquitto.conf` differs from `A`'s and
+/// `C`'s matches `B`'s. `current` is `A`, with its unit installed and its config in the run dir.
+fn world_with_a_broker_on_a(socket: &str) -> World {
+    let w = World::with_git_and_reg(FakeGit::default(), Registered { broker_socket: socket.into(), ..Default::default() });
+    for (sha, note) in [(A, "first"), (B, "second"), (C, "second")] {
+        let rel = w.cfg.releases.join(sha);
+        file(&rel.join("systemd/spira-broker.service"), BROKER_UNIT);
+        file(&rel.join("systemd/mosquitto.conf"), &format!("# {note}\nlistener 0 @SPIRA_BROKER_SOCKET@\n"));
+        let m = Manifest { commit: sha.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
+        fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+    }
+    let run = w.cfg.run.clone().unwrap();
+    let home = w.cfg.home().unwrap().display().to_string();
+    let unit = BROKER_UNIT.replace("@SPIRA_ENV_PATH@", &spira_config::spira_env_bin(&home)).replace("@SPIRA_RUN@", &run.display().to_string());
+    file(&w.cfg.unit_dir.join(BROKER), &unit);
+    file(&run.join("mosquitto.conf"), &broker_conf_of(&w, "first"));
+    std::os::unix::fs::symlink(A, w.cfg.releases.join("current")).unwrap();
+    let state = w.cfg.state_dir().unwrap();
+    fs::create_dir_all(&state).unwrap();
+    fs::write(state.join("history"), format!("{A} landed\n")).unwrap();
+    w
+}
+
+fn broker_conf_of(w: &World, note: &str) -> String {
+    format!("# {note}\nlistener 0 {}\n", w.cfg.run.as_ref().unwrap().join("sock/b.sock").display())
+}
+
+fn placed_broker_conf(w: &World) -> String {
+    fs::read_to_string(w.cfg.run.as_ref().unwrap().join("mosquitto.conf")).unwrap()
+}
+
+fn broker_running(w: &World) -> FakeSystemctl {
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.states.borrow_mut().insert(BROKER.into(), UnitState { active: "active".into(), result: "success".into(), kind: "notify".into() });
+    sc
+}
+
+fn activate_sha(w: &World, sc: &FakeSystemctl, sha: &str) -> Result<activate::Switched, String> {
+    let reads = FakeReads::serving();
+    let nix = FakeNix::default();
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None };
+    activate::activate(&ctx, sha, None)
+}
+
+fn restarts_of_the_broker(sc: &FakeSystemctl) -> usize {
+    sc.restarts.borrow().iter().filter(|u| *u == BROKER).count()
+}
+
+#[test_id(tp5ewbe)]
+#[test]
+fn activate_and_rollback_each_place_their_releases_broker_config_and_restart_the_broker() {
+    let w = world_with_a_broker_on_a("sock/b.sock");
+    let sc = broker_running(&w);
+    let seen = {
+        let conf = w.cfg.run.clone().unwrap().join("mosquitto.conf");
+        move || fs::read_to_string(&conf).unwrap()
+    };
+    let sc = FakeSystemctl { on_restart: Some(Box::new(seen)), ..sc };
+
+    let out = activate_sha(&w, &sc, B).unwrap();
+    assert_eq!(out.restarted, [BROKER], "no restart");
+    assert_eq!(placed_broker_conf(&w), broker_conf_of(&w, "second"));
+    assert!(w.cfg.run.as_ref().unwrap().join("sock").is_dir(), "the socket's directory is made");
+
+    rollback_with(&w, &sc).unwrap();
+    assert_eq!(placed_broker_conf(&w), broker_conf_of(&w, "first"));
+    assert_eq!(restarts_of_the_broker(&sc), 2);
+    assert_eq!(*sc.at_restart.borrow(), [broker_conf_of(&w, "second"), broker_conf_of(&w, "first")], "each restart finds its release's config in place");
+}
+
+#[test_id(ty8gcer)]
+#[test]
+fn a_release_whose_broker_config_renders_the_same_leaves_the_broker_running() {
+    let w = world_with_a_broker_on_a("sock/b.sock");
+    let sc = broker_running(&w);
+    activate_sha(&w, &sc, B).unwrap();
+    let out = activate_sha(&w, &sc, C).unwrap();
+    assert_eq!(out.left_running, [BROKER]);
+    assert!(out.restarted.is_empty(), "{:?}", out.restarted);
+    assert_eq!(restarts_of_the_broker(&sc), 1);
+}
+
+#[test_id(tko63ff)]
+#[test]
+fn an_undone_activation_restores_the_broker_config_before_restarting_the_broker_on_it() {
+    let w = world_with_a_broker_on_a("sock/b.sock");
+    let conf = w.cfg.run.clone().unwrap().join("mosquitto.conf");
+    let mut sc = broker_running(&w);
+    sc.restart_fails.insert(BROKER.into());
+    sc.on_restart = Some(Box::new(move || fs::read_to_string(&conf).unwrap()));
+    let e = activate_sha(&w, &sc, B).unwrap_err();
+    assert_eq!(current_of(&w), A, "{e}");
+    assert_eq!(placed_broker_conf(&w), broker_conf_of(&w, "first"), "{e}");
+    assert_eq!(*sc.at_restart.borrow(), [broker_conf_of(&w, "second"), broker_conf_of(&w, "first")], "{e}");
+}
+
+#[test_id(tl3vtys)]
+#[test]
+fn a_broker_config_that_cannot_be_placed_undoes_the_activation_naming_the_key() {
+    let w = world_with_a_broker_on_a("");
+    let sc = broker_running(&w);
+    let e = activate_sha(&w, &sc, B).unwrap_err();
+    assert!(e.contains("SPIRA_BROKER_SOCKET") && e.contains("rolled back"), "{e}");
+    assert_eq!(current_of(&w), A, "{e}");
+    assert!(sc.restarts.borrow().is_empty(), "{e}");
+}
+
+#[test_id(t99geib)]
+#[test]
+fn a_box_without_the_broker_unit_gets_no_broker_config_from_activation() {
+    let w = world_with_a_broker_on_a("");
+    fs::remove_file(w.cfg.unit_dir.join(BROKER)).unwrap();
+    activate_sha(&w, &broker_running(&w), B).unwrap();
+    assert!(placed_broker_conf(&w).starts_with("# first\n"));
+}
+
 // ---------------------------------------------------------------- hotfix
 
 const STANDING_HOTFIX: &str = "sha cccccccccccccccccccccccccccccccccccccccc\nreason r\nat t\n";
