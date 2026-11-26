@@ -15,6 +15,7 @@ mod telemetry;
 pub mod topics;
 
 pub use publisher::{Log, Options, Publisher, Republish, CONNECT_DEADLINE, MAX_PAYLOAD};
+pub use socket_watch::SocketWatch;
 pub use topics::Class;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

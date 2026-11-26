@@ -855,6 +855,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-pub",
  "spira-store",
  "spira-test-id",
  "testkit",
@@ -1000,7 +1001,11 @@ dependencies = [
 name = "inbox-rules"
 version = "1.0.0"
 dependencies = [
+ "ports",
  "regex",
+ "rumqttc",
+ "serde_json",
+ "spira-pub",
  "spira-test-id",
  "testkit",
 ]
@@ -1014,6 +1019,7 @@ dependencies = [
  "regex",
  "spira-config",
  "spira-otel",
+ "spira-pub",
  "spira-test-id",
  "spira-world",
  "testkit",
@@ -2615,6 +2621,7 @@ dependencies = [
  "spira-claim",
  "spira-config",
  "spira-otel",
+ "spira-pub",
  "spira-store",
  "spira-submission",
  "spira-test-id",
@@ -2674,6 +2681,23 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-test-id",
+ "testkit",
+]
+
+[[package]]
+name = "spira-sub"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "ports",
+ "rumqttc",
+ "serde",
+ "serde_json",
+ "spira-config",
+ "spira-otel",
+ "spira-pub",
+ "spira-test-id",
+ "strand",
  "testkit",
 ]
 

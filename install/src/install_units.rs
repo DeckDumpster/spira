@@ -5,7 +5,7 @@
 //! `release install-tarball --skip-restart` leaves this call as the one that matters).
 
 use crate::decide::{decide, Action, State};
-use crate::manifest::{inst_name, inst_watch_name, Manifest};
+use crate::manifest::{inst_name, Manifest};
 use crate::systemctl::Systemctl;
 use crate::values::{render, HostValues};
 use std::collections::BTreeMap;
@@ -150,9 +150,10 @@ pub fn render_all(ctx: &Ctx) -> Result<Vec<(String, String, String)>, String> {
         let text = if WATCHDOG_ROWS.contains(&name) { render_watchdog_row(ctx, name)? } else { render_template(ctx, name, None)? };
         out.push((inst_name(name, &ctx.host.instance), name.to_string(), text));
     }
-    for w in &ctx.manifest.watch_names {
-        let text = render_template(ctx, "spira-watch@.service", Some(w))?;
-        out.push((inst_watch_name(w, &ctx.host.instance), "spira-watch@.service".to_string(), text));
+    let instances = ctx.manifest.instances().zip(ctx.manifest.instance_names(&ctx.host.instance));
+    for ((template, name), installed) in instances {
+        let text = render_template(ctx, template, Some(name))?;
+        out.push((installed, template.to_string(), text));
     }
     Ok(out)
 }
@@ -571,9 +572,6 @@ fn retire_unledgered_units(ctx: &Ctx, now: &std::collections::BTreeSet<String>, 
 
 fn migrate_legacy(ctx: &Ctx, r: &mut Report) {
     for name in ctx.manifest.template_names() {
-        if name == "spira-watch@.service" {
-            continue;
-        }
         if !(name.starts_with("spira-") && (name.ends_with(".service") || name.ends_with(".timer"))) {
             continue;
         }
@@ -654,7 +652,7 @@ pub fn prune_targets<'a>(on_disk_or_known: impl IntoIterator<Item = &'a str>, ex
 /// template's own installed name) — the prune passes' "a manifest unit, not a stray" set.
 pub fn expected_installed_names(manifest: &Manifest, instance: &str) -> std::collections::BTreeSet<String> {
     let mut s: std::collections::BTreeSet<String> = manifest.template_names().iter().map(|n| inst_name(n, instance)).collect();
-    s.extend(manifest.watch_names.iter().map(|w| inst_watch_name(w, instance)));
+    s.extend(manifest.instance_names(instance));
     s
 }
 

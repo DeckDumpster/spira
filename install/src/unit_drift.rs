@@ -16,7 +16,7 @@ const KNOWN_DROPINS: [&str; 2] = ["50-spira-intake.conf", "cadence.conf"];
 pub fn shipped_names(instance: &str) -> Result<BTreeSet<String>, String> {
     let m = crate::bootstrap::manifest_from_env(instance)?;
     let mut names: BTreeSet<String> = m.template_names().into_iter().map(|n| crate::manifest::inst_name(n, instance)).collect();
-    names.extend(m.watch_names.iter().map(|w| crate::manifest::inst_watch_name(w, instance)));
+    names.extend(m.instance_names(instance));
     names.extend(m.unbuilt.iter().map(|n| crate::manifest::inst_name(n, instance)));
     names.extend(crate::manifest::union_installed_names(instance));
     Ok(names)

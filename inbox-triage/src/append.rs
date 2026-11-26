@@ -44,7 +44,8 @@ pub fn run(text: &str) -> Result<(), String> {
             (String::new(), String::new())
         }
     };
-    record(Path::new(&inbox), &line, &wake, &pattern, || std::env::current_exe().map_err(|e| e.to_string())).map(|_| ())
+    let flusher = || std::env::current_exe().map_err(|e| e.to_string());
+    record(Path::new(&inbox), &line, &wake, &pattern, flusher, || spira_pub::Publisher::new("inbox-triage")).map(|_| ())
 }
 
 fn size(path: &Path) -> u64 {

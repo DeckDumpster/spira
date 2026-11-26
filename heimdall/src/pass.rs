@@ -187,7 +187,8 @@ fn page_inbox(paths: &PassPaths, now: i64, title: &str, evidence: &str) -> Resul
     let beads = evidence.lines().find_map(|l| l.strip_prefix("BEADS")).map(str::trim).unwrap_or_default();
     let line = inbox_rules::line(&util::iso_utc(now), &format!("[heimdall] {title}; beads {beads}"));
     let flusher = || spira_config::release_env::tool("inbox-triage").map(PathBuf::from);
-    inbox_rules::record(&paths.inbox, &line, &paths.push_wake, &paths.push_pattern, flusher).map(|_| ())
+    let publisher = || spira_pub::Publisher::new("heimdall");
+    inbox_rules::record(&paths.inbox, &line, &paths.push_wake, &paths.push_pattern, flusher, publisher).map(|_| ())
 }
 
 #[cfg(test)]

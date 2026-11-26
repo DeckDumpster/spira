@@ -1,0 +1,40 @@
+[package]
+name = "spira-sub"
+version = "0.1.0"
+edition = "2021"
+publish = false
+autotests = false
+description = "spira-sub — one subscriber's single MQTT connection: add and drop topic filters while connected, and stream each delivery as one line."
+
+[lib]
+name = "spira_sub"
+path = "src/lib.rs"
+
+[[bin]]
+name = "spira-sub"
+path = "src/main.rs"
+test = false
+
+[[test]]
+name = "broker"
+path = "tests/broker.rs"
+required-features = ["integration"]
+
+[features]
+integration = ["ports/integration", "spira-config/integration", "spira-otel/integration", "spira-pub/integration", "strand/integration", "testkit/integration", "spira-test-id/integration"]
+
+[dependencies]
+# TLS off: the broker is a Unix socket.
+rumqttc = { version = "0.25.1", default-features = false }
+libc = "0.2"
+ports = { path = "../ports" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+spira-config = { path = "../spira-config" }
+spira-otel = { path = "../spira-otel" }
+spira-pub = { path = "../spira-pub" }
+strand = { path = "../strand" }
+
+[dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
+testkit = { path = "../testkit" }

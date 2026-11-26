@@ -46,6 +46,10 @@ pub struct Family {
     pub publisher: String,
     /// The payload's field names.
     pub fields: Vec<String>,
+    /// The publisher names that live as long as what they publish: one going is news to this
+    /// family's subscribers. A publisher that exits after each message is not listed.
+    #[serde(default)]
+    pub resident: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -104,6 +108,11 @@ pub fn family_of(topic: &str) -> Option<&'static Family> {
 /// Whether an MQTT subscription filter (`+` one level, a final `#` the rest, the parent level
 /// included) could match a topic of any declared family. A malformed filter matches none.
 pub fn filter_matches_any(filter: &str) -> bool {
+    families_matching(filter).next().is_some()
+}
+
+/// The declared families some topic of which the filter selects.
+pub fn families_matching(filter: &str) -> impl Iterator<Item = &'static Family> + '_ {
     let words: Vec<&str> = filter.split('/').collect();
     let well_formed = !filter.is_empty()
         && !filter.contains('\0')
@@ -112,7 +121,7 @@ pub fn filter_matches_any(filter: &str) -> bool {
             "#" => i + 1 == words.len(),
             w => !w.contains(['+', '#']),
         });
-    well_formed && families().iter().any(|f| filter_meets(&words, &segments(&f.family)))
+    families().iter().filter(move |f| well_formed && filter_meets(&words, &segments(&f.family)))
 }
 
 fn filter_meets(filter: &[&str], pattern: &[Segment]) -> bool {

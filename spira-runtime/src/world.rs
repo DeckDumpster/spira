@@ -1445,7 +1445,8 @@ impl World {
         };
         let mut pushed = false;
         for line in input.lines().filter(|l| !l.is_empty()) {
-            pushed |= inbox_rules::record(&self.inbox, line, &self.push_wake, &self.push_pattern, flusher)?;
+            let publisher = || spira_pub::Publisher::new("spira-runtime");
+            pushed |= inbox_rules::record(&self.inbox, line, &self.push_wake, &self.push_pattern, flusher, publisher)?;
         }
         Ok(if pushed { "appended, pushed" } else { "appended" }.into())
     }

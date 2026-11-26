@@ -12,7 +12,8 @@ pub struct Mapped {
     pub installed: String,
     /// The template file name in the release's `systemd/`, e.g. `spira-sentinel.service`.
     pub template: String,
-    /// For `spira-watch@.service`: the watcher name `%i` becomes.
+    /// For an instanced template (`spira-watch@.service`, `spira-sub@.service`): the name `%i`
+    /// becomes.
     pub watcher: Option<String>,
 }
 
@@ -27,13 +28,15 @@ pub fn template_for(installed: &str, templates: &BTreeSet<String>, instance: &st
         let Some(stem) = installed.strip_suffix(ext) else { continue };
         let base = stem.strip_suffix(&format!("-{instance}"))?;
         let t = format!("{base}{ext}");
-        if templates.contains(&t) && t != "spira-watch@.service" {
+        if templates.contains(&t) && !t.ends_with("@.service") {
             return mapped(&t, None);
         }
         if ext == ".service" {
-            if let Some(name) = base.strip_prefix("spira-watch-") {
-                if !name.is_empty() && templates.contains("spira-watch@.service") {
-                    return mapped("spira-watch@.service", Some(name.to_string()));
+            for (prefix, instanced) in [("spira-watch-", "spira-watch@.service"), ("spira-sub-", "spira-sub@.service")] {
+                if let Some(name) = base.strip_prefix(prefix).filter(|n| !n.is_empty()) {
+                    if templates.contains(instanced) {
+                        return mapped(instanced, Some(name.to_string()));
+                    }
                 }
             }
         }

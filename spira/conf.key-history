@@ -839,3 +839,4 @@ conditions_max_file
 cr_size_unit_lines
 dolt_unit
 broker_socket
+sub_control_dir

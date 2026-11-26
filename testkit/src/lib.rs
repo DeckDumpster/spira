@@ -139,6 +139,11 @@ impl ChildGuard {
         ChildGuard(child)
     }
 
+    /// The piped stdout and stderr, for a test that reads them while the child runs.
+    pub fn pipes(&mut self) -> (Option<std::process::ChildStdout>, Option<std::process::ChildStderr>) {
+        (self.0.stdout.take(), self.0.stderr.take())
+    }
+
     /// The child's pid (also its process group id, since it leads its own group).
     pub fn id(&self) -> u32 {
         self.0.id()

@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=runtime
+DOC=The directory spira-sub keeps each subscriber's control socket (<name>.sock) and subscription set (<name>.subs) in. A relative value is a path under SPIRA_RUN.
+SCHEMA=REQUIRED: spira-sub's directory for each subscriber's control socket and subscription set. A relative value is a path under spira.run. spira-config init writes it on a fresh install and activation's config delta declares it on an upgrade; a reader never defaults it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Written by spira-config init only: a reader refuses a config that does not declare the key.
+    : "${SPIRA_SUB_CONTROL_DIR:=sub}"
+SPIRA_CONF_DEFAULT_EOF

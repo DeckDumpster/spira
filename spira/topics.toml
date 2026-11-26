@@ -5,18 +5,22 @@
 #   class      state (retained: the broker keeps the last value) | chatter (not retained)
 #   publisher  who publishes it
 #   fields     the payload's field names
+#   resident   optional: the publisher names that live as long as what they publish. When one's
+#              publisher/<name> goes to gone, the family's subscribers are told.
 
 [[topic]]
 family = "bead/<id>/state"
 class = "state"
 publisher = "store-bridge"
 fields = ["state", "from", "actor", "at"]
+resident = ["lc-serve"]
 
 [[topic]]
 family = "bead/<id>/sessions"
 class = "state"
 publisher = "store-bridge"
 fields = ["sessions", "holder", "at"]
+resident = ["lc-serve"]
 
 [[topic]]
 family = "round/<repo>/<batch>"
