@@ -65,7 +65,7 @@ The status is `forge check-status <path> <pr> <branch>`'s first line, `provision
 normalised to `harness_fault`. On 3 the lock is dropped and `settle_publish_red` runs
 unlocked: red suites and run URL from the same check-status output (`red-suite: `,
 `run-url: ` lines, suites de-duplicated in order); `pr-close`; one bead through
-`bdq create` (seam R23: actor `${SPIRA_QUEUE_ACTOR:-queue.sh}`, type bug, priority
+`content create` through `LcClient` (R23: actor `${SPIRA_QUEUE_ACTOR:-queue.sh}` in the body's first line, type bug, priority
 `SPIRA_INCIDENT_PRIORITY`, labels `spira,plan,repo:<repo>`, body the same text
 verdict.sh wrote, minus its "Local attribution" paragraph); remove the record; write
 `publish-red` = `head=<head>\nfix_forward=<id>` atomically; `QUEUE PUBLISH_RED` line;
@@ -169,9 +169,8 @@ never cleaned), the head-sha verification (the sp-quu2w class of bug).
 **Unit tests** (`cargo test -p queue`, 158 in all): `queue/src/tests/verdict.rs` (34) covers
 each row of §2.1 and §2.2, the pure classifiers, the lock wait and starvation counter, the
 lifecycle walk, the stash refusal and `step` running the pass in process;
-`real::tests::context_seam_carries_the_verdict_thresholds_with_the_per_repo_override` and
-`real::tests::create_bug_seam_files_through_bdq_with_the_body_in_a_file` run the two seam
-changes through real bash.
+`queue/src/tests/transport.rs` covers the filing, note and comment calls over a scripted
+store transport.
 
 **Parity** (before deletion): a temporary suite ran `bash verdict.sh` and `queue verdict`
 on 25 identically-built fixtures (8 queue.local, 17 queue.forge) and compared exit, output,

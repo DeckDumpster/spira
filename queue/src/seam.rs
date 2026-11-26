@@ -15,15 +15,11 @@ pub enum Op {
     BeadReopen,
     CauseEvent,
     ReleaseClaim,
-    Comment,
     Event,
     Rebase,
     LandSubject,
     FormatBatch,
     PfGate,
-    CreateBug,
-    AmendBug,
-    BeadLive,
 }
 
 /// The record separator that precedes a seam's machine-readable answer on stdout, so any
@@ -49,7 +45,6 @@ fn body(op: Op) -> &'static str {
         Op::BeadReopen => "bead_reopen \"$1\" \"$2\" \"\" \"$3\"\nexit $?\n",
         Op::CauseEvent => "_bump_write_event \"$1\" reopen \"$2\"\nexit $?\n",
         Op::ReleaseClaim => "release_claim \"$1\"\nexit $?\n",
-        Op::Comment => "printf '%s' \"$2\" | bdq comment \"$1\" --stdin >/dev/null 2>&1 || true\nexit 0\n",
         Op::Event => "spira_event \"$1\" - \"$2\" \"$3\" || true\nexit 0\n",
         Op::Rebase => "rebase_branch \"$1\" \"$2\" \"$3\" \"$4\" 2>/dev/null; __rc=$?\nprintf '\\036%s' \"${REBASE_FAILURE:-}\"\nexit $__rc\n",
         Op::LandSubject => "printf '\\036%s' \"$(land_subject \"$1\")\"\nexit 0\n",
@@ -106,21 +101,6 @@ fn body(op: Op) -> &'static str {
             "printf '\\036%s' \"$__o\"\n",
             "exit $__rc\n",
         ),
-        // The body travels as a value and lands in a temp file inside the script: bd reads
-        // it with --body-file, never argv (law-payloads-go-on-stdin).
-        Op::CreateBug => "__f=\"$(mktemp)\" || exit 1\nprintf '%s' \"$5\" > \"$__f\"\n__id=\"$(BEADS_ACTOR=\"$1\" bdq create \"$2\" --type bug --priority \"$3\" --labels \"$4\" --body-file \"$__f\" --silent 2>/dev/null | tr -d '[:space:]')\"\nrm -f \"$__f\"\nprintf '\\036%s' \"$__id\"\nexit 0\n",
-        Op::AmendBug => r#"__r="$(lc_bead_row "$2" 2>/dev/null)" || { printf '\036'; exit 0; }
-case "${__r%%$'\t'*}" in ""|LANDED|SUPERSEDED|DROPPED|DONE) printf '\036'; exit 0 ;; esac
-__f="$(mktemp)" || exit 1
-printf '%s' "$3" > "$__f"
-if BEADS_ACTOR="$1" bdq note "$2" --file "$__f" >/dev/null 2>&1; then printf '\036amended'; else printf '\036'; fi
-rm -f "$__f"
-exit 0
-"#,
-        Op::BeadLive => r#"__r="$(lc_bead_row "$1" 2>/dev/null)" || { printf '\036'; exit 0; }
-case "${__r%%$'\t'*}" in ""|LANDED|SUPERSEDED|DROPPED|DONE) printf '\036' ;; *) printf '\036live' ;; esac
-exit 0
-"#,
     }
 }
 
@@ -170,15 +150,11 @@ mod tests {
             Op::BeadReopen,
             Op::CauseEvent,
             Op::ReleaseClaim,
-            Op::Comment,
             Op::Event,
             Op::Rebase,
             Op::LandSubject,
             Op::FormatBatch,
             Op::PfGate,
-            Op::CreateBug,
-            Op::AmendBug,
-            Op::BeadLive,
         ] {
             let s = script(op);
             assert!(s.starts_with("{\n") && s.ends_with("}\n"), "{op:?}");
