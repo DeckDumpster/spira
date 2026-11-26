@@ -284,7 +284,7 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
         "deliver" => deliver(args, m),
         "certify" => {
             if !need(3) {
-                return usage("certify <bead-id> <tip> <pass|red|infra> [detail] [actor] [step] [message]");
+                return usage("certify <bead-id> <tip> <pass|red|infra|nothing> [detail] [actor] [step] [message]");
             }
             let red_at = RedAt { step: a(5), message: a(6) };
             certify(m, &a(0), &a(1), &a(2), &a(3), &actor_or(args.get(4), "lifecycle-cert"), &red_at)

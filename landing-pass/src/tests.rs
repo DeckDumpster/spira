@@ -477,7 +477,7 @@ impl crate::lifecycle::Lc for FakeLc {
     fn certify(&self, id: &str, tip: &str, outcome: &str, _: &str) -> Result<String, String> {
         self.certified.borrow_mut().push(format!("{id} {tip} {outcome}"));
         let mismatched = self.held_tip.borrow().as_deref().is_some_and(|h| h != tip);
-        if (outcome == "pass" && (self.refuse_pass.get() || mismatched)) || (outcome == "nothing" && self.refuse_nothing.get()) {
+        if (outcome == "pass" && (self.refuse_pass.get() || mismatched)) || (outcome == "nothing" && (self.refuse_nothing.get() || mismatched)) {
             return Err("spira-lc certify exited 3: refused".into());
         }
         Ok("applied".into())
@@ -2726,6 +2726,20 @@ fn a_row_returned_to_submitted_without_the_mark_is_gated_again_inside_the_window
     set_row_reason(&h, "sp-a", None);
     h.run();
     assert_eq!(q.queued().iter().map(|j| j.tip.as_str()).collect::<Vec<_>>(), ["t1"], "{:?}", h.out.lines());
+}
+
+#[test_id(t318eae)]
+#[test]
+fn a_row_marked_at_a_tip_the_branch_left_is_moved_to_the_gated_tip_and_marked_there() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t9");
+    set_row_reason(&h, "sp-a", Some("gate-certifies-nothing"));
+    *h.lc.held_tip.borrow_mut() = Some("t1".into());
+    let word = spira_config::gate_source::CERTIFIES_NOTHING;
+    file_verdict(&h, "sp-a", "t9", 75, &format!("gate: VERDICT=NO_VERDICT reason={word} branch=b repo=spira suite=- (x)\n"));
+    h.run();
+    assert_eq!(*h.lc.resubmits.borrow(), ["sp-a t9"], "{:?}", h.out.lines());
+    assert_eq!(*h.lc.certified.borrow(), ["sp-a t9 nothing", "sp-a t9 nothing"], "refused at the old tip, taken at the new");
 }
 
 #[test_id(tcjuwnn)]
