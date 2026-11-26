@@ -743,10 +743,7 @@ fn run_main() -> (ExitCode, Endpoint) {
         }
     };
     match proc_starts_or_declared(opts.proc_starts, opts.system_user, require_declared_config_and_release) {
-        Ok(true) => {
-            let (code, endpoint) = standalone_proc_starts(opts.instance.as_deref(), opts.dry);
-            (code, Endpoint::Derived(endpoint))
-        }
+        Ok(true) => standalone_proc_starts(opts.instance.as_deref(), opts.dry),
         Ok(false) => (run_declared(opts), Endpoint::Process),
         Err(e) => {
             eprintln!("install: {e}");
@@ -1941,13 +1938,16 @@ type RunCmd<'a> = &'a dyn Fn(&str, &[&str]) -> Result<(), String>;
 
 const PROC_STARTS_PHASE_FAILED: &str = "phase proc-starts failed — ";
 
-fn standalone_proc_starts(instance: Option<&str>, dry: bool) -> (ExitCode, Option<String>) {
+fn standalone_proc_starts(instance: Option<&str>, dry: bool) -> (ExitCode, Endpoint) {
     phase("proc-starts: system unit");
     let argv0 = bootstrap::argv0_path().unwrap_or_default();
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
     let pin = |home: &Path| spira_config::registry::pin_for_process(home).map(|_| ());
     let dest = Path::new(system_paths::ETC_SYSTEMD_SYSTEM);
-    let (got, endpoint) = standalone_proc_starts_with(instance, &argv0, &env, &bootstrap::stat_owner, &bootstrap::getent_passwd, &pin, is_root(), dest, &run_ok, dry);
+    proc_starts_report(standalone_proc_starts_with(instance, &argv0, &env, &bootstrap::stat_owner, &bootstrap::getent_passwd, &pin, is_root(), dest, &run_ok, dry))
+}
+
+fn proc_starts_report((got, endpoint): (Result<(), String>, Option<String>)) -> (ExitCode, Endpoint) {
     let code = match got {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -1955,7 +1955,7 @@ fn standalone_proc_starts(instance: Option<&str>, dry: bool) -> (ExitCode, Optio
             ExitCode::from(proc_starts_exit(&e))
         }
     };
-    (code, endpoint)
+    (code, Endpoint::Derived(endpoint))
 }
 
 /// 2 for a phase that failed, 1 for a refusal before it.
@@ -2618,9 +2618,8 @@ mod proc_starts_phase_tests {
     fn metered_plain_sudo(case: Case) -> String {
         let (addr, sink) = spira_otel::metrics::run::fixture_sink_within(std::time::Duration::from_secs(2));
         install::telemetry::metered_exit_to("install", || {
-            let (_td, _, _, (got, endpoint)) = plain_sudo_metered(Case { metrics_endpoint: Some(addr), ..case });
-            let code = got.map_or_else(|e| ExitCode::from(proc_starts_exit(&e)), |()| ExitCode::SUCCESS);
-            (code, Endpoint::Derived(endpoint))
+            let (_td, _, _, ran) = plain_sudo_metered(Case { metrics_endpoint: Some(addr), ..case });
+            proc_starts_report(ran)
         });
         let body = sink.join().unwrap().expect("no push reached the fixture sink");
         for want in ["spira_component_invocations", "spira_component_duration_seconds", "install"] {
