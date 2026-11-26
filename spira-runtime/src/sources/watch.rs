@@ -208,23 +208,32 @@ mod tests {
         let dir = testkit::TempDir::new("watch-drop");
         let a = dir.path().join("a");
         std::fs::create_dir_all(&a).unwrap();
+        let m1 = vec![(a.clone(), vec!["m1".to_string()])];
         // A look that answers within the first poll was delivered, not dropped: try again.
-        let mut w = loop {
-            let _ = std::fs::remove_file(a.join("m1"));
-            let mut w = ListingWatch::default();
-            w.add(&a).unwrap();
-            std::fs::write(a.join("m1"), "x").unwrap();
-            let (tx, woken) = std::sync::mpsc::channel();
-            let waker = std::task::Waker::from(Arc::new(Woken(tx)));
-            let mut wait = w.changed();
-            if wait.as_mut().poll(&mut std::task::Context::from_waker(&waker)).is_pending() {
-                woken.recv().expect("the finished look wakes the wait");
-                drop(wait);
-                break w;
-            }
-        };
+        let mut w = (0..100)
+            .find_map(|_| {
+                let _ = std::fs::remove_file(a.join("m1"));
+                let mut w = ListingWatch::default();
+                w.add(&a).unwrap();
+                std::fs::write(a.join("m1"), "x").unwrap();
+                let (tx, woken) = std::sync::mpsc::channel();
+                let waker = std::task::Waker::from(Arc::new(Woken(tx)));
+                let mut wait = w.changed();
+                match wait.as_mut().poll(&mut std::task::Context::from_waker(&waker)) {
+                    std::task::Poll::Ready(got) => {
+                        assert_eq!(got, Ok(m1.clone()));
+                        None
+                    }
+                    std::task::Poll::Pending => {
+                        woken.recv().expect("the finished look wakes the wait");
+                        drop(wait);
+                        Some(w)
+                    }
+                }
+            })
+            .expect("every look finished within its first poll");
         let got = tokio::time::timeout(Duration::from_secs(5), w.changed()).await;
-        assert_eq!(got.expect("the dropped wait swallowed the file"), Ok(vec![(a, vec!["m1".to_string()])]));
+        assert_eq!(got.expect("the dropped wait swallowed the file"), Ok(m1));
     }
 
     #[cfg(target_os = "linux")]
