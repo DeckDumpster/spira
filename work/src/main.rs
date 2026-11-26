@@ -761,20 +761,11 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
         }
         println!("== {}: {}", row.name, row.run);
         let none = work::Affected::Crates(Vec::new());
-        let scope = if row.run.contains(work::AFFECTED) || work::is_unit_build(&row.run) { &*scope.get_or_insert_with(|| affected_scope(work::CHECKS_BASE)) } else { &none };
+        let scope = if row.run.contains(work::AFFECTED) { &*scope.get_or_insert_with(|| affected_scope(work::CHECKS_BASE)) } else { &none };
         let record_file = log.record_file(&row.name);
         let _ = std::fs::remove_file(&record_file);
         let started = std::time::Instant::now();
-        let argv = if work::is_unit_build(&row.run) {
-            let meta = spira_config::bounded::bounded("cargo").args(["metadata", "--format-version", "1", "--no-deps"]).output().ok().filter(|o| o.status.success());
-            if meta.is_none() {
-                println!("work checks: cannot read the cargo workspace; the unit-build row builds no test-bins");
-            }
-            let bins = meta.map(|o| work::scope_test_bins(scope, &String::from_utf8_lossy(&o.stdout))).unwrap_or_default();
-            work::unit_build_row(scope, &bins)
-        } else {
-            work::check_argv(&row.run, scope, &branch, &record_file)
-        };
+        let argv = work::check_argv(&row.run, scope, &branch, &record_file);
         let Some(argv) = argv else {
             println!("-- {}: ok (the diff affects no crate; nothing to check)", row.name);
             continue;
