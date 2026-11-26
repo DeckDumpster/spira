@@ -59,6 +59,23 @@ fn the_runner_called_as_a_target_runner_refuses_and_names_around() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("--around"), "{}", String::from_utf8_lossy(&out.stderr));
 }
 
+#[test_id(ttrajft)]
+#[test]
+fn a_cargo_run_artifact_beside_fingerprint_runs_as_it_is_while_a_harness_in_deps_is_refused() {
+    let tmp = testkit::TempDir::new("cargo-run-artifact");
+    let profile = tmp.path().join("debug");
+    fs::create_dir_all(profile.join(".fingerprint")).unwrap();
+    fs::create_dir_all(profile.join("deps")).unwrap();
+    let run = |bin: PathBuf| {
+        testkit::write_exe(&bin, "#!/bin/sh\necho \"ran $1\"\n");
+        std::process::Command::new(workspace().join("tools/test-sandbox/runner")).arg(&bin).arg("a").output().expect("the runner spawns")
+    };
+    let artifact = run(profile.join("tool"));
+    assert_eq!((artifact.status.code(), &artifact.stdout[..]), (Some(0), &b"ran a\n"[..]), "{}", String::from_utf8_lossy(&artifact.stderr));
+    let harness = run(profile.join("deps/tool-0123"));
+    assert_eq!((harness.status.code(), &harness.stdout[..]), (Some(2), &b""[..]));
+}
+
 #[test_id(trhutlx)]
 #[test]
 fn around_applies_the_environment_allow_list_once_keeping_rust_build_flags() {

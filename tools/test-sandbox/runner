@@ -14,8 +14,8 @@
 # write to the install lands in tmpfs and never on disk. It differs in hiding both $HOME and the
 # passwd entry's home.
 #
-# Called as cargo's target runner (the overlay missing) it refuses: a test binary is never
-# sandboxed alone. No fallback: without an executable bwrap it refuses and runs nothing.
+# Called as cargo's target runner (the overlay missing) it refuses every test binary: one is never
+# sandboxed alone. Only a `cargo run` artifact, which is no test, runs as it is. No fallback: without an executable bwrap it refuses and runs nothing.
 set -uo pipefail
 
 die() { echo "test-sandbox: $*" >&2; exit 2; }
@@ -31,7 +31,12 @@ print="" around=""
 if [ "${1:-}" = "--print-args" ]; then print=1; shift; fi
 if [ "${1:-}" = "--around" ]; then around=1; shift; fi
 [ $# -ge 1 ] || die "usage: runner [--print-args] --around CMD [ARGS...]"
-[ -n "$around" ] || die "$1 runs outside the test sandbox; run the tests through tools/test-sandbox/runner --around cargo …"
+if [ -z "$around" ]; then
+    # A `cargo run` artifact sits beside .fingerprint and is no test; harnesses live in deps/.
+    case "$1" in */*) d="${1%/*}" ;; *) d=. ;; esac
+    [ -z "$print" ] && [ -d "${d:-/}/.fingerprint" ] && exec "$@"
+    die "$1 runs outside the test sandbox; run the tests through tools/test-sandbox/runner --around cargo …"
+fi
 
 [ -n "${HOME:-}" ] && [ "${HOME#/}" != "$HOME" ] || die "HOME is not an absolute path; it names the tree to hide"
 physdir "$HOME" || die "HOME=$HOME does not exist"
