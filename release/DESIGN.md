@@ -129,6 +129,12 @@ about which release they name.
 3. Render every installed unit that comes from one of the release's templates, against
    `spira-releases/<sha>` — never `current`, so a unit states exactly what it runs. Any
    render failure is a refusal before anything is touched.
+   Then, **before anything changes**, a release with `flake.nix` and `flake.lock` has its
+   `spira-env` built into `~/.local/lib/spira-env` (every unit's tools), with `nix` from
+   `$SPIRA_NIX_PROFILE_BIN`, and the env it replaces rooted at `spira-env.prev`. A failed
+   build or root refuses with the link as it was. Every later failure points the link back.
+   `rollback` does the same for the release it returns to. A release without a flake skips it.
+   Garbage collection is install's, and no service is restarted for an env change.
 4. Install the rendered files that differ (write `.new`, rename).
 5. Swap `current` atomically (a symlink written beside it, renamed over it).
 6. `daemon-reload`.
@@ -675,6 +681,7 @@ only `HOME` is required of the caller.
 | `config` | resolve the releases dir, run dir, keep, unit dir and host keys |
 | `build` | archive, cargo, bins, clash check, MANIFEST, read-only, rename |
 | `verify` | the checks above |
+| `spira_env` | build, root and restore the release's tool env (shared with `spira-install`) |
 | `units` | installed-unit ↔ template mapping and the renderer |
 | `systemctl` | the `Systemctl` trait; the real one runs `systemctl --user` (`$SPIRA_SYSTEMCTL`) |
 | `git` | the `Git` trait (resolve, archive, is-ancestor) |

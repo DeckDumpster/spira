@@ -9,6 +9,7 @@ use crate::config_delta;
 use crate::fsutil;
 use crate::git::Git;
 use crate::install::{self, InstallOpts, Unpack};
+use crate::spira_env;
 use crate::manifest::{Entry, Manifest};
 use crate::systemctl::{Systemctl, UnitState};
 use crate::units;
@@ -176,6 +177,8 @@ struct FakeSystemctl {
     kills: RefCell<Vec<String>>,
     resets: RefCell<Vec<String>>,
     reloads: RefCell<usize>,
+    /// The first daemon-reload fails; the undo's own succeeds.
+    reload_fails_once: Cell<bool>,
     poison: Option<String>,
     /// Unit names `list_active` must never return, mirroring a `systemd-run` transient
     /// unit (no file of its own).
@@ -222,6 +225,7 @@ impl FakeSystemctl {
             kills: RefCell::new(vec![]),
             resets: RefCell::new(vec![]),
             reloads: RefCell::new(0),
+            reload_fails_once: Cell::new(false),
             poison: None,
             transient: BTreeSet::new(),
             restart_fails: BTreeSet::new(),
@@ -245,6 +249,9 @@ impl FakeSystemctl {
 impl Systemctl for FakeSystemctl {
     fn daemon_reload(&self) -> Result<(), String> {
         *self.reloads.borrow_mut() += 1;
+        if self.reload_fails_once.replace(false) {
+            return Err("simulated daemon-reload failure".into());
+        }
         if let Some(p) = &self.probe {
             self.probes.borrow_mut().push(p());
         }
@@ -502,7 +509,8 @@ fn world_rolling_back_to_a() -> World {
 
 fn rollback_with(w: &World, sc: &FakeSystemctl) -> Result<String, String> {
     let reads = FakeReads::serving();
-    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {} };
+    let nix = FakeNix::default();
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {} };
     activate::rollback(&ctx)
 }
 
@@ -563,7 +571,8 @@ fn world_activating_over_a_landed_hotfix() -> World {
 
 fn activate_as_the_batcher(w: &World, sc: &FakeSystemctl) -> Result<activate::Switched, String> {
     let reads = FakeReads::serving();
-    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, git: &w._git, repo: Some(w.cfg.releases.clone()), landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(5), report: &|_| {} };
+    let nix = FakeNix::default();
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: Some(w.cfg.releases.clone()), landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(5), report: &|_| {} };
     activate::activate(&ctx, A, None)
 }
 
@@ -1226,7 +1235,8 @@ fn activate_reading_within(w: &World, sc: &FakeSystemctl, reads: &FakeReads, ste
 }
 
 fn activate_reporting(w: &World, sc: &FakeSystemctl, reads: &FakeReads, steady: Duration, warm_wait: Duration, report: &dyn Fn(&str)) -> Result<activate::Switched, String> {
-    let ctx = activate::Ctx { cfg: &w.cfg, reads, sc, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady, warm_wait, warm_pause: Duration::from_millis(5), report };
+    let nix = FakeNix::default();
+    let ctx = activate::Ctx { cfg: &w.cfg, reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady, warm_wait, warm_pause: Duration::from_millis(5), report };
     activate::activate(&ctx, A, None)
 }
 
@@ -2305,4 +2315,235 @@ fn deps_problems_refuse_a_dangling_link_and_an_unparseable_manifest() {
     file(&rel.join("spira/deps.toml"), "[[dep\n");
     assert_eq!(deps_problems(&rel, &bin.display().to_string()).len(), 1);
     assert_eq!(deps_problems(&d.path().join("none"), "").len(), 1, "unreadable is a problem");
+}
+
+// ---------------------------------------------------------------- spira-env
+
+/// One nix call, with how the installed unit and `current` stood when it was made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NixCall {
+    Build { target: String, out: PathBuf, unit: String, current: Option<String> },
+    AddRoot { root: PathBuf, store_path: PathBuf },
+}
+
+/// A nix that "builds" by linking `out` to a directory named for the target's release.
+#[derive(Default)]
+struct FakeNix {
+    store: PathBuf,
+    unit: PathBuf,
+    current: PathBuf,
+    fails: Option<&'static str>,
+    root_fails: bool,
+    log: RefCell<Vec<NixCall>>,
+}
+
+impl FakeNix {
+    fn watching(w: &World) -> FakeNix {
+        FakeNix { store: w._sb.p().join("store"), unit: w.cfg.unit_dir.join("spira-tool-prod.service"), current: w.cfg.releases.join("current"), ..FakeNix::default() }
+    }
+    fn store_path(&self, release: &str) -> PathBuf {
+        self.store.join(format!("{release}-spira-env"))
+    }
+}
+
+impl spira_env::Nix for FakeNix {
+    fn build(&self, target: &str, out: &Path) -> Result<(), String> {
+        self.log.borrow_mut().push(NixCall::Build {
+            target: target.into(),
+            out: out.into(),
+            unit: fs::read_to_string(&self.unit).unwrap_or_default(),
+            current: fs::read_link(&self.current).ok().map(|t| t.display().to_string()),
+        });
+        if let Some(e) = self.fails {
+            return Err(e.into());
+        }
+        let release = target.trim_end_matches("#spira-env").rsplit('/').next().unwrap();
+        let dest = self.store_path(release);
+        fs::create_dir_all(&dest).unwrap();
+        fsutil::atomic_symlink(out, &dest.display().to_string())
+    }
+    fn add_root(&self, root: &Path, store_path: &Path) -> Result<(), String> {
+        self.log.borrow_mut().push(NixCall::AddRoot { root: root.into(), store_path: store_path.into() });
+        if self.root_fails {
+            return Err("no root".into());
+        }
+        Ok(())
+    }
+}
+
+fn home_of(w: &World) -> PathBuf {
+    w._sb.p().join("home")
+}
+
+fn env_link(w: &World) -> PathBuf {
+    home_of(w).join(spira_config::SPIRA_ENV_REL)
+}
+
+/// Points the env link at `store/<name>`, as an earlier build left it, and returns that path.
+fn installed_env(w: &World, name: &str) -> PathBuf {
+    let dest = w._sb.p().join("store").join(name);
+    fs::create_dir_all(&dest).unwrap();
+    fs::create_dir_all(env_link(w).parent().unwrap()).unwrap();
+    fsutil::atomic_symlink(&env_link(w), &dest.display().to_string()).unwrap();
+    fs::canonicalize(&dest).unwrap()
+}
+
+/// Adds `files` to release `sha` and rewrites its MANIFEST to match.
+fn release_gains(w: &World, sha: &str, files: &[&str]) {
+    let rel = w.cfg.releases.join(sha);
+    for f in files {
+        file(&rel.join(f), "{}\n");
+    }
+    let _ = fs::remove_file(rel.join("MANIFEST"));
+    let entries = Manifest::scan(&rel).unwrap();
+    let m = Manifest { commit: sha.into(), built: None, repo: None, entries };
+    fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+}
+
+const FLAKE: [&str; 2] = ["flake.nix", "flake.lock"];
+
+fn world_activating_a_flake_release() -> World {
+    let w = world_activating_a_changed_unit();
+    release_gains(&w, A, &FLAKE);
+    w
+}
+
+fn ctx_with_nix<'a>(w: &'a World, sc: &'a FakeSystemctl, nix: &'a FakeNix, reads: &'a FakeReads) -> activate::Ctx<'a> {
+    activate::Ctx { cfg: &w.cfg, reads, sc, nix, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {} }
+}
+
+fn activate_with_nix(w: &World, sc: &FakeSystemctl, nix: &FakeNix) -> Result<activate::Switched, String> {
+    activate::activate(&ctx_with_nix(w, sc, nix, &FakeReads::serving()), A, None)
+}
+
+fn env_target_of(w: &World, sha: &str) -> String {
+    format!("path:{}#spira-env", fs::canonicalize(w.cfg.releases.join(sha)).unwrap().display())
+}
+
+#[test_id(tkuvner)]
+#[test]
+fn activation_builds_the_releases_env_once_before_a_unit_is_rewritten_or_current_moves() {
+    let w = world_activating_a_flake_release();
+    let nix = FakeNix::watching(&w);
+    activate_with_nix(&w, &FakeSystemctl::new(w.cfg.unit_dir.clone()), &nix).unwrap();
+    let want = NixCall::Build { target: env_target_of(&w, A), out: env_link(&w), unit: OLD_UNIT.into(), current: None };
+    assert_eq!(*nix.log.borrow(), vec![want]);
+    assert_eq!(fs::read_link(env_link(&w)).unwrap(), nix.store_path(A));
+    assert_eq!(current_of(&w), A);
+}
+
+#[test_id(tsmvun5)]
+#[test]
+fn a_failed_env_build_refuses_activation_with_nothing_changed() {
+    let w = world_activating_a_flake_release();
+    let before = installed_env(&w, "old-env");
+    let nix = FakeNix { fails: Some("boom"), ..FakeNix::watching(&w) };
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    let e = activate_with_nix(&w, &sc, &nix).unwrap_err();
+    assert!(e.contains("cannot build spira-env") && e.contains(A) && e.contains("boom") && e.contains("nothing changed"), "{e}");
+    assert!(!w.cfg.releases.join("current").exists());
+    assert_eq!(fs::read_to_string(w.cfg.unit_dir.join("spira-tool-prod.service")).unwrap(), OLD_UNIT);
+    assert!(activate::read_history(&w.cfg.state_dir().unwrap()).unwrap().is_empty());
+    assert_eq!(fs::canonicalize(env_link(&w)).unwrap(), before);
+    assert_eq!((*sc.reloads.borrow(), sc.restarts.borrow().len()), (0, 0));
+}
+
+#[test_id(tpd80yv)]
+#[test]
+fn an_activation_undone_at_daemon_reload_puts_the_env_back() {
+    let w = world_activating_a_flake_release();
+    let before = installed_env(&w, "old-env");
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.reload_fails_once.set(true);
+    let e = activate_with_nix(&w, &sc, &FakeNix::watching(&w)).unwrap_err();
+    assert!(e.contains("daemon-reload failed") && !e.contains("UNDO INCOMPLETE"), "{e}");
+    assert_eq!(fs::canonicalize(env_link(&w)).unwrap(), before);
+}
+
+#[test_id(tj60x1v)]
+#[test]
+fn an_activation_undone_by_a_failed_restart_puts_the_env_back_before_restarting_on_the_old_release() {
+    let w = world_activating_a_flake_release();
+    let before = installed_env(&w, "old-env");
+    let mut sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.restart_fails.insert("spira-tool-prod.service".into());
+    let link = env_link(&w);
+    sc.on_restart = Some(Box::new(move || fs::canonicalize(&link).unwrap().display().to_string()));
+    let nix = FakeNix::watching(&w);
+    activate_with_nix(&w, &sc, &nix).unwrap_err();
+    assert_eq!(sc.at_restart.borrow().last(), Some(&before.display().to_string()), "{:?}", sc.at_restart.borrow());
+    assert_eq!(fs::canonicalize(env_link(&w)).unwrap(), before);
+}
+
+#[test_id(tnd1rv6)]
+#[test]
+fn a_replaced_env_is_rooted_and_an_unchanged_one_is_not() {
+    let w = world_activating_a_flake_release();
+    let before = installed_env(&w, "old-env");
+    let nix = FakeNix::watching(&w);
+    activate_with_nix(&w, &FakeSystemctl::new(w.cfg.unit_dir.clone()), &nix).unwrap();
+    let root = NixCall::AddRoot { root: home_of(&w).join(".local/lib/spira-env.prev"), store_path: before };
+    assert_eq!(nix.log.borrow()[1..], [root]);
+
+    nix.log.borrow_mut().clear();
+    activate_with_nix(&w, &FakeSystemctl::new(w.cfg.unit_dir.clone()), &nix).unwrap();
+    assert!(matches!(nix.log.borrow()[..], [NixCall::Build { .. }]), "{:?}", nix.log.borrow());
+}
+
+#[test_id(tuvs3zl)]
+#[test]
+fn an_env_that_cannot_be_rooted_refuses_activation_and_stays_linked() {
+    let w = world_activating_a_flake_release();
+    let before = installed_env(&w, "old-env");
+    let nix = FakeNix { root_fails: true, ..FakeNix::watching(&w) };
+    let e = activate_with_nix(&w, &FakeSystemctl::new(w.cfg.unit_dir.clone()), &nix).unwrap_err();
+    assert!(e.contains("cannot root the previous spira-env") && e.contains("no root") && e.contains("nothing changed"), "{e}");
+    assert!(!w.cfg.releases.join("current").exists());
+    assert_eq!(fs::canonicalize(env_link(&w)).unwrap(), before);
+}
+
+#[test_id(trczhfq)]
+#[test]
+fn rollback_builds_the_env_of_the_release_it_returns_to() {
+    let w = world_rolling_back_to_a();
+    release_gains(&w, A, &FLAKE);
+    let nix = FakeNix::watching(&w);
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    activate::rollback(&ctx_with_nix(&w, &sc, &nix, &FakeReads::serving())).unwrap();
+    let want = NixCall::Build { target: env_target_of(&w, A), out: env_link(&w), unit: OLD_UNIT.into(), current: Some(B.into()) };
+    assert_eq!(*nix.log.borrow(), vec![want]);
+}
+
+#[test_id(trjozvx)]
+#[test]
+fn a_release_without_a_flake_lock_activates_without_calling_nix() {
+    let w = world_activating_a_changed_unit();
+    release_gains(&w, A, &["flake.nix"]);
+    let nix = FakeNix::watching(&w);
+    activate_with_nix(&w, &FakeSystemctl::new(w.cfg.unit_dir.clone()), &nix).unwrap();
+    assert!(nix.log.borrow().is_empty());
+    assert_eq!(current_of(&w), A);
+}
+
+#[test_id(tlfrwew)]
+#[test]
+fn spira_env_target_names_the_release_directory_not_the_symlink_to_it() {
+    let td = TempDir::new("env-target");
+    let real = td.path().join("spira-daily");
+    fs::create_dir_all(&real).unwrap();
+    std::os::unix::fs::symlink("spira-daily", td.path().join("current")).unwrap();
+    let want = format!("path:{}#spira-env", fs::canonicalize(&real).unwrap().display());
+    assert_eq!(spira_env::target(&td.path().join("current")), want);
+}
+
+#[test_id(tdabs9l)]
+#[test]
+fn an_activation_that_cannot_move_current_puts_the_env_back() {
+    let w = world_activating_a_flake_release();
+    let before = installed_env(&w, "old-env");
+    fs::create_dir_all(w.cfg.releases.join("current/occupied")).unwrap();
+    let e = activate_with_nix(&w, &FakeSystemctl::new(w.cfg.unit_dir.clone()), &FakeNix::watching(&w)).unwrap_err();
+    assert!(e.contains("cannot swap") && !e.contains("UNDO INCOMPLETE"), "{e}");
+    assert_eq!(fs::canonicalize(env_link(&w)).unwrap(), before);
+    assert_eq!(fs::read_to_string(w.cfg.unit_dir.join("spira-tool-prod.service")).unwrap(), OLD_UNIT);
 }
