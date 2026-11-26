@@ -1436,7 +1436,7 @@ mod tests {
     #[test]
     fn a_slot_released_reserved_for_the_bead_is_leased_by_its_gate() {
         let p = pool("exit 0\n");
-        let _ = spira_config::build_dir::lease_dir(&p.bases, &p.slot, "sp-a", "sp-a", std::time::Duration::ZERO).unwrap().ok().unwrap().release_reserved("sp-a");
+        spira_config::build_dir::lease_dir(&p.bases, &p.slot, "sp-a", "sp-a", std::time::Duration::ZERO).unwrap().ok().unwrap().release_reserved("sp-a").1.unwrap();
         let line = p.real.build_in_bases(&p.tree, &builder(&p), &p.bases).unwrap();
         assert!(line.contains(&p.slot.display().to_string()), "{line}");
     }
@@ -1457,6 +1457,22 @@ mod tests {
         let gone = pool("exit 0\n");
         let b = crate::ports::Builder { dir: gone.t.path().join("pool/dir.99"), ..builder(&gone) };
         assert_eq!(gone.real.build_in_bases(&gone.tree, &b, &gone.bases).unwrap_err().0, BuilderMiss::Gone);
+    }
+
+    #[test_id(tb7bl86)]
+    #[test]
+    fn a_gate_waits_for_the_beads_own_session_to_release_its_builder_directory() {
+        let p = pool("exit 0\n");
+        let held = spira_config::build_dir::lease_dir(&p.bases, &p.slot, "sp-a", "sp-a", std::time::Duration::ZERO).unwrap().ok().unwrap();
+        // clock-safe: the delay only makes the gate arrive while the slot is held; the 10s wait bounds it
+        let holder = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            drop(held);
+        });
+        let b = crate::ports::Builder { wait: std::time::Duration::from_secs(10), ..builder(&p) };
+        let line = p.real.build_in_bases(&p.tree, &b, &p.bases).unwrap();
+        assert!(line.contains(&p.slot.display().to_string()), "{line}");
+        holder.join().unwrap();
     }
 
     #[test_id(tpf4epi)]
