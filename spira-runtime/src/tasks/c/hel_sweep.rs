@@ -799,8 +799,12 @@ pub fn close_on_land(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient
     let t: Target = serde_json::from_str(input).map_err(|e| e.to_string())?;
     let root = root_of(real, &t.repo)?;
     let base = real.base(&root).ok_or_else(|| format!("{}: the land ref does not resolve", t.repo))?;
-    let sha = spira_config::git_refs::sha_of(&root, &base.landref).or_else(|| hel::git::Git(&root).rev_parse(&base.landref)).unwrap_or_default();
-    record_landed(lc, &t.id, &sha)
+    record_landed(lc, &t.id, &land_sha(&root, &base.landref))
+}
+
+/// Empty when neither the ref files nor git can say; git is asked only when the files cannot.
+fn land_sha(root: &std::path::Path, landref: &str) -> String {
+    spira_config::git_refs::sha_of(root, landref).or_else(|| hel::git::Git(root).rev_parse(landref)).unwrap_or_default()
 }
 
 /// The runner of [`ARCHIVE`]: park the tip at `refs/archive/<br>` and read it back; answers
@@ -1010,5 +1014,16 @@ mod tests {
             assert_eq!(seen, vec!["show sp-a".to_string()], "{state}");
             assert_eq!(answer, Ok(format!("nothing to record ({state})")));
         }
+    }
+
+    #[test_id(tcmvgfs)]
+    #[test]
+    fn the_land_sha_is_read_from_the_ref_files_of_a_checkout_git_could_not_read() {
+        let dir = testkit::TempDir::new("hel-sweep-land-sha");
+        let heads = dir.path().join(".git/refs/heads");
+        std::fs::create_dir_all(&heads).unwrap();
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        std::fs::write(heads.join("main"), format!("{sha}\n")).unwrap();
+        assert_eq!(land_sha(dir.path(), "main"), sha);
     }
 }

@@ -124,12 +124,18 @@ pub fn bead_event_on(c: &LcClient, id: &str, kind: &BeadEventKind, actor: &str) 
     if shown.code != 0 {
         return Err(format!("{id}: no lifecycle row to mark: {}", shown.why()));
     }
-    let v: serde_json::Value = serde_json::from_str(shown.out.trim()).map_err(|e| format!("{id}: show is not JSON: {e}"))?;
+    let (state, version) = row_head(id, &shown.out)?;
+    send_bead_event(c, id, &state, &version, kind, actor)
+}
+
+/// The bead row's state and version, from what `show` answered.
+fn row_head(id: &str, shown: &str) -> Result<(String, String), String> {
+    let v: serde_json::Value = serde_json::from_str(shown.trim()).map_err(|e| format!("{id}: show is not JSON: {e}"))?;
     let (state, version) = (json_field(&v["bead"], "state"), json_field(&v["bead"], "version"));
     if state.is_empty() || version.is_empty() {
         return Err(format!("{id}: no lifecycle row to mark"));
     }
-    send_bead_event(c, id, &state, &version, kind, actor)
+    Ok((state, version))
 }
 
 fn send_bead_event(c: &LcClient, id: &str, state: &str, version: &str, kind: &BeadEventKind, actor: &str) -> Result<(), String> {
@@ -159,11 +165,7 @@ pub fn landed_record_on(c: &LcClient, id: &str, sha: &str, actor: &str) -> Resul
         NO_ROW => return nothing("no row"),
         _ => return Err(format!("{id}: show exited {}: {}", shown.code, shown.why())),
     }
-    let v: serde_json::Value = serde_json::from_str(shown.out.trim()).map_err(|e| format!("{id}: show is not JSON: {e}"))?;
-    let (state, version) = (json_field(&v["bead"], "state"), json_field(&v["bead"], "version"));
-    if state.is_empty() || version.is_empty() {
-        return nothing("no row");
-    }
+    let (state, version) = row_head(id, &shown.out)?;
     if !matches!(state.as_str(), "SUBMITTED" | "CERTIFIED" | "IN_DELIVERY") {
         return nothing(&state);
     }
