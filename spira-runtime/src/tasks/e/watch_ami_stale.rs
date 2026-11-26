@@ -4,7 +4,9 @@
 //!
 //! ## Tick
 //!
-//! - Cadence 300 s (`--interval 300`, `spira/watchers:158`; loop `spira/round-ami-stale.sh:313-330`). No waking events today; a release activation is the natural extra wake (the recipe hash changes) (unverified: no such event exists yet). Single-flight.
+//! - One observe at boot. Every release activation is a boot, and only a new release changes the recipe hash. A tick only probes; the answer decides the next one.
+//! - EC2 spill answering `Stale` or `Unreadable`, or an observe that failed, timed out or answered no snapshot, arms the next tick 300 s after the answer. Only an image build ends staleness, and nothing local signals it.
+//! - `Fresh`, or spill not on EC2, arms nothing until the next boot. An image deregistered outside Spira is refused by the EC2 round at launch.
 //!
 //! ## Observe
 //!
@@ -44,7 +46,7 @@
 //!
 //! ## Silence
 //!
-//! Spill off, or `Fresh` with `said=None`, or the same line as `said`: probe only, no `Emit`, no effect.
+//! Spill off, or `Fresh` with `said=None`, or the same line as `said`: probe only, no `Emit`, no effect. After spill off or `Fresh` there is no further probe, so no AWS call, until the next boot.
 //!
 //! ## Replaces
 //!
@@ -62,7 +64,7 @@ use serde::{Deserialize, Serialize};
 use spira_config::process::cfg;
 
 use crate::tasks::d::pattern;
-use crate::watchers::INBOX_APPEND;
+use crate::watchers::{answers_observe, INBOX_APPEND};
 
 pub const NAME: &str = "watch.ami_stale";
 pub const STREAM: &str = "watch.ami_stale";
@@ -186,7 +188,7 @@ const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("said")];
 
 impl Handler for WatchAmiStale {
     fn interests(&self) -> &[EventKindTag] {
-        &[TICK, EFFECT_SUCCEEDED]
+        &[TICK, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
@@ -194,8 +196,17 @@ impl Handler for WatchAmiStale {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
+            return vec![Command::Probe(EffectSpec::probe(OBSERVE, String::new(), OBSERVE_DEADLINE_MS))];
         }
-        pattern::on_answer(ctx, view, ev, OBSERVE, STATE, &self.config, decide)
+        if !answers_observe(view, ev, OBSERVE) {
+            return vec![];
+        }
+        let mut out = pattern::on_answer(ctx, view, ev, OBSERVE, STATE, &self.config, decide);
+        // Only a snapshot that was read settles it: any other outcome asks again.
+        let settled = pattern::answer::<Snapshot>(view, ev, OBSERVE).is_some_and(|s| !EC2_SPILLS.contains(&s.spill.as_str()) || s.verdict == Verdict::Fresh);
+        if !settled {
+            out.push(Command::Timer { at: ev.at + CADENCE_MS, kind: EventKind::new(TICK, "") });
+        }
+        out
     }
 }
