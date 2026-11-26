@@ -143,10 +143,12 @@ fn t5_a_merged_pr_of_a_concierge_batch_is_left_alone() {
 #[test_id(tfqk7xu)]
 #[test]
 fn t5_an_open_pr_of_an_operator_batch_is_neither_pushed_nor_judged() {
-    for check in [Check::Green, Check::Red] {
-        let (carry, acts) = decide(&Carry::default(), &operator_batch("operator", PrState::Open, check));
-        assert!(!effects(&acts).contains(&PUSH) && !effects(&acts).contains(&JUDGEMENT), "{check:?}: {acts:?}");
-        assert_eq!(carry.repos.get("spira").and_then(|r| r.batch.as_deref()), None, "{check:?}");
+    for (check, base) in [(Check::Green, "b1"), (Check::Green, "b2"), (Check::Red, "b1"), (Check::HarnessFault, "b1")] {
+        let mut snap = operator_batch("operator", PrState::Open, check);
+        snap.repos.get_mut("spira").unwrap().base_sha = base.into();
+        let (carry, acts) = decide(&Carry::default(), &snap);
+        assert_eq!(acts, Vec::<Act>::new(), "{check:?} on {base}");
+        assert_eq!(carry.repos.get("spira").and_then(|r| r.batch.as_deref()), None, "{check:?} on {base}");
     }
 }
 
