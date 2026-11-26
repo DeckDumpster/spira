@@ -3026,12 +3026,7 @@ fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume:
     }
     let text = fs::read_to_string(&out).unwrap_or_default();
     let compiled = text.lines().filter(|l| l.trim_start().starts_with("Compiling ")).count();
-    deps.log(&format!(
-        "sandbox-metrics runner=sandbox secs={} compiled={compiled} rc={} timed_out={}",
-        ran.secs,
-        ran.rc.map(|c| c.to_string()).unwrap_or_else(|| "-".into()),
-        ran.timed_out
-    ));
+    deps.log(&sandbox_metrics(&ran, compiled));
     if let Some(l) = text.lines().find(|l| l.starts_with("unit-tests: skipped ")) {
         deps.log(l);
     }
@@ -3070,15 +3065,25 @@ fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume:
             for l in crate::unit::failing_report(&text) {
                 deps.log(&l);
             }
-            Finish {
-                rc: 1,
-                ran: 1,
-                red: 1,
-                first_red: Some(format!("{script}: exit {}", ran.rc.map(|c| c.to_string()).unwrap_or_else(|| "signal".into())).into()),
-                ..Finish::green(1)
-            }
+            sandbox_red(script, &ran)
         }
     }
+}
+
+fn sandbox_metrics(ran: &crate::sandbox::Ran, compiled: usize) -> String {
+    format!(
+        "sandbox-metrics runner=sandbox secs={} compiled={compiled} rc={} timed_out={}{}",
+        ran.secs,
+        ran.rc.map(|c| c.to_string()).unwrap_or_else(|| "-".into()),
+        ran.timed_out,
+        ran.stopped.as_ref().map(|s| format!(" {}", s.metrics_field())).unwrap_or_default()
+    )
+}
+
+fn sandbox_red(script: &str, ran: &crate::sandbox::Ran) -> Finish {
+    let exit = ran.rc.map(|c| c.to_string()).unwrap_or_else(|| "signal".into());
+    let stopped = ran.stopped.as_ref().map(|s| format!(" {}", s.verdict_field())).unwrap_or_default();
+    Finish { rc: 1, ran: 1, red: 1, first_red: Some(format!("{script}: exit {exit}{stopped}").into()), ..Finish::green(1) }
 }
 
 fn warm_conf_gen(wt: &Path) -> Option<Finish> {

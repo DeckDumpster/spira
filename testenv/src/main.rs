@@ -74,6 +74,10 @@ fn load_config(who: &str) -> Option<spira_config::SpiraToml> {
 }
 
 fn main() -> ExitCode {
+    if std::env::args().nth(1).as_deref() == Some(testenv::sandbox::SUPERVISE_ARG) {
+        let argv: Vec<String> = std::env::args().skip(2).collect();
+        return ExitCode::from(testenv::sandbox::supervise(&argv).clamp(0, 255) as u8);
+    }
     testenv::util::drop_activation_env();
     let first = std::env::args().nth(1).unwrap_or_default();
     let op = match first.as_str() {
