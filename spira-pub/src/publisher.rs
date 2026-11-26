@@ -135,6 +135,15 @@ fn configured_socket(cfg: &dyn Fn(&str) -> Result<String, String>) -> Result<Str
     socket_path(&run, cfg).map_err(refuse)
 }
 
+/// `SPIRA_SEED` as `cfg` declares it; declared empty draws from the clock.
+fn configured_seed(cfg: &dyn Fn(&str) -> Result<String, String>, now_ms: u64) -> Result<u64, PubError> {
+    let value = cfg("SPIRA_SEED").map_err(|why| PubError::Config(format!("cannot read SPIRA_SEED: {why}")))?;
+    match value.trim() {
+        "" => Ok(now_ms),
+        seed => seed.parse().map_err(|e| PubError::Config(format!("SPIRA_SEED {seed:?} is not a number: {e}"))),
+    }
+}
+
 impl Publisher {
     /// The publisher called `name`, on the broker the configuration names. Nothing is connected
     /// until the first [`publish`](Publisher::publish) or [`connect`](Publisher::connect).
@@ -145,9 +154,13 @@ impl Publisher {
             Some(secs) => Arc::new(VirtualClock::new(secs.saturating_mul(1000))),
             None => Arc::new(WallClock),
         };
-        let seed = cfg("SPIRA_SEED").ok().and_then(|s| s.trim().parse().ok()).unwrap_or_else(|| clock.now_ms());
+        let seed = configured_seed(&cfg, clock.now_ms())?;
         let mut options = Options::new(socket, clock, Box::new(SeededRng::new(seed)));
-        options.metrics = Some(MetricsSink::for_component(cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "spira-pub"));
+        // Metrics are not worth refusing a publish over: an unreadable endpoint is logged.
+        let endpoint = cfg("SPIRA_METRICS_ENDPOINT")
+            .inspect_err(|why| (options.log)(&format!("spira-pub[{name}]: no metrics: {why}")))
+            .ok();
+        options.metrics = Some(MetricsSink::for_component(endpoint.as_deref(), "spira-pub"));
         Publisher::with(name, options)
     }
 
@@ -398,6 +411,7 @@ impl Inner {
     /// just appeared, so a refusal is waited out until the deadline.
     fn session(&self, watch: &mut SocketWatch, announced: bool) {
         lock(&self.shared).phase = Phase::Connecting;
+        // Real time, not the injected clock: this bounds socket I/O, which virtual time never ends.
         let started = Instant::now();
         let (client, mut connection) = loop {
             if let Err(why) = watch.arm() {
@@ -538,6 +552,18 @@ mod tests {
         assert!(empty.to_string().contains("SPIRA_BROKER_SOCKET"), "{empty}");
         let found = configured_socket(&|k| Ok(if k == "SPIRA_RUN" { "run".into() } else { "b.sock".into() }));
         assert_eq!(found.unwrap(), "run/b.sock");
+    }
+
+    #[test_id(tmq7ost)]
+    #[test]
+    fn only_a_declared_empty_seed_is_the_clocks_and_a_bad_one_is_refused_by_name() {
+        let seed = |v: &'static str| configured_seed(&|_| Ok(v.to_string()), 99);
+        assert_eq!(seed("").unwrap(), 99);
+        assert_eq!(seed("7").unwrap(), 7);
+        let bad = seed("seven").unwrap_err().to_string();
+        assert!(bad.contains("SPIRA_SEED") && bad.contains("seven"), "{bad}");
+        let refused = configured_seed(&|k| Err(format!("{k} is not declared")), 99).unwrap_err().to_string();
+        assert!(refused.contains("SPIRA_SEED is not declared"), "{refused}");
     }
 
     #[test_id(tqbh325)]

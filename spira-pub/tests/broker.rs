@@ -256,7 +256,11 @@ fn publishes_failures_and_queue_depth_reach_the_metrics_store() {
 
 /// The built CLI, configured only by a fixture declaring `socket` as the broker's.
 fn cli(dir: &Path, socket: &Path, args: &[&str], stdin: &str) -> (Option<i32>, String) {
-    let env = spira_config::process::fixture_metrics_env(dir, "", &[("SPIRA_BROKER_SOCKET", socket.to_str().unwrap())]);
+    cli_pushing_to("", dir, socket, args, stdin)
+}
+
+fn cli_pushing_to(endpoint: &str, dir: &Path, socket: &Path, args: &[&str], stdin: &str) -> (Option<i32>, String) {
+    let env = spira_config::process::fixture_metrics_env(dir, endpoint, &[("SPIRA_BROKER_SOCKET", socket.to_str().unwrap())]);
     let mut child = Command::new(testkit::bin_exe("spira-pub"))
         .args(args)
         .env_clear()
@@ -294,4 +298,17 @@ fn the_cli_publishes_stdin_to_the_configured_broker_and_exits_by_what_happened()
     broker.stop();
     let (code, err) = cli(&dir, broker.socket(), &["--as", "queue", "--topic", "release/active"], "{}");
     assert!(code == Some(1) && err.contains("unreachable"), "{code:?} {err}");
+}
+
+#[test_id(tvdsteq)]
+#[test]
+fn the_configured_endpoint_receives_the_clis_run_and_the_librarys_series() {
+    let broker = Broker::up();
+    let dir = testkit::TempDir::new("cli-otel");
+    let sink = testkit::otlp::Sink::start();
+
+    let (code, err) = cli_pushing_to(&sink.addr, &dir, broker.socket(), &["--as", "queue", "--topic", "release/active"], "{}");
+
+    assert_eq!(code, Some(0), "{err}");
+    sink.expect(&["spira_pub_publishes", "spira_pub_queue_depth", "spira_component_runs"], FAILSAFE);
 }
