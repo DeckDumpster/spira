@@ -136,6 +136,9 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     let first_read = &all[at_warm..at_idle];
     assert!(first_read.len() == 1 && status_of_local(&first_read[0]), "an idle virtual hour's only git is the drift check's first status read:\n{}", first_read.join("\n"));
     assert_eq!(at_quiet_a, at_quiet_b, "a quiet stretch logged git:\n{}", all[at_quiet_a..at_quiet_b].join("\n"));
+    assert!(validated_at_quiet_a > 0, "no document was ever counted, so the quiet stretch proves nothing");
+    assert!(spira_config::documents_validated() > validated_at_quiet_b, "the rewritten config was not validated again");
+    assert!(started(&f, "gh") > 0, "the new spira/* branch asked no gh stub, so landing may have reached the host's gh");
     let validated = validated_at_quiet_b - validated_at_quiet_a;
     assert_eq!(validated, QUIET_STRETCH_CONFIG_VALIDATIONS, "3 quiet virtual minutes validated the unchanged config {validated} times, over the ceiling of {QUIET_STRETCH_CONFIG_VALIDATIONS}");
     assert!(!f.worktrees.parent().unwrap().join("conditions/drift-unreadable-units.count").exists(), "the units half was blind in the fixture");
