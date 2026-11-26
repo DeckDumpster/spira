@@ -36,15 +36,15 @@ fn lifecycle_submitted_is_any_state_past_the_model() {
     assert!(!lifecycle_submitted(&[]));
 }
 
-#[test_id(tf8i945)]
+#[test_id(ta0r94e)]
 #[test]
-fn only_a_claim_view_offering_the_bead_to_a_builder_counts() {
+fn the_claim_view_reader_tells_offered_withheld_unlisted_and_unreadable_apart() {
     let view = |bead: &str, verdict: &str, rune: &str| format!(r#"{{"rev":1,"beads":[{{"bead_id":"{bead}","verdict":"{verdict}","runes":["{rune}"]}}]}}"#);
-    assert!(builder_would_take(&view("sp-b", "claimable", "builder"), "sp-b"));
-    assert!(!builder_would_take(&view("sp-a", "claimable", "builder"), "sp-b"), "another bead");
-    assert!(!builder_would_take(&view("sp-b", "blocked", "builder"), "sp-b"));
-    assert!(!builder_would_take(&view("sp-b", "claimable", "ops"), "sp-b"), "no builder takes it");
-    assert!(!builder_would_take("not json", "sp-b"));
+    assert_eq!(claim_view_offer(&view("sp-b", "claimable", "builder"), "sp-b"), Some(Offer::ToBuilder));
+    assert_eq!(claim_view_offer(&view("sp-b", "blocked", "builder"), "sp-b"), Some(Offer::Withheld));
+    assert_eq!(claim_view_offer(&view("sp-b", "claimable", "ops"), "sp-b"), Some(Offer::Withheld), "no builder takes it");
+    assert_eq!(claim_view_offer(&view("sp-a", "claimable", "builder"), "sp-b"), Some(Offer::Unlisted));
+    assert_eq!(claim_view_offer("not json", "sp-b"), None);
 }
 
 fn files(rows: &str) -> Vec<UnitFile> {
@@ -205,6 +205,8 @@ struct Fake {
     /// The claim view holds every probe blocked.
     never_claimable: bool,
     seed_create_fails: bool,
+    /// Ids of the defects the content door took.
+    defects: Cell<u32>,
     uninstalled: Cell<bool>,
     sidecar_wrong: bool,
     failed_unit: bool,
@@ -261,6 +263,7 @@ impl Fake {
             already_claimed: false,
             never_claimable: false,
             seed_create_fails: false,
+            defects: Cell::new(0),
             uninstalled: Cell::new(false),
             sidecar_wrong: false,
             failed_unit: false,
@@ -344,7 +347,8 @@ impl Fake {
         let refused = |text: String| Out { rc: 1, text, out: String::new() };
         let vars = spira_store::lc_call::guard_vars(c.env.clone());
         let vars = |k: &str| vars.get(k).cloned();
-        if let Err(r) = bead::guard::state_verb(&argv, &vars, "spira-lc content") {
+        let ctx = bead::guard::Ctx { who: "spira-lc content", vars: &vars, rows: &|_| None, now: 0, ask_label: &|| Ok("ask-fixture".to_string()), registry: &scratch_registry };
+        if let Err(r) = bead::guard::write(&argv, c.stdin.as_deref(), &ctx) {
             return refused(r.text);
         }
         match args {
@@ -359,6 +363,9 @@ impl Fake {
                 let probe = labels.starts_with("acceptance,");
                 if labels == "acceptance-seed" && self.seed_create_fails {
                     return refused("cannot tell\n".into());
+                }
+                if args.contains(&"bug") {
+                    self.defects.set(self.defects.get() + 1);
                 }
                 self.next_id.set(self.next_id.get() + 1);
                 let id = format!("sp-{}{}", if probe { "p" } else { "s" }, self.next_id.get());
@@ -419,8 +426,6 @@ impl Fake {
                 // As the real one does: the operator's answers become the one config file.
                 let text = fs::read_to_string(answers).unwrap();
                 let toml = Path::new(c.env_of("SPIRA_TOML").expect("install-tarball names SPIRA_TOML"));
-                // Two typed keys have no registered default and `answers_text` answers neither; the fake supplies them.
-                let text = format!("{text}spira.metrics_flush_minutes = 60\nspira.gate_target_cap_mib = 81920\n");
                 spira_config::init::ensure(toml, spira_config::init::parse_answers(&text).unwrap(), None, &registry()).unwrap();
                 self.activate(Path::new(tb).file_name().unwrap().to_string_lossy().trim_end_matches(".tar.gz"));
                 ok("")
@@ -613,6 +618,14 @@ fn a_missing_prerequisite_stops_before_any_phase_with_exit_2() {
 
 // ---- the store is reached through spira-lc ------------------------------------------------
 
+/// The repo map and home repo `acceptance-ci.sh` gives the installed instance.
+fn scratch_registry() -> spira_config::repos::Registry {
+    let env = [("SPIRA_HOME_REPO".to_string(), "scratch-repo".to_string())].into_iter().collect();
+    spira_config::repos::Registry::new(Some(SCRATCH_MAP), &env, Path::new("scratch/spira"))
+}
+
+const SCRATCH_MAP: &str = "scratch-repo | /r | push | origin/main | |\nscratch-queue | /q | queue.local | local/main | |\nscratch-pr | /p | pr | origin/main | |\n";
+
 /// The policy the content door loads, from this tree's own personas and statute guards.
 fn filing_policy() -> bead::filing::Policy {
     let home = spira_config::resolve::locate_home_for_process().unwrap();
@@ -625,7 +638,7 @@ fn filing_policy() -> bead::filing::Policy {
         })
     };
     let mut policy = bead::filing::Policy::load(&home, &cfg).unwrap();
-    policy.repos = bead::repos_by_name("scratch-repo | /r | push | origin/main | |\n");
+    policy.repos = bead::repos_by_name(SCRATCH_MAP);
     policy
 }
 
@@ -751,6 +764,19 @@ fn a_forensics_snapshot_reads_the_store_through_spira_lc() {
     Run::new(&f, b.opts(&[])).snapshot("x");
     let ran = lines(&f);
     assert!(ran.iter().any(|l| l == "spira-lc content list --all --limit 0 --json") && ran.iter().any(|l| l == "spira-lc claimable"), "{ran:#?}");
+}
+
+#[test_id(t9mzbdk)]
+#[test]
+fn a_failed_run_asked_to_file_defects_files_one_the_door_admits() {
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.sidecar_wrong = true;
+    let prev_tb = b.root.join("spira-20260901T000000Z.tar.gz").display().to_string();
+    let mut extra = PREV.to_vec();
+    extra.extend([prev_tb.as_str(), "--file-defects"]);
+    assert_eq!(phases::run(&f, b.opts(&extra)), 1);
+    assert_eq!(f.defects.get(), 1, "{:#?}", lines(&f));
 }
 
 #[test_id(t3dhpwo)]

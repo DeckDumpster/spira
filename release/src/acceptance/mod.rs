@@ -415,12 +415,22 @@ pub fn lifecycle_submitted(states: &[String]) -> bool {
     states.iter().any(|s| matches!(s.as_str(), "SUBMITTED" | "CERTIFIED" | "IN_DELIVERY" | "QUEUED" | "BATCHED" | "LANDED" | "DONE"))
 }
 
-/// Whether a `spira-lc claimable` reply offers `id` to a builder. Unreadable is not claimable.
-pub fn builder_would_take(view_json: &str, id: &str) -> bool {
-    let Ok(view) = serde_json::from_str::<serde_json::Value>(view_json) else { return false };
-    view["beads"].as_array().is_some_and(|beads| {
-        beads.iter().any(|b| b["bead_id"] == id && b["verdict"] == "claimable" && b["runes"].as_array().is_some_and(|r| r.iter().any(|x| x == "builder")))
-    })
+/// What a `spira-lc claimable` reply says of one bead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Offer {
+    ToBuilder,
+    /// Listed, and no builder can take it.
+    Withheld,
+    /// Not READY or REWORK, so the view does not list it.
+    Unlisted,
+}
+
+/// `None` when the reply is unreadable.
+pub fn claim_view_offer(view_json: &str, id: &str) -> Option<Offer> {
+    let view = serde_json::from_str::<serde_json::Value>(view_json).ok()?;
+    let Some(bead) = view.get("beads")?.as_array()?.iter().find(|b| b["bead_id"] == id) else { return Some(Offer::Unlisted) };
+    let to_builder = bead["verdict"] == "claimable" && bead["runes"].as_array().is_some_and(|r| r.iter().any(|x| x == "builder"));
+    Some(if to_builder { Offer::ToBuilder } else { Offer::Withheld })
 }
 
 /// `last_fired_at` of `task` in a `scheduler status` document (`world scheduler-status --json`):

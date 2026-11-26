@@ -392,10 +392,6 @@ done
     exit 2
 }
 
-# THE INSTALLED INSTANCE'S OWN DATABASE, exactly as acceptance-ci.sh passes it: the probe
-# bead must be filed where the installed sentinel and dwarves read. `release acceptance`'s own
-# default (~/spira-acceptance-test-db) is a path no install creates, so the first local run
-# failed at "bead filed" before reaching anything the release does.
 # THE RELEASE RUNNER'S PATH: system directories only, no rustup shim and no host tool — a unit
 # or row that resolves a harness tool by a bare name the release does not put on PATH fails here.
 _al_bare_path="${SPIRA_ACCEPTANCE_LOCAL_PATH:-/usr/local/bin:/usr/bin:/bin}"
@@ -426,8 +422,7 @@ exec env -i HOME=\"\$HOME\" USER=\"\${USER:-spirauser}\" LANG=\"\${LANG:-C.UTF-8
     /tmp/release acceptance '$_al_tag' \
     --scratch-repo \"\$HOME/scratch-repo\" \
     --tarball '$_al_ctar' \
-    --agent '$_al_agent' \
-    --bd-db \"\$HOME/.local/share/spira/db\" $_al_prev_args $_al_waive_args
+    --agent '$_al_agent' $_al_prev_args $_al_waive_args
 "
 _al_rc=$?
 if [ "$_al_rc" -eq 0 ] && [ -n "$PRED" ]; then

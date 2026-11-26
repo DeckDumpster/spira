@@ -38,6 +38,8 @@ impl Run<'_> {
         c.push_str(&format!("releases = {}\n", Self::s(releases)));
         c.push_str(&format!("dolt_data = {}\n", Self::s(&data.join("dolt"))));
         c.push_str("operated = 0\n");
+        // Typed keys with no registered default: the installer refuses until they are answered.
+        c.push_str("metrics_flush_minutes = 60\ngate_target_cap_mib = 81920\n");
         c.push_str(&format!("release_repo = {}\n", Self::s(&self.o.release_src())));
         if let Some(a) = &self.o.a.agent {
             c.push_str(&format!("agent = {a}\n"));
@@ -574,13 +576,15 @@ impl Run<'_> {
         (Some(id), out.text)
     }
 
-    /// Whether a builder takes `id`: the claim view offers it to one, or one has already
-    /// claimed it, which takes it out of the view.
+    /// Whether a builder takes `id`: the claim view offers it to one, or the view no longer
+    /// lists it and it has been claimed. The probe's labels name only the builder's partition.
     pub(super) fn claimable_by_builder(&self, id: &str) -> bool {
         self.poll(30, 2, || {
             let view = self.h.run(&self.tool("spira-lc").arg("claimable"));
-            if view.rc == 0 && builder_would_take(&view.out, id) {
-                return true;
+            match (view.rc, claim_view_offer(&view.out, id)) {
+                (0, Some(Offer::ToBuilder)) => return true,
+                (0, Some(Offer::Unlisted)) => {}
+                _ => return false,
             }
             let hist = self.h.run(&self.tool("spira-lc").args(["history", id]));
             hist.rc == 0 && lifecycle_states(&hist.out).iter().any(|s| spira_store::lc_state::is_working(s))
@@ -1064,7 +1068,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
     if r.o.a.file_defects && r.fail > 0 {
         let title = format!("acceptance-run {tag}: {} phase(s) failed", r.fail);
         let desc = format!("release acceptance found {} failure(s) against tag {tag}. See the acceptance log for detail.", r.fail);
-        let create = r.content(&["create", "--title", &title, "--label", "defect,repo:spira,discovered-from:sp-ewwwq", "--type", "bug", "--body-file", "-"]).stdin(desc);
+        let create = r.content(&["create", "--title", &title, "--label", "defect,discovered-from:sp-ewwwq", "--type", "bug", "--body-file", "-"]).stdin(desc);
         let filed = h.run(&create);
         if filed.rc != 0 {
             println!("warning: the defect was not filed (exit {}): {}", filed.rc, tail(&filed.text, 3));
