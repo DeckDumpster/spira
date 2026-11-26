@@ -45,7 +45,8 @@ pub fn run(text: &str) -> Result<(), String> {
         }
     };
     let flusher = || std::env::current_exe().map_err(|e| e.to_string());
-    record(Path::new(&inbox), &line, &wake, &pattern, flusher, || spira_pub::Publisher::new("inbox-triage")).map(|_| ())
+    let cursor = inbox_rules::concierge_cursor(Path::new(&spira_config::process::cfg("SPIRA_RUN").unwrap_or_default()));
+    record(Path::new(&inbox), &line, &wake, &pattern, flusher, &cursor, || spira_pub::Publisher::new("inbox-triage")).map(|_| ())
 }
 
 fn size(path: &Path) -> u64 {

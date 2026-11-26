@@ -134,6 +134,12 @@ fn filter_meets(filter: &[&str], pattern: &[Segment]) -> bool {
     }
 }
 
+/// Whether the well-formed subscription filter selects the concrete `topic`.
+pub fn filter_selects(filter: &str, topic: &str) -> bool {
+    let filter: Vec<&str> = filter.split('/').collect();
+    filter_meets(&filter, &topic.split('/').map(Segment::Literal).collect::<Vec<_>>())
+}
+
 /// The family of `topic`, refused when none is declared or when `as_class` is not its class.
 pub fn check(topic: &str, as_class: Option<Class>) -> Result<&'static Family, PubError> {
     let family = family_of(topic).ok_or_else(|| PubError::UndeclaredFamily { topic: topic.to_string() })?;
@@ -157,6 +163,17 @@ mod tests {
         }
         for no in ["nosuch/#", "bead/+/nosuch", "session/+/age/45m", "bead/+", "bead/#/state", "bead/a+/state", ""] {
             assert!(!filter_matches_any(no), "{no}");
+        }
+    }
+
+    #[test_id(t0c0ich)]
+    #[test]
+    fn a_filter_selects_a_topic_by_mqtt_wildcards() {
+        for (filter, topic) in [("a/+/c", "a/b/c"), ("a/#", "a"), ("a/#", "a/b/c"), ("#", "a/b"), ("a/b", "a/b")] {
+            assert!(filter_selects(filter, topic), "{filter} {topic}");
+        }
+        for (filter, topic) in [("a/+", "a/b/c"), ("a/b", "a"), ("a/c", "a/b"), ("a/b/c", "a/b")] {
+            assert!(!filter_selects(filter, topic), "{filter} {topic}");
         }
     }
 

@@ -1017,6 +1017,8 @@ dependencies = [
  "inbox-rules",
  "libc",
  "regex",
+ "rumqttc",
+ "serde_json",
  "spira-config",
  "spira-otel",
  "spira-pub",
@@ -2697,6 +2699,7 @@ dependencies = [
  "spira-otel",
  "spira-pub",
  "spira-test-id",
+ "spira-world",
  "strand",
  "testkit",
 ]

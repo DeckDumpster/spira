@@ -11,4 +11,3 @@ pub mod core;
 pub mod protocol;
 mod render;
 pub mod run;
-mod wait;

@@ -17,6 +17,16 @@ pub struct Mapped {
     pub watcher: Option<String>,
 }
 
+pub const SUB_TEMPLATE: &str = "spira-sub@.service";
+
+/// The subscribers this harness runs a `spira-sub` for.
+pub const SUBSCRIBERS: [&str; 1] = ["concierge"];
+
+/// The installed name of `name`'s `spira-sub` unit.
+pub fn subscriber_unit(name: &str, instance: &str) -> String {
+    format!("spira-sub-{name}-{instance}.service")
+}
+
 /// Map an installed unit file name back to its template, given the templates a release
 /// carries. `None`: not a unit any template makes.
 pub fn template_for(installed: &str, templates: &BTreeSet<String>, instance: &str) -> Option<Mapped> {
@@ -32,11 +42,13 @@ pub fn template_for(installed: &str, templates: &BTreeSet<String>, instance: &st
             return mapped(&t, None);
         }
         if ext == ".service" {
-            for (prefix, instanced) in [("spira-watch-", "spira-watch@.service"), ("spira-sub-", "spira-sub@.service")] {
-                if let Some(name) = base.strip_prefix(prefix).filter(|n| !n.is_empty()) {
-                    if templates.contains(instanced) {
-                        return mapped(instanced, Some(name.to_string()));
-                    }
+            let subscriber = SUBSCRIBERS.into_iter().find(|name| installed == subscriber_unit(name, instance));
+            if let Some(name) = subscriber.filter(|_| templates.contains(SUB_TEMPLATE)) {
+                return mapped(SUB_TEMPLATE, Some(name.to_string()));
+            }
+            if let Some(name) = base.strip_prefix("spira-watch-") {
+                if !name.is_empty() && templates.contains("spira-watch@.service") {
+                    return mapped("spira-watch@.service", Some(name.to_string()));
                 }
             }
         }

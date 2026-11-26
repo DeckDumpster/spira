@@ -58,24 +58,10 @@ pub struct Core {
     pub(crate) subs: Vec<Sub>,
     /// The current value of every subscribed state topic.
     current: BTreeMap<String, Value>,
+    /// The chatter message last taken, and how many more copies of it the broker owes.
+    echoes: (String, Vec<u8>, usize),
     /// The current value of every `publisher/<name>`.
     pub(crate) publishers: BTreeMap<String, Value>,
-}
-
-/// Whether the MQTT filter selects the concrete topic: `+` is one level, a final `#` the rest,
-/// the parent level included.
-fn selects(filter: &str, topic: &str) -> bool {
-    let mut words = topic.split('/');
-    for f in filter.split('/') {
-        if f == "#" {
-            return true;
-        }
-        match words.next() {
-            Some(w) if f == "+" || f == w => {}
-            _ => return false,
-        }
-    }
-    words.next().is_none()
 }
 
 fn is_state(topic: &str) -> bool {
@@ -112,7 +98,7 @@ impl Sub {
 impl Core {
     pub fn new(clock: Arc<dyn Clock>, saved: Saved) -> Core {
         let subs = saved.subs.into_iter().map(|entry| Sub { entry, last_fired_ms: None, seen: HashMap::new() }).collect();
-        Core { clock, next: saved.next.max(1), subs, current: BTreeMap::new(), publishers: BTreeMap::new() }
+        Core { clock, next: saved.next.max(1), subs, current: BTreeMap::new(), publishers: BTreeMap::new(), echoes: Default::default() }
     }
 
     pub fn saved(&self) -> Saved {
@@ -193,7 +179,21 @@ impl Core {
                 out.unsubscribe.push(filter);
             }
         }
-        self.current.retain(|topic, _| held.iter().any(|f| selects(f, topic)));
+        self.current.retain(|topic, _| held.iter().any(|f| topics::filter_selects(f, topic)));
+    }
+
+    /// Whether this is another copy of the chatter just taken: the broker sends one for each
+    /// held filter that selects the topic, one after another. A state value needs no such
+    /// count, since an equal one is skipped anyway.
+    fn echo(&mut self, topic: &str, payload: &[u8]) -> bool {
+        let (last, said, owed) = &mut self.echoes;
+        if *owed > 0 && last == topic && said == payload {
+            *owed -= 1;
+            return true;
+        }
+        let copies = self.filters().iter().filter(|f| topics::filter_selects(f, topic)).count();
+        self.echoes = (topic.to_string(), payload.to_vec(), copies.saturating_sub(1));
+        false
     }
 
     /// A message from the broker. With nobody `listening` nothing counts as delivered, so a
@@ -209,17 +209,20 @@ impl Core {
         }
         let value = serde_json::from_slice(payload).unwrap_or_else(|_| Value::String(String::from_utf8_lossy(payload).into_owned()));
         let state = is_state(topic);
+        if !state && self.echo(topic, payload) {
+            return out;
+        }
         if liveness {
             self.publishers.insert(topic.to_string(), value.clone());
         }
-        if state && self.subs.iter().any(|s| s.filter().is_some_and(|f| selects(f, topic))) {
+        if state && self.subs.iter().any(|s| s.filter().is_some_and(|f| topics::filter_selects(f, topic))) {
             self.current.insert(topic.to_string(), value.clone());
         }
         let now = self.now_ms();
         let mut spent = Vec::new();
         for (at, sub) in self.subs.iter_mut().enumerate() {
             let Some(filter) = sub.entry.filter.clone() else { continue };
-            let direct = selects(&filter, topic);
+            let direct = topics::filter_selects(&filter, topic);
             let notice = !direct && liveness && depends_on(&filter, topic.trim_start_matches("publisher/"));
             if notice && !is_gone(&value) {
                 // Back up: its next going is news again.
@@ -249,11 +252,11 @@ impl Core {
             let Some(filter) = sub.entry.filter.clone() else { continue };
             sub.seen.clear();
             for (topic, value) in &self.publishers {
-                if !selects(&filter, topic) && is_gone(value) && depends_on(&filter, topic.trim_start_matches("publisher/")) {
+                if !topics::filter_selects(&filter, topic) && is_gone(value) && depends_on(&filter, topic.trim_start_matches("publisher/")) {
                     out.lines.extend(sub.deliver(topic, value, true, now));
                 }
             }
-            for (topic, value) in self.current.iter().filter(|(t, _)| selects(&filter, t)) {
+            for (topic, value) in self.current.iter().filter(|(t, _)| topics::filter_selects(&filter, t)) {
                 out.lines.extend(sub.deliver(topic, value, true, now));
                 if sub.entry.once {
                     spent.push(at);
@@ -402,6 +405,19 @@ mod tests {
         assert!(c.attach().lines.is_empty(), "chatter is not retained");
     }
 
+    #[test_id(t8ua73w)]
+    #[test]
+    fn the_copies_of_one_chatter_message_sent_for_overlapping_filters_are_one_delivery() {
+        let (mut c, _) = core();
+        c.add("progress/+", "", false, true).unwrap();
+        c.add("progress/#", "", false, true).unwrap();
+        let said = json!({"note": "n"});
+        for publish in 0..2 {
+            assert_eq!(say(&mut c, "progress/sp-a", said.clone()).lines.len(), 2, "publish {publish}: one line each");
+            assert!(say(&mut c, "progress/sp-a", said.clone()).lines.is_empty(), "publish {publish}: the broker's second copy");
+        }
+    }
+
     #[test_id(t9eqtde)]
     #[test]
     fn a_resident_publisher_going_is_told_to_its_familys_subscriptions_once_per_going() {
@@ -452,13 +468,6 @@ mod tests {
         let mut again = Core::new(Arc::new(clock), serde_json::from_str(&text).unwrap());
         assert_eq!(again.filters().into_iter().collect::<Vec<_>>(), ["round/#"]);
         assert_eq!(again.add("gate/#", "", false, true).unwrap().0, "s3");
-    }
-
-    #[test_id(tctlpe2)]
-    #[test]
-    fn selects_follows_mqtt_wildcards() {
-        assert!(selects("a/+/c", "a/b/c") && selects("a/#", "a") && selects("a/#", "a/b/c"));
-        assert!(!selects("a/+", "a/b/c") && !selects("a/b", "a") && !selects("a/c", "a/b"));
     }
 
     #[test_id(t2qin32)]

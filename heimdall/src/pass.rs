@@ -32,6 +32,8 @@ pub struct PassPaths {
     pub heartbeat: PathBuf,
     /// The Concierge inbox, and the wake and pattern that decide whether a line pushes.
     pub inbox: PathBuf,
+    /// How far the inbox has been read.
+    pub inbox_cursor: PathBuf,
     pub push_wake: String,
     pub push_pattern: String,
 }
@@ -188,7 +190,7 @@ fn page_inbox(paths: &PassPaths, now: i64, title: &str, evidence: &str) -> Resul
     let line = inbox_rules::line(&util::iso_utc(now), &format!("[heimdall] {title}; beads {beads}"));
     let flusher = || spira_config::release_env::tool("inbox-triage").map(PathBuf::from);
     let publisher = || spira_pub::Publisher::new("heimdall");
-    inbox_rules::record(&paths.inbox, &line, &paths.push_wake, &paths.push_pattern, flusher, publisher).map(|_| ())
+    inbox_rules::record(&paths.inbox, &line, &paths.push_wake, &paths.push_pattern, flusher, &paths.inbox_cursor, publisher).map(|_| ())
 }
 
 #[cfg(test)]
@@ -230,7 +232,7 @@ mod tests {
             Rig { dir: testkit::TempDir::new("heimdall-pass"), ops: Fake::default(), state: State::default(), now: 1_800_000_000, wedged: false, halted: false, restart_delta: None, refresh: 3600, gate_rows: Vec::new(), gate_unread: false }
         }
         fn paths(&self) -> PassPaths {
-            PassPaths { fallback: self.dir.join("heimdall.alerts.json"), heartbeat: self.dir.join("heimdall.status"), inbox: self.dir.join("inbox.log"), push_wake: String::new(), push_pattern: String::new() }
+            PassPaths { fallback: self.dir.join("heimdall.alerts.json"), heartbeat: self.dir.join("heimdall.status"), inbox: self.dir.join("inbox.log"), inbox_cursor: self.dir.join("inbox.cursor"), push_wake: String::new(), push_pattern: String::new() }
         }
         fn pass(&mut self) -> PassReport {
             self.now += 120;

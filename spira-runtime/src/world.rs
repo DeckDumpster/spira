@@ -1443,11 +1443,10 @@ impl World {
             true => spira_config::release_env::tool("inbox-triage").map(PathBuf::from),
             false => Ok(self.inbox_flusher.clone()),
         };
-        let mut pushed = false;
-        for line in input.lines().filter(|l| !l.is_empty()) {
-            let publisher = || spira_pub::Publisher::new("spira-runtime");
-            pushed |= inbox_rules::record(&self.inbox, line, &self.push_wake, &self.push_pattern, flusher, publisher)?;
-        }
+        let lines: Vec<&str> = input.lines().filter(|l| !l.is_empty()).collect();
+        let cursor = watchd::paths::cursorfile(&self.run_dir.to_string_lossy(), INBOX_WATCHER);
+        let publisher = || spira_pub::Publisher::new("spira-runtime");
+        let pushed = inbox_rules::record_lines(&self.inbox, &lines, &self.push_wake, &self.push_pattern, flusher, &cursor, publisher)?;
         Ok(if pushed { "appended, pushed" } else { "appended" }.into())
     }
 }

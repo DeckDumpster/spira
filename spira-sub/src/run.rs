@@ -7,29 +7,26 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ports::Clock;
-use rumqttc::{Client, Connection, ConnectionError, Event, LastWill, MqttOptions, NetworkOptions, Packet, QoS, Transport};
+use rumqttc::{Client, Connection, Event, Packet, QoS};
 use serde_json::json;
 use spira_otel::metrics::{MetricsSink, Point};
-use spira_pub::{SocketWatch, CONNECT_DEADLINE, MAX_PAYLOAD};
+use spira_pub::link::{sleep_until_readable, Dial};
+use spira_pub::SocketWatch;
 
 use crate::core::{Core, Out, Saved, LIVENESS};
 use crate::protocol::{Reply, Request};
-use crate::wait;
 
 /// The most a command waits for the broker to acknowledge what it asked of it.
 const ACK_DEADLINE: Duration = Duration::from_secs(3);
-/// Between connects while a broker that has just made its socket is not yet listening on it.
-const LISTEN_PAUSE: Duration = Duration::from_millis(5);
 /// Before trying again a broker that is there and did not take the connection.
 const RETRY: Duration = Duration::from_secs(5);
 /// The longest one sleep toward a timer, so a stepped wall clock is noticed.
 const TIMER_SLICE: Duration = Duration::from_secs(60);
 /// Requests the client holds ahead of the connection: the whole set, resubscribed at once.
 const CHANNEL: usize = 1 << 12;
-const MAX_PACKET: usize = MAX_PAYLOAD + (4 << 10);
 /// Lines a reader may fall behind before it is cut off; it re-attaches and is replayed.
 const BACKLOG: usize = 1 << 16;
 
@@ -301,25 +298,6 @@ impl Server {
         format!("spira-sub-{}", self.name)
     }
 
-    fn open(&self, broker: &str, within: Duration) -> Result<(Client, Connection), Option<Box<ConnectionError>>> {
-        let mut options = MqttOptions::new(self.client_id(), broker, 0);
-        options.set_transport(Transport::Unix);
-        // Liveness is the socket: a dead client's closes, and the broker publishes its will.
-        options.set_keep_alive(Duration::ZERO);
-        options.set_max_packet_size(MAX_PACKET, MAX_PACKET);
-        let gone = json!({"state": "gone"}).to_string();
-        options.set_last_will(LastWill::new(format!("subscriber/{}", self.name), gone, QoS::AtLeastOnce, true));
-        let (client, mut connection) = Client::new(options, CHANNEL);
-        let mut network = NetworkOptions::new();
-        network.set_connection_timeout(CONNECT_DEADLINE.as_secs());
-        connection.eventloop.set_network_options(network);
-        match connection.recv_timeout(within) {
-            Ok(Ok(Event::Incoming(Packet::ConnAck(_)))) => Ok((client, connection)),
-            Ok(Err(e)) => Err(Some(Box::new(e))),
-            Ok(Ok(_)) | Err(_) => Err(None),
-        }
-    }
-
     /// Says it is up and takes the whole set to the new connection.
     fn connected(&self, client: Client, now_ms: u64) {
         let mut state = self.lock();
@@ -362,7 +340,8 @@ impl Server {
     /// Holds a connection for as long as there is a broker. Between brokers it sleeps until the
     /// next one makes its socket.
     fn connection(&self, broker: &Path, clock: &dyn Clock) -> String {
-        let Some(path) = broker.to_str() else { return format!("socket path {} is not UTF-8", broker.display()) };
+        let client_id = self.client_id();
+        let dial = Dial { client_id: &client_id, socket: broker, will_topic: format!("subscriber/{}", self.name), capacity: CHANNEL };
         let mut watch = SocketWatch::new(broker);
         // Whether the broker's socket has just appeared, so a refusal is a not-yet.
         let mut announced = false;
@@ -371,14 +350,7 @@ impl Server {
                 return why;
             }
             watch.drain();
-            let started = Instant::now();
-            let opened = loop {
-                match self.open(path, CONNECT_DEADLINE) {
-                    Err(Some(e)) if announced && refused(&e) && started.elapsed() < CONNECT_DEADLINE => std::thread::sleep(LISTEN_PAUSE),
-                    other => break other,
-                }
-            };
-            match opened {
+            match dial.connect(announced) {
                 Ok((client, mut connection)) => {
                     self.connected(client, clock.now_ms());
                     let why = self.drive(&mut connection);
@@ -388,15 +360,14 @@ impl Server {
                     // Once at once, in case only this connection went.
                     announced = false;
                 }
-                Err(e) => {
-                    // A broker that is not there announces itself; one that is there may not.
-                    let absent = e.as_deref().is_some_and(refused);
-                    if announced || !absent {
-                        say(&self.name, &format!("cannot connect: {}", e.map_or_else(|| "no CONNACK".to_string(), |e| e.to_string())));
+                Err(lost) => {
+                    if announced || !lost.refused {
+                        say(&self.name, &format!("cannot connect: {}", lost.why));
                     }
-                    let retry = (!absent).then_some(RETRY);
+                    // A broker that is not there announces itself; one that is there may not.
+                    let retry = (!lost.refused).then_some(RETRY);
                     loop {
-                        wait::readable(watch.fd(), retry);
+                        sleep_until_readable([watch.fd(), None], retry);
                         announced = watch.drain();
                         if announced || retry.is_some() {
                             break;
@@ -406,10 +377,6 @@ impl Server {
             }
         }
     }
-}
-
-fn refused(e: &ConnectionError) -> bool {
-    matches!(e, ConnectionError::Io(io) if matches!(io.kind(), ErrorKind::ConnectionRefused | ErrorKind::NotFound))
 }
 
 /// One `run` per name: two would share a client id and take the broker connection from each

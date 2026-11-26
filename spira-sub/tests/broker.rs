@@ -29,10 +29,14 @@ struct World {
 
 impl World {
     fn new(broker: &Path) -> World {
+        World::pushing_to("", broker)
+    }
+
+    fn pushing_to(metrics: &str, broker: &Path) -> World {
         let dir = TempDir::new("sub");
         let control = dir.join("c").display().to_string();
         let declare = [("SPIRA_BROKER_SOCKET", broker.to_str().unwrap()), ("SPIRA_SUB_CONTROL_DIR", control.as_str())];
-        let env = spira_config::process::fixture_metrics_env(&dir, "", &declare);
+        let env = spira_config::process::fixture_metrics_env(&dir, metrics, &declare);
         World { dir, env }
     }
 
@@ -329,4 +333,73 @@ fn an_at_timer_set_in_the_past_arrives_on_follow() {
     world.ok(&["add", "--at", "2000-01-01T00:00:00Z", "--note", "look again"]);
 
     assert_eq!(follow.next(), "[sub:s1] at 2000-01-01T00:00:00Z — look again");
+}
+
+#[test_id(t32stn8)]
+#[test]
+fn follow_started_before_any_run_waits_for_it_and_then_streams() {
+    let broker = Broker::up();
+    let world = World::new(broker.socket());
+    let mut command = world.command(&["follow"]);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = ChildGuard::spawn(&mut command);
+    let (stdout, stderr) = child.pipes();
+    let follow = Follow { _child: child, lines: pipe(stdout.unwrap()), notes: pipe(stderr.unwrap()) };
+    follow.noted("waiting for it");
+
+    let _run = world.run(broker.socket());
+    follow.noted("following");
+    world.ok(&["add", "release/active"]);
+    publish(&publisher("t", broker.socket()), "release/active", json!({"release": "r1"}));
+
+    assert_eq!(follow.next(), "[sub:s1] release/active release=r1");
+}
+
+#[test_id(tbp2ghh)]
+#[test]
+fn an_at_timer_ahead_of_now_is_woken_for_and_delivered() {
+    let broker = Broker::up();
+    let world = World::new(broker.socket());
+    let _run = world.run(broker.socket());
+    let follow = world.follow();
+    let soon = strand::timefmt::utc_stamp(i64::try_from(spira_config::vtime::wall_epoch()).unwrap() + 2);
+
+    world.ok(&["add", "--at", &soon, "--note", "now"]);
+
+    assert_eq!(follow.next(), format!("[sub:s1] at {soon} — now"));
+    assert!(world.ok(&["list"]).contains("no subscriptions"));
+}
+
+#[test_id(tcxfl3k)]
+#[test]
+fn overlapping_filters_each_deliver_a_chatter_message_once() {
+    let broker = Broker::up();
+    let world = World::new(broker.socket());
+    let _run = world.run(broker.socket());
+    let follow = world.follow();
+    world.ok(&["add", "progress/+"]);
+    world.ok(&["add", "progress/#"]);
+    world.ok(&["add", "release/active"]);
+    let p = publisher("t", broker.socket());
+
+    publish(&p, "progress/sp-a", json!({"note": "compiling"}));
+    publish(&p, "release/active", json!({"release": "r1"}));
+
+    let seen: Vec<String> = std::iter::repeat_with(|| follow.next()).take_while(|l| !l.contains("release/active")).collect();
+    assert_eq!(seen, ["[sub:s1] progress/sp-a note=compiling", "[sub:s2] progress/sp-a note=compiling"]);
+}
+
+#[test_id(tgjz3s7)]
+#[test]
+fn deliveries_subscriptions_and_control_commands_reach_the_metrics_store() {
+    let broker = Broker::up();
+    let sink = testkit::otlp::Sink::start();
+    let world = World::pushing_to(&sink.addr, broker.socket());
+    let _run = world.run(broker.socket());
+    let follow = world.follow();
+    world.ok(&["add", "release/active"]);
+    publish(&publisher("t", broker.socket()), "release/active", json!({"release": "r1"}));
+    follow.next();
+
+    sink.expect(&["spira_sub_deliveries", "spira_sub_subscriptions", "spira_sub_control_commands"], FAILSAFE);
 }

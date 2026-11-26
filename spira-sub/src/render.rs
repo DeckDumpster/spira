@@ -2,6 +2,7 @@
 
 use serde_json::Value;
 use spira_pub::topics;
+use spira_world::clock::format_age;
 
 use crate::core::Core;
 
@@ -48,15 +49,6 @@ pub(crate) fn at_line(id: &str, at_ms: u64, note: &str) -> String {
     tagged(id, &format!("at {}", instant(at_ms)), note)
 }
 
-fn ago(ms: u64) -> String {
-    match ms / 1000 {
-        s if s < 60 => format!("{s}s ago"),
-        s if s < 3600 => format!("{}m ago", s / 60),
-        s if s < 86_400 => format!("{}h ago", s / 3600),
-        s => format!("{}d ago", s / 86_400),
-    }
-}
-
 /// `text` under `lead`, continued on indented lines, none wider than the screen.
 fn wrap(out: &mut String, lead: &str, text: &str) {
     let mut line = lead.to_string();
@@ -87,7 +79,7 @@ pub(crate) fn list(core: &Core, name: &str, connected: bool, readers: usize) -> 
             (None, at) => format!("at {}", instant(at.unwrap_or(0))),
         };
         wrap(&mut out, "", &format!("{} {what}", sub.entry.id));
-        let fired = sub.last_fired_ms.map_or("never".to_string(), |t| ago(now.saturating_sub(t)));
+        let fired = sub.last_fired_ms.map_or("never".to_string(), |t| format!("{} ago", format_age(i64::try_from(now.saturating_sub(t) / 1000).unwrap_or(i64::MAX))));
         let once = if sub.entry.once && sub.entry.filter.is_some() { ", once" } else { "" };
         wrap(&mut out, "  ", &format!("fired {fired}{once}"));
         if !sub.entry.note.is_empty() {

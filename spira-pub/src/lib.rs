@@ -9,6 +9,7 @@
 extern crate spira_test_id;
 
 pub mod cli;
+pub mod link;
 mod publisher;
 mod socket_watch;
 mod telemetry;

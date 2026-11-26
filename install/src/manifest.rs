@@ -3,6 +3,8 @@
 //! filesystem or `watchd.sh` — callers resolve [`Inputs::watch_names`] and the two presence
 //! flags themselves and hand them in.
 
+use release::units::{subscriber_unit, SUBSCRIBERS, SUB_TEMPLATE};
+
 /// One template this box installs. `enable` is the template-level default; a template that
 /// should never be auto-enabled (the `.service` half of a timer pair) carries `enable: false`
 /// and the pairing timer carries `enable: true`.
@@ -15,10 +17,6 @@ pub struct Template {
 /// The templates installed once per name, never under their own: each instance is a concrete
 /// `<template>-<name>-<instance>.service`.
 const WATCH_TEMPLATE: &str = "spira-watch@.service";
-const SUB_TEMPLATE: &str = "spira-sub@.service";
-
-/// The subscribers this harness runs a `spira-sub` for.
-const SUBSCRIBERS: [&str; 1] = ["concierge"];
 
 fn is_instanced(template: &str) -> bool {
     template.ends_with("@.service")
@@ -196,7 +194,7 @@ impl Manifest {
 
     /// The installed names of [`instances`](Manifest::instances).
     pub fn instance_names<'a>(&'a self, instance: &'a str) -> impl Iterator<Item = String> + 'a {
-        self.instances().map(move |(template, name)| inst_template_name(template, name, instance))
+        self.instances().map(move |(template, name)| inst_instance_name(template, name, instance))
     }
 
     /// Every template name this box installs, excluding the instanced ones (callers render
@@ -254,7 +252,7 @@ pub fn union_template_names() -> Vec<String> {
 /// [`union_template_names`], resolved to this instance's installed names via [`inst_name`]
 /// — what a removal caller actually needs to check against disk.
 pub fn union_installed_names(instance: &str) -> Vec<String> {
-    let subscribers = SUBSCRIBERS.iter().map(|s| inst_template_name(SUB_TEMPLATE, s, instance));
+    let subscribers = SUBSCRIBERS.iter().map(|s| subscriber_unit(s, instance));
     union_template_names().iter().map(|n| inst_name(n, instance)).chain(subscribers).collect()
 }
 
@@ -280,12 +278,14 @@ pub fn inst_name(template: &str, instance: &str) -> String {
 
 /// `inst_watch_name` (units.sh): `spira-watch@<name>.service`'s per-instance installed name.
 pub fn inst_watch_name(name: &str, instance: &str) -> String {
-    inst_template_name(WATCH_TEMPLATE, name, instance)
+    format!("spira-watch-{name}-{instance}.service")
 }
 
-fn inst_template_name(template: &str, name: &str, instance: &str) -> String {
-    let family = if template == SUB_TEMPLATE { "spira-sub" } else { "spira-watch" };
-    format!("{family}-{name}-{instance}.service")
+fn inst_instance_name(template: &str, name: &str, instance: &str) -> String {
+    match template {
+        SUB_TEMPLATE => subscriber_unit(name, instance),
+        _ => inst_watch_name(name, instance),
+    }
 }
 
 #[cfg(test)]

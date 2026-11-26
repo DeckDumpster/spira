@@ -5,14 +5,13 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use spira_pub::link::{sleep_until_readable, LISTEN_PAUSE};
 use spira_pub::{SocketWatch, CONNECT_DEADLINE};
 
 use crate::protocol::{Reply, Request};
-use crate::wait;
 
 /// The most a command waits for its reply: past the longest the client waits for the broker.
 const REPLY_DEADLINE: Duration = Duration::from_secs(5);
-const LISTEN_PAUSE: Duration = Duration::from_millis(5);
 
 fn open(socket: &Path, request: &Request) -> std::io::Result<(Reply, BufReader<UnixStream>)> {
     let mut stream = UnixStream::connect(socket)?;
@@ -35,6 +34,10 @@ pub fn call(socket: &Path, request: &Request) -> Result<Reply, String> {
 /// waited for on its socket's directory, and replays on the new attach. Returns once `out` is
 /// closed.
 pub fn follow(socket: &Path, out: &mut impl Write, note: &mut impl FnMut(&str)) -> Result<(), String> {
+    // It may be asked before any `run` has made the directory it waits in.
+    if let Some(dir) = socket.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    }
     let mut watch = SocketWatch::new(socket);
     let mut announced = false;
     let mut waiting = false;
@@ -78,7 +81,7 @@ pub fn follow(socket: &Path, out: &mut impl Write, note: &mut impl FnMut(&str)) 
                     waiting = true;
                 }
                 loop {
-                    wait::readable(watch.fd(), None);
+                    sleep_until_readable([watch.fd(), None], None);
                     if watch.drain() {
                         break;
                     }

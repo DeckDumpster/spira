@@ -19,7 +19,7 @@
 1 unit-name install/src/values.rs
 2 unit-name loom/src/units.rs
 1 unit-name release/src/intake.rs
-1 unit-name release/src/units.rs
+2 unit-name release/src/units.rs
 1 unit-name sim/src/units.rs
 2 unit-name spira-config/src/release_tag.rs
 1 output spira-runtime/src/reconcile_host.rs

@@ -126,22 +126,36 @@ pub fn spool_path(inbox: &Path) -> PathBuf {
 /// The most of the oldest unread line `concierge/inbox` carries.
 const OLDEST_CHARS: usize = 500;
 
-/// How many lines of `inbox` lie past the reader's cursor, `<inbox stem>.cursor` beside it (the
-/// count of lines read, as watchd keeps it), and the oldest of them. No cursor: all of them.
-fn unread(inbox: &Path) -> std::io::Result<(u64, Option<String>)> {
-    let cursor = std::fs::read_to_string(inbox.with_extension("cursor")).ok();
-    let read: usize = cursor.and_then(|c| c.split_whitespace().next()?.parse().ok()).unwrap_or(0);
+/// Where watchd keeps the count of inbox lines its `concierge-inbox` row has read.
+pub fn concierge_cursor(run: &Path) -> PathBuf {
+    run.join("watchd").join("concierge-inbox.cursor")
+}
+
+/// A cursor file's first token; empty or non-numeric is no cursor.
+pub fn parse_cursor(content: &str) -> Option<i64> {
+    content.split_whitespace().next()?.parse::<i64>().ok()
+}
+
+/// A raw cursor held to `[0, total]`: a missing or negative one is the start, one past the end
+/// (rotation, truncation, a hand edit) the end.
+pub fn clamp_pos(raw: Option<i64>, total: u64) -> u64 {
+    raw.map_or(0, |p| u64::try_from(p).map_or(0, |p| p.min(total)))
+}
+
+/// How many lines of `inbox` lie past the position `cursor` holds, and the oldest of them.
+pub fn unread(inbox: &Path, cursor: &Path) -> std::io::Result<(u64, Option<String>)> {
     let bytes = std::fs::read(inbox)?;
-    let mut lines = bytes.split_inclusive(|b| *b == b'\n').filter(|l| l.ends_with(b"\n")).skip(read);
-    let oldest = lines.next().map(|l| String::from_utf8_lossy(l).trim_end().chars().take(OLDEST_CHARS).collect());
-    let count = u64::from(oldest.is_some()) + lines.count() as u64;
-    Ok((count, oldest))
+    let lines = || bytes.split_inclusive(|b| *b == b'\n').filter(|l| l.ends_with(b"\n"));
+    let total = lines().count() as u64;
+    let read = clamp_pos(std::fs::read_to_string(cursor).ok().and_then(|c| parse_cursor(&c)), total);
+    let oldest = lines().nth(read as usize).map(|l| String::from_utf8_lossy(l).trim_end().chars().take(OLDEST_CHARS).collect());
+    Ok((total - read, oldest))
 }
 
 /// Publishes `concierge/inbox`. Every failure is logged here or by the publisher, and none is
 /// the writer's: the line is already on disk.
-fn announce(inbox: &Path, publisher: impl FnOnce() -> Result<Publisher, PubError>) {
-    let (count, oldest) = match unread(inbox) {
+fn announce(inbox: &Path, cursor: &Path, publisher: impl FnOnce() -> Result<Publisher, PubError>) {
+    let (count, oldest) = match unread(inbox, cursor) {
         Ok(found) => found,
         Err(e) => return eprintln!("concierge/inbox not published: cannot read {}: {e}", inbox.display()),
     };
@@ -152,22 +166,46 @@ fn announce(inbox: &Path, publisher: impl FnOnce() -> Result<Publisher, PubError
     }
 }
 
-/// Records `line` in `inbox` and publishes `concierge/inbox` through `publisher` (named for the
-/// caller, resolved only once the line is on disk); when it [`pushes`] under `wake` and `pattern`, also spools it and
+/// Records `line` in `inbox`; when it [`pushes`] under `wake` and `pattern`, also spools it and
 /// starts `<flusher> flush` (the `inbox-triage` program, resolved only for a line that pushes),
-/// detached, which wakes the session once per burst. Returns whether it pushed. A bad pattern
-/// disables the push and says so on stderr; a spool that cannot be written or a flusher that
-/// cannot be named is an error, after the line is recorded.
+/// detached, which wakes the session once per burst. Then publishes `concierge/inbox`, counted
+/// from the position in `cursor`, through `publisher` (named for the caller). Returns whether
+/// it pushed. A bad pattern disables the push and says so on stderr; a spool that cannot be
+/// written or a flusher that cannot be named is an error, after the line is recorded.
 pub fn record(
     inbox: &Path,
     line: &str,
     wake: &str,
     pattern: &str,
-    flusher: impl FnOnce() -> Result<PathBuf, String>,
+    flusher: impl Fn() -> Result<PathBuf, String>,
+    cursor: &Path,
     publisher: impl FnOnce() -> Result<Publisher, PubError>,
 ) -> Result<bool, String> {
+    record_lines(inbox, &[line], wake, pattern, flusher, cursor, publisher)
+}
+
+/// [`record`] for a batch: every line is recorded, then `concierge/inbox` is published once, so
+/// a slow broker costs the caller one wait however many lines it holds.
+pub fn record_lines(
+    inbox: &Path,
+    lines: &[&str],
+    wake: &str,
+    pattern: &str,
+    flusher: impl Fn() -> Result<PathBuf, String>,
+    cursor: &Path,
+    publisher: impl FnOnce() -> Result<Publisher, PubError>,
+) -> Result<bool, String> {
+    if lines.is_empty() {
+        return Ok(false);
+    }
+    let pushed = lines.iter().try_fold(false, |pushed, line| append_and_push(inbox, line, wake, pattern, &flusher).map(|p| p || pushed));
+    // Even after a failure: what did reach the inbox is unread.
+    announce(inbox, cursor, publisher);
+    pushed
+}
+
+fn append_and_push(inbox: &Path, line: &str, wake: &str, pattern: &str, flusher: &impl Fn() -> Result<PathBuf, String>) -> Result<bool, String> {
     append_line(inbox, line).map_err(|e| format!("cannot append to {}: {e}", inbox.display()))?;
-    announce(inbox, publisher);
     match pushes(line, wake, pattern) {
         Ok(true) => {}
         Ok(false) => return Ok(false),
@@ -270,12 +308,12 @@ mod tests {
         let inbox = d.join("inbox.log");
         let none = || Ok(PathBuf::from("nonexistent/inbox-triage"));
         let quiet = || Err(PubError::Config("no broker in a unit test".into()));
-        assert_eq!(record(&inbox, "t plain line", "wake", r"\bP0\b", none, quiet), Ok(false));
+        assert_eq!(record(&inbox, "t plain line", "wake", r"\bP0\b", none, &d.join("no.cursor"), quiet), Ok(false));
         assert!(!d.join("inbox.log.push").exists());
-        assert_eq!(record(&inbox, "t P0 down", "wake", "(", none, quiet), Ok(false), "a bad pattern records and does not push");
-        assert_eq!(record(&inbox, "t P0 down", "wake", r"\bP0\b", none, quiet), Ok(true));
+        assert_eq!(record(&inbox, "t P0 down", "wake", "(", none, &d.join("no.cursor"), quiet), Ok(false), "a bad pattern records and does not push");
+        assert_eq!(record(&inbox, "t P0 down", "wake", r"\bP0\b", none, &d.join("no.cursor"), quiet), Ok(true));
         assert_eq!(std::fs::read_to_string(d.join("inbox.log.push")).unwrap(), "t P0 down\n");
-        assert!(record(&inbox, "t P0 again", "wake", r"\bP0\b", || Err("no release".into()), quiet).unwrap_err().contains("no release"), "an unnamed flusher is said");
+        assert!(record(&inbox, "t P0 again", "wake", r"\bP0\b", || Err("no release".into()), &d.join("no.cursor"), quiet).unwrap_err().contains("no release"), "an unnamed flusher is said");
         assert_eq!(std::fs::read_to_string(&inbox).unwrap().lines().count(), 4, "every line is recorded first");
     }
 
