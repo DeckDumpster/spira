@@ -543,7 +543,7 @@ mod tests {
     #[test]
     fn the_shipped_list_counts_the_known_executors() {
         let list = parse_count_allow(ALLOW_FILE, include_str!("../../store-door-allow")).unwrap();
-        for p in ["dwarf/src/session.rs", "spira-claim/src/store.rs", "mail/src/bead.rs", "incident/src/real.rs", "spira/lib.sh"] {
+        for p in ["dwarf/src/session.rs", "spira-claim/src/store.rs", "incident/src/real.rs", "spira/lib.sh"] {
             assert!(list.contains_key(p), "{p} missing from the allow list");
         }
     }

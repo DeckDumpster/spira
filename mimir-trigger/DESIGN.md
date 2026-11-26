@@ -55,9 +55,6 @@ Side effects (unchanged from the bash):
 - A non-blocking `flock` on `$SPIRA_RUN/mimir-trigger.lock`; a caller that loses the race
   skips this tick silently (exit 0) rather than risking two overlapping list-then-create
   dedup checks.
-- One `bd -C $SPIRA_DB create` on a fire, **not** through `bdq` — this preserves an existing
-  asymmetry with `incident.sh` (which always uses `bdq`) rather than introducing a behaviour
-  change (see Decisions).
 - Log lines to stderr, `<ISO-8601Z> mimir-trigger: <message>`.
 
 ## Schema / architecture
