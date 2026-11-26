@@ -29,17 +29,11 @@ while [ $# -gt 0 ]; do
 done
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # conf.sh resolves this tree's keys, and the box declares a new one only once activation applies the tree's delta.
-staged="" log="" list=""
-if [ -n "${SPIRA_TOML:-}" ]; then
-    _t="$(release config-stage "$HERE/..")" || { echo 'round-image-preflight: cannot stage the tree config delta' >&2; exit 75; }
-    [ "$_t" = "$SPIRA_TOML" ] || staged="$_t"
-    export SPIRA_TOML="$_t"
-fi
-cleanup() {
-    rm -f ${log:+"$log"} ${list:+"$list"}
-    case "$staged" in */release-config-*/layer*) rm -rf "${staged%%/layer*}" ;; esac
-}
-trap cleanup EXIT
+# Staging gets a scratch of its own, so cleanup cannot remove layers the caller staged.
+log="" list="" stage="$(mktemp -d)" || exit 75
+trap 'rm -rf "$stage"; rm -f ${log:+"$log"} ${list:+"$list"}' EXIT
+_t="$(TMPDIR="$stage" release config-stage "$HERE/..")" || { echo 'round-image-preflight: cannot stage the tree config delta' >&2; exit 75; }
+export SPIRA_TOML="$_t"
 . "$HERE/conf.sh"
 IMAGE="${SPIRA_PREFLIGHT_BASE_IMAGE:-docker.io/library/ubuntu:26.04}"
 LIMIT="${SPIRA_PREFLIGHT_TIMEOUT:-1500}"

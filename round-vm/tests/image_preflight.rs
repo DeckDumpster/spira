@@ -119,15 +119,13 @@ fn the_config_is_read_with_the_trees_delta_staged_and_the_layers_are_removed() {
     let tmp = testkit::TempDir::new("preflight-staged-config");
     let spira = tmp.path().join("tree/spira");
     let bin = tmp.path().join("bin");
-    let scratch = tmp.path().join("release-config-1");
-    let staged = scratch.join("layer/staged.toml");
-    for d in [&spira, &bin, &scratch.join("layer")] {
+    for d in [&spira, &bin] {
         std::fs::create_dir_all(d).unwrap();
     }
-    std::fs::write(&staged, "").unwrap();
     std::fs::write(spira.join("round-image-preflight.sh"), HOST).unwrap();
-    std::fs::write(spira.join("conf.sh"), "echo \"conf.sh read $SPIRA_TOML\"\n").unwrap();
-    testkit::write_exe(bin.join("release"), &format!("#!/bin/bash\n[ \"$1\" = config-stage ] && [ \"$SPIRA_TOML\" = box.toml ] && [ \"$2\" -ef '{}' ] && echo '{}'\n", spira.parent().unwrap().display(), staged.display()));
+    std::fs::write(spira.join("conf.sh"), "[ -f \"$SPIRA_TOML\" ] && echo \"conf.sh read $SPIRA_TOML\"\n").unwrap();
+    let stage = format!("#!/bin/bash\n[ \"$1\" = config-stage ] && [ \"$SPIRA_TOML\" = box.toml ] && [ \"$2\" -ef '{}' ] && : > \"$TMPDIR/staged.toml\" && echo \"$TMPDIR/staged.toml\"\n", spira.parent().unwrap().display());
+    testkit::write_exe(bin.join("release"), &stage);
     testkit::write_exe(bin.join("round-vm"), "#!/bin/bash\nprintf 'plan=skip\\nnpaths=1\\n'\n");
     let o = std::process::Command::new("bash")
         .arg(spira.join("round-image-preflight.sh"))
@@ -139,6 +137,7 @@ fn the_config_is_read_with_the_trees_delta_staged_and_the_layers_are_removed() {
         .unwrap();
     let out = String::from_utf8_lossy(&o.stdout);
     assert!(o.status.success(), "{out}{}", String::from_utf8_lossy(&o.stderr));
-    assert!(out.contains(&format!("conf.sh read {}", staged.display())), "{out}");
-    assert!(!scratch.exists(), "the staged layers are removed");
+    let read = out.lines().find_map(|l| l.strip_prefix("conf.sh read ")).expect("conf.sh read the staged config");
+    assert!(read.ends_with("/staged.toml"), "{out}");
+    assert!(!std::path::Path::new(read).parent().unwrap().exists(), "the staged scratch is removed");
 }
