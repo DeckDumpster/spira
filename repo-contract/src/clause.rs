@@ -68,9 +68,6 @@ pub fn judge(p: &dyn Ports, clause: Clause, repo: &str, tree: Option<&Path>) -> 
 type Judged = Result<Outcome, String>;
 
 fn row_program(run: &str) -> Option<String> {
-    if run.trim() == "{unit-build}" {
-        return Some("cargo".into());
-    }
     habits::config::argv(run, &[]).into_iter().next()
 }
 
@@ -281,14 +278,6 @@ mod tests {
     #[test]
     fn environment_met_names_the_shell_and_the_image() {
         assert_eq!(line(&green(), Clause::Environment), "met environment: flake dev shell k1 provides lint=cargo; unit tier runs in image img:1");
-    }
-
-    #[test_id(tbog5q4)]
-    #[test]
-    fn a_unit_build_row_runs_cargo_not_its_placeholder() {
-        let mut f = green();
-        f.files.insert(CHECKS.into(), "[[check]]\nname = \"unit\"\nrun = \"{unit-build}\"\nbudget_ms = 1000\n".into());
-        assert_eq!(line(&f, Clause::Environment), "met environment: flake dev shell k1 provides unit=cargo; unit tier runs in image img:1");
     }
 
     #[test_id(tk6233n)]

@@ -758,8 +758,7 @@ pub fn unit_build_commands(crates: &[String], test_bins: &[String], jobs: u64) -
 }
 
 /// The build phase's argv lists: with `test_bins`, the `--bins` build over `crates` plus those
-/// crates, so one feature unification covers both builds, then [`unit_build_words`]. The gate and
-/// `work`'s `{unit-build}` row both compose it.
+/// crates, so one feature unification covers both builds, then [`unit_build_words`].
 pub fn unit_build_argvs(crates: &[String], test_bins: &[String]) -> Vec<Vec<String>> {
     let mut argvs = Vec::new();
     if !test_bins.is_empty() {
