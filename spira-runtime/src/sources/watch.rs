@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use runtime::sources::on_pool;
@@ -25,6 +25,7 @@ pub trait Watch: Send {
 
     /// Resolves with each watched directory that gained a file since the last answer, with the
     /// names of the files that arrived, in directory order. Never resolves with an empty answer.
+    /// A call dropped before it resolves loses nothing.
     fn changed(&mut self) -> Changed<'_>;
 }
 
@@ -36,7 +37,7 @@ type Seen = BTreeMap<PathBuf, BTreeSet<String>>;
 /// The listing backend: each look compares the directories' file names with the last look.
 #[derive(Debug, Default)]
 pub struct ListingWatch {
-    dirs: Arc<Mutex<Seen>>,
+    dirs: Seen,
 }
 
 fn names(dir: &Path) -> Result<BTreeSet<String>, String> {
@@ -44,31 +45,35 @@ fn names(dir: &Path) -> Result<BTreeSet<String>, String> {
     Ok(rd.flatten().filter(|e| e.path().is_file()).filter_map(|e| e.file_name().into_string().ok()).collect())
 }
 
-fn look(dirs: &Mutex<Seen>) -> Changes {
-    let mut out = vec![];
-    for (dir, seen) in dirs.lock().unwrap_or_else(|e| e.into_inner()).iter_mut() {
+/// Reads only: the pool runs a look to the end even when its wait was dropped. Returns the
+/// files new since `seen` and the listing of each directory it could read.
+fn look(seen: &Seen) -> (Changes, Seen) {
+    let (mut fresh, mut listed) = (vec![], Seen::new());
+    for (dir, seen) in seen {
         let Ok(now) = names(dir) else { continue };
-        let fresh: Vec<String> = now.difference(seen).cloned().collect();
-        *seen = now;
-        if !fresh.is_empty() {
-            out.push((dir.clone(), fresh));
+        let new: Vec<String> = now.difference(seen).cloned().collect();
+        if !new.is_empty() {
+            fresh.push((dir.clone(), new));
         }
+        listed.insert(dir.clone(), now);
     }
-    out
+    (fresh, listed)
 }
 
 impl Watch for ListingWatch {
     fn add(&mut self, dir: &Path) -> Result<(), String> {
         let now = names(dir)?;
-        self.dirs.lock().unwrap_or_else(|e| e.into_inner()).insert(dir.to_path_buf(), now);
+        self.dirs.insert(dir.to_path_buf(), now);
         Ok(())
     }
 
     fn changed(&mut self) -> Changed<'_> {
         Box::pin(async move {
             loop {
-                let dirs = self.dirs.clone();
-                let out = on_pool("mail.listing", Arc::new(move || look(&dirs))).await.map_err(|e| e.to_string())?;
+                let seen = self.dirs.clone();
+                let (out, listed) = on_pool("mail.listing", Arc::new(move || look(&seen))).await.map_err(|e| e.to_string())?;
+                // No await from here to the return: a dropped wait records nothing it did not deliver.
+                self.dirs.extend(listed);
                 if !out.is_empty() {
                     return Ok(out);
                 }
@@ -187,6 +192,48 @@ mod tests {
     #[tokio::test]
     async fn the_listing_watch_reports_each_new_file_once_by_directory() {
         exercise(Box::new(ListingWatch::default())).await;
+    }
+
+    struct Woken(std::sync::mpsc::Sender<()>);
+
+    impl std::task::Wake for Woken {
+        fn wake(self: Arc<Self>) {
+            let _ = self.0.send(());
+        }
+    }
+
+    #[test_id(t2zgrlr)]
+    #[tokio::test]
+    async fn a_listing_wait_dropped_after_its_look_ran_still_reports_the_file() {
+        let dir = testkit::TempDir::new("watch-drop");
+        let a = dir.path().join("a");
+        std::fs::create_dir_all(&a).unwrap();
+        let m1 = vec![(a.clone(), vec!["m1".to_string()])];
+        // A look that answers within the first poll was delivered, not dropped: try again.
+        let mut w = (0..100)
+            .find_map(|_| {
+                let _ = std::fs::remove_file(a.join("m1"));
+                let mut w = ListingWatch::default();
+                w.add(&a).unwrap();
+                std::fs::write(a.join("m1"), "x").unwrap();
+                let (tx, woken) = std::sync::mpsc::channel();
+                let waker = std::task::Waker::from(Arc::new(Woken(tx)));
+                let mut wait = w.changed();
+                match wait.as_mut().poll(&mut std::task::Context::from_waker(&waker)) {
+                    std::task::Poll::Ready(got) => {
+                        assert_eq!(got, Ok(m1.clone()));
+                        None
+                    }
+                    std::task::Poll::Pending => {
+                        woken.recv().expect("the finished look wakes the wait");
+                        drop(wait);
+                        Some(w)
+                    }
+                }
+            })
+            .expect("every look finished within its first poll");
+        let got = tokio::time::timeout(Duration::from_secs(5), w.changed()).await;
+        assert_eq!(got.expect("the dropped wait swallowed the file"), Ok(m1));
     }
 
     #[cfg(target_os = "linux")]
