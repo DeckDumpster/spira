@@ -22,6 +22,14 @@ set -uo pipefail
 
 die() { echo "test-sandbox: $*" >&2; exit 2; }
 
+# Resolve a directory's physical path into REPLY without a subshell: this runner starts once per
+# test binary, so every fork here is multiplied by every binary of every gate.
+physdir() {
+    local back="$PWD"
+    builtin cd -P -- "$1" 2>/dev/null || return 1
+    REPLY="$PWD"
+    builtin cd -- "$back" || return 1
+}
 print="" around=""
 if [ "${1:-}" = "--print-args" ]; then print=1; shift; fi
 if [ "${1:-}" = "--around" ]; then around=1; shift; fi
@@ -29,8 +37,10 @@ if [ "${1:-}" = "--around" ]; then around=1; shift; fi
 bin="$1"
 if [ -z "$around" ]; then
     [ -x "$bin" ] || die "$bin is not an executable file"
-    bindir="$(cd "$(dirname "$bin")" && pwd -P)" || die "cannot resolve the directory of $bin"
-    bin="$bindir/$(basename "$bin")"
+    case "$bin" in */*) bindir="${bin%/*}" ;; *) bindir=. ;; esac
+    physdir "${bindir:-/}" || die "cannot resolve the directory of $bin"
+    bindir="$REPLY"
+    bin="$bindir/${bin##*/}"
 
     if [ -z "$print" ] && [ -d "$bindir/.fingerprint" ]; then
         exec "$@"
@@ -38,14 +48,17 @@ if [ -z "$around" ]; then
 fi
 
 [ -n "${HOME:-}" ] && [ "${HOME#/}" != "$HOME" ] || die "HOME is not an absolute path; it names the tree to hide"
-home="$(cd "$HOME" && pwd -P)" || die "HOME=$HOME does not exist"
+physdir "$HOME" || die "HOME=$HOME does not exist"
+home="$REPLY"
 [ "$home" != / ] || die "HOME is /; hiding it would hide the root"
 # The passwd entry's home is hidden too: a caller that sets HOME to a fixture still has a real
 # home a test could reach by its absolute path.
 trees=("$home")
-pw="$(getent passwd "$(id -u)" | cut -d: -f6)"
-if [ -n "$pw" ] && [ -d "$pw" ]; then
-    pw="$(cd "$pw" && pwd -P)"
+pw=""
+while IFS=: read -r _ _ u _ _ h _; do [ "$u" = "$UID" ] && { pw="$h"; break; }; done < /etc/passwd
+[ -n "$pw" ] || pw="$(getent passwd "$UID" | cut -d: -f6)"
+if [ -n "$pw" ] && [ -d "$pw" ] && physdir "$pw"; then
+    pw="$REPLY"
     [ "$pw" = "$home" ] || [ "$pw" = / ] || trees+=("$pw")
 fi
 
@@ -109,11 +122,11 @@ bounded() {
     start=${EPOCHREALTIME/./}
     last=$start
     while kill -0 "$pid" 2>/dev/null; do
-        if [ -s "$tmp/hung" ]; then why=libtest; name="$(<"$tmp/hung")"; break; fi
+        if [ -s "$tmp/hung" ]; then why=libtest; IFS= read -r name < "$tmp/hung" || true; break; fi
         if [ -n "$limit" ]; then
             now=${EPOCHREALTIME/./}
             # A read between a watcher's truncate and its write is empty: keep the newest stamp.
-            act="$(<"$tmp/act")"
+            act=""; IFS= read -r act < "$tmp/act" || true
             [ "$act" -gt "$last" ] 2>/dev/null && last=$act
             if [ $((now - last)) -ge "$limit" ]; then why=silent; name=-; break; fi
         fi
@@ -149,23 +162,35 @@ supervise=""
 
 
 path="$home/.local/lib/spira-env/bin:${CARGO_HOME:+$CARGO_HOME/bin:}/usr/local/bin:/usr/bin:/bin"
-[ -n "${CARGO:-}" ] && path="$(dirname "$CARGO"):$path"
+[ -n "${CARGO:-}" ] && path="${CARGO%/*}:$path"
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-workspace="$(cd "$HERE/../.." && pwd -P)"
+here="${BASH_SOURCE[0]}"; case "$here" in */*) here="${here%/*}" ;; *) here=. ;; esac
+physdir "$here" || die "cannot resolve the runner's own directory"
+HERE="$REPLY"
+physdir "$HERE/../.." || die "cannot resolve the workspace"
+workspace="$REPLY"
 
 # The target is the one CARGO_TARGET_DIR declares; unset, cargo's own is in the workspace.
 target="${CARGO_TARGET_DIR:-}"
 if [ -n "$target" ]; then
     [ "${target#/}" != "$target" ] || die "CARGO_TARGET_DIR=$target is relative; cargo resolved it from a directory this runner is not in"
-    target="$(cd "$target" && pwd -P)" || die "CARGO_TARGET_DIR=$CARGO_TARGET_DIR does not exist"
+    physdir "$target" || die "CARGO_TARGET_DIR=$CARGO_TARGET_DIR does not exist"
+    target="$REPLY"
 fi
 
 # testenv's system git identity (GIT_IDENTITY), lowest priority, on the sandbox's /run.
+has_identity() {
+    local l name="" email=""
+    while IFS= read -r l || [ -n "$l" ]; do
+        [[ $l =~ ^[[:space:]]*name[[:space:]]*= ]] && name=1
+        [[ $l =~ ^[[:space:]]*email[[:space:]]*= ]] && email=1
+    done < "$1"
+    [ -n "$name" ] && [ -n "$email" ]
+}
 gitconfig=/run/test-sandbox/gitconfig
 handed=""
 if [ -n "$is_held" ] && [ -n "${GIT_CONFIG_SYSTEM:-}" ] && [ -r "$GIT_CONFIG_SYSTEM" ] && [ -f "$GIT_CONFIG_SYSTEM" ] &&
-    grep -Eq '^[[:space:]]*name[[:space:]]*=' "$GIT_CONFIG_SYSTEM" && grep -Eq '^[[:space:]]*email[[:space:]]*=' "$GIT_CONFIG_SYSTEM"; then
+    has_identity "$GIT_CONFIG_SYSTEM"; then
     gitconfig="$GIT_CONFIG_SYSTEM"
     handed=1
 fi
@@ -277,7 +302,8 @@ for r in "${ro[@]}"; do [ -e "$r" ] && a+=(--ro-bind "$r" "$r"); done
 for r in "${rw[@]}"; do [ -e "$r" ] && a+=(--bind "$r" "$r"); done
 nogit=""
 if [ -f "$workspace/.git" ]; then
-    gitdir="$(sed -n 's/^gitdir: *//p' "$workspace/.git")"
+    gitdir=""
+    while IFS= read -r l || [ -n "$l" ]; do [[ $l =~ ^gitdir:\ *(.*)$ ]] && gitdir="${BASH_REMATCH[1]}"; done < "$workspace/.git"
     case "$gitdir" in /*) ;; *) gitdir="$workspace/$gitdir" ;; esac
     case "$gitdir" in */worktrees/*) gitdir="${gitdir%/worktrees/*}" ;; esac
     # Refused only where a sandbox is made: a held one has no mounts to make.
