@@ -173,24 +173,17 @@ fn build_in(
     built
 }
 
-fn kebab(variant: &str) -> String {
-    let mut out = String::new();
-    for (i, c) in variant.chars().enumerate() {
-        if c.is_ascii_uppercase() {
-            if i > 0 {
-                out.push('-');
-            }
-            out.push(c.to_ascii_lowercase());
-        } else {
-            out.push(c);
-        }
+fn error_name(e: &BuildError) -> &'static str {
+    match e {
+        BuildError::NoCargo => "no-cargo",
+        BuildError::Failed(_) => "failed",
+        BuildError::NoArtifacts(_) => "no-artifacts",
+        BuildError::Deadline => "deadline",
+        BuildError::NoCache(_) => "no-cache",
+        BuildError::Cancelled => "cancelled",
+        BuildError::NoSpace(_) => "no-space",
+        BuildError::Oom => "oom",
     }
-    out
-}
-
-fn error_name(e: &BuildError) -> String {
-    let debug = format!("{e:?}");
-    kebab(debug.split(['(', ' ']).next().unwrap_or(&debug))
 }
 
 fn build_op(worktree: &Path, start: std::time::SystemTime, duration: Duration, err: Option<&BuildError>, cost: Option<spira_otel::ops::Cost>) -> spira_otel::ops::Op {
@@ -201,7 +194,7 @@ fn build_op(worktree: &Path, start: std::time::SystemTime, duration: Duration, e
         repo: None,
         start,
         duration,
-        result: err.map_or_else(|| "ok".to_string(), error_name),
+        result: err.map_or("ok", error_name).to_string(),
         cost,
         tests: None,
         place: None,

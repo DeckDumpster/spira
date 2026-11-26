@@ -228,7 +228,13 @@ pub fn build(cfg: &Config, git: &dyn Git, cargo: &dyn Cargo, o: &BuildOpts) -> R
                     let out = target.join("release");
                     let mut publish_phase = None;
                     if let Some((k, a)) = &key {
-                        let tree = git.tree(o.repo, &sha)?;
+                        let tree = match git.tree(o.repo, &sha) {
+                            Ok(t) => t,
+                            Err(e) => {
+                                emit_phases(cfg, &sha, &build_phase, None);
+                                return Err(e);
+                            }
+                        };
                         let timer = PhaseTimer::start();
                         let stored = artifacts::scratch_dir(&cfg.releases, "put").and_then(|s| {
                             let r = artifacts::publish(a.dav, k, &tree, &a.toolchain, &out, &s);
@@ -376,7 +382,7 @@ mod op_tests {
 
     #[test_id(tz2ghvg)]
     #[test]
-    fn a_cache_miss_with_a_key_sends_a_build_and_a_publish_record_and_without_one_only_the_build() {
+    fn a_cache_miss_with_a_key_sends_a_build_and_a_publish_record_and_a_failed_build_only_the_build() {
         let ops = release_ops("abc123", &phase(true), Some(&phase(false)));
         let seen: Vec<_> = ops.iter().map(|o| (o.operation.as_str(), o.phase.as_deref().unwrap(), o.subject.as_str(), o.result.as_str())).collect();
         assert_eq!(seen, [("release-build", "build", "abc123", "ok"), ("release-build", "publish", "abc123", "not-stored")]);
