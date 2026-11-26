@@ -36,7 +36,6 @@ const DOORS: &[(&str, &str)] = &[
     ("spira/testdb", "throwaway fixture database on an embedded dolt"),
     ("spira/dolt-", "operates the dolt server process"),
     ("spira/build-bd.sh", "builds the bd binary"),
-    ("spira/bd-pin.sh", "pins the bd binary version"),
     ("spira/test-", "legacy: suite fixtures drive the throwaway store they created; shrink-only"),
     ("store-persist/", "legacy: the persistence probe operates dolt itself; shrink-only"),
     ("spira/lc-backup.sh", "legacy: dolt backup and restore of the stores; shrink-only"),

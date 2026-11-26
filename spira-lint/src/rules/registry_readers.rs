@@ -210,7 +210,7 @@ mod tests {
         let door = format!("fn f() {{ let _ = spira_config::resolve::{HOME_DOOR}().unwrap().join(\"conf.d\"); }}\n");
         let tree = workspace(&t, &[("planted", &door)]);
         assert!(messages(&tree).iter().any(|x| x.starts_with("planted-crate reads")));
-        let other = workspace(&t, &[("planted", &door.replace("conf.d", "bd-pin.sh"))]);
+        let other = workspace(&t, &[("planted", &door.replace("conf.d", "deps.toml"))]);
         assert!(!messages(&other).iter().any(|x| x.contains("planted-crate")));
     }
 

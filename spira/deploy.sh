@@ -342,35 +342,39 @@ _tarball="$_deploy_tmp/${release_stem}.tar.gz"
     printf 'deploy: tarball not found after download: %s\n' "$_tarball" >&2; exit 2
 }
 
-# Check DB migration compatibility before drain so a mismatch does not strand the instance.
+# Check the store's layout before drain so a mismatch does not strand the instance.
+# `check` exits 1 for a store that answered and lacks a column; anything else could not ask it.
+_store_check() {
+    # batch-job: the layout read waits behind a loaded dolt server
+    _chk_out="$(timeout 30 spira-lc admin-store check 2>&1)"
+    _chk_rc=$?
+}
 if [ -d "${SPIRA_DB:-}/.beads" ]; then
-    log "deploy: checking DB migration compatibility"
-    # batch-job: schema migration over the whole store
-    _mig_out="$(timeout 30 spira-lc admin-store migrate 2>&1)"
-    _mig_rc=$?
-    if [ "$_mig_rc" -ne 0 ] \
-            && printf '%s' "$_mig_out" | grep -qE 'unreachable|connection refused'; then
-        log "deploy: Dolt server not running — starting"
-        # batch-job: starts the dolt server
-        spira-lc admin-store dolt-start 2>/dev/null || true
-        # batch-job: schema migration over the whole store
-        _mig_out="$(timeout 30 spira-lc admin-store migrate 2>&1)"
-        _mig_rc=$?
+    log "deploy: checking the store's layout"
+    _store_check
+    if [ "$_chk_rc" -ne 0 ] && [ "$_chk_rc" -ne 1 ]; then
+        log "deploy: Dolt server not answering — starting $SPIRA_DOLT_UNIT"
+        $_SC --user start "$SPIRA_DOLT_UNIT" || true
+        # The unit is active before the server listens.
+        for _attempt in 1 2 3 4 5 6 7 8 9 10; do
+            _store_check
+            [ "$_chk_rc" -ne 0 ] && [ "$_chk_rc" -ne 1 ] || break
+            sleep 1
+        done
     fi
-    if [ "$_mig_rc" -ne 0 ]; then
-        if printf '%s' "$_mig_out" | grep -qE 'unreachable|connection refused'; then
-            _dolt_addr="$(printf '%s' "$_mig_out" \
-                | sed -n 's/.*unreachable at \([^ :]*:[0-9]*\).*/\1/p' | head -1)"
-            printf 'deploy: cannot read DB migration count — Dolt server unreachable at %s\n' \
-                "${_dolt_addr:-127.0.0.1:3307}" >&2
-            printf '%s\n' "$_mig_out" >&2
-        else
-            printf 'deploy: DB migration mismatch — refusing before drain\n' >&2
-            printf '%s\n' "$_mig_out" >&2
-        fi
+    if [ "$_chk_rc" -eq 1 ]; then
+        printf 'deploy: DB migration mismatch — refusing before drain; the store lacks:\n' >&2
+        printf '%s\n' "$_chk_out" >&2
+        exit 1
+    elif [ "$_chk_rc" -ne 0 ]; then
+        _dolt_addr="$(printf '%s' "$_chk_out" \
+            | sed -n 's/.*unreachable at \([^ :]*:[0-9]*\).*/\1/p' | head -1)"
+        printf 'deploy: cannot read the store layout — Dolt server unreachable at %s\n' \
+            "${_dolt_addr:-$SPIRA_BEADS_SQL_HOST:$SPIRA_BEADS_SQL_PORT}" >&2
+        printf '%s\n' "$_chk_out" >&2
         exit 1
     fi
-    unset _mig_out _mig_rc _dolt_addr
+    unset _chk_out _chk_rc _dolt_addr _attempt
 fi
 
 
@@ -400,7 +404,7 @@ _pre_deploy_unit_state="$SPIRA_RUN/pre-deploy-unit-state.$$"
 # fatals that exist before activation are named here, not blamed on the release.
 # A fatal here means the box has a pre-existing problem; fix it and re-run deploy.
 log "deploy: pre-deploy health check"
-_pre_deploy_fails="$(SPIRA_DOCTOR=1 "$_DOCTOR" 2>&1 | grep '^  FAIL  ')" || true
+_pre_deploy_fails="$("$_DOCTOR" 2>&1 | grep '^  FAIL  ')" || true
 # A unit failed on a config key the incoming release fills in (config-delta.toml) cannot be
 # cured before activation, which is what applies the delta: it is named here, then re-run and
 # judged under the incoming release below, where a unit it still fails keeps the deploy red.
@@ -697,7 +701,7 @@ if [ "$_skew_exit" -eq 0 ] && [ "$_named_tag" = 1 ]; then
 fi
 # THE FAIL LINES ARE THE EVIDENCE. A bare "ROLLBACK — doctor" says a check failed and not
 # which; the rollback that follows destroys the state it failed on. Print what doctor said.
-if ! _doctor_out="$(_activated_release_cmd env SPIRA_DOCTOR=1 "$_DOCTOR" 2>&1)"; then
+if ! _doctor_out="$(_activated_release_cmd "$_DOCTOR" 2>&1)"; then
     _deploy_failed="${_deploy_failed:+$_deploy_failed, }doctor"
     printf '%s\n' "$_doctor_out" | grep -E '^\s*FAIL' | sed 's/^/deploy: doctor: /' >&2
 fi

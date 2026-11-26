@@ -19,7 +19,7 @@ fn spira() -> PathBuf {
     testkit::manifest_dir().join("../spira").canonicalize().unwrap()
 }
 
-const SPIRA_CONFIG: &str = "#!/bin/bash\ncase \"$1\" in resolve) cat \"$STUB_RESOLVED\" ;; env-bootstrap|check-bd) ;; *) exit 1 ;; esac\n";
+const SPIRA_CONFIG: &str = "#!/bin/bash\ncase \"$1\" in resolve) cat \"$STUB_RESOLVED\" ;; env-bootstrap) ;; *) exit 1 ;; esac\n";
 
 struct Rig {
     dir: TempDir,

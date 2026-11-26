@@ -228,6 +228,8 @@ pub struct FakeSystemctl {
     pub batched_queries: std::cell::Cell<u32>,
     /// A running unit that reads inactive after this many more `is_active` polls.
     pub finishes_after_polls: std::cell::RefCell<BTreeMap<String, u32>>,
+    /// `enable` and `enable_now` refuse these units.
+    pub enable_fails: std::cell::RefCell<std::collections::BTreeSet<String>>,
     pub running_exes: std::cell::RefCell<BTreeMap<String, PathBuf>>,
 }
 
@@ -276,10 +278,16 @@ impl Systemctl for FakeSystemctl {
         units.iter().map(|u| m.get(u).and_then(|u| u.enabled.clone())).collect()
     }
     fn enable(&self, unit: &str) -> Result<(), String> {
+        if self.enable_fails.borrow().contains(unit) {
+            return Err(format!("{unit}: simulated enable failure"));
+        }
         self.units.borrow_mut().entry(unit.to_string()).or_default().enabled = Some("enabled".into());
         Ok(())
     }
     fn enable_now(&self, unit: &str) -> Result<(), String> {
+        if self.enable_fails.borrow().contains(unit) {
+            return Err(format!("{unit}: simulated enable failure"));
+        }
         self.enabled_now.borrow_mut().push(unit.to_string());
         self.order.borrow_mut().push(format!("enable_now {unit}"));
         let mut m = self.units.borrow_mut();

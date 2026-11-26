@@ -288,8 +288,7 @@ unset _spira_conf_here _spira_conf_home_env _spira_conf_real_dir
 
 # --------------------------------------------------------------------------------------
 # ENVIRONMENT BOOTSTRAP (sp-kfimz, "wave 4.6: environment bootstrap into spira-config"):
-# the PATH tail, SPIRA_BD resolution and the bd schema preflight — previously three blocks
-# of bash here — are now one call each into spira-config, so this logic exists exactly
+# the PATH tail and SPIRA_BD resolution are one call into spira-config, so this logic exists exactly
 # once rather than in bash and in a Rust re-implementation that could drift from it.
 #
 # THE LAUNCHER'S PATH COMES FIRST AND IS NEVER REWRITTEN (sp-gypjk): every Spira tool is
@@ -321,37 +320,6 @@ if [ "$_spira_env_bootstrap_rc" -ne 0 ]; then
 fi
 eval "$_spira_env_bootstrap"
 unset _spira_env_bootstrap _spira_env_bootstrap_rc
-
-# BD SCHEMA REFUSAL. When the resolved bd's migration count disagrees with the database's,
-# bd exits 0 with the complaint on stdout — callers that check exit status read success and
-# parse the error as data. `spira-config check-bd` is the cached preflight that catches it
-# once, here, before the mismatch can propagate to every bdq call; see its own doc
-# (spira-config/src/env_bootstrap.rs) for the cache key, the locked-dolt tolerance and
-# SPIRA_DOCTOR's exemption, all preserved exactly. `exit`, NOT `return` (unlike the
-# "spira-config not found" guard above): a schema mismatch ends the WHOLE process that
-# sourced conf.sh, even for the handful of callers that source it as `. conf.sh || true` —
-# unchanged from this check's own behaviour before this bead.
-SPIRA_BD="$SPIRA_BD" SPIRA_DB="${SPIRA_DB:-}" SPIRA_RUN="${SPIRA_RUN:-}" \
-    SPIRA_DOCTOR="${SPIRA_DOCTOR:-}" SPIRA_TOML_FILE="$SPIRA_TOML_FILE" \
-    spira-config check-bd || exit 1
-
-# BD_IGNORE_SCHEMA_SKEW WAS EXPORTED HERE AND IS GONE, because the recovery it was waiting on
-# has run. The database was at schema v61, migrated by the accidental v1.2.0/v1.2.1 release,
-# and every bd newer than v1.1.0 refused it outright — a refusal that EXITS 0 with the
-# complaint on stdout, so a caller checking status read success and parsed an error as data.
-# On 2026-09-08 a CGO rebuild of bd landed in ~/.local/bin, rune_ready returned nothing, the
-# sentinel logged "no rune in the runes" for every persona, and Spira called nothing for
-# six minutes while the panes showed 0 ready rather than a fault.
-#
-# The rollback (sp-6ylz, 2026-09-08 18:14) ran and was reverted three minutes later at 18:17:
-# at v53 every write to the production database failed. The cursor has been at v61 since 18:17.
-# Reads and writes work without BD_IGNORE_SCHEMA_SKEW because this bd is a CGO_ENABLED=0
-# (server-mode) dev build from main that knows all 61 migrations — NOT because the cursor
-# moved. The rule the scar teaches: bd's version string does not order against release tags.
-# A dev build from main knows MORE migrations than a tagged release (v1.2.2 knows only 53),
-# so pin by migration count, never by version string. See spira/bd-pin.sh and SPIRA_BD_PIN.
-# The revert is in the dolt log of database spira: commit piud5v03ri22ktnshufhl5dk09m24f5b,
-# 'revert: restore schema cursor to v61 — rollback broke writes (bd 1.1.0 knows 61, not 53)'.
 
 # --------------------------------------------------------------------------------------
 # WHAT IS EXPORTED, AND WHAT MUST NEVER BE.

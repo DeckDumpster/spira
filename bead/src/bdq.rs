@@ -256,9 +256,9 @@ pub fn check_schema_delete(args: &[String]) -> Option<String> {
         return Some(
             "spira: bead contains \"DELETE FROM schema_migrations\" — this SQL is refused\n\
              even with an operator ask because it was escalated and approved three times while wrong.\n\
-             Run `bd migrate schema` and include its output in the escalation instead.\n\
-             The correct response to a real mismatch is rebuilding bd (see bd-pin.sh),\n\
-             not deleting migration rows from the database.\n"
+             Run `spira-lc admin-store check` and include its output in the escalation instead.\n\
+             The correct response to a real mismatch is a spira-lc admin verb that repairs\n\
+             the layout, not deleting migration rows from the database.\n"
                 .to_string(),
         );
     }
@@ -549,7 +549,8 @@ mod tests {
     #[test_id(tnt6md6)]
     #[test]
     fn schema_delete_is_detected_regardless_of_case_or_spacing() {
-        assert!(check_schema_delete(&s(&["create", "DELETE   FROM schema_migrations"])).is_some());
+        let refusal = check_schema_delete(&s(&["create", "DELETE   FROM schema_migrations"])).expect("refused");
+        assert!(refusal.contains("spira-lc admin-store check"), "{refusal}");
         assert!(check_schema_delete(&s(&["create", "clean", "-d", "please delete from schema_migrations now"]))
             .is_some());
         assert_eq!(check_schema_delete(&s(&["create", "delete from somewhere_else"])), None);

@@ -181,10 +181,15 @@ mod tests {
     #[test_id(t74h6zj)]
     #[test]
     fn the_broker_listens_on_the_configured_unix_socket_only_and_keeps_nothing() {
-        let conf = repo_template("mosquitto.conf");
+        let dir = testkit::TempDir::new("broker-conf");
+        let socket = dir.join("fixture-broker.sock").display().to_string();
+        let host = HostValues { run: dir.path().display().to_string(), broker_socket: socket.clone(), ..hv() };
+        let templates = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd");
+        crate::broker::place_conf(&templates, &host).unwrap();
+        let conf = std::fs::read_to_string(dir.join(crate::broker::CONF_FILE)).unwrap();
         let lines = directives(&conf);
         let listeners: Vec<&&str> = lines.iter().filter(|l| l.starts_with("listener ")).collect();
-        assert_eq!(listeners, [&"listener 0 run/fixture-broker.sock"], "one listener, port 0 (a Unix socket, no TCP port): {conf}");
+        assert_eq!(listeners, [&format!("listener 0 {socket}").as_str()], "one listener, port 0 (a Unix socket, no TCP port): {conf}");
         assert!(!lines.iter().any(|l| l.starts_with("port ")), "{conf}");
         for want in ["persistence false", "sys_interval 0", "max_keepalive 0", "allow_anonymous true", "connection_messages false"] {
             assert!(lines.contains(&want), "{want}: {conf}");

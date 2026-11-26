@@ -249,7 +249,6 @@ impl Host for Fake {
 fn conf(root: &str) -> Conf {
     Conf {
         harness: Some(PathBuf::from(root)),
-        bd_pin: PathBuf::from("run/bd-pin"),
         registry: String::new(),
         max_concurrent: 8,
         cpus: None,
@@ -325,17 +324,15 @@ fn a_run_heredoc_or_directive_edit_moves_the_tag() {
 fn the_tag_is_the_scripts_hash_of_the_closure_by_content() {
     let f = Fake::new();
     harness(&f, "h");
-    f.file("run/bd-pin", "migrations=12\n");
     let c = conf("h");
-    // Containerfile and the bd pin hash in full; deps.toml hashes only the (name, tier)
+    // The Containerfile hashes in full; deps.toml hashes only the (name, tier)
     // rows doctor-check.sh's FATAL/WARN case arms actually consult — here just "bd
     // runtime" (sp-ehj2t: the raw file used to hash whole, so every release-tier addition
     // cold-built a new image).
     let line = |b: &str| format!("{}  -\n", crate::verdict::sha256_hex(b.as_bytes()));
     let closure = format!(
-        "{}{}{}{}",
+        "{}{}{}",
         line("FROM ubuntu:24.04\n"),
-        "migrations=12\n",
         line("bd runtime\n"),
         line("7.6.5")
     );
@@ -359,12 +356,9 @@ fn every_closure_input_moves_the_tag_and_nothing_else_does() {
     );
     let deps = tag_of(&f, &c).unwrap();
     assert_ne!(deps, base, "a checked-tier deps.toml change");
-    f.file("run/bd-pin", "migrations=13\n");
-    let pin = tag_of(&f, &c).unwrap();
-    assert_ne!(pin, deps, "the bd pin");
     f.file("h/spira/testenv/Containerfile", "FROM ubuntu:26.04\n");
     let cf = tag_of(&f, &c).unwrap();
-    assert_ne!(cf, pin, "the Containerfile");
+    assert_ne!(cf, deps, "the Containerfile");
     f.file("h/rust-toolchain.toml", "[toolchain]\nchannel = \"7.6.6\"\n");
     assert_ne!(tag_of(&f, &c).unwrap(), cf, "the rust-toolchain.toml channel");
 }
@@ -1520,7 +1514,7 @@ fn an_unknown_subcommand_prints_usage_and_fails() {
 }
 
 // `Conf::load`'s registered-key defaulting (SPIRA_RUN, SPIRA_TESTENV_MAX_CONCURRENT,
-// SPIRA_BD_PIN, ...) now goes through `spira_config::process::cfg`/`cfg_parse`, which
+// ...) now goes through `spira_config::process::cfg`/`cfg_parse`, which
 // resolve once per process from spira-config's own cache — not something a unit test here
 // can drive per-case. That behavior is spira-config's to test; `cpu_cap_is_unset_unless_a_
 // positive_number_is_configured` above still covers this crate's own pure validation.

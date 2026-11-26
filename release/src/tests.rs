@@ -392,27 +392,28 @@ fn manifest_without_a_commit_or_with_garbage_does_not_parse() {
 // ---------------------------------------------------------------- verify
 
 /// sp-vrn3v: `pre_activate_env` names the release **under verification**, plus the box's own
-/// tool tail appended after the system directories, exactly as `release_path_with_tail`
-/// documents — the same shape `host_values` renders into `Environment=PATH=` (sp-31gtu,
+/// tool tail appended after the system directories, with the spira-env bin ahead of them —
+/// the same shape `host_values` renders into `Environment=PATH=` (sp-31gtu,
 /// sp-c7b85), reused here for a process this crate spawns directly instead of a unit.
 #[test_id(tu69lzx)]
 #[test]
 fn pre_activate_env_builds_the_release_own_path_and_release_var() {
     let mut env = Env::new();
     env.insert("SPIRA_UNIT_DIR".into(), "units".into());
+    env.insert("HOME".into(), "h".into());
     let reg = Registered { releases: "e".into(), releases_keep: "10".into(), path: "h/.local/bin:h/.cargo/bin".into(), ..Default::default() };
     let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     let rel = PathBuf::from("e").join(A);
     let envs = verify::pre_activate_env(&cfg, &rel).unwrap();
     assert_eq!(envs[0], (spira_config::RELEASE_ENV.to_string(), rel.display().to_string()));
     assert_eq!(envs[1], ("SPIRA_HOME".to_string(), format!("{}/spira", rel.display())));
-    assert_eq!(envs[2], ("PATH".to_string(), format!("{}/bin:{}/spira:/usr/local/bin:/usr/bin:/bin:h/.local/bin:h/.cargo/bin", rel.display(), rel.display())));
+    assert_eq!(envs[2], ("PATH".to_string(), format!("{}/bin:{}/spira:h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin:h/.local/bin:h/.cargo/bin", rel.display(), rel.display())));
 
-    // No tail configured: PATH ends at the system directories, same as `release_path`.
+    // No tail configured: PATH ends at the system directories.
     let reg = Registered { releases: "e".into(), releases_keep: "10".into(), ..Default::default() };
     let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     let envs = verify::pre_activate_env(&cfg, &rel).unwrap();
-    assert_eq!(envs[2].1, format!("{}/bin:{}/spira:/usr/local/bin:/usr/bin:/bin", rel.display(), rel.display()));
+    assert_eq!(envs[2].1, format!("{}/bin:{}/spira:h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin", rel.display(), rel.display()));
 }
 
 /// The same refusal `host_values` gives a tail inside a release or a checkout (sp-c7b85)
@@ -511,7 +512,7 @@ fn world_rolling_back_to_a() -> World {
 fn rollback_with(w: &World, sc: &FakeSystemctl) -> Result<String, String> {
     let reads = FakeReads::serving();
     let nix = FakeNix::default();
-    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None };
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None };
     activate::rollback(&ctx)
 }
 
@@ -556,6 +557,159 @@ fn a_rollback_whose_slow_unit_comes_up_on_the_second_restart_succeeds() {
     assert_eq!(current_of(&w), A);
 }
 
+// ---------------------------------------------------------------- broker config
+
+const BROKER: &str = "spira-broker-prod.service";
+const BROKER_UNIT: &str = "[Service]\nType=notify\nExecStart=@SPIRA_ENV_PATH@/mosquitto -c @SPIRA_RUN@/mosquitto.conf\n";
+const C: &str = "cccccccccccccccccccccccccccccccccccccccc";
+
+/// Releases `A`, `B` and `C` ship one broker unit; `B`'s `mosquitto.conf` differs from `A`'s and
+/// `C`'s matches `B`'s. `current` is `A`, with its unit installed and its config in the run dir.
+fn world_with_a_broker_on_a(socket: &str) -> World {
+    let w = World::with_git_and_reg(FakeGit::default(), Registered { broker_socket: socket.into(), ..Default::default() });
+    for (sha, note) in [(A, "first"), (B, "second"), (C, "second")] {
+        let rel = w.cfg.releases.join(sha);
+        file(&rel.join("systemd/spira-broker.service"), BROKER_UNIT);
+        file(&rel.join("systemd/mosquitto.conf"), &format!("# {note}\nlistener 0 @SPIRA_BROKER_SOCKET@\n"));
+        let m = Manifest { commit: sha.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
+        fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+    }
+    let run = w.cfg.run.clone().unwrap();
+    let home = w.cfg.home().unwrap().display().to_string();
+    let unit = BROKER_UNIT.replace("@SPIRA_ENV_PATH@", &spira_config::spira_env_bin(&home)).replace("@SPIRA_RUN@", &run.display().to_string());
+    file(&w.cfg.unit_dir.join(BROKER), &unit);
+    file(&run.join("mosquitto.conf"), &broker_conf_of(&w, "first"));
+    std::os::unix::fs::symlink(A, w.cfg.releases.join("current")).unwrap();
+    let state = w.cfg.state_dir().unwrap();
+    fs::create_dir_all(&state).unwrap();
+    fs::write(state.join("history"), format!("{A} landed\n")).unwrap();
+    w
+}
+
+fn broker_conf_of(w: &World, note: &str) -> String {
+    format!("# {note}\nlistener 0 {}\n", w.cfg.run.as_ref().unwrap().join("sock/b.sock").display())
+}
+
+fn placed_broker_conf(w: &World) -> String {
+    fs::read_to_string(w.cfg.run.as_ref().unwrap().join("mosquitto.conf")).unwrap()
+}
+
+fn broker_running(w: &World) -> FakeSystemctl {
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.states.borrow_mut().insert(BROKER.into(), UnitState { active: "active".into(), result: "success".into(), kind: "notify".into() });
+    sc
+}
+
+fn activate_sha(w: &World, sc: &FakeSystemctl, sha: &str) -> Result<activate::Switched, String> {
+    let reads = FakeReads::serving();
+    let nix = FakeNix::default();
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None };
+    activate::activate(&ctx, sha, None)
+}
+
+fn restarts_of_the_broker(sc: &FakeSystemctl) -> usize {
+    sc.restarts.borrow().iter().filter(|u| *u == BROKER).count()
+}
+
+#[test_id(tp5ewbe)]
+#[test]
+fn activate_and_rollback_each_place_their_releases_broker_config_and_restart_the_broker() {
+    let w = world_with_a_broker_on_a("sock/b.sock");
+    let sc = broker_running(&w);
+    let seen = {
+        let conf = w.cfg.run.clone().unwrap().join("mosquitto.conf");
+        move || fs::read_to_string(&conf).unwrap()
+    };
+    let sc = FakeSystemctl { on_restart: Some(Box::new(seen)), ..sc };
+
+    let out = activate_sha(&w, &sc, B).unwrap();
+    assert_eq!(out.restarted, [BROKER], "no restart");
+    assert_eq!(placed_broker_conf(&w), broker_conf_of(&w, "second"));
+    assert!(w.cfg.run.as_ref().unwrap().join("sock").is_dir(), "the socket's directory is made");
+
+    rollback_with(&w, &sc).unwrap();
+    assert_eq!(placed_broker_conf(&w), broker_conf_of(&w, "first"));
+    assert_eq!(restarts_of_the_broker(&sc), 2);
+    assert_eq!(*sc.at_restart.borrow(), [broker_conf_of(&w, "second"), broker_conf_of(&w, "first")], "each restart finds its release's config in place");
+}
+
+#[test_id(tixqeuj)]
+#[test]
+fn the_broker_is_restarted_though_the_new_releases_unit_ensure_writes_the_same_config() {
+    let w = world_with_a_broker_on_a("sock/b.sock");
+    let sc = broker_running(&w);
+    // What the release's unit-ensure does to this file: the same renderer, the same values.
+    let unit_ensure = |cfg: &Config, sha: &str| {
+        let socket = cfg.host_values()?["SPIRA_BROKER_SOCKET"].clone();
+        crate::broker::place_conf(&cfg.releases.join(sha).join("systemd"), &socket, cfg.run.as_ref().unwrap()).map(|_| ())
+    };
+    let reads = FakeReads::serving();
+    let nix = FakeNix::default();
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc: &sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &unit_ensure, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None };
+    assert_eq!(activate::activate(&ctx, B, None).unwrap().restarted, [BROKER]);
+}
+
+#[test_id(ty8gcer)]
+#[test]
+fn a_release_whose_broker_config_renders_the_same_leaves_the_broker_running() {
+    let w = world_with_a_broker_on_a("sock/b.sock");
+    let sc = broker_running(&w);
+    activate_sha(&w, &sc, B).unwrap();
+    let out = activate_sha(&w, &sc, C).unwrap();
+    assert_eq!(out.left_running, [BROKER]);
+    assert!(out.restarted.is_empty(), "{:?}", out.restarted);
+    assert_eq!(restarts_of_the_broker(&sc), 1);
+}
+
+#[test_id(tko63ff)]
+#[test]
+fn an_undone_activation_restores_the_broker_config_before_restarting_the_broker_on_it() {
+    let w = world_with_a_broker_on_a("sock/b.sock");
+    let conf = w.cfg.run.clone().unwrap().join("mosquitto.conf");
+    let mut sc = broker_running(&w);
+    sc.restart_fails.insert(BROKER.into());
+    sc.on_restart = Some(Box::new(move || fs::read_to_string(&conf).unwrap()));
+    let e = activate_sha(&w, &sc, B).unwrap_err();
+    assert_eq!(current_of(&w), A, "{e}");
+    assert_eq!(placed_broker_conf(&w), broker_conf_of(&w, "first"), "{e}");
+    assert_eq!(*sc.at_restart.borrow(), [broker_conf_of(&w, "second"), broker_conf_of(&w, "first")], "{e}");
+}
+
+#[test_id(tl3vtys)]
+#[test]
+fn a_broker_config_that_cannot_be_placed_undoes_the_activation_naming_the_key() {
+    let w = world_with_a_broker_on_a("");
+    let sc = broker_running(&w);
+    let e = activate_sha(&w, &sc, B).unwrap_err();
+    assert!(e.contains("SPIRA_BROKER_SOCKET") && e.contains("rolled back"), "{e}");
+    assert_eq!(current_of(&w), A, "{e}");
+    assert!(sc.restarts.borrow().is_empty(), "{e}");
+}
+
+#[test_id(tlgbn0x)]
+#[test]
+fn a_registry_that_refuses_the_socket_key_resolves_and_the_refused_placing_says_why() {
+    let w = world_with_a_broker_on_a("");
+    let reg = Registered { instance: "prod".into(), broker_socket_refusal: "fixture registry refusal".into(), ..Default::default() };
+    let mut env = Env::new();
+    env.insert("HOME".into(), w.cfg.home().unwrap().display().to_string());
+    env.insert("SPIRA_UNIT_DIR".into(), w.cfg.unit_dir.display().to_string());
+    env.insert("SPIRA_TOML".into(), w.cfg.toml_spec().unwrap());
+    let flags = Flags { releases: Some(w.cfg.releases.clone()), run: w.cfg.run.clone(), keep: Some(2) };
+    let w = World { cfg: Config::resolve_with(&flags, &env, None, &reg).unwrap(), ..w };
+    let e = activate_sha(&w, &broker_running(&w), B).unwrap_err();
+    assert!(e.contains("SPIRA_BROKER_SOCKET is empty") && e.contains("fixture registry refusal"), "{e}");
+}
+
+#[test_id(t99geib)]
+#[test]
+fn a_box_without_the_broker_unit_gets_no_broker_config_from_activation() {
+    let w = world_with_a_broker_on_a("");
+    fs::remove_file(w.cfg.unit_dir.join(BROKER)).unwrap();
+    activate_sha(&w, &broker_running(&w), B).unwrap();
+    assert!(placed_broker_conf(&w).starts_with("# first\n"));
+}
+
 // ---------------------------------------------------------------- hotfix
 
 const STANDING_HOTFIX: &str = "sha cccccccccccccccccccccccccccccccccccccccc\nreason r\nat t\n";
@@ -573,7 +727,7 @@ fn world_activating_over_a_landed_hotfix() -> World {
 fn activate_as_the_batcher(w: &World, sc: &FakeSystemctl) -> Result<activate::Switched, String> {
     let reads = FakeReads::serving();
     let nix = FakeNix::default();
-    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: Some(w.cfg.releases.clone()), landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(5), report: &|_| {}, gc: None };
+    let ctx = activate::Ctx { cfg: &w.cfg, reads: &reads, sc, nix: &nix, git: &w._git, repo: Some(w.cfg.releases.clone()), landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(5), report: &|_| {}, gc: None };
     activate::activate(&ctx, A, None)
 }
 
@@ -1196,7 +1350,7 @@ fn activate_reading_within(w: &World, sc: &FakeSystemctl, reads: &FakeReads, ste
 
 fn activate_reporting(w: &World, sc: &FakeSystemctl, reads: &FakeReads, steady: Duration, warm_wait: Duration, report: &dyn Fn(&str)) -> Result<activate::Switched, String> {
     let nix = FakeNix::default();
-    let ctx = activate::Ctx { cfg: &w.cfg, reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady, warm_wait, warm_pause: Duration::from_millis(5), report, gc: None };
+    let ctx = activate::Ctx { cfg: &w.cfg, reads, sc, nix: &nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady, warm_wait, warm_pause: Duration::from_millis(5), report, gc: None };
     activate::activate(&ctx, A, None)
 }
 
@@ -2217,6 +2371,26 @@ fn verify_names_a_runtime_program_missing_from_the_release_path_as_a_deps_proble
     assert!(!p.iter().any(|p| p.starts_with("deps:")), "--no-pre-activate skips the check: {p:?}");
 }
 
+#[test_id(tfmpvdw)]
+#[test]
+fn verify_finds_a_spira_env_program_in_the_env_bin_without_a_link_or_a_tail() {
+    let w = World::with_git(FakeGit::default());
+    let prog = "spira-no-such-env-program";
+    let rel = w.cfg.releases.join(A);
+    file(&rel.join("spira/deps.toml"), &format!("{}provider = \"spira-env\"\n", dep_row(prog, "")));
+    let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
+    fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+    let home = w.cfg.home().unwrap();
+    let in_env = PathBuf::from(spira_config::spira_env_bin(&home.display().to_string())).join(prog);
+    stub(&in_env, "#!/bin/sh\n");
+    let o = verify::VerifyOpts { pre_activate: true, system_dirs: vec![] };
+    let p = verify::verify(&w.cfg, A, &o).unwrap();
+    assert!(!p.iter().any(|p| p.starts_with("deps:")), "{p:?}");
+    fs::remove_file(&in_env).unwrap();
+    let p = verify::verify(&w.cfg, A, &o).unwrap();
+    assert!(p.iter().any(|p| p.starts_with(&format!("deps: {prog}:"))), "{p:?}");
+}
+
 #[test_id(tqeytds)]
 #[test]
 fn the_shipped_pre_activate_script_starts_no_version_probe() {
@@ -2375,7 +2549,7 @@ fn world_activating_a_flake_release() -> World {
 }
 
 fn ctx_with_nix<'a>(w: &'a World, sc: &'a FakeSystemctl, nix: &'a FakeNix, reads: &'a FakeReads) -> activate::Ctx<'a> {
-    activate::Ctx { cfg: &w.cfg, reads, sc, nix, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None }
+    activate::Ctx { cfg: &w.cfg, reads, sc, nix, git: &w._git, repo: None, landed_ref: "main".into(), unit_ensure: &activate::ensure_new_units, settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_secs(60), warm_wait: Duration::from_secs(60), warm_pause: Duration::from_millis(1), report: &|_| {}, gc: None }
 }
 
 fn activate_with_nix(w: &World, sc: &FakeSystemctl, nix: &FakeNix) -> Result<activate::Switched, String> {

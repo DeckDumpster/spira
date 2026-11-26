@@ -110,9 +110,10 @@ Passes only if all hold, and reports every failure, not just the first:
 
 **pre-activate's environment (sp-vrn3v).** The dependency check and `pre-activate.sh` resolve
 binaries against a PATH built from the release, so both run with `SPIRA_RELEASE` and `PATH` set from
-the release **under verification** — `<rel>/bin:<rel>/spira:<system dirs><tail>`
-(`release_path_with_tail`, the box's own tool tail from `Config::path_tail`) — never
-inherited from the caller. Before this, the child ran with whatever `PATH` the caller's
+the release **under verification** — `<rel>/bin:<rel>/spira:<spira-env bin>:<system dirs><tail>`,
+the shape every unit runs with (`release_path_with_env_and_tail`; the env bin is under the
+config's `HOME`, the box's own tool tail from `Config::path_tail`) — never inherited from the
+caller. Before this, the child ran with whatever `PATH` the caller's
 shell had; at cutover that was the old checkout's `spira-config`, which lacked
 `path-tail`, and verify failed judging binaries that were never the release's own. Every
 other inherited variable is left alone: only `SPIRA_RELEASE` and `PATH` are ever ambiguous
@@ -137,7 +138,11 @@ about which release they name.
    starts, without waiting for it, and no service is restarted for an env change.
 4. Install the rendered files that differ (write `.new`, rename).
 5. Swap `current` atomically (a symlink written beside it, renamed over it).
-6. `daemon-reload`.
+6. `daemon-reload`. Then, when the broker's unit is installed and the release ships
+   `systemd/mosquitto.conf`, render it into the run directory (`release::broker`, the renderer
+   the installers call too), before `unit-ensure` can. A rewrite restarts the broker in step 7
+   with "its config changed", whatever its `Exec*=` lines say; a refusal to render, like any
+   later failure, puts the old file back. `rollback` does the same for its target.
 7. Restart each **service whose `Exec*=` lines changed, that is active, and is not a
    oneshot**. An active oneshot finishes its run from the old release, which is still on
    disk and still immutable, and its next start reads the new unit file. Inactive units are

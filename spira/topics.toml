@@ -1,0 +1,92 @@
+# Every topic family the broker carries, read by the spira-pub library. A publish to a family
+# not listed here is refused, as is a publish whose class does not match the row.
+#
+#   family     topic pattern; `<name>` matches one segment, `<a|b>` one of those words
+#   class      state (retained: the broker keeps the last value) | chatter (not retained)
+#   publisher  who publishes it
+#   fields     the payload's field names
+
+[[topic]]
+family = "bead/<id>/state"
+class = "state"
+publisher = "store-bridge"
+fields = ["state"]
+
+[[topic]]
+family = "bead/<id>/sessions"
+class = "state"
+publisher = "store-bridge"
+fields = ["sessions"]
+
+[[topic]]
+family = "round/<repo>/<batch>"
+class = "state"
+publisher = "queue"
+fields = ["event"]
+
+[[topic]]
+family = "gate/<repo>/<bead>"
+class = "state"
+publisher = "gate"
+fields = ["rc", "reason", "killed_by", "over_cap"]
+
+[[topic]]
+family = "session/<bead>/state"
+class = "state"
+publisher = "dwarf"
+fields = ["state"]
+
+[[topic]]
+family = "session/<bead>/age/<15m|30m|60m>"
+class = "state"
+publisher = "dwarf"
+fields = ["sessions"]
+
+[[topic]]
+family = "test/<id>/red"
+class = "state"
+publisher = "queue, gate"
+fields = ["at", "tree", "tree_touches_crate"]
+
+[[topic]]
+family = "release/active"
+class = "state"
+publisher = "release"
+fields = ["release"]
+
+[[topic]]
+family = "host/pressure"
+class = "state"
+publisher = "scheduler"
+fields = ["resource", "avg300", "line", "direction"]
+
+[[topic]]
+family = "pr/<repo>/<n>"
+class = "state"
+publisher = "pr-notify"
+fields = ["change"]
+
+[[topic]]
+family = "concierge/inbox"
+class = "state"
+publisher = "inbox-writer"
+fields = ["unread", "oldest"]
+
+[[topic]]
+family = "progress/<bead>"
+class = "chatter"
+publisher = "builder or gate"
+fields = ["note"]
+
+# Liveness: set to up on connect, and to gone by the client's last will.
+[[topic]]
+family = "publisher/<name>"
+class = "state"
+publisher = "each publisher"
+fields = ["state", "since_ms"]
+
+[[topic]]
+family = "subscriber/<name>"
+class = "state"
+publisher = "each subscriber"
+fields = ["state", "since_ms"]

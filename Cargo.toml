@@ -35,6 +35,7 @@ members = [
     "lifecycle",
     "spira-lc",
     "spira-otel",
+    "spira-pub",
     "hel",
     "tsd-lifecycle-export",
     "work",

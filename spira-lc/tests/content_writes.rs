@@ -968,6 +968,31 @@ fn admin_store_sql_ping_and_config_answer_from_the_server_and_start_no_bd() {
     assert_eq!(admin_store(&lc, &["config", "get", "types.custom"], "").1, "event\n");
 }
 
+#[test_id(toqt39a)]
+#[test]
+fn admin_store_check_names_each_column_the_reads_or_writer_lack_and_cannot_tell_without_a_server() {
+    let Some(store) = Store::up() else { return };
+    let lc = Lc::new(&store, "ac", "");
+    let whole = admin_store(&lc, &["check"], "");
+    assert_eq!((whole.0, whole.1.as_str()), (0, ""), "{}", whole.2);
+
+    store.sql("ALTER TABLE comments DROP COLUMN author");
+    let read = admin_store(&lc, &["check"], "");
+    assert_eq!((read.0, read.1.as_str()), (1, "comments.author\n"), "a column the reads need: {}", read.2);
+    store.sql("ALTER TABLE issues DROP COLUMN row_lock");
+    let both = admin_store(&lc, &["check"], "");
+    assert_eq!((both.0, both.1.as_str()), (1, "comments.author\nissues.row_lock\n"), "and one only the writer needs: {}", both.2);
+
+    let toml = std::fs::read_to_string(&lc.toml).unwrap();
+    let closed = toml.replace(&store.port, "1");
+    assert_ne!(closed, toml, "the config names the server's port");
+    std::fs::write(&lc.toml, closed).unwrap();
+    let (rc, out, err) = admin_store(&lc, &["check"], "");
+    assert_eq!((rc, out.as_str()), (2, ""), "{err}");
+    assert!(err.contains("unreachable at 127.0.0.1:1:"), "{err}");
+    assert!(!lc.bd_log.exists(), "the check started bd");
+}
+
 #[test_id(tjofiw4)]
 #[test]
 fn a_failed_admin_store_statement_exits_non_zero_with_the_servers_error() {
