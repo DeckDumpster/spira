@@ -459,7 +459,7 @@ fn the_built_testenv_supervisor_records_who_signalled_it_and_passes_the_signal_o
     use std::process::{Command, Stdio};
     let dir = testkit::TempDir::new("supervise-record");
     let record = dir.path().join("rec");
-    let mut sup = Command::new(env!("CARGO_BIN_EXE_testenv"))
+    let mut sup = Command::new(testkit::bin_exe("testenv"))
         .args(["sandbox-supervise"])
         .arg(&record)
         .args(["sh", "-c", "echo ready; exec sleep 29.5"])
