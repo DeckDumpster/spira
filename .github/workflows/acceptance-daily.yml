@@ -164,7 +164,6 @@ jobs:
         run: |
           set -uo pipefail
           bash spira/acceptance-ci.sh "local-$(git rev-parse --short=12 HEAD)" \
-            --bd-db "$HOME/.local/share/spira/db" \
             --agent "$GITHUB_WORKSPACE/spira/acceptance-agent.sh" \
             --tarball "$TARBALL" 2>&1 | tee "$HOME/acceptance-daily.log"
           exit "${PIPESTATUS[0]}"

@@ -4,7 +4,7 @@
 //! `spira/acceptance-run.sh` and `spira/acceptance-lib.sh` (sp-ak7qm).
 //!
 //! Every check prints one `ok`/`FAIL` line and one JSON line; a check that cannot look is a
-//! FAIL. The external world — `bd`, `git`, `gh`, `systemctl`, the release's own scripts —
+//! FAIL. The external world — `git`, `gh`, `systemctl`, the release's own tools and scripts —
 //! is reached only through [`Host`], so the whole run is unit-tested against a fake.
 
 pub mod host;
@@ -19,7 +19,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub const USAGE: &str = "usage: release acceptance <tag> --scratch-repo <path> [--prev-tag <tag>] [--record]
-                          [--notes-repo <path>] [--file-defects] [--bd-db <path>] [--agent <path>]
+                          [--notes-repo <path>] [--file-defects] [--agent <path>]
                           [--waive-upgrade] [--tarball <path>] [--prev-tarball <path>]
                           [--aged-tag <tag> [--aged-tarball <path>]]";
 
@@ -51,7 +51,6 @@ pub struct Args {
     /// The standing no-backward-compatibility ruling is in force: it declares the waiver for every
     /// cut, so a waived predecessor does not refuse this one.
     pub standing_waiver: bool,
-    pub bd_db: Option<PathBuf>,
     pub agent: Option<String>,
     pub tarball: Option<PathBuf>,
     pub prev_tarball: Option<PathBuf>,
@@ -87,7 +86,6 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--aged-tarball" => a.aged_tarball = Some(val()?.into()),
             "--aged-tag" => a.aged_tag = Some(val()?).filter(|s| !s.is_empty()),
             "--prev-tag" => a.prev_tag = Some(val()?).filter(|s| !s.is_empty()),
-            "--bd-db" => a.bd_db = Some(val()?.into()),
             "--agent" => a.agent = Some(val()?).filter(|s| !s.is_empty()),
             "--notes-repo" => a.notes_repo = Some(val()?.into()),
             "--record" => a.record = true,
@@ -128,7 +126,8 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
 #[derive(Debug, Clone)]
 pub struct Opts {
     pub a: Args,
-    pub bd_db: PathBuf,
+    /// Where the installed instance keeps its store: the installer's `db` answer.
+    pub db: PathBuf,
     /// Scratch space for this run: releases, run dir, release source, downloads.
     pub tmp: PathBuf,
     /// `${XDG_CONFIG_HOME:-$HOME/.config}` — the instance's config directory is its `spira/`.
@@ -263,7 +262,7 @@ impl<'h> Run<'h> {
         self.check(name, want == got, || format!("wanted [{want}] got [{got}]"))
     }
 
-    /// Dump systemd/bd/run-dir/config/scratch-repo state under `<forensics>/NN-<label>`. Best-effort
+    /// Dump systemd/store/run-dir/config/scratch-repo state under `<forensics>/NN-<label>`. Best-effort
     /// throughout: a forensics failure never changes the verdict.
     pub fn snapshot(&mut self, label: &str) {
         self.snaps += 1;
@@ -289,11 +288,11 @@ impl<'h> Run<'h> {
         }
         let _ = fs::write(dir.join("unit-status.txt"), status);
         put("journal-full.txt", Cmd::new("journalctl").args(["--user", &format!("--since={since}"), "--no-pager", "-l"]));
-        let db = self.o.bd_db.display().to_string();
-        put("bd-list.json", Cmd::new("bd").args(["-C", &db, "list", "--all", "--json"]));
-        put("bd-ready.json", Cmd::new("bd").args(["-C", &db, "ready", "--json"]));
+        let lc = |args: &[&str]| self.tool("spira-lc").args(args.iter().copied());
+        put("lc-list.json", lc(&["content", "list", "--all", "--limit", "0", "--json"]));
+        put("lc-claimable.json", lc(&["claimable"]));
         if let Some(id) = &self.probe {
-            put("bd-probe.json", Cmd::new("bd").args(["-C", &db, "show", id, "--json"]));
+            put("lc-probe.json", lc(&["content", "show", id, "--json"]));
         }
         let run = &self.o.spira_run;
         if run.is_dir() {
@@ -378,8 +377,8 @@ pub fn missing_release_bins(release_dir: &Path) -> String {
         .join(", ")
 }
 
-/// The bead id from `bd create`'s "Created issue: <id>" line, past any warning printed ahead
-/// of it (GH#2950). `None` when there is none.
+/// The bead id from `content create`'s "Created issue: <id>" line, past any warning printed
+/// ahead of it. `None` when there is none.
 pub fn extract_bead_id(out: &str) -> Option<String> {
     for line in out.lines() {
         if let Some(pos) = line.find("Created issue: ") {
@@ -398,9 +397,9 @@ pub fn extract_bead_id(out: &str) -> Option<String> {
     None
 }
 
-/// `bd … --json` output as a list of objects: warning lines before the first line starting
+/// A `--json` reply as a list of objects: warning lines before the first line starting
 /// with `[` or `{` are dropped; a single object is a one-element list. `None` when unparsable.
-pub fn bd_json(out: &str) -> Option<Vec<serde_json::Value>> {
+pub fn listed_json(out: &str) -> Option<Vec<serde_json::Value>> {
     let start = out.lines().position(|l| l.starts_with('[') || l.starts_with('{'))?;
     let body: Vec<&str> = out.lines().skip(start).collect();
     match serde_json::from_str::<serde_json::Value>(&body.join("\n")).ok()? {
@@ -416,9 +415,12 @@ pub fn lifecycle_submitted(states: &[String]) -> bool {
     states.iter().any(|s| matches!(s.as_str(), "SUBMITTED" | "CERTIFIED" | "IN_DELIVERY" | "QUEUED" | "BATCHED" | "LANDED" | "DONE"))
 }
 
-/// Whether `id` is among the beads of a `bd ready --json` reply. Unreadable is not claimable.
-pub fn ready_has(ready_json: &str, id: &str) -> bool {
-    bd_json(ready_json).is_some_and(|v| v.iter().any(|b| b.get("id").and_then(|x| x.as_str()) == Some(id)))
+/// Whether a `spira-lc claimable` reply offers `id` to a builder. Unreadable is not claimable.
+pub fn builder_would_take(view_json: &str, id: &str) -> bool {
+    let Ok(view) = serde_json::from_str::<serde_json::Value>(view_json) else { return false };
+    view["beads"].as_array().is_some_and(|beads| {
+        beads.iter().any(|b| b["bead_id"] == id && b["verdict"] == "claimable" && b["runes"].as_array().is_some_and(|r| r.iter().any(|x| x == "builder")))
+    })
 }
 
 /// `last_fired_at` of `task` in a `scheduler status` document (`world scheduler-status --json`):
@@ -440,7 +442,7 @@ pub fn lifecycle_states(history_json: &str) -> Vec<String> {
         }
     }
     let mut out: Vec<String> = Vec::new();
-    for e in bd_json(history_json).unwrap_or_default() {
+    for e in listed_json(history_json).unwrap_or_default() {
         let applied = e.get("applied").is_some_and(|a| {
             a.as_i64() == Some(1) || a.as_bool() == Some(true) || a.as_str().is_some_and(|x| x == "1" || x == "true")
         });
@@ -715,7 +717,7 @@ pub fn main(argv: &[String]) -> u8 {
     let gh_repo = gh_repo_from([env("SPIRA_FORGE_REPO"), env("GH_REPO"), env("GITHUB_REPOSITORY")], (origin.rc == 0).then_some(origin.out));
     let secs = |k: &str, d: u64| env(k).and_then(|v| v.parse().ok()).unwrap_or(d);
     let o = Opts {
-        bd_db: a.bd_db.clone().unwrap_or_else(|| home.join("spira-acceptance-test-db")),
+        db: home.join(".local/share/spira/db"),
         tmp: tmp.clone(),
         xdg_config: env("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".config")),
         forensics,

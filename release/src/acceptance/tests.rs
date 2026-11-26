@@ -36,12 +36,15 @@ fn lifecycle_submitted_is_any_state_past_the_model() {
     assert!(!lifecycle_submitted(&[]));
 }
 
-#[test_id(ty91rfv)]
+#[test_id(tf8i945)]
 #[test]
-fn ready_has_finds_the_probe_and_unreadable_is_not_claimable() {
-    assert!(ready_has(r#"[{"id":"sp-a"},{"id":"sp-b"}]"#, "sp-b"));
-    assert!(!ready_has(r#"[{"id":"sp-a"}]"#, "sp-b"));
-    assert!(!ready_has("not json", "sp-b"));
+fn only_a_claim_view_offering_the_bead_to_a_builder_counts() {
+    let view = |bead: &str, verdict: &str, rune: &str| format!(r#"{{"rev":1,"beads":[{{"bead_id":"{bead}","verdict":"{verdict}","runes":["{rune}"]}}]}}"#);
+    assert!(builder_would_take(&view("sp-b", "claimable", "builder"), "sp-b"));
+    assert!(!builder_would_take(&view("sp-a", "claimable", "builder"), "sp-b"), "another bead");
+    assert!(!builder_would_take(&view("sp-b", "blocked", "builder"), "sp-b"));
+    assert!(!builder_would_take(&view("sp-b", "claimable", "ops"), "sp-b"), "no builder takes it");
+    assert!(!builder_would_take("not json", "sp-b"));
 }
 
 fn files(rows: &str) -> Vec<UnitFile> {
@@ -196,6 +199,13 @@ struct Fake {
     probes: RefCell<Vec<String>>,
     next_id: Cell<u32>,
     bead_count_fails: bool,
+    memory_count_fails: bool,
+    /// A dwarf has already claimed every probe by the time the claim view is read.
+    already_claimed: bool,
+    /// The claim view holds every probe blocked.
+    never_claimable: bool,
+    seed_create_fails: bool,
+    uninstalled: Cell<bool>,
     sidecar_wrong: bool,
     failed_unit: bool,
     rollback: (i32, &'static str),
@@ -247,6 +257,11 @@ impl Fake {
             probes: RefCell::new(Vec::new()),
             next_id: Cell::new(0),
             bead_count_fails: false,
+            memory_count_fails: false,
+            already_claimed: false,
+            never_claimable: false,
+            seed_create_fails: false,
+            uninstalled: Cell::new(false),
             sidecar_wrong: false,
             failed_unit: false,
             rollback: (0, ""),
@@ -321,6 +336,50 @@ impl Fake {
         std::os::unix::fs::symlink(name, &cur).unwrap();
     }
 
+    /// The content door: a write is judged by the real door's state-verb fence and filing
+    /// contract, over this tree's personas and statute guards, before the fake applies it.
+    fn content(&self, c: &Cmd, args: &[&str]) -> Out {
+        let argv = s(args);
+        let ok = |t: &str| Out::stdout(0, t);
+        let refused = |text: String| Out { rc: 1, text, out: String::new() };
+        let vars = spira_store::lc_call::guard_vars(c.env.clone());
+        let vars = |k: &str| vars.get(k).cloned();
+        if let Err(r) = bead::guard::state_verb(&argv, &vars, "spira-lc content") {
+            return refused(r.text);
+        }
+        match args {
+            ["create", ..] => {
+                let mut argv = argv.clone();
+                let mut body = c.stdin.clone();
+                assert_eq!(args.windows(2).any(|w| w == ["--body-file", "-"]), body.is_some(), "a body and --body-file - go together: {}", c.line());
+                if let Err(r) = bead::filing::create(&mut argv, &mut body, &filing_policy(), &vars) {
+                    return refused(r.text);
+                }
+                let labels = args.iter().position(|a| *a == "--label").map_or("", |i| args[i + 1]);
+                let probe = labels.starts_with("acceptance,");
+                if labels == "acceptance-seed" && self.seed_create_fails {
+                    return refused("cannot tell\n".into());
+                }
+                self.next_id.set(self.next_id.get() + 1);
+                let id = format!("sp-{}{}", if probe { "p" } else { "s" }, self.next_id.get());
+                if probe {
+                    self.probes.borrow_mut().push(id.clone());
+                }
+                ok(&format!("✓ Created issue: {id} — a bead\n  Priority: P2\n"))
+            }
+            ["list", "--all", "--limit", "0", "--json"] if self.bead_count_fails => Out { rc: 2, text: "spira-lc content: cannot tell: database unreachable\n".into(), out: String::new() },
+            ["list", "--all", "--limit", "0", "--json"] => ok(&format!("[{}]", vec!["{}"; self.next_id.get() as usize].join(","))),
+            ["memories", "--json"] if self.memory_count_fails => Out { rc: 2, text: "spira-lc content: cannot tell: database unreachable\n".into(), out: String::new() },
+            ["memories", "--json"] => ok(r#"{"law-a":"a\nsecond line","law-b":"b"}"#),
+            ["remember", "--key", _] => {
+                assert!(c.stdin.as_deref().is_some_and(|b| !b.trim().is_empty()), "remember takes its text as the body: {}", c.line());
+                ok("")
+            }
+            ["show", _, "--json"] => ok("[]"),
+            _ => Out { rc: 3, text: format!("fake: not a content verb: {}\n", c.line()), out: String::new() },
+        }
+    }
+
     fn sha(&self) -> String {
         format!("sha{}", self.probes.borrow().len())
     }
@@ -349,7 +408,7 @@ impl Fake {
             ("systemctl", ["--user", "list-unit-files", "spira-runtime*-watch*.service", ..]) => ok("[]"),
             ("systemctl", ["--user", "list-unit-files", "spira-runtime*.service", ..]) => ok(r#"[{"unit_file":"spira-runtime-t.service","state":"enabled"}]"#),
             ("systemctl", ["--user", "list-unit-files", "spira-*.service", ..]) => ok(r#"[{"unit_file":"spira-archive-t.service","state":"static"},{"unit_file":"spira-loom-t.service","state":"enabled"}]"#),
-            ("systemctl", ["--user", "list-unit-files", "spira-*", ..]) if self.no_unit_files => Out { rc: 1, text: String::new(), out: String::new() },
+            ("systemctl", ["--user", "list-unit-files", "spira-*", ..]) if self.no_unit_files || self.uninstalled.get() => Out { rc: 1, text: String::new(), out: String::new() },
             ("systemctl", ["--user", "list-unit-files", "spira-*", ..]) => ok(r#"[{"unit_file":"spira-a.service","state":"enabled"},{"unit_file":"spira-b.timer","state":"enabled"}]"#),
             ("systemctl", ["--user", "show", "-p", "Type", "--value", u]) => ok(if u.contains("archive") { "oneshot\n" } else { "simple\n" }),
             ("systemctl", ["--user", "list-units", "--state=active", ..]) => ok("spira-sentinel-t.timer loaded active waiting\n"),
@@ -360,6 +419,8 @@ impl Fake {
                 // As the real one does: the operator's answers become the one config file.
                 let text = fs::read_to_string(answers).unwrap();
                 let toml = Path::new(c.env_of("SPIRA_TOML").expect("install-tarball names SPIRA_TOML"));
+                // Two typed keys have no registered default and `answers_text` answers neither; the fake supplies them.
+                let text = format!("{text}spira.metrics_flush_minutes = 60\nspira.gate_target_cap_mib = 81920\n");
                 spira_config::init::ensure(toml, spira_config::init::parse_answers(&text).unwrap(), None, &registry()).unwrap();
                 self.activate(Path::new(tb).file_name().unwrap().to_string_lossy().trim_end_matches(".tar.gz"));
                 ok("")
@@ -381,7 +442,17 @@ impl Fake {
                 }
             }
             ("bash", _) => ok(""), // ready.sh
-            ("spira-install", _) => ok(""), // spira-install (sp-31dm0): invoked directly now, no bash wrapper
+            ("spira-install", _) => {
+                self.uninstalled.set(false);
+                fs::create_dir_all(&self.unit_dir).unwrap();
+                fs::write(self.unit_dir.join("spira-a.service"), "[Service]\n").unwrap();
+                ok("")
+            }
+            ("uninstall.sh", _) => {
+                self.uninstalled.set(true);
+                let _ = fs::remove_file(self.unit_dir.join("spira-a.service"));
+                ok("")
+            }
             ("deploy.sh", args) => {
                 let tag = args.last().unwrap();
                 if args.contains(&"--allow-draft") {
@@ -396,6 +467,13 @@ impl Fake {
             }
             ("spira-config", ["repo", "names"]) => ok(&self.land_modes.iter().map(|(n, _)| format!("{n}\n")).collect::<String>()),
             ("spira-config", ["repo", "land", n]) => ok(&format!("{}\n", self.land_modes.iter().find(|(x, _)| x == n).map_or("", |(_, m)| m))),
+            ("spira-lc", ["content", rest @ ..]) => self.content(c, rest),
+            ("spira-lc", ["claimable"]) => {
+                let verdict = if self.never_claimable { "blocked" } else { "claimable" };
+                let held: Vec<String> = if self.already_claimed { Vec::new() } else { self.probes.borrow().iter().map(|i| format!(r#"{{"bead_id":"{i}","verdict":"{verdict}","runes":["builder"]}}"#)).collect() };
+                ok(&format!(r#"{{"rev":1,"cannot_tell":0,"content_error":null,"beads":[{}]}}"#, held.join(",")))
+            }
+            ("spira-lc", ["close", _, "--reason", _]) => ok(""),
             ("spira-lc", ["create-bead", id]) => {
                 if self.lc_create_refusals.get() > 0 {
                     self.lc_create_refusals.set(self.lc_create_refusals.get() - 1);
@@ -404,7 +482,11 @@ impl Fake {
                 self.rows.borrow_mut().push(id.to_string());
                 ok("{}\n")
             }
-            ("spira-lc", ["history", id]) if self.seed_no_rows && id.starts_with("sp-s") => ok("[]"),
+            ("spira-lc", ["show", id]) if self.seed_no_rows && id.starts_with("sp-s") => Out { rc: 1, text: "no row\n".into(), out: String::new() },
+            ("spira-lc", ["show", id]) => ok(&format!(r#"{{"bead":{{"bead_id":"{id}","state":"READY"}},"delivery":null}}"#)),
+            // A row born READY has no history entry until an event moves it.
+            ("spira-lc", ["history", id]) if id.starts_with("sp-s") => ok("[]"),
+            ("spira-lc", ["history", _]) if self.never_claimable => ok("[]"),
             ("spira-lc", ["history", _]) => {
                 if self.history_late.get() > 0 {
                     self.history_late.set(self.history_late.get() - 1);
@@ -421,31 +503,8 @@ impl Fake {
                 let n = self.fired.get();
                 ok(&format!(r#"{{"schema":1,"at":{n},"halted":false,"held":0,"tasks":[{{"name":"sentinel-call","last_fired_at":{n}}},{{"name":"landing","last_fired_at":{n}}}],"classes":[]}}"#))
             }
-            ("uninstall.sh" | "world.sh" | "doctor", _) => ok(""),
-            ("bd", ["-C", _, "create", "--title", _, "--description", _, "--label", l, ..]) if l.starts_with("acceptance,") => {
-                self.next_id.set(self.next_id.get() + 1);
-                let id = format!("sp-p{}", self.next_id.get());
-                self.probes.borrow_mut().push(id.clone());
-                ok(&format!("warning: beads.role not configured (GH#2950)\n✓ Created issue: {id} — probe\n"))
-            }
-            ("bd", ["-C", _, "create", ..]) => {
-                self.next_id.set(self.next_id.get() + 1);
-                ok(&format!("✓ Created issue: sp-s{}\n", self.next_id.get()))
-            }
-            // A warning on stderr (bd's schema-skew notice) never reaches what is parsed.
-            ("bd", ["-C", _, "ready", ..]) => {
-                let json = format!("[{}]", self.probes.borrow().iter().map(|i| format!("{{\"id\":\"{i}\"}}")).collect::<Vec<_>>().join(","));
-                Out { rc: 0, text: format!("{json}\nwarning: schema skew\n"), out: json }
-            }
-            ("bd", ["-C", _, "list", "--all", "--json"]) => {
-                if self.bead_count_fails {
-                    Out { rc: 1, text: "Error: database unreachable\n".into(), out: String::new() }
-                } else {
-                    ok(&format!("[{}]", vec!["{}"; self.next_id.get() as usize].join(",")))
-                }
-            }
-            ("bd", ["-C", _, "memories"]) => ok("law-a\nlaw-b\n"),
-            ("bd", _) => ok(""),
+            ("world.sh" | "doctor", _) => ok(""),
+            ("bd", _) => panic!("release acceptance started bd: {}", c.line()),
             ("git", ["-C", _, "rev-parse", "--abbrev-ref", "HEAD"]) => ok("main\n"),
             ("git", ["-C", _, "rev-parse", "origin/main"]) => ok(&format!("{}\n", if self.never_lands { "sha0".into() } else { self.sha() })),
             ("git", ["-C", _, "log", "--oneline", br]) => ok(&format!("abc {}: acceptance probe\n", br.trim_start_matches("spira/"))),
@@ -513,7 +572,7 @@ impl Box_ {
         argv.extend(s(extra));
         Opts {
             a: parse_args(&argv).unwrap(),
-            bd_db: self.root.join("db"),
+            db: self.root.join("db"),
             tmp: self.root.join("tmp"),
             xdg_config: self.root.join("config"),
             forensics: self.root.join("forensics"),
@@ -550,6 +609,148 @@ fn a_missing_prerequisite_stops_before_any_phase_with_exit_2() {
     assert_eq!(phases::run(&f, b.opts(&[])), 2);
     assert_eq!(b.fails(), vec!["prereq: dolt on PATH: not found; install before running acceptance".to_string()]);
     assert!(!f.log.borrow().iter().any(|c| c.args.first().map(String::as_str) == Some("install-tarball")));
+}
+
+// ---- the store is reached through spira-lc ------------------------------------------------
+
+/// The policy the content door loads, from this tree's own personas and statute guards.
+fn filing_policy() -> bead::filing::Policy {
+    let home = spira_config::resolve::locate_home_for_process().unwrap();
+    let _env = testkit::env(&[("SPIRA_SCOPE_LABEL", Some("spira")), ("SPIRA_PLAN_LABEL", Some("plan")), ("SPIRA_CI_LABEL", Some("ci"))]);
+    let cfg = |key: &str| {
+        Ok(match key {
+            "SPIRA_STATUTE_GUARDS" => home.join("statute-guards").display().to_string(),
+            "SPIRA_HOME_REPO" => "scratch-repo".to_string(),
+            _ => String::new(),
+        })
+    };
+    let mut policy = bead::filing::Policy::load(&home, &cfg).unwrap();
+    policy.repos = bead::repos_by_name("scratch-repo | /r | push | origin/main | |\n");
+    policy
+}
+
+const PREV: &[&str] = &["--prev-tag", "spira-release-spira-20260901T000000Z", "--prev-tarball"];
+
+fn upgrade_run(b: &Box_, f: &Fake) -> u8 {
+    let prev_tb = b.root.join("spira-20260901T000000Z.tar.gz").display().to_string();
+    let mut extra = PREV.to_vec();
+    extra.push(&prev_tb);
+    phases::run(f, b.opts(&extra))
+}
+
+fn failed_checks(b: &Box_, prefix: &str) -> Vec<String> {
+    b.fails().into_iter().filter(|x| x.starts_with(prefix)).collect()
+}
+
+fn check_names(b: &Box_) -> Vec<String> {
+    b.checks().iter().map(|c| c["check"].as_str().unwrap().to_string()).collect()
+}
+
+#[test_id(tks98oz)]
+#[test]
+fn phases_a_to_d_pass_with_the_store_driven_only_through_spira_lc() {
+    let b = Box_::new();
+    let f = b.fake();
+    let rc = upgrade_run(&b, &f);
+    assert_eq!((b.fails(), rc), (Vec::<String>::new(), 0));
+    let names = check_names(&b);
+    for want in [
+        "phase A: bead is claimable by builder predicate (spira,plan)",
+        "phase D: aged-install seeds written: two beads, one closed, two memories",
+        "phase D: bead count preserved through migration (3 → 3)",
+        "phase D: memory count preserved through migration (2 → 2)",
+        "phase D: pre-upgrade bead sp-s2 has lifecycle rows after the aged upgrade",
+    ] {
+        assert!(names.iter().any(|n| n == want), "no check {want:?} in {names:#?}");
+    }
+    let ran = lines(&f);
+    for want in ["spira-lc content list --all --limit 0 --json", "spira-lc content memories --json", "spira-lc claimable", "spira-lc close sp-s3 --reason ", "spira-lc content remember --key law-acceptance-aged-seed-2"] {
+        assert!(ran.iter().any(|l| l.starts_with(want)), "never ran {want:?}");
+    }
+    let log = f.log.borrow();
+    let lc: Vec<&Cmd> = log.iter().filter(|c| c.prog == "spira-lc").collect();
+    let current = b.root.join("tmp/releases/current").display().to_string();
+    assert!(lc.iter().all(|c| c.env_of("SPIRA_RELEASE") == Some(current.as_str())), "every spira-lc is the installed release's");
+}
+
+#[test_id(tusfndl)]
+#[test]
+fn a_bead_count_that_cannot_be_read_fails_the_count_check() {
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.bead_count_fails = true;
+    assert_eq!(upgrade_run(&b, &f), 1);
+    assert_eq!(failed_checks(&b, "phase D: bead count"), vec!["phase D: bead count preserved through migration: could not count beads: before=None after=None".to_string()]);
+}
+
+#[test_id(thtwo66)]
+#[test]
+fn a_memory_count_that_cannot_be_read_fails_the_count_check() {
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.memory_count_fails = true;
+    assert_eq!(upgrade_run(&b, &f), 1);
+    assert_eq!(failed_checks(&b, "phase D: memory count"), vec!["phase D: memory count preserved through migration: could not count memories: before=None after=None".to_string()]);
+}
+
+#[test_id(t56vv8f)]
+#[test]
+fn a_seed_the_store_did_not_take_fails_phase_d_rather_than_leaving_the_counts_vacuous() {
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.seed_create_fails = true;
+    assert_eq!(upgrade_run(&b, &f), 1);
+    assert_eq!(failed_checks(&b, "phase D: aged-install seeds written").len(), 1, "{:?}", b.fails());
+}
+
+#[test_id(ttop0z7)]
+#[test]
+fn a_seed_with_no_lifecycle_row_after_the_upgrade_fails_naming_it() {
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.seed_no_rows = true;
+    assert_eq!(upgrade_run(&b, &f), 1);
+    assert_eq!(failed_checks(&b, "phase D: pre-upgrade bead").len(), 2, "{:?}", b.fails());
+}
+
+#[test_id(tc599tz)]
+#[test]
+fn a_probe_already_claimed_when_the_claim_view_is_read_still_counts_as_claimable() {
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.already_claimed = true;
+    assert_eq!((upgrade_run(&b, &f), b.fails()), (0, vec![]));
+}
+
+#[test_id(tmekwt8)]
+#[test]
+fn a_probe_the_claim_view_never_offers_and_nobody_claimed_fails() {
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.never_claimable = true;
+    f.history_late.set(0);
+    let r = Run::new(&f, b.opts(&[]));
+    assert!(!r.claimable_by_builder("sp-p1"));
+}
+
+#[test_id(twi2at2)]
+#[test]
+fn a_box_with_no_bd_on_path_passes_the_prerequisites() {
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.missing_tool = Some("bd");
+    assert_eq!((phases::run(&f, b.opts(&[])), b.fails()), (0, vec![]));
+}
+
+#[test_id(tsd3pdb)]
+#[test]
+fn a_forensics_snapshot_reads_the_store_through_spira_lc() {
+    let b = Box_::new();
+    fs::create_dir_all(b.root.join("forensics")).unwrap();
+    let f = b.fake();
+    Run::new(&f, b.opts(&[])).snapshot("x");
+    let ran = lines(&f);
+    assert!(ran.iter().any(|l| l == "spira-lc content list --all --limit 0 --json") && ran.iter().any(|l| l == "spira-lc claimable"), "{ran:#?}");
 }
 
 #[test_id(t3dhpwo)]
