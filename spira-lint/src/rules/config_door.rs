@@ -26,6 +26,7 @@ const EXEMPT_TOML_FROM_STR: &[&str] = &[
     "statute-check/src/doors.rs",
     "sim/src/fit.rs",
     "spira/sim/src/drive.rs",
+    "spira-pub/src/topics.rs",
 ];
 
 const USE_INSTEAD: &str = "use spira_config::process::spec() (the path) or spira_config::load (the parse)";
