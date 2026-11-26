@@ -904,6 +904,7 @@ mod tests {
         let token = concat!("{unit", "-build}");
         assert_eq!(declare(&[("compile", "cargo test --no-run -p x"), ("token", token)]), ["compile", "token"]);
         assert_eq!(declare(&[("nextest", "cargo --config a=b nextest run"), ("bench", "cargo bench --no-run")]), ["nextest", "bench"]);
+        assert_eq!(declare(&[("plain", "cargo test -p x"), ("unit-build", "true")]), ["plain", "unit-build"]);
         assert!(declare(&[("clippy", &repo_clippy_row())]).is_empty());
 
         let root = testkit::manifest_dir().parent().unwrap().to_path_buf();
