@@ -10,13 +10,6 @@ use crate::proc::Command;
 use crate::content_sql::{self, Failure, Sql};
 use crate::content_sql::Bead;
 
-pub(crate) fn bd_bin() -> Result<String, String> {
-    // SPIRA_BD resolves empty when unset (no default in its registry entry); an empty program
-    // name fails every call, so the door's store half silently never ran in such a setup
-    // (sp-swh8b8). Empty means bd on PATH, as every other bd caller reads it.
-    spira_config::process::cfg("SPIRA_BD").map(|b| if b.trim().is_empty() { "bd".to_string() } else { b })
-}
-
 /// Pushes one bead-store call's count and duration, labelled by its bd verb (the first
 /// non-flag word) and whether it succeeded; a failed push is counted, never raised.
 fn verb_of<'a>(args: &[&'a str]) -> &'a str {
