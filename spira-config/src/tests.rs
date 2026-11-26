@@ -67,6 +67,22 @@
         }
     }
 
+    #[test_id(t123cqb)]
+    #[test]
+    fn release_path_with_env_and_tail_puts_the_env_bin_between_the_release_and_the_system_dirs() {
+        assert_eq!(
+            release_path_with_env_and_tail("r/spira-releases/abc", "h/env/bin", "h/.local/bin:h/.cargo/bin").unwrap(),
+            "r/spira-releases/abc/bin:r/spira-releases/abc/spira:h/env/bin:/usr/local/bin:/usr/bin:/bin:h/.local/bin:h/.cargo/bin"
+        );
+        assert_eq!(
+            release_path_with_env_and_tail("r/spira-releases/abc", "h/env/bin", "  ").unwrap(),
+            "r/spira-releases/abc/bin:r/spira-releases/abc/spira:h/env/bin:/usr/local/bin:/usr/bin:/bin"
+        );
+        assert_eq!(release_path_with_env_and_tail("r/spira-releases/abc", "", "").unwrap(), release_path("r/spira-releases/abc"));
+        let e = release_path_with_env_and_tail("r/spira-releases/abc", "h/env/bin", "r/spira-releases/def/bin").unwrap_err();
+        assert!(e.contains("r/spira-releases/def/bin"), "{e}");
+    }
+
     #[test_id(t36d98r)]
     #[test]
     fn release_path_with_tail_refuses_a_tail_entry_inside_a_release() {

@@ -219,7 +219,7 @@ impl Config {
     /// The box's own tool-directory tail (`SPIRA_PATH`) — the same value
     /// [`host_values`](Config::host_values) renders into `SPIRA_PATH_TAIL`, and what a child
     /// process this crate spawns *from* a release (verify's pre-activate, sp-vrn3v) appends
-    /// to [`spira_config::release_path_with_tail`] after that release's own directories.
+    /// to [`spira_config::release_path_with_env_and_tail`] after that release's own directories.
     /// `Err`, naming the offending entry, when a segment resolves inside a release or a
     /// checkout (sp-c7b85).
     pub fn path_tail(&self) -> Result<String, String> {

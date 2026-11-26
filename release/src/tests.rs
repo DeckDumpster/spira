@@ -392,27 +392,28 @@ fn manifest_without_a_commit_or_with_garbage_does_not_parse() {
 // ---------------------------------------------------------------- verify
 
 /// sp-vrn3v: `pre_activate_env` names the release **under verification**, plus the box's own
-/// tool tail appended after the system directories, exactly as `release_path_with_tail`
-/// documents — the same shape `host_values` renders into `Environment=PATH=` (sp-31gtu,
+/// tool tail appended after the system directories, with the spira-env bin ahead of them —
+/// the same shape `host_values` renders into `Environment=PATH=` (sp-31gtu,
 /// sp-c7b85), reused here for a process this crate spawns directly instead of a unit.
 #[test_id(tu69lzx)]
 #[test]
 fn pre_activate_env_builds_the_release_own_path_and_release_var() {
     let mut env = Env::new();
     env.insert("SPIRA_UNIT_DIR".into(), "units".into());
+    env.insert("HOME".into(), "h".into());
     let reg = Registered { releases: "e".into(), releases_keep: "10".into(), path: "h/.local/bin:h/.cargo/bin".into(), ..Default::default() };
     let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     let rel = PathBuf::from("e").join(A);
     let envs = verify::pre_activate_env(&cfg, &rel).unwrap();
     assert_eq!(envs[0], (spira_config::RELEASE_ENV.to_string(), rel.display().to_string()));
     assert_eq!(envs[1], ("SPIRA_HOME".to_string(), format!("{}/spira", rel.display())));
-    assert_eq!(envs[2], ("PATH".to_string(), format!("{}/bin:{}/spira:/usr/local/bin:/usr/bin:/bin:h/.local/bin:h/.cargo/bin", rel.display(), rel.display())));
+    assert_eq!(envs[2], ("PATH".to_string(), format!("{}/bin:{}/spira:h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin:h/.local/bin:h/.cargo/bin", rel.display(), rel.display())));
 
-    // No tail configured: PATH ends at the system directories, same as `release_path`.
+    // No tail configured: PATH ends at the system directories.
     let reg = Registered { releases: "e".into(), releases_keep: "10".into(), ..Default::default() };
     let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     let envs = verify::pre_activate_env(&cfg, &rel).unwrap();
-    assert_eq!(envs[2].1, format!("{}/bin:{}/spira:/usr/local/bin:/usr/bin:/bin", rel.display(), rel.display()));
+    assert_eq!(envs[2].1, format!("{}/bin:{}/spira:h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin", rel.display(), rel.display()));
 }
 
 /// The same refusal `host_values` gives a tail inside a release or a checkout (sp-c7b85)
@@ -2215,6 +2216,26 @@ fn verify_names_a_runtime_program_missing_from_the_release_path_as_a_deps_proble
     let o = verify::VerifyOpts { pre_activate: false, system_dirs: vec![] };
     let p = verify::verify(&w.cfg, A, &o).unwrap();
     assert!(!p.iter().any(|p| p.starts_with("deps:")), "--no-pre-activate skips the check: {p:?}");
+}
+
+#[test_id(tfmpvdw)]
+#[test]
+fn verify_finds_a_spira_env_program_in_the_env_bin_without_a_link_or_a_tail() {
+    let w = World::with_git(FakeGit::default());
+    let prog = "spira-no-such-env-program";
+    let rel = w.cfg.releases.join(A);
+    file(&rel.join("spira/deps.toml"), &format!("{}provider = \"spira-env\"\n", dep_row(prog, "")));
+    let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
+    fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+    let home = w.cfg.home().unwrap();
+    let in_env = PathBuf::from(spira_config::spira_env_bin(&home.display().to_string())).join(prog);
+    stub(&in_env, "#!/bin/sh\n");
+    let o = verify::VerifyOpts { pre_activate: true, system_dirs: vec![] };
+    let p = verify::verify(&w.cfg, A, &o).unwrap();
+    assert!(!p.iter().any(|p| p.starts_with("deps:")), "{p:?}");
+    fs::remove_file(&in_env).unwrap();
+    let p = verify::verify(&w.cfg, A, &o).unwrap();
+    assert!(p.iter().any(|p| p.starts_with(&format!("deps: {prog}:"))), "{p:?}");
 }
 
 #[test_id(tqeytds)]
