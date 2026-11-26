@@ -392,7 +392,7 @@ fn no_mosquitto_is_carried_over_from_outside_the_store_or_beside_the_homes_own()
 
     let (home, stray) = (root.join("stray-home"), root.join("stray-home/bin"));
     fs::create_dir_all(&stray).unwrap();
-    testkit::write_exe(&stray.join("mosquitto"), "#!/bin/sh\nexit 0\n");
+    testkit::write_exe(stray.join("mosquitto"), "#!/bin/sh\nexit 0\n");
     let dirs = sandbox_path_for(&home, &stray);
     assert!(!dirs.contains(&stray), "{dirs:?}");
 
