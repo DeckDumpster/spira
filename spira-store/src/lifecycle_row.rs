@@ -419,14 +419,6 @@ pub fn promote(id: &str) -> Result<(), String> {
     promote_with(&lc_bin()?, id)
 }
 
-fn row_on(c: &LcClient, id: &str, repo: Option<&str>, retry: &Retry) -> Result<(), String> {
-    write_idempotent(c, &create_row_args(id, repo), retry)
-}
-
-pub fn ensure_row(id: &str, repo: Option<&str>) -> Result<(), String> {
-    row_on(&client(&lc_bin()?)?, id, repo, &Retry::configured()?)
-}
-
 /// Config key: seconds an idempotent row write is retried through a store that cannot tell.
 pub const IDEMPOTENT_RETRY_KEY: &str = "SPIRA_LC_IDEMPOTENT_RETRY_SECS";
 
@@ -526,42 +518,12 @@ pub fn write_idempotent<S: AsRef<str>>(c: &LcClient, argv: &[S], retry: &Retry) 
     Err(format!("{said} exited {}: {}", r.code, r.text()))
 }
 
-/// Call after a successful `bd create` whose stdout is `created_stdout`. A failure is
-/// reported on stderr and returned; the bead exists, so the caller must not retry the create.
-pub fn after_create(who: &str, created_stdout: &str) -> Result<(), String> {
-    let Some(id) = created_id(created_stdout) else {
-        let e = format!("cannot read the created bead's id from {created_stdout:?}");
-        eprintln!("{who}: LIFECYCLE: {e}; the new bead has no lifecycle row and cannot be claimed");
-        return Err(e);
-    };
-    ensure_row(&id, None).map_err(|e| {
-        eprintln!("{who}: LIFECYCLE: {id} was created but has NO lifecycle row and cannot be claimed: {e}");
-        e
-    })
-}
-
 /// The bead a `bd close <id> ...` argv closes: the first operand, when it is one.
 pub fn closed_id(args: &[String]) -> Option<&str> {
     match (args.first().map(String::as_str), args.get(1)) {
         (Some("close"), Some(id)) if !id.starts_with('-') => Some(id),
         _ => None,
     }
-}
-
-/// Move the bead's lifecycle row to the terminal state its bd close earned
-/// (`spira-lc reconcile-closed`), so a closed bead never stays READY and claimable.
-pub fn terminalize_closed_with(bin: &str, id: &str) -> Result<(), String> {
-    lc_status(bin, &["reconcile-closed", "--apply", id])
-}
-
-/// Call after a successful `bd close`. A failure is reported and returned; the bead is
-/// closed, so the caller must not retry the close.
-pub fn after_close(who: &str, args: &[String]) -> Result<(), String> {
-    let Some(id) = closed_id(args) else { return Ok(()) };
-    terminalize_closed_with(&lc_bin()?, id).map_err(|e| {
-        eprintln!("{who}: LIFECYCLE: {id} was closed but its lifecycle row is not terminal and may read as claimable: {e}");
-        e
-    })
 }
 
 /// Close a bead through the lifecycle machine (`spira-lc close`, sp-3fue0j): the row's end is
@@ -640,53 +602,6 @@ pub fn set_repo(id: &str, repo: &str) -> Result<(), String> {
 /// [`reopen_with`] through the configured `spira-lc`.
 pub fn reopen(id: &str, cause: &str, actor: &str) -> Result<(), String> {
     reopen_with(&lc_bin()?, id, cause, actor)
-}
-
-/// `after_create` for a verb that may create many beads (`import`, `mol pour|wisp|bond`),
-/// which must have been run with `--json`. `repo` is the create's `repo:` label, if any.
-pub fn after_create_ids(who: &str, created_stdout: &str, repo: Option<&str>) -> Result<(), String> {
-    let c = client(&lc_bin()?)?;
-    after_create_ids_on(&c, who, created_stdout, repo, &Retry::configured()?)
-}
-
-/// [`after_create_ids`] through `c`, so a test can run it against an in-process service.
-pub fn after_create_ids_on(c: &LcClient, who: &str, created_stdout: &str, repo: Option<&str>, retry: &Retry) -> Result<(), String> {
-    let ids = created_ids(created_stdout);
-    if ids.is_empty() {
-        let e = format!("cannot read any created bead id from {created_stdout:?}");
-        eprintln!("{who}: LIFECYCLE: {e}; the new beads have no lifecycle row and cannot be claimed");
-        return Err(e);
-    }
-    let errs: Vec<String> = ids.iter().filter_map(|id| row_on(c, id, repo, retry).err()).collect();
-    if errs.is_empty() {
-        return Ok(());
-    }
-    let e = errs.join("; ");
-    eprintln!("{who}: LIFECYCLE: some created beads have NO lifecycle row and cannot be claimed: {e}");
-    Err(e)
-}
-
-/// Writes the claim inputs of each of `ids` onto its lifecycle record (`spira-lc
-/// sync-claim-inputs`). A failure is reported with its repair and returned; the bd write it
-/// follows stands.
-pub fn sync_claim_inputs_on(c: &LcClient, who: &str, ids: &[String], retry: &Retry) -> Result<(), String> {
-    if ids.is_empty() {
-        return Ok(());
-    }
-    let mut argv = vec!["sync-claim-inputs"];
-    argv.extend(ids.iter().map(String::as_str));
-    write_idempotent(c, &argv, retry).inspect_err(|failed| {
-        eprintln!("{who}: LIFECYCLE: {failed}; claim inputs not written; repair: spira-lc sync-claim-inputs {}", ids.join(" "));
-    })
-}
-
-/// [`sync_claim_inputs_on`] through the configured `spira-lc`.
-pub fn sync_claim_inputs(who: &str, ids: &[String]) -> Result<(), String> {
-    if ids.is_empty() {
-        return Ok(());
-    }
-    let c = client(&lc_bin()?)?;
-    sync_claim_inputs_on(&c, who, ids, &Retry::configured()?)
 }
 
 #[cfg(test)]
@@ -780,7 +695,7 @@ mod tests {
     #[test]
     fn a_create_the_store_cannot_tell_twice_is_sent_a_third_time_and_succeeds() {
         let (c, t, retry) = scripted(&[2, 2, 0], 60);
-        assert_eq!(row_on(&c, "sp-1", None, &retry), Ok(()));
+        assert_eq!(write_idempotent(&c, &create_row_args("sp-1", None), &retry), Ok(()));
         assert_eq!(sent(&t), 3);
         assert_eq!(t.seen.lock().unwrap()[2], ["create-bead", "sp-1", "--ready"]);
     }
@@ -789,7 +704,7 @@ mod tests {
     #[test]
     fn a_store_down_for_longer_than_three_attempts_is_waited_out_within_the_bound() {
         let (c, t, retry) = scripted(&[2, 2, 2, 2, 2, 0], 60);
-        assert_eq!(row_on(&c, "sp-1", None, &retry), Ok(()));
+        assert_eq!(write_idempotent(&c, &create_row_args("sp-1", None), &retry), Ok(()));
         assert_eq!(sent(&t), 6);
     }
 
@@ -797,7 +712,7 @@ mod tests {
     #[test]
     fn a_store_that_never_answers_reports_after_the_bound_and_not_before() {
         let (c, t, retry) = scripted(&[2], 60);
-        let e = row_on(&c, "sp-1", None, &retry).unwrap_err();
+        let e = write_idempotent(&c, &create_row_args("sp-1", None), &retry).unwrap_err();
         assert!(e.contains("cannot tell"), "{e}");
         assert!(sent(&t) > 3, "{} attempts", sent(&t));
         assert!(t.pace.now() <= Duration::from_secs(60 + 5), "never runs far past the bound");
@@ -807,7 +722,7 @@ mod tests {
     #[test]
     fn a_bound_of_zero_makes_one_attempt() {
         let (c, t, retry) = scripted(&[2, 0], 0);
-        assert!(row_on(&c, "sp-1", None, &retry).is_err());
+        assert!(write_idempotent(&c, &create_row_args("sp-1", None), &retry).is_err());
         assert_eq!(sent(&t), 1);
     }
 
@@ -816,19 +731,10 @@ mod tests {
     fn a_refusal_is_final_and_sent_once() {
         for code in [1, 3] {
             let (c, t, retry) = scripted(&[code, 0], 60);
-            assert!(row_on(&c, "sp-1", None, &retry).is_err());
+            assert!(write_idempotent(&c, &create_row_args("sp-1", None), &retry).is_err());
             assert_eq!(sent(&t), 1, "exit {code}");
         }
     }
-
-    #[test_id(tu9nano)]
-    #[test]
-    fn claim_inputs_are_retried_the_same_way() {
-        let (c, t, retry) = scripted(&[2, 2, 0], 60);
-        assert_eq!(sync_claim_inputs_on(&c, "t", &["sp-1".to_string()], &retry), Ok(()));
-        assert_eq!(sent(&t), 3);
-    }
-
 
     /// The store as the real socket answers it: `deliver` is refused with usage, `show` is the row.
     struct Socket {

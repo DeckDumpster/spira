@@ -1,20 +1,18 @@
 use super::*;
 
-/// A create through the door leaves the lifecycle state a create through bdq leaves: the
-/// row, READY, written by the server in the same request.
 #[test_id(tafqpyb)]
 #[test]
 fn a_content_create_gets_its_lifecycle_row_in_the_same_request() {
     let w = World::new();
     let ans = served(&w, &Filing(&w, "sp-new"), &["create", "T", "--type", "task", "--silent"], &[]);
     assert_eq!((ans.code, ans.stdout.as_str(), ans.stderr.as_str()), (0, "sp-new\n", ""), "{ans:?}");
-    assert_eq!(state(&w, "sp-new").map(|r| r.state), Some("READY".to_string()), "the row bdq's after_create_ids writes");
+    assert_eq!(state(&w, "sp-new").map(|r| r.state), Some("READY".to_string()));
     let ans = served(&w, &Filing(&w, "sp-ev"), &["create", "Probe", "--type", "event", "--silent"], &[]);
     assert_eq!(ans.code, 0, "{ans:?}");
-    assert!(state(&w, "sp-ev").is_none(), "a rowless type gets no row, as through bdq");
+    assert!(state(&w, "sp-ev").is_none(), "a rowless type gets no row");
 }
 
-/// `World` behind the store client's transport, so bdq's own after-create step runs in-process.
+/// `World` behind the store client's transport.
 struct InProcess(std::sync::Mutex<World>);
 
 impl spira_store::lc_call::Transport for InProcess {
@@ -28,14 +26,11 @@ impl spira_store::lc_call::Transport for InProcess {
 
 #[test_id(t0w07s6)]
 #[test]
-fn bdqs_after_create_step_gives_the_row_the_repo_the_create_was_labelled_with() {
-    let world = std::sync::Arc::new(InProcess(std::sync::Mutex::new(World::new())));
-    let client = spira_store::lc_call::LcClient::over(world.clone(), true);
-    let args: Vec<String> = ["create", "T", "--silent", "--labels", "repo:spira"].iter().map(|a| a.to_string()).collect();
-    let repo = bead::bdq::created_repo(&args);
-    spira_store::lifecycle_row::after_create_ids_on(&client, "bdq", "sp-new\n", repo.as_deref(), &spira_store::lifecycle_row::Retry::once()).unwrap();
-    let live = world.0.lock().unwrap().ok(&["list", "--live"]);
-    let rows: Vec<serde_json::Value> = serde_json::from_str(&live).unwrap();
+fn a_content_create_gives_the_row_the_repo_the_create_was_labelled_with() {
+    let w = World::new();
+    let ans = served(&w, &Filing(&w, "sp-new"), &["create", "T", "--silent", "--labels", "repo:spira"], &[]);
+    assert_eq!((ans.code, ans.stderr.as_str()), (0, ""), "{ans:?}");
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&w.ok(&["list", "--live"])).unwrap();
     let row = rows.iter().find(|r| r["bead_id"] == "sp-new").expect("the row exists");
     assert_eq!(row["repo"], "spira", "{row}");
 }
@@ -46,28 +41,29 @@ fn listed_row(world: &InProcess, id: &str) -> serde_json::Value {
     rows.into_iter().find(|r| r["bead_id"] == id).unwrap_or_else(|| panic!("no row for {id}: {live}"))
 }
 
-/// bdq's hooks after a write, as `bdq` runs them: the ids the write changed, then the sync.
-fn bdq_hooks(client: &spira_store::lc_call::LcClient, args: &[&str], stdout: &str) -> Result<(), String> {
+fn sync_after_write(client: &spira_store::lc_call::LcClient, args: &[&str], stdout: &str) -> Result<(), String> {
     let ids = spira_store::planning::claim_inputs_changed(args, stdout);
-    spira_store::lifecycle_row::sync_claim_inputs_on(client, "bdq", &ids, &spira_store::lifecycle_row::Retry::once())
+    let argv: Vec<&str> = std::iter::once("sync-claim-inputs").chain(ids.iter().map(String::as_str)).collect();
+    let reply = client.call(&argv)?;
+    if reply.code == 0 { Ok(()) } else { Err(reply.text()) }
 }
 
 fn filed_world(labels: &[&str], parent: Option<&str>) -> (std::sync::Arc<InProcess>, spira_store::lc_call::LcClient) {
     let world = std::sync::Arc::new(InProcess(std::sync::Mutex::new(World::new())));
     world.0.lock().unwrap().file("sp-new", "task", parent, labels);
     let client = spira_store::lc_call::LcClient::over(world.clone(), true);
-    spira_store::lifecycle_row::after_create_ids_on(&client, "bdq", "sp-new\n", None, &spira_store::lifecycle_row::Retry::once()).unwrap();
+    world.0.lock().unwrap().ok(&["create-bead", "sp-new", "--ready"]);
     (world, client)
 }
 
 #[test_id(tz8i1mr)]
 #[test]
-fn a_filed_beads_parent_and_labels_are_on_its_record_once_bdqs_hooks_have_run() {
+fn a_filed_beads_parent_and_labels_are_on_its_record_once_the_write_is_synced() {
     // literal-ok: test fixture label
     let (world, client) = filed_world(&["repo:spira", "no-loop"], Some("sp-e"));
     assert_eq!(listed_row(&world, "sp-new")["claim"], serde_json::Value::Null, "nothing has synced it yet");
     // literal-ok: test fixture label
-    bdq_hooks(&client, &["create", "T", "--silent", "--parent", "sp-e", "--labels", "repo:spira,no-loop"], "sp-new\n").unwrap();
+    sync_after_write(&client, &["create", "T", "--silent", "--parent", "sp-e", "--labels", "repo:spira,no-loop"], "sp-new\n").unwrap();
     // literal-ok: test fixture label
     assert_eq!(listed_row(&world, "sp-new")["claim"], serde_json::json!({"blocks": [], "parent": "sp-e", "labels": ["repo:spira", "no-loop"]}));
 }
@@ -79,13 +75,13 @@ fn a_dep_add_then_a_dep_remove_move_the_records_blocks_and_a_related_edge_does_n
     let blocks = || listed_row(&world, "sp-new")["claim"]["blocks"].clone();
     let edge = |to: &str, kind: &str| world.0.lock().unwrap().plan.borrow_mut().get_mut("sp-new").unwrap().dependencies.push((to.into(), kind.into()));
     edge("sp-r", "related");
-    bdq_hooks(&client, &["dep", "relate", "sp-new", "sp-r"], "").unwrap();
+    sync_after_write(&client, &["dep", "relate", "sp-new", "sp-r"], "").unwrap();
     assert_eq!(blocks(), serde_json::json!([]));
     edge("sp-b", "blocks");
-    bdq_hooks(&client, &["dep", "add", "sp-new", "sp-b"], "").unwrap();
+    sync_after_write(&client, &["dep", "add", "sp-new", "sp-b"], "").unwrap();
     assert_eq!(blocks(), serde_json::json!(["sp-b"]));
     world.0.lock().unwrap().plan.borrow_mut().get_mut("sp-new").unwrap().dependencies.retain(|(to, _)| to != "sp-b");
-    bdq_hooks(&client, &["dep", "remove", "sp-new", "sp-b"], "").unwrap();
+    sync_after_write(&client, &["dep", "remove", "sp-new", "sp-b"], "").unwrap();
     assert_eq!(blocks(), serde_json::json!([]));
 }
 
@@ -279,8 +275,9 @@ fn syncing_an_id_with_no_record_names_it_and_makes_none() {
     let world = std::sync::Arc::new(InProcess(std::sync::Mutex::new(World::new())));
     world.0.lock().unwrap().file("sp-ghost", "task", None, &[]);
     let client = spira_store::lc_call::LcClient::over(world.clone(), true);
-    let err = spira_store::lifecycle_row::sync_claim_inputs_on(&client, "bdq", &["sp-ghost".to_string()], &spira_store::lifecycle_row::Retry::once()).unwrap_err();
-    assert!(err.contains("sp-ghost"), "{err}");
+    let reply = client.call(&["sync-claim-inputs", "sp-ghost"]).unwrap();
+    assert_ne!(reply.code, 0, "{reply:?}");
+    assert!(reply.text().contains("sp-ghost"), "{reply:?}");
     assert_eq!(world.0.lock().unwrap().ok(&["list", "--live"]).trim(), "[]");
 }
 

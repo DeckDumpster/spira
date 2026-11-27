@@ -53,8 +53,8 @@ fn content_label_add_and_remove_are_written_by_the_server() {
     written(&["update", "sp-a", "--add-label", "x", "--remove-label", "y"], None, "update sp-a --add-label x --remove-label y");
 }
 
-/// A close is a state verb: refused as bdq refuses it unless the caller overrides, and an
-/// overridden close leaves the row terminal, as bdq's after_close does.
+/// A close is a state verb: refused unless the caller overrides, and an overridden close
+/// leaves the row terminal.
 #[test_id(tp0uuco)]
 #[test]
 fn a_content_close_is_refused_unless_overridden_and_then_its_row_is_terminal() {
