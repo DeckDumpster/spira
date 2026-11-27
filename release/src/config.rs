@@ -145,8 +145,8 @@ impl Config {
             snap_stale_s: cfg("SPIRA_SNAP_STALE_S")?,
             watchtower_start_timeout_s: cfg("SPIRA_WATCHTOWER_START_TIMEOUT_S")?,
             sccache_dav_addr: cfg("SPIRA_SCCACHE_DAV_ADDR")?,
-            // `release build` and `activate` resolve against the ACTIVE release's registry, which
-            // does not register this key until the release that adds it is the active one:
+            // `release build` resolves against the ACTIVE release's registry, which does not
+            // register this key until the release that adds it is the active one:
             // unregistered there is unset, and unset means the run directory's store.
             sccache_dav_root: cfg("SPIRA_SCCACHE_DAV_ROOT").unwrap_or_default(),
             lc_password_file: cfg("SPIRA_LC_PASSWORD_FILE")?,

@@ -36,6 +36,8 @@ fn a_caller_on_a_registry_older_than_the_broker_still_places_the_targets_broker_
     let _env = testkit::env(&[("SPIRA_HOME", Some(old.to_str().unwrap())), ("SPIRA_TOML", Some(spec.to_str().unwrap()))]);
     let cfg = resolve_as_release(&Flags::default(), &process_env(), &rel).unwrap();
 
+    assert_eq!(spira_config::process::cfg("SPIRA_BROKER_SOCKET").as_deref(), Ok("fixture-broker.sock"), "a later read judges the same registry");
+
     let values = cfg.host_values().unwrap();
     let socket = &values["SPIRA_BROKER_SOCKET"];
     assert_eq!(cfg.broker_socket_refusal, "", "socket={socket:?}");
@@ -52,6 +54,6 @@ fn a_release_without_a_registry_of_its_own_is_refused_naming_the_path() {
     let dir = testkit::TempDir::new("activate-registry-bare");
     let rel = dir.join(SHA);
     std::fs::create_dir_all(rel.join("spira")).unwrap();
-    let e = resolve_as_release(&Flags::default(), &Default::default(), &rel).err().expect("a bare release is refused");
+    let e = resolve_as_release(&Flags::default(), &Default::default(), &rel).expect_err("a bare release is refused");
     assert!(e.contains(&rel.join("spira/conf.d").display().to_string()), "{e}");
 }

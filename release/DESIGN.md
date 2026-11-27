@@ -249,7 +249,7 @@ Edits are made on the TOML value, not the typed schema this binary links, which 
 the other release's keys. No instant satisfies both schemas when a release both adds and drops
 a key; the exposure is the flip, not the deploy.
 
-The binary running `verify` or `activate` is the new release's, so it resolves its own config
+`activate` runs the new release's binary, so it resolves its own config
 from the layers with the whole delta already applied (a scratch copy; the files in force are
 untouched until step 2) — otherwise its registry refuses the keys `activate` is about to write.
 It also reads its own registry, `<releases>/<sha>/spira`, with or without a delta: after a rollback
