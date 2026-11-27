@@ -1684,6 +1684,18 @@ fn sp_xmqd8k_a_refused_landing_leaves_the_green_round_open_and_pages_the_refusin
     assert!(rc.paused_on.is_none(), "no pause");
 }
 
+#[test_id(twkybrx)]
+#[test]
+fn a_land_or_eject_lost_at_a_restart_is_not_read_as_a_refusal() {
+    let lost = runtime::engine::LOST_AT_RESTART;
+    let land = Leg { batch: "r9".into(), bead: "sp-a".into(), ..Leg::on("spira") };
+    for (carry, effect) in [(landing(), LAND), (driving(State::Certifying, "spira.c1"), EJECT), (driving(State::Certifying, "spira.c1"), EJECT_GATE_RED)] {
+        let (next, acts) = on_outcome(&carry, effect, false, lost, &land, NOW);
+        assert_eq!(acts, vec![], "{effect}");
+        assert_eq!(next, carry, "{effect}");
+    }
+}
+
 // --- sp-tjrjca: a green round refused base-moved is certified again, never abandoned ---
 
 fn landing() -> Carry {

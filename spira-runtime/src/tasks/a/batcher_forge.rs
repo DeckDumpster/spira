@@ -61,6 +61,8 @@
 //! | Corpus | `unit.ran` green | Opening |
 //! | Opening | moved members (`main.rs:1032`) or foreign commits (`main.rs:1126`) | Idle (verdict red) |
 //! | Opening | `batch_open` ok | Open (verdict green, metric) |
+//! | Opening | observe: open batch PR holding the round's members | Open (adopted: no second `batch_open`) |
+//! | Assembling / Opening | `assemble` / `batch_open` lost at restart | unchanged (the same leg is asked again) |
 //! | Open | `batch.settled` | Idle |
 //!
 //! Illegal: a second `batch_open` while the projection shows one open is refused naming `Open`.
@@ -103,7 +105,7 @@
 //! remains the operator hold in both.
 //!
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use batcher::core;
 use runtime::event::*;
@@ -392,6 +394,12 @@ impl Machine<'_> {
         self.rc = RepoCarry { state: kept.state, held: kept.held, base_moved: kept.base_moved, conflict_streaks: kept.conflict_streaks, held_keys: kept.held_keys, left_noted: kept.left_noted, ..RepoCarry::default() };
     }
 
+    /// Whether `batch` holds exactly the members of the carried round.
+    fn is_round(&self, batch: &Batch) -> bool {
+        let carried: BTreeSet<&str> = self.rc.members.iter().map(|(id, _)| id.as_str()).collect();
+        !carried.is_empty() && carried == batch.members.iter().map(String::as_str).collect()
+    }
+
     /// The effect the state waits on, when the scheduler says it holds none in flight for the repo.
     fn unsent(&self, repo: &Repo) -> Option<&'static str> {
         let effect = match self.rc.state {
@@ -403,6 +411,10 @@ impl Machine<'_> {
     }
 
     fn observe(&mut self, policy: &Policy, enabled: bool, repo: &Repo) {
+        // Ahead of `unsent`: a PR opened just before a restart is adopted, not cut again.
+        if self.rc.state == State::Opening && repo.open_batch.as_ref().is_some_and(|b| self.is_round(b)) {
+            self.go(Trigger::BatchOpened);
+        }
         // Ahead of the disabled gate: a forgotten round must not be cut again under the hold.
         if let Some(effect) = self.unsent(repo) {
             eprintln!("{NAME} {}: forgetting its {:?} round {:?}: its {effect} was never answered and none is in flight", self.repo, self.rc.state, self.rc.round_key);
@@ -510,7 +522,11 @@ impl Machine<'_> {
     }
 
     fn outcome(&mut self, effect: &str, ok: bool, body: &str, leg: &Leg) {
+        let lost = !ok && body == runtime::engine::LOST_AT_RESTART;
         match (self.rc.state, effect) {
+            (State::Assembling, ASSEMBLE) | (State::Opening, BATCH_OPEN) if lost => self.acts.push(leg.clone().act(effect)),
+            // Whether it ran is unknown, so it is no refusal: a leg's end is read through `unit.facts`.
+            _ if lost => {}
             (State::Assembling, ASSEMBLE) => {
                 let a: Assembled = if ok { serde_json::from_str(body).unwrap_or_default() } else { Assembled::default() };
                 self.assembled(a, leg, ok);

@@ -21,6 +21,7 @@ mod conformance {
         #[test_id(tz4g1lb)] a_duplicate_submit_dispatches_once,
         #[test_id(twz7bif)] a_failed_commit_is_sent_again_and_the_turn_lands_once,
         #[test_id(ttc2dum)] a_restart_never_relaunches_an_unresolved_effect_and_delivers_timed_out,
+        #[test_id(tfwr14q)] a_task_told_an_effect_was_lost_at_a_restart_can_read_which_effect,
         #[test_id(tk8pf8f)] determinism_under_one_seed,
         #[test_id(t8vvykm)] a_fired_schedule_row_is_not_fired_by_the_next_process,
         #[test_id(tbtt9mk)] out_of_order_effect_outcomes,

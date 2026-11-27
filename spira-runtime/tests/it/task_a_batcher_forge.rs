@@ -442,3 +442,90 @@ fn a_forgotten_round_is_not_cut_again_while_the_forge_is_disabled() {
     assert!(acts.iter().all(|a| a.effect != FETCH && a.effect != ASSEMBLE), "{acts:?}");
     assert_eq!(carry.repos["deckdumpster"].state, State::Disabled);
 }
+
+/// The forge task with every effect but `assemble` answering `{}`.
+fn restarted_world(r: TaskRig, assembled: String) -> TaskRig {
+    let mut r = r.double(OBSERVE, |_| Ok(serde_json::to_string(&busy()).unwrap())).double(ASSEMBLE, move |_| Ok(assembled.clone()));
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, ASSEMBLE].contains(e)) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r
+}
+
+#[test_id(t4ulool)]
+#[test]
+fn an_assemble_lost_at_a_restart_is_asked_again_for_the_members_the_cut_chose() {
+    use spira_runtime::tasks::a::batcher_local::{Assembled, Leg};
+    let assembled = serde_json::to_string(&Assembled { merged: vec![("dd-a".into(), "t1".into())], suites: false, ..Assembled::default() }).unwrap();
+    let fresh = TaskRig::new(1, BatcherForge::new(BTreeMap::new()).registration()).unwrap().hanging(ASSEMBLE);
+    let mut r = restarted_world(fresh, assembled);
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(CADENCE_MS).unwrap();
+    assert_eq!(cut_asks(&r), [1, 1, 0], "the assemble is in flight at the restart");
+    r.reopen(BatcherForge::new(BTreeMap::new()).registration()).unwrap();
+    // The open the retried assemble leads to stays in flight: an answer would start another round.
+    let mut r = r.hanging(BATCH_OPEN);
+    r.run_until_idle().unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(CADENCE_MS * 2).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    assert_eq!(cut_asks(&r)[0], 1, "one fetch: no re-cut: {:?}", cut_asks(&r));
+    let open = r.requested().iter().find(|q| q.name == BATCH_OPEN).expect("a batch_open follows the retried assemble");
+    let leg: Leg = serde_json::from_str(&open.input).unwrap();
+    assert_eq!(leg.members, [("dd-a".to_string(), "t1".to_string())]);
+}
+
+#[test_id(tlkbdrx)]
+#[test]
+fn a_batch_open_lost_at_a_restart_is_asked_again_with_the_same_leg() {
+    use spira_runtime::tasks::a::batcher_local::{Assembled, Leg};
+    let assembled = serde_json::to_string(&Assembled { merged: vec![("dd-a".into(), "t1".into())], suites: false, ..Assembled::default() }).unwrap();
+    let fresh = TaskRig::new(1, BatcherForge::new(BTreeMap::new()).registration()).unwrap().hanging(BATCH_OPEN);
+    let mut r = restarted_world(fresh, assembled);
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(CADENCE_MS).unwrap();
+    assert_eq!(cut_asks(&r), [1, 1, 1], "the batch_open is in flight at the restart");
+    r.reopen(BatcherForge::new(BTreeMap::new()).registration()).unwrap();
+    r.run_until_idle().unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    assert_eq!(cut_asks(&r), [1, 1, 2]);
+    let legs: Vec<Leg> = r.requested().iter().filter(|q| q.name == BATCH_OPEN).map(|q| serde_json::from_str(&q.input).unwrap()).collect();
+    assert_eq!(legs[0], legs[1]);
+}
+
+#[test_id(thugvpq)]
+#[test]
+fn an_opening_round_whose_pr_is_already_open_is_adopted_not_opened_again() {
+    for in_flight in [Some(vec![]), Some(vec![BATCH_OPEN.to_string()]), None] {
+        let rc = RepoCarry { state: State::Opening, round_key: Some("dd-a:t1".into()), members: vec![("dd-a".into(), "t1".into())], ..RepoCarry::default() };
+        let carry = Carry { repos: [("deckdumpster".to_string(), rc)].into() };
+        let mut s = busy();
+        let repo = s.repos.get_mut("deckdumpster").unwrap();
+        repo.open_batch = Some(Batch { pr: 12, head: String::new(), members: vec!["dd-a".into()] });
+        repo.in_flight = in_flight.clone();
+        let (next, acts) = decide(&carry, &s);
+        assert_eq!(next.repos["deckdumpster"].state, State::Open, "{in_flight:?}");
+        assert!(acts.iter().all(|a| a.effect != BATCH_OPEN && a.effect != FETCH), "{in_flight:?}: {acts:?}");
+    }
+}
+
+#[test_id(tqd6pvp)]
+#[test]
+fn an_open_batch_with_other_members_is_not_adopted() {
+    let rc = RepoCarry { state: State::Opening, round_key: Some("dd-a:t1".into()), members: vec![("dd-a".into(), "t1".into())], ..RepoCarry::default() };
+    let carry = Carry { repos: [("deckdumpster".to_string(), rc)].into() };
+    let mut s = busy();
+    s.repos.get_mut("deckdumpster").unwrap().open_batch = Some(Batch { pr: 12, head: String::new(), members: vec!["dd-z".into()] });
+    let (next, _) = decide(&carry, &s);
+    assert_eq!(next.repos["deckdumpster"].state, State::Opening);
+}
+
+#[test_id(tz8fool)]
+#[test]
+fn a_corpus_start_lost_at_a_restart_does_not_judge_the_leg() {
+    let rc = RepoCarry { state: State::Corpus, leg: Some("spira.c1".into()), round_key: Some("dd-a:t1".into()), members: vec![("dd-a".into(), "t1".into())], ..RepoCarry::default() };
+    let carry = Carry { repos: [("deckdumpster".to_string(), rc)].into() };
+    let leg = spira_runtime::tasks::a::batcher_local::Leg { repo: "deckdumpster".into(), unit: "spira.c1".into(), ..Default::default() };
+    let (next, acts) = on_outcome(&carry, CORPUS, false, runtime::engine::LOST_AT_RESTART, &leg, NOW);
+    assert_eq!((next, acts), (carry, vec![]));
+}
