@@ -47,8 +47,10 @@ fn the_image_setup_ends_by_reporting_its_bytes_then_trimming_the_root() {
 #[test]
 fn the_preflight_guest_replaces_the_trim_and_the_nested_prune() {
     let g = code(GUEST);
-    line_with(&g, r"printf '#!/bin/sh\nexit 0\n' > /usr/local/bin/fstrim");
-    assert!(g[line_with(&g, "chmod +x /usr/local/bin/systemctl")].contains("/usr/local/bin/fstrim"));
+    let shim = &g[line_with(&g, "bin/fstrim")];
+    assert!(shim.starts_with("printf ") && shim.contains("exit 0"), "fstrim is shimmed to succeed: {shim}");
+    let chmod = &g[g.iter().position(|l| l.starts_with("chmod +x") && l.contains("bin/systemctl")).expect("the shims are made executable")];
+    assert!(chmod.contains("bin/fstrim"), "the shim is executable: {chmod}");
     let podman = line_with(&g, "cat > /usr/local/bin/podman <<'SHIM'");
     let end = podman + g[podman..].iter().position(|l| *l == "SHIM").expect("the podman shim ends");
     line_with(&g[podman..end], r#""image prune") exit 0 ;;"#);
