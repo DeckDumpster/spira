@@ -10,6 +10,8 @@ struct Pass {
     work: PathBuf,
     code: Option<i32>,
     said: String,
+    calls: String,
+    cidfile: PathBuf,
 }
 
 impl Pass {
@@ -33,7 +35,9 @@ fn pass(name: &str, entry: &str, cap: u64) -> Pass {
     let sha = git(&src, &["rev-parse", "HEAD"]);
     git(&src, &["update-ref", "refs/rounds/1", &sha]);
     git(&root, &["clone", "--quiet", "--mirror", "src", "mirror.git"]);
-    testkit::write_exe(stub.join("podman"), &format!("#!/bin/sh\n[ \"$1\" = run ] || exit 0\necho entry-output\n{entry}\n"));
+    // Logs each call, and writes the cidfile `run` is told to, as podman does.
+    let log = root.join("podman.calls");
+    testkit::write_exe(stub.join("podman"), &format!("#!/bin/sh\necho \"$@\" >> '{}'\n[ \"$1\" = run ] || exit 0\n[ \"$2\" != --cidfile ] || echo cid > \"$3\"\necho entry-output\n{entry}\n", log.display()));
 
     // The script pins its own PATH and fetches over git://; both are pointed at the fixture.
     let url = "\"git://${host_addr}:${port}/mirror.git\"";
@@ -46,7 +50,8 @@ fn pass(name: &str, entry: &str, cap: u64) -> Pass {
     let cap = cap.to_string();
     let args = ["host", "1", "", "1", "", "", "", "1", &cap, "1", "", "refs/rounds/1", &sha, "the-entry", "", "", "", "", "", "", "image", ""];
     let o = Command::new("bash").arg(root.join("round.sh")).args(args).env_clear().env("HOME", &home).env("PATH", system_paths::SYSTEM_PATH_MIN).stdin(Stdio::null()).output().unwrap();
-    Pass { work: home.join("round-work"), code: o.status.code(), said: String::from_utf8_lossy(&o.stderr).into_owned(), _tmp: tmp }
+    let calls = std::fs::read_to_string(&log).unwrap_or_default();
+    Pass { calls, cidfile: home.join("round-entry.cid"), work: home.join("round-work"), code: o.status.code(), said: String::from_utf8_lossy(&o.stderr).into_owned(), _tmp: tmp }
 }
 
 fn stamped(p: &Pass) -> Vec<String> {
@@ -64,6 +69,8 @@ fn an_entry_past_the_cap_is_cut_and_recorded_with_its_phase_and_no_verdict() {
     let kind = p.result("round-fault-kind").expect("the cut is recorded");
     assert!(kind.starts_with("over-cap guard=ci-entry-cap phase=entry elapsed=") && kind.contains("s cap=1s"), "{kind}");
     assert_eq!(p.result("ci.result"), None, "a cut entry has no verdict");
+    let removal = format!("rm --force --ignore --time 0 --cidfile {}", p.cidfile.display());
+    assert!(p.calls.lines().any(|l| l == removal), "the cut removes the container it started: {}", p.calls);
 }
 
 #[test_id(td99zl4)]

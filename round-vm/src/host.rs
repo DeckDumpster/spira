@@ -192,13 +192,16 @@ impl LocalRemote {
     /// Ends the pass a signalled round-vm has running here, keeping what a signalled VM run
     /// keeps. A home running another's pass, or none, holds some other round's results.
     pub fn end_signalled_pass(&self, owner: u32, results_dir: &Path, scratch: &Path, within: Duration) {
-        if self.pass_owner() == Some(owner) {
+        let ours = self.pass_owner() == Some(owner);
+        // Stopped before the copy: a slow copy must not outlast the caller's kill-after with the
+        // pass and its container still running. The files stay on disk.
+        self.stop_pass_of(Some(owner));
+        if ours {
             match crate::run::salvage_results(self, "", results_dir, scratch, within) {
                 Some(n) => eprintln!("round-vm run: salvaged {n} suite result(s) from the host pass before stopping it"),
                 None => eprintln!("round-vm run: the host pass's results could not be copied; they stay under {}", self.home.display()),
             }
         }
-        self.stop_pass_of(Some(owner));
     }
 
     fn pass_owner(&self) -> Option<u32> {
@@ -623,6 +626,7 @@ mod tests {
         assert_eq!(entry_removal("abc"), "timeout 30 podman rm --force --ignore --time 0 'abc'");
     }
 
+    // Spawns `cp`: copying the results folder is the host's real pull.
     #[test_id(tjvqrkz)]
     #[test]
     fn a_signalled_host_pass_leaves_its_log_and_phase_stamps_in_the_results_and_only_its_owner_takes_them() {

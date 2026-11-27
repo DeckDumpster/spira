@@ -1701,7 +1701,7 @@ fn run_round_vm(
     let _ = fs::write(handle, child.id().to_string());
     match child.wait_with_output() {
         Ok(o) => RunOut {
-            rc: o.status.code().unwrap_or(127),
+            rc: guard_rc(o.status),
             out: String::from_utf8_lossy(&o.stdout).to_string(),
             err: String::from_utf8_lossy(&o.stderr).to_string(),
         },
@@ -1711,6 +1711,12 @@ fn run_round_vm(
             err: format!("cannot run round-vm: {e}"),
         },
     }
+}
+
+/// `timeout -k`'s exit. GNU's dies by SIGKILL when the kill-after fires; others exit 137.
+fn guard_rc(status: std::process::ExitStatus) -> i32 {
+    use std::os::unix::process::ExitStatusExt;
+    status.code().unwrap_or(if status.signal() == Some(libc::SIGKILL) { 137 } else { 127 })
 }
 
 /// round-vm's `--on-red` argument: this binary's `round failed`, the suite name appended by round-vm.
@@ -3153,6 +3159,16 @@ mod unit_of_cgroup_tests {
 mod vtime_tests {
     use super::*;
     use crate::ports::Clock;
+
+    #[test_id(t6gsm24)]
+    #[test]
+    fn a_hang_guard_that_died_by_its_own_kill_after_reads_as_a_cut_not_as_a_missing_program() {
+        use std::os::unix::process::ExitStatusExt;
+        let status = std::process::ExitStatus::from_raw;
+        assert_eq!(guard_rc(status(libc::SIGKILL)), 137);
+        assert_eq!(guard_rc(status(124 << 8)), 124);
+        assert_eq!(guard_rc(status(libc::SIGSEGV)), 127);
+    }
 
     #[test_id(t58v9fb)]
     #[test]
