@@ -1,8 +1,8 @@
 TYPE=u64
 GROUP=heimdall
-DOC=Seconds a live builder's transcript may stay unwritten while its commands use no CPU before Heimdall raises builder-still:<bead>.
+DOC=Seconds a live builder's transcript, judged without the client's tool_progress heartbeats, may gain nothing while its commands use no CPU before Heimdall raises builder-still:<bead>.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # A builder whose transcript is unwritten and whose descendants are idle this long is a
     # command waiting on nothing the builder can see.
-    : "${SPIRA_HEIMDALL_STILL_SECS:=180}"
+    : "${SPIRA_HEIMDALL_STILL_SECS:=900}"
 SPIRA_CONF_DEFAULT_EOF

@@ -158,20 +158,43 @@ pub fn at_boundary(trace_tail: &str) -> bool {
 
 /// The last 64 KiB of the trace, cut to whole lines.
 pub fn trace_tail(log: &Path) -> String {
+    String::from_utf8_lossy(&tail_bytes(log).1).into_owned()
+}
+
+/// The byte offset where the trace's last whole line that is not a client heartbeat ends; the
+/// tail's own start when it holds only heartbeats, 0 for an unreadable trace.
+pub fn trace_progress(log: &Path) -> u64 {
+    let (start, tail) = tail_bytes(log);
+    let (mut end, mut offset) = (start, start);
+    for line in tail.split_inclusive(|&c| c == b'\n') {
+        offset += line.len() as u64;
+        if line.ends_with(b"\n") && !is_client_heartbeat(line) {
+            end = offset;
+        }
+    }
+    end
+}
+
+fn is_client_heartbeat(line: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(line).is_ok_and(|v| v["type"] == "tool_progress" && v["heartbeat"] == true)
+}
+
+/// `(offset, bytes)` of the trace's last 64 KiB, cut to start on a line.
+fn tail_bytes(log: &Path) -> (u64, Vec<u8>) {
     use std::io::{Read, Seek, SeekFrom};
-    let Ok(mut f) = std::fs::File::open(log) else { return String::new() };
+    let Ok(mut f) = std::fs::File::open(log) else { return (0, Vec::new()) };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
     let from = len.saturating_sub(64 * 1024);
     let mut buf = Vec::new();
     if f.seek(SeekFrom::Start(from)).is_err() || f.read_to_end(&mut buf).is_err() {
-        return String::new();
+        return (0, Vec::new());
     }
-    let s = String::from_utf8_lossy(&buf).into_owned();
-    if from > 0 {
-        s.split_once('\n').map(|(_, rest)| rest.to_string()).unwrap_or_default()
-    } else {
-        s
+    if from == 0 {
+        return (0, buf);
     }
+    let cut = buf.iter().position(|&c| c == b'\n').map_or(buf.len(), |i| i + 1);
+    buf.drain(..cut);
+    (from + cut as u64, buf)
 }
 
 pub fn resume_message(stopped_at: Option<i64>, now: i64, branch: &str) -> String {
@@ -198,6 +221,33 @@ fn duration(secs: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(tqx6q7k)]
+    #[test]
+    fn client_heartbeats_do_not_move_the_trace_progress() {
+        use std::io::Write;
+        let d = testkit::TempDir::new("dwarf-progress");
+        let log = d.join("trace.log");
+        let call = "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\"}]}}\n";
+        let beat = "{\"type\":\"tool_progress\",\"tool_name\":\"Bash\",\"elapsed_time_seconds\":30,\"heartbeat\":true}\n";
+        std::fs::write(&log, format!("{call}{beat}{beat}{beat}")).unwrap();
+        assert_eq!(trace_progress(&log), call.len() as u64);
+
+        let result = "{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\"}]}}\n";
+        std::fs::OpenOptions::new().append(true).open(&log).unwrap().write_all(result.as_bytes()).unwrap();
+        assert_eq!(trace_progress(&log), std::fs::metadata(&log).unwrap().len());
+
+        // Past 64 KiB the offset is still a position in the file, not in the tail.
+        let long = call.repeat(2000);
+        std::fs::write(&log, format!("{long}{beat}")).unwrap();
+        assert_eq!(trace_progress(&log), long.len() as u64);
+
+        // A tail of nothing but heartbeats answers where that tail starts.
+        let beats = beat.repeat(1000);
+        std::fs::write(&log, &beats).unwrap();
+        let from = beats.len() - 64 * 1024;
+        assert_eq!(trace_progress(&log), (from + beats[from..].find('\n').unwrap() + 1) as u64);
+    }
 
     #[test_id(th4a1hd)]
     #[test]

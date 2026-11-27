@@ -1865,6 +1865,9 @@ impl Beat for RealBeat<'_> {
     fn trace_mtime(&self) -> i64 {
         session::mtime(&self.logf)
     }
+    fn trace_progress(&self) -> u64 {
+        crate::checkpoint::trace_progress(&self.logf)
+    }
     fn fuse(&self) -> String {
         // `base` (family W, base refs): spira_config::repos in-process (sp-o88bx, "wave
         // 4.12"), not the spira_landref seam.
