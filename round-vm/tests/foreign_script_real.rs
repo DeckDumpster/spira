@@ -38,7 +38,7 @@ fn pass(name: &str, entry: &str, cap: u64) -> Pass {
     let sha = git(&src, &["rev-parse", "HEAD"]);
     git(&src, &["update-ref", "refs/rounds/1", &sha]);
     git(&root, &["clone", "--quiet", "--mirror", "src", "mirror.git"]);
-    testkit::write_exe(&stub.join("podman"), &format!("#!/bin/sh\n[ \"$1\" = run ] || exit 0\necho entry-output\n{entry}\n"));
+    testkit::write_exe(stub.join("podman"), &format!("#!/bin/sh\n[ \"$1\" = run ] || exit 0\necho entry-output\n{entry}\n"));
 
     // The script pins its own PATH and fetches over git://; both are pointed at the fixture.
     let url = "\"git://${host_addr}:${port}/mirror.git\"";
@@ -49,7 +49,8 @@ fn pass(name: &str, entry: &str, cap: u64) -> Pass {
         .replace(path_line, &format!("export PATH=\"{}:{}\"", stub.display(), system_paths::SYSTEM_PATH_MIN));
     std::fs::write(root.join("round.sh"), script).unwrap();
     let cap = cap.to_string();
-    let args = ["host", "1", "", "1", "", "", "", "1", &cap, "1", "", "refs/rounds/1", &sha, "the-entry", "", "", "", "", "", "", "image", "/work"];
+    let workdir = "/work"; // not a path: the mount point inside the container, which the fake podman never opens
+    let args = ["host", "1", "", "1", "", "", "", "1", &cap, "1", "", "refs/rounds/1", &sha, "the-entry", "", "", "", "", "", "", "image", workdir];
     let o = Command::new("bash").arg(root.join("round.sh")).args(args).env_clear().env("HOME", &home).env("PATH", system_paths::SYSTEM_PATH_MIN).stdin(Stdio::null()).output().unwrap();
     Pass { work: home.join("round-work"), code: o.status.code(), said: String::from_utf8_lossy(&o.stderr).into_owned(), _tmp: tmp }
 }
