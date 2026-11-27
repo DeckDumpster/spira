@@ -1691,3 +1691,27 @@ fn a_spike_branch_inside_the_allowed_trees_passes_and_a_plan_branch_is_not_confi
         "a branch behind its base is judged on its own work: {out}"
     );
 }
+
+#[test_id(tv0pdgz)]
+#[test]
+fn the_bash_stdin_hook_reads_stdin_prints_the_rewrite_and_always_exits_zero() {
+    let run = |payload: &str| -> (Option<i32>, String) {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_dwarf"))
+            .arg("bash-stdin")
+            .env_clear()
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        std::io::Write::write_all(&mut child.stdin.take().unwrap(), payload.as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        (out.status.code(), String::from_utf8(out.stdout).unwrap())
+    };
+    let (code, out) = run(r#"{"tool_name":"Bash","tool_input":{"command":"cat <<E\nE"}}"#);
+    assert_eq!(code, Some(0));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&out).unwrap()["hookSpecificOutput"]["updatedInput"],
+        serde_json::json!({"command": "exec 0</dev/null\ncat <<E\nE"}),
+    );
+    assert_eq!(run("not json <<"), (Some(0), String::new()));
+}
