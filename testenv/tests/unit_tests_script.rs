@@ -27,6 +27,50 @@ fn a_run_that_cannot_write_target_still_rewrites_the_copy_testenv_left() {
     two_runs(0, true);
 }
 
+#[test_id(tex2gv1)]
+#[test]
+fn a_clean_that_fails_without_a_report_leaves_no_stale_copy() {
+    failed_clean("exit 1", None);
+}
+
+#[test_id(thddzw4)]
+#[test]
+fn a_clean_that_fails_after_removing_something_still_leaves_its_report() {
+    let report = r#"{"at":"2026-09-29T19:18:40.000000000Z","rc":1,"acts":[]}"#;
+    failed_clean(&format!("echo '{report}' > \"$CARGO_TARGET_DIR/.target-clean-report.json\"; exit 1"), Some(1));
+}
+
+/// Both ways the script can meet an old copy: one it can remove, and one it can only rewrite.
+fn failed_clean(clean: &str, report_rc: Option<i32>) {
+    for mode in [0o755, 0o555] {
+        let d = testkit::TempDir::new("unit-tests-script-clean");
+        let tree = d.path().join("tree");
+        let target = d.path().join("cargo-target");
+        for dir in [tree.join("spira"), tree.join("target"), target.clone()] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let home = spira_config::resolve::locate_home_for_process().unwrap();
+        std::fs::copy(home.join("unit-tests.sh"), tree.join("spira/unit-tests.sh")).unwrap();
+        std::fs::write(tree.join("spira/target-clean.sh"), format!("{clean}\n")).unwrap();
+        std::fs::write(tree.join("target/unit-tests.crates"), "crate-a\n").unwrap();
+        let copy = tree.join("target/unit-tests.clean.json");
+        std::fs::write(&copy, r#"{"at":"2026-09-29T19:18:40.000000000Z","rc":0,"acts":[]}"#).unwrap();
+        assert!(spira_config::build_dir::clean_report_at(&copy).is_some(), "positive control: the old copy parses");
+        let lock = |m| std::fs::set_permissions(tree.join("target"), std::fs::Permissions::from_mode(m)).unwrap();
+        lock(mode);
+        let out = Command::new("bash")
+            .arg(tree.join("spira/unit-tests.sh"))
+            .env_clear()
+            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .env("CARGO_TARGET_DIR", &target)
+            .output()
+            .expect("unit-tests.sh runs");
+        lock(0o755);
+        assert_eq!(out.status.code(), Some(2), "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(spira_config::build_dir::clean_report_at(&copy).map(|r| r.rc), report_rc, "target mode {mode:o}");
+    }
+}
+
 fn two_runs_keep_the_unit(test_exit: i32) {
     two_runs(test_exit, false);
 }

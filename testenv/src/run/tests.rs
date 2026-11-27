@@ -290,6 +290,12 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
 
     #[allow(clippy::too_many_arguments)]
     fn run_flags_env(pool: &str, suite: &str, deny: Option<&str>, state: Option<&str>, flags: &[&str], shell_only: &str, more_env: &[(&str, &str)]) -> (String, Vec<String>, usize, Vec<String>) {
+        run_flags_rt(pool, suite, deny, state, flags, shell_only, more_env, &|_, _| {})
+    }
+
+    /// As above; `setup` adds the fake container's answers, given the run's scratch root.
+    #[allow(clippy::too_many_arguments)]
+    fn run_flags_rt(pool: &str, suite: &str, deny: Option<&str>, state: Option<&str>, flags: &[&str], shell_only: &str, more_env: &[(&str, &str)], setup: &dyn Fn(&FakeRuntime, &Path)) -> (String, Vec<String>, usize, Vec<String>) {
         let root = testkit::TempDir::new("testenv-admission-cancel");
         let (repo, harness, owner) = (root.join("repo"), root.join("harness"), root.join("owner"));
         for d in [&repo.join("spira"), &harness.join("spira"), &owner] {
@@ -360,6 +366,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         let envf = |k: &str| env.get(k).cloned();
         let out = |l: &str| lines.lock().unwrap().push(l.to_string());
         let rt = FakeRuntime::new();
+        setup(&rt, &root);
         let exe = root.join("runner-exe");
         fs::write(&exe, b"runner").unwrap();
         let deps = Deps {
@@ -391,6 +398,40 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         let left = fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.starts_with("slot.") || n.starts_with("wait.")).collect();
         let all = lines.lock().unwrap().clone();
         (last, left, sleeps.load(Ordering::SeqCst), all)
+    }
+
+    fn find_file(dir: &Path, rel: &str) -> Option<PathBuf> {
+        let here = dir.join(rel);
+        if here.is_file() {
+            return Some(here);
+        }
+        fs::read_dir(dir).ok()?.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).find_map(|e| find_file(&e.path(), rel))
+    }
+
+    #[test_id(t36eoy3)]
+    #[test]
+    fn a_container_unit_run_leaves_the_script_a_writable_copy_and_removes_it_once_read() {
+        use std::os::unix::fs::PermissionsExt;
+        let seen = Arc::new(std::sync::Mutex::new(None::<(PathBuf, u32, u64)>));
+        let at_exec = seen.clone();
+        let setup = move |rt: &FakeRuntime, root: &Path| {
+            let (root, at_exec) = (root.to_path_buf(), at_exec.clone());
+            rt.on(
+                |r| r.argv.get(1).is_some_and(|a| a.ends_with("/spira/unit-tests.sh")),
+                move |_| {
+                    if let Some(copy) = find_file(&root, crate::unit::CLEAN_REPORT_REL) {
+                        let meta = fs::metadata(&copy).unwrap();
+                        *at_exec.lock().unwrap() = Some((copy.clone(), meta.permissions().mode() & 0o777, meta.len()));
+                        fs::write(&copy, r#"{"at":"2026-09-29T19:18:40.000000000Z","rc":0,"acts":[]}"#).unwrap();
+                    }
+                    Default::default()
+                },
+            );
+        };
+        let (_, _, _, lines) = run_flags_rt("none", "unit-tests.sh", None, None, &["--suites", "unit-tests.sh"], "", &[], &setup);
+        let (copy, mode, len) = seen.lock().unwrap().clone().unwrap_or_else(|| panic!("the script ran and found the copy: {lines:?}"));
+        assert_eq!((mode, len), (0o666, 0), "empty, and the container's uid can rewrite it");
+        assert!(!copy.exists(), "the copy is removed once read: {lines:?}");
     }
 
     fn deadline_run(bead: &str, flags: &[&str]) -> (Vec<String>, Vec<String>) {
