@@ -186,3 +186,28 @@
         std::fs::remove_file(copy.join(INDEX_FILE)).unwrap();
         assert_eq!(Registry::load(copy.path()).unwrap(), want);
     }
+
+    #[test_id(tlcnb8p)]
+    #[test]
+    fn a_first_load_waits_out_a_neighbours_swap_of_the_home() {
+        let dir = testkit::TempDir::new("registry-first-load-lock");
+        let missing = dir.path().join("no-such-home").display().to_string();
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let (b_done_tx, b_done_rx) = std::sync::mpsc::channel::<()>();
+        let a = std::thread::spawn(move || {
+            let _g = testkit::env(&[("SPIRA_HOME", Some(missing.as_str()))]);
+            held_tx.send(()).unwrap();
+            // An unlocked B ends while A holds; a locked B waits, so this times out.
+            let _ = b_done_rx.recv_timeout(std::time::Duration::from_millis(300));
+        });
+        held_rx.recv().unwrap();
+        // A fresh cell: B is the first loader whatever ran before it.
+        let cell: &'static OnceLock<(PathBuf, Registry)> = Box::leak(Box::default());
+        let b = std::thread::spawn(move || {
+            let _done = b_done_tx;
+            load_first(cell)
+        });
+        a.join().unwrap();
+        let registry = b.join().unwrap().expect("load_first waited for the swap to end and read the real home");
+        assert!(registry.get("SPIRA_RUN").is_some());
+    }

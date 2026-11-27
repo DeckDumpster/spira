@@ -275,6 +275,9 @@ pub fn documents_validated() -> usize {
 /// file must exist. Callers never see layers — they get one [`SpiraToml`].
 fn load_layered(spec: &str) -> Result<(SpiraToml, Vec<String>), String> {
     let layers = read_layers(spec)?;
+    // Before LAST_VALIDATED: a test's first load waits on the environment lock, and a test
+    // holding that lock may be waiting on this one.
+    let registry = registry::for_process();
     // Keyed on the bytes, so a rewrite is always seen; a refusal is never kept. The other input,
     // the registry, is pinned for the life of the process.
     let mut last = LAST_VALIDATED.lock().unwrap_or_else(|e| e.into_inner());
@@ -283,7 +286,7 @@ fn load_layered(spec: &str) -> Result<(SpiraToml, Vec<String>), String> {
     }
     let merged = merge_texts(&layers)?;
     DOCUMENTS_VALIDATED.fetch_add(1, Ordering::Relaxed);
-    let valid = validate_value(toml::Value::Table(merged), registry::for_process()?).map_err(|e| format!("{spec}: {e}"))?;
+    let valid = validate_value(toml::Value::Table(merged), registry?).map_err(|e| format!("{spec}: {e}"))?;
     *last = Some((layers, valid.clone()));
     Ok(valid)
 }

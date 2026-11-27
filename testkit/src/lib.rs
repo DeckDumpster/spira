@@ -222,6 +222,7 @@ static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 thread_local! {
     static ENV_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static ENV_READ_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Process environment edits for one test, serialized across every test thread in the
@@ -272,12 +273,27 @@ impl Drop for EnvGuard {
 }
 
 /// Held by a test that READS the environment without editing it, so no [`env`] edit lands
-/// under it. Reentrant: a no-op on a thread already holding an [`EnvGuard`].
-pub fn env_read() -> Option<std::sync::MutexGuard<'static, ()>> {
-    if ENV_HELD.with(|h| h.get()) {
-        None
-    } else {
-        Some(ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner()))
+/// under it. Reentrant: a no-op on a thread already holding an [`EnvGuard`] or an
+/// [`EnvReadGuard`].
+pub fn env_read() -> EnvReadGuard {
+    if ENV_HELD.with(|h| h.get()) || ENV_READ_HELD.with(|h| h.get()) {
+        return EnvReadGuard(None);
+    }
+    let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    ENV_READ_HELD.with(|h| h.set(true));
+    EnvReadGuard(Some(lock))
+}
+
+/// What [`env_read`] returns. Only the outermost one on a thread holds the lock, so it must
+/// outlive the ones nested in it.
+#[must_use]
+pub struct EnvReadGuard(Option<std::sync::MutexGuard<'static, ()>>);
+
+impl Drop for EnvReadGuard {
+    fn drop(&mut self) {
+        if self.0.is_some() {
+            ENV_READ_HELD.with(|h| h.set(false));
+        }
     }
 }
 
@@ -365,6 +381,51 @@ mod tests {
             std::fs::write(p, "fn main() {}").unwrap();
         }
         t
+    }
+
+    #[test_id(tlhq2jy)]
+    #[test]
+    fn env_read_nests_on_one_thread_and_frees_the_lock_when_the_outer_guard_drops() {
+        use std::sync::mpsc::channel;
+        use std::time::Duration;
+        let wait = Duration::from_secs(5);
+        let (nested_tx, nested_rx) = channel();
+        let (release_tx, release_rx) = channel::<()>();
+        // A timed channel, so a self-deadlock fails the test instead of hanging it.
+        let reader = std::thread::spawn(move || {
+            let outer = env_read();
+            let inner = env_read();
+            drop(inner);
+            nested_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            drop(outer);
+            release_rx.recv().unwrap();
+            // The hold is forgotten with its guard: this one takes the lock afresh.
+            let again = env_read();
+            nested_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            drop(again);
+        });
+        let editor = || {
+            let (tx, rx) = channel();
+            let t = std::thread::spawn(move || {
+                let _g = env(&[]);
+                tx.send(()).unwrap();
+            });
+            (t, rx)
+        };
+        for hold in ["nested", "again"] {
+            nested_rx.recv_timeout(wait).expect("a nested env_read returns without blocking");
+            let (t, got) = editor();
+            assert!(got.recv_timeout(Duration::from_millis(100)).is_err(), "{hold}: env() was taken under a held env_read");
+            release_tx.send(()).unwrap();
+            got.recv_timeout(wait).expect("env() is free once the outer guard drops");
+            t.join().unwrap();
+            if hold == "nested" {
+                release_tx.send(()).unwrap();
+            }
+        }
+        reader.join().unwrap();
     }
 
     #[test_id(te3sqtk)]

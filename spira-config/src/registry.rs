@@ -177,9 +177,16 @@ pub fn for_process() -> Result<&'static Registry, String> {
     if let Some((_, r)) = PROCESS.get() {
         return Ok(r);
     }
+    load_first(&PROCESS)
+}
+
+fn load_first(cell: &'static OnceLock<(PathBuf, Registry)>) -> Result<&'static Registry, String> {
+    // The lib tests swap SPIRA_HOME; the first load reads it.
+    #[cfg(test)]
+    let _env = testkit::env_read();
     let home = crate::resolve::locate_home_for_process()?;
     let loaded = Registry::load(&home)?;
-    Ok(&PROCESS.get_or_init(|| (home, loaded)).1)
+    Ok(&cell.get_or_init(|| (home, loaded)).1)
 }
 
 /// Names the release of a process that derives it instead of inheriting
