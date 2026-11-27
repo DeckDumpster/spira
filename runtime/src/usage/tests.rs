@@ -289,6 +289,7 @@ fn unit_names_fold_to_a_bounded_class() {
     assert_eq!(class("spira-run-gate.worker-0_2fgate_2f9c1e.service"), same("gate-worker"));
     assert_eq!(class("spira-run-sentinel_2dcall-builder_2d1795634659026_2d0.service"), same("builder"));
     assert_eq!(class(BATCHER_UNIT), same("round"));
+    assert_eq!(class(&crate::units::unit_name("batcher.local", "spira.image-abc").unwrap()), same("image-build"));
     assert_eq!(class("spira-run-sentinel_2dpass-landing.service"), same("pass-landing"));
     assert_eq!(class("spira-run-sentinel_2dtick-x.service"), same("sentinel-tick"));
     assert_eq!(class("spira-dwarf-skuld-directed-1762500000.service"), same("skuld"));

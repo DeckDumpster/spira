@@ -502,7 +502,11 @@ impl LeftOut {
             ),
             Cause::Refused { kind } => (
                 format!("queue round open refused it ({kind}) at this tip and base"),
-                "a new tip, or the base moving, readmits it".into(),
+                if kind == "image-absent" {
+                    "the host's store holding its testenv image, a new tip, or the base moving, readmits it".into()
+                } else {
+                    "a new tip, or the base moving, readmits it".into()
+                },
             ),
             Cause::NoSift => (
                 format!("its tip {tip} has no sift pass"),
@@ -1629,6 +1633,28 @@ fn clear_unregistered(repo: &Repo, wt: &Path) -> Result<Option<String>, String> 
         wt.display(),
         repo.name
     )))
+}
+
+/// Removes the worktree at `wt` with whatever stands in it; nothing there is not an error.
+pub fn worktree_remove(repo: &Repo, wt: &Path) -> Result<(), String> {
+    if wt.join(".git").exists() {
+        run(
+            Command::new("git")
+                .arg("-C")
+                .arg(&repo.path)
+                .args(["worktree", "remove", "--force"])
+                .arg(wt),
+            "git worktree remove",
+        )?;
+    }
+    let _ = run(
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo.path)
+            .args(["worktree", "prune"]),
+        "git worktree prune",
+    );
+    clear_unregistered(repo, wt).map(|_| ())
 }
 
 /// Is `tip` already an ancestor of the worktree's current HEAD? True for a member reset to
@@ -3610,11 +3636,13 @@ pub fn round_open(env: &Env, repo: &Repo, wt: &Path, members: &[Member]) -> Resu
 }
 
 /// One member a refused `queue round open` named as not admitted, from its typed stdout record
-/// (`refused=<id> kind=<kind> why=<line>`, `queue::ops::round::refused_record`).
+/// (`refused=<id> kind=<kind> [image=<tag>] why=<line>`, `queue::ops::round::refused_record`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Refused {
     pub id: String,
     pub kind: String,
+    /// The testenv tag an `image-absent` refusal needs.
+    pub image: Option<String>,
     pub why: String,
 }
 
@@ -3625,7 +3653,11 @@ pub fn parse_refused(out: &str) -> Vec<Refused> {
             let rest = l.strip_prefix("refused=")?;
             let (id, rest) = rest.split_once(" kind=")?;
             let (kind, why) = rest.split_once(" why=").unwrap_or((rest, ""));
+            let (kind, image) = kind
+                .split_once(" image=")
+                .map_or((kind, None), |(k, tag)| (k, Some(tag.trim().to_string())));
             Some(Refused {
+                image,
                 id: id.trim().to_string(),
                 kind: kind.trim().to_string(),
                 why: why.trim().to_string(),
@@ -6270,6 +6302,12 @@ mod land_exit_tests {
             ]
         );
         assert!(r[1].why.ends_with("paths: a.rs"), "{r:?}");
+        assert!(r.iter().all(|r| r.image.is_none()), "{r:?}");
+        let r = parse_refused("refused=sp-a kind=image-absent image=53aa why=sp-a: build it image=prose\n");
+        assert_eq!(
+            (r[0].kind.as_str(), r[0].image.as_deref(), r[0].why.as_str()),
+            ("image-absent", Some("53aa"), "sp-a: build it image=prose")
+        );
         assert!(parse_refused("batch=x\nmembers=sp-a:t\n").is_empty());
     }
 

@@ -8,7 +8,7 @@
 //!
 //! - Cadence 30 s, single-flight **per queue.local repo**. A repo cuts a further round only while fewer than `SPIRA_ROUND_MAX_OPEN` are in flight (default 1): it is assembled on the newest open round's head in a tree of its own, certified beside it, and lands only after the rounds below it (`State::Certified` holds a green round until then).
 //! - Admission (today `main.rs:1299-1320`, `:1183-1206`): only `land == queue.local` repos; the home repo only while `SPIRA_BATCHER_ENABLE != 0`.
-//! - Wakes, besides the tick (proposed names, none exist today): `bead.certified` (a pool grew), `world.unpaused` for the repo's `rounds` lane, and `unit.ran` for any leg it started.
+//! - Wakes, besides the tick (proposed names, none exist today): `bead.certified` (a pool grew), `world.unpaused` for the repo's `rounds` lane, and `unit.ran` for any leg it started, an image build included.
 //!
 //! ## Observe
 //!
@@ -86,6 +86,8 @@
 //! | `batcher.local.eject_red` | store | 30 s | batch + members | not in round |
 //! | `batcher.local.withdraw` | store | 10 s | bead + version | state ≠ CERTIFIED (`io.rs:851-887`) |
 //! | `batcher.local.rebase_stale` | unit | 600 s (unverified) | bead + base sha | not due (`io.rs:178`) |
+//! | `batcher.local.image_build` | unit (class `image-build`) | `SPIRA_BATCHER_WALL_SECS` | `<repo>:image:<tag>` | a second build of the same tag |
+//! | `batcher.local.image_clean` | git | 60 s | `<repo>:image:<tag>:clean` | the tag's build is running |
 //! | `batcher.local.certify` | unit | wall secs | batch | head ≠ worktree (`io.rs:1662`) |
 //! | `batcher.local.lc_certify` | store | 10 s | bead + `round:<key>` | state ≠ SUBMITTED (`io.rs:830-849`) |
 //! | `batcher.local.land` | host | 900 s (unverified) | batch | not certified; lock busy retried ×`LAND_LOCK_ATTEMPTS` (`io.rs:2002`) |
@@ -138,6 +140,11 @@ pub const CORPUS: &str = "batcher.local.corpus";
 pub const STAGE: &str = "batcher.local.stage";
 pub const STAGE_TEST: &str = "batcher.local.stage_test";
 pub const NOTE_LEFT_OUT: &str = "batcher.local.note_left_out";
+pub const IMAGE_BUILD: &str = "batcher.local.image_build";
+pub const IMAGE_CLEAN: &str = "batcher.local.image_clean";
+/// The `round open` refusal kind a built testenv image lifts.
+const IMAGE_ABSENT: &str = "image-absent";
+const IMAGE_KEY: &str = ".image-";
 const SOLE_KEY: &str = ":sole";
 /// Refusal kinds the observe's pool read (`batcher_cut::io::pool_rows`) already excludes while they hold; remembering them would only outlive the lifting.
 const POOL_READ_REFUSALS: [&str; 3] = ["held", "state", "no-row"];
@@ -178,6 +185,8 @@ pub const ACTS: &[(&str, u64)] = &[
     (STAGE, UNIT_START_DEADLINE_MS),
     (STAGE_TEST, UNIT_START_DEADLINE_MS),
     (NOTE_LEFT_OUT, 60_000),
+    (IMAGE_BUILD, 60_000),
+    (IMAGE_CLEAN, 60_000),
     (EJECT, 30_000),
     (EJECT_GATE_RED, 30_000),
     (WITHDRAW, 10_000),
@@ -200,7 +209,7 @@ pub const ACTS: &[(&str, u64)] = &[
 pub const EMITS: &[EventKindTag] = &[super::queue_step::PUBLISH_WANTED];
 /// Hand-offs that wake it at once, besides its tick: a submission sifted, a batch settled.
 pub const WAKES: &[EventKindTag] = &[kit::WORK_SUBMITTED, super::queue_step::CUT_WANTED];
-pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, runtime::units::UNIT_STOP, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, NOTE_LEFT_OUT, EJECT, EJECT_GATE_RED, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, SUPERSEDE_REDS, CLEAR_LANDED, PAUSE, PAUSE_ASK, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
+pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, runtime::units::UNIT_STOP, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, NOTE_LEFT_OUT, EJECT, EJECT_GATE_RED, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, SUPERSEDE_REDS, CLEAR_LANDED, PAUSE, PAUSE_ASK, KEEP_CERTIFY_OUTPUT, IMAGE_BUILD, IMAGE_CLEAN, INBOX_APPEND];
 pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
     "SPIRA_DB",
@@ -386,6 +395,9 @@ pub struct Repo {
     /// Beads the pool read kept out of the pool, with why (held, ejected red, tip moved, ...).
     #[serde(default)]
     pub left_out: Vec<batcher_cut::io::LeftOut>,
+    /// The carried image wants whose tag the host's container store holds.
+    #[serde(default)]
+    pub images_present: Vec<String>,
 }
 
 impl Repo {
@@ -765,6 +777,9 @@ pub struct RepoCarry {
     /// until its tip or the base moves. Kinds in `POOL_READ_REFUSALS` are not kept.
     #[serde(default)]
     pub refused: BTreeMap<String, (String, String, String)>,
+    /// The testenv images refused members wait on, by tag: each is built once.
+    #[serde(default)]
+    pub images: BTreeMap<String, ImageWant>,
     /// The base the round was re-certified on after a base-moved land refusal: at most once per
     /// base change.
     #[serde(default)]
@@ -788,6 +803,51 @@ pub struct RepoCarry {
     /// The batch the last reconcile dropped because the lifecycle had already settled it.
     #[serde(default)]
     pub reconciled: Option<String>,
+}
+
+/// One testenv image refused members need.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageWant {
+    /// The member tip the image is built from.
+    pub tip: String,
+    pub members: Vec<String>,
+    /// The key of the build's unit while no result of it has come.
+    pub unit: Option<String>,
+    pub failed: bool,
+    #[serde(default)]
+    pub at_ms: u64,
+}
+
+/// The unit key of the build of `tag`; [`image_of_key`] reads it back.
+pub fn image_unit_key(repo: &str, tag: &str) -> String {
+    format!("{repo}{IMAGE_KEY}{tag}")
+}
+
+fn image_of_key(key: &str) -> Option<(&str, &str)> {
+    key.split_once(IMAGE_KEY)
+}
+
+/// The wanted tags `held` finds in the store; with nothing wanted it is never asked.
+pub fn images_held(rc: &RepoCarry, held: &dyn Fn(&str) -> bool) -> Vec<String> {
+    rc.images.keys().filter(|tag| held(tag)).cloned().collect()
+}
+
+fn image_leg(repo: &str, tag: &str, want: &ImageWant) -> Leg {
+    Leg { key: format!("{repo}:image:{tag}"), unit: image_unit_key(repo, tag), image: tag.to_string(), head: want.tip.clone(), ..Leg::on(repo) }
+}
+
+fn image_clean(repo: &str, tag: &str) -> Act {
+    Leg { key: format!("{repo}:image:{tag}:clean"), unit: image_unit_key(repo, tag), image: tag.to_string(), ..Leg::on(repo) }.act(IMAGE_CLEAN)
+}
+
+const IMAGE_SAID_LINES: usize = 5;
+
+fn exit_words(exit: Exit) -> String {
+    match exit {
+        Exit::Code(c) => format!("exit {c}"),
+        Exit::Signal(s) => format!("signal {s}"),
+        Exit::Unknown => "no exit status".into(),
+    }
 }
 
 /// A held eject, and whether its act is out: the round is waiting on that act's outcome.
@@ -951,6 +1011,9 @@ pub struct Leg {
     pub unit: String,
     #[serde(default)]
     pub head: String,
+    /// The testenv image tag an image build or its clean is for.
+    #[serde(default)]
+    pub image: String,
     /// The head of the open round an assemble builds on, when it stacks; empty for the landing ref.
     #[serde(default)]
     pub onto: String,
@@ -1023,6 +1086,9 @@ pub struct Opened {
     /// The members a refused open named as not admitted, as (id, kind, why); nothing opened.
     #[serde(default)]
     pub refused: Vec<(String, String, String)>,
+    /// The testenv tag each image-absent refusal names, by member id.
+    #[serde(default)]
+    pub images: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1595,6 +1661,7 @@ impl Machine<'_> {
             held_keys: rc.held_keys,
             paused_on: rc.paused_on,
             refused: rc.refused,
+            images: rc.images,
             ..RepoCarry::default()
         };
     }
@@ -1857,7 +1924,11 @@ impl Machine<'_> {
 
     fn stop_carried_leg(&mut self) {
         let Some(key) = self.rc.leg.clone() else { return };
-        let Ok(handle) = UnitHandle::of(NAME, &key) else { return };
+        self.stop_unit(&key);
+    }
+
+    fn stop_unit(&mut self, key: &str) {
+        let Ok(handle) = UnitHandle::of(NAME, key) else { return };
         self.acts.push(Act::new(runtime::units::UNIT_STOP, format!("{NAME}:stop:{key}")).with_input(serde_json::to_string(&handle).unwrap_or_default()));
     }
 
@@ -2187,10 +2258,61 @@ impl Machine<'_> {
         self.acts.push(Act::new(PAUSE_ASK, key).with_input(serde_json::to_string(&send).unwrap_or_default()));
     }
 
+    /// Lifts the image-absent refusals of the wants whose tag is present, then forgets every want
+    /// no remaining refusal waits on.
+    fn readmit_imaged(&mut self, present: &[String]) {
+        let RepoCarry { refused, images, .. } = &mut self.rc;
+        images.retain(|tag, want| {
+            let built = present.contains(tag);
+            if built {
+                refused.retain(|id, (_, _, kind)| kind != IMAGE_ABSENT || !want.members.contains(id));
+            }
+            !built && want.members.iter().any(|id| refused.get(id).is_some_and(|(_, _, kind)| kind == IMAGE_ABSENT))
+        });
+    }
+
+    /// `id`, refused for want of `tag` at `tip`, joins that tag's want; only a new want builds.
+    fn want_image(&mut self, tag: &str, id: &str, tip: &str) {
+        for (_, other) in self.rc.images.iter_mut().filter(|(t, _)| *t != tag) {
+            other.members.retain(|m| m != id);
+        }
+        if let Some(want) = self.rc.images.get_mut(tag) {
+            if !want.members.iter().any(|m| m == id) {
+                want.members.push(id.to_string());
+            }
+            return;
+        }
+        let want = ImageWant { tip: tip.to_string(), members: vec![id.to_string()], unit: Some(image_unit_key(self.repo, tag)), failed: false, at_ms: self.now_ms };
+        self.acts.push(image_leg(self.repo, tag, &want).act(IMAGE_BUILD));
+        self.rc.images.insert(tag.to_string(), want);
+    }
+
+    /// The build of `tag` gave no image: it is not built again, and one line says how to.
+    fn image_failed(&mut self, tag: &str, how: &str, said: &str) {
+        let Some(want) = self.rc.images.get_mut(tag) else { return };
+        want.unit = None;
+        want.failed = true;
+        let lines: Vec<&str> = said.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+        let last = lines[lines.len().saturating_sub(IMAGE_SAID_LINES)..].join(" | ");
+        let said = if last.is_empty() { String::new() } else { format!(" — last output: {last}") };
+        let page = format!("batcher {}: testenv image build for localhost/spira-testenv:{tag} failed ({how}); {} stay(s) out of the cut — build it by hand from a checkout of {} with `{}`{said}", self.repo, want.members.join(", "), want.tip, spira_config::recipe::HAND_BUILD);
+        self.acts.push(Act::new(INBOX_APPEND, page.clone()).with_input(page_line(self.now_ms, &page)));
+    }
+
+    /// A build with no result past the wall is stopped and failed.
+    fn expire_image_builds(&mut self, policy: &Policy, repo: &Repo) {
+        let overdue: Vec<(String, String)> = self.rc.images.iter().filter(|(tag, w)| !repo.images_present.contains(tag) && self.now_ms.saturating_sub(w.at_ms) > policy.wall_ms + LEG_GRACE_MS).filter_map(|(tag, w)| Some((tag.clone(), w.unit.clone()?))).collect();
+        for (tag, unit) in overdue {
+            self.stop_unit(&unit);
+            self.image_failed(&tag, "no result within the wall", "");
+        }
+    }
+
     /// `repo` without the members `queue round open` refused at their current tip and base, and
     /// a line naming each; a refusal whose tip or base has moved since is forgotten.
     fn without_refused(&mut self, repo: &Repo) -> (Repo, Vec<String>, Vec<batcher_cut::io::LeftOut>) {
         self.rc.refused.retain(|id, (tip, base, _)| repo.pool.iter().any(|m| &m.id == id && &m.tip == tip) && base == &repo.base_sha);
+        self.readmit_imaged(&repo.images_present);
         let refused = &self.rc.refused;
         let why = repo.pool.iter().filter_map(|m| refused.get(&m.id).map(|(_, _, kind)| format!("{}: queue round open refused it ({kind}) at this tip and base", m.id))).collect();
         let left = repo.pool.iter().filter_map(|m| refused.get(&m.id).map(|(tip, _, kind)| batcher_cut::io::LeftOut { id: m.id.clone(), tip: tip.clone(), cause: batcher_cut::io::Cause::Refused { kind: kind.clone() } })).collect();
@@ -2434,7 +2556,7 @@ impl Machine<'_> {
             (State::Opened, ROUND_OPEN) => {
                 let o: Opened = if ok { serde_json::from_str(body).unwrap_or_default() } else { Opened::default() };
                 if o.batch.is_empty() && !o.refused.is_empty() {
-                    self.refused_some(&o.refused, leg);
+                    self.refused_some(&o, leg);
                     return;
                 }
                 if o.batch.is_empty() {
@@ -2550,11 +2672,15 @@ impl Machine<'_> {
     /// and the round's base (but not a `POOL_READ_REFUSALS` kind, which only leaves this leg), and the round is asked for again with the rest; with none left the
     /// cut is over, nothing opened and nothing abandoned. The queue has already routed them (a
     /// base conflict back to rework, a round conflict into an integration that carries it).
-    fn refused_some(&mut self, refused: &[(String, String, String)], leg: &Leg) {
+    fn refused_some(&mut self, opened: &Opened, leg: &Leg) {
+        let refused = &opened.refused;
         for (id, kind, _) in refused.iter().filter(|(_, kind, _)| !POOL_READ_REFUSALS.contains(&kind.as_str())) {
             let tip = self.rc.members.iter().find(|(m, _)| m == id).map(|(_, t)| t.clone()).unwrap_or_default();
             let landing = if self.rc.landing_base.is_empty() { &self.rc.base } else { &self.rc.landing_base };
-            self.rc.refused.insert(id.clone(), (tip, landing.clone(), kind.clone()));
+            self.rc.refused.insert(id.clone(), (tip.clone(), landing.clone(), kind.clone()));
+            if let Some(tag) = opened.images.get(id).filter(|_| kind == IMAGE_ABSENT) {
+                self.want_image(tag, id, &tip);
+            }
         }
         self.rc.members.retain(|(id, _)| !refused.iter().any(|(r, _, _)| r == id));
         if self.rc.members.is_empty() {
@@ -2703,6 +2829,7 @@ fn decide_repo(policy: &Policy, name: &str, rc: &RepoCarry, repo: &Repo, now_ms:
         shared = m.rc;
     }
     let mut m = Machine { repo: name, rc: shared.holding(&RepoCarry { state: idle, ..RepoCarry::default() }), acts, now_ms, below: !live.is_empty() };
+    m.expire_image_builds(policy, repo);
     if ended {
         m.rc.admissible.clear();
     } else {
@@ -2759,6 +2886,21 @@ pub fn on_outcome(carry: &Carry, effect: &str, ok: bool, body: &str, leg: &Leg, 
         }
         return (next, vec![]);
     }
+    if effect == IMAGE_CLEAN {
+        return (next, vec![]);
+    }
+    if effect == IMAGE_BUILD {
+        let mut m = Machine { repo: &leg.repo, rc, acts: vec![], now_ms, below: false };
+        let Some(want) = m.rc.images.get(&leg.image).filter(|w| w.unit.as_deref() == Some(leg.unit.as_str())) else { return (next, vec![]) };
+        if !ok && body == runtime::engine::LOST_AT_RESTART {
+            m.acts.push(image_leg(&leg.repo, &leg.image, want).act(IMAGE_BUILD));
+        } else if !ok {
+            m.acts.push(image_clean(&leg.repo, &leg.image));
+            m.image_failed(&leg.image, &format!("it did not start: {}", body.trim()), "");
+        }
+        store(&mut next, &leg.repo, m.rc);
+        return (next, m.acts);
+    }
     let Some(at) = round_of(&rc, leg) else { return (next, vec![]) };
     let mut m = Machine { repo: &leg.repo, rc: rc.holding(&rc.rounds()[at]), acts: vec![], now_ms, below: at > 0 };
     m.outcome(effect, ok, body, leg);
@@ -2784,6 +2926,9 @@ pub fn on_ran_with(carry: &Carry, ran: &UnitRan, out: &RanOutput, now_ms: u64) -
 /// own eject moved the head, in which case the attribution's outcome is applied at the new head.
 pub fn on_ran_seeing<R: Into<Round>>(carry: &Carry, ran: &UnitRan, out: &RanOutput, now_ms: u64, round_of: &dyn Fn(&str, &str) -> Option<R>) -> Option<(Carry, Vec<Act>)> {
     let key = ran.key_for(NAME)?;
+    if let Some((repo, tag)) = image_of_key(&key) {
+        return Some(image_ran(carry, repo, tag, ran.exit, out, now_ms));
+    }
     let (repo, rc, at) = carry.repos.iter().find_map(|(repo, rc)| {
         let at = rc.rounds().iter().position(|r| r.leg.as_deref() == Some(key.as_str()) && matches!(r.state, State::Corpus | State::Attributing | State::Certifying))?;
         Some((repo, rc, at))
@@ -2805,11 +2950,32 @@ pub fn on_ran_seeing<R: Into<Round>>(carry: &Carry, ran: &UnitRan, out: &RanOutp
         m.rc.leg_head = current.clone();
         m.rc.certify_head = current;
     }
-    let said = [out.stdout_tail.as_deref(), out.stderr_tail.as_deref()].into_iter().flatten().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n");
+    let said = said_by(out);
     m.leg_ended_with(ran.exit, &said);
     let acts = std::mem::take(&mut m.acts);
     store(&mut next, repo, replace_round(rc, at, &m));
     Some((next, acts))
+}
+
+fn said_by(out: &RanOutput) -> String {
+    [out.stdout_tail.as_deref(), out.stderr_tail.as_deref()].into_iter().flatten().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n")
+}
+
+/// An image build ended: its checkout goes whether or not a refusal still waits on it.
+fn image_ran(carry: &Carry, repo: &str, tag: &str, exit: Exit, out: &RanOutput, now_ms: u64) -> (Carry, Vec<Act>) {
+    let mut next = carry.clone();
+    let mut m = Machine { repo, rc: carry.repos.get(repo).cloned().unwrap_or_default(), acts: vec![image_clean(repo, tag)], now_ms, below: false };
+    if m.rc.images.get(tag).is_some_and(|w| w.unit.is_some()) {
+        if green(exit) {
+            if let Some(want) = m.rc.images.get_mut(tag) {
+                want.unit = None;
+            }
+        } else {
+            m.image_failed(tag, &exit_words(exit), &said_by(out));
+        }
+        store(&mut next, repo, m.rc);
+    }
+    (next, m.acts)
 }
 
 /// The fixed names a family-A P2 task's handler is driven by.
@@ -2967,7 +3133,10 @@ impl Handler for BatcherLocal {
         };
         let out = RanOutput::from_event_kind(&ev.kind).unwrap_or_default();
         let ran = |carry: &Carry, r: &UnitRan| on_ran_seeing(carry, r, &out, ev.at, &round_now);
-        let legs = |carry: &Carry| carry.repos.values().flat_map(|rc| rc.rounds()).filter(|r| matches!(r.state, State::Corpus | State::Attributing | State::Certifying)).filter_map(|r| r.leg).collect();
+        let legs = |carry: &Carry| {
+            let rounds = carry.repos.values().flat_map(|rc| rc.rounds()).filter(|r| matches!(r.state, State::Corpus | State::Attributing | State::Certifying)).filter_map(|r| r.leg);
+            rounds.chain(carry.repos.values().flat_map(|rc| rc.images.values().filter_map(|w| w.unit.clone()))).collect()
+        };
         handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran, legs })
     }
 }
@@ -3175,11 +3344,59 @@ pub mod edge {
             let mut seen = observe_repo(&env, &repo, units)?;
             seen.live_legs = live_legs(e);
             seen.scoped_batches = scoped_batches(e, &name, &carried);
+            seen.images_present = carried.repos.get(&name).map(|rc| super::images_held(rc, &host_holds_image)).unwrap_or_default();
             (seen.settled, seen.landed) = carried.repos.get(&name).map(|rc| settled_batches(&env, rc, &seen)).unwrap_or_default();
             snap.repos.insert(name.clone(), seen);
         }
         snap.registry_landed = registry_landed(&env);
         json(&snap)
+    }
+
+    /// The check round-vm makes of the host store before it places a round there.
+    fn host_holds_image(tag: &str) -> bool {
+        spira_config::bounded::bounded("podman").args(["image", "exists", &format!("localhost/spira-testenv:{tag}")]).output().is_ok_and(|o| o.status.success())
+    }
+
+    fn unit_running(e: &Effects, task: &str, key: &str) -> bool {
+        use runtime::units::{UnitFacts, UnitHandle, UnitState};
+        let Some(units) = e.units.as_deref() else { return false };
+        let Ok(handle) = UnitHandle::of(task, key) else { return false };
+        let facts = json(&handle).and_then(|h| runtime::units::effect(units, runtime::units::UNIT_FACTS, &h));
+        facts.ok().and_then(|f| serde_json::from_str::<UnitFacts>(&f).ok()).is_some_and(|f| matches!(f.state, UnitState::Active | UnitState::Activating))
+    }
+
+    pub fn image_tree(run: &Path, repo: &str, tag: &str) -> PathBuf {
+        run.join("worktree").join(format!(".image-{repo}-{tag}"))
+    }
+
+    /// Cuts the build's checkout and starts the build as its own unit, a scope so that what it
+    /// wrote comes back on its `unit.ran`. A build of the tag already running is left alone.
+    pub fn start_image_build(e: &Effects, repo: &batcher_cut::io::Repo, run: &Path, testenv: String, vars: Vec<(String, String)>, leg: &Leg) -> Result<String, String> {
+        if unit_running(e, super::NAME, &leg.unit) {
+            return Ok("{}".into());
+        }
+        let tree = image_tree(run, &leg.repo, &leg.image);
+        io::worktree_remove(repo, &tree)?;
+        io::worktree_reset(repo, &tree, &leg.head)?;
+        let argv = vec![testenv, "container".into(), "image".into(), "--tree".into(), tree.display().to_string()];
+        start_scope(e, super::NAME, &leg.unit, argv, vars, None)
+    }
+
+    pub fn image_build(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        start_image_build(e, &repo_of(&env, &leg)?, &env.run, spira_config::release_env::tool("testenv")?, home_vars(&env), &leg)
+    }
+
+    pub fn remove_image_tree(e: &Effects, repo: &batcher_cut::io::Repo, run: &Path, leg: &Leg) -> Result<String, String> {
+        if !unit_running(e, super::NAME, &leg.unit) {
+            io::worktree_remove(repo, &image_tree(run, &leg.repo, &leg.image))?;
+        }
+        Ok("{}".into())
+    }
+
+    pub fn image_clean(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        remove_image_tree(e, &repo_of(&env, &leg)?, &env.run, &leg)
     }
 
     /// The batches of `rc`'s leg-driven rounds that the queue no longer holds open and the
@@ -3351,7 +3568,8 @@ pub mod edge {
                     eprintln!("{} {}: queue round open refused {} ({}): {} — cutting without it", super::NAME, repo.name, r.id, r.kind, r.why);
                 }
                 eprintln!("{} {}: {line}", super::NAME, repo.name);
-                json(&Opened { refused: refused.into_iter().map(|r| (r.id, r.kind, r.why)).collect(), ..Opened::default() })
+                let images = refused.iter().filter_map(|r| Some((r.id.clone(), r.image.clone()?))).collect();
+                json(&Opened { refused: refused.into_iter().map(|r| (r.id, r.kind, r.why)).collect(), images, ..Opened::default() })
             }
         }
     }

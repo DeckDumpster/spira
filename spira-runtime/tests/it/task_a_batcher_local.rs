@@ -1278,6 +1278,188 @@ fn sp_822b8l_a_refused_member_stays_out_until_its_tip_or_the_base_moves() {
     assert_eq!(leg.members.len(), 2, "a moved base tries it again: {leg:?}");
 }
 
+// --- sp-4pne6q: an image-absent refusal builds its tag once and readmits when the store holds it ---
+
+const BUILD: &str = "batcher.local.image_build";
+
+/// `rc` read from `v`, so a field the release under test lacks is ignored rather than refused.
+fn rc_of(v: serde_json::Value) -> RepoCarry {
+    serde_json::from_value(v).unwrap()
+}
+
+fn refusing_image(carry: &Carry, refused: &[(&str, &str)]) -> (Carry, Vec<Act>) {
+    let body = serde_json::json!({
+        "refused": refused.iter().map(|(id, _)| (id, "image-absent", "needs an image")).collect::<Vec<_>>(),
+        "images": refused.iter().copied().collect::<BTreeMap<_, _>>(),
+    });
+    on_outcome(carry, ROUND_OPEN, true, &body.to_string(), &open_leg(), NOW)
+}
+
+fn builds(acts: &[Act]) -> Vec<Leg> {
+    acts.iter().filter(|a| a.effect == BUILD).map(|a| serde_json::from_str(&a.input).unwrap()).collect()
+}
+
+fn image_wants(carry: &Carry) -> serde_json::Value {
+    serde_json::to_value(&carry.repos["spira"]).unwrap()["images"].clone()
+}
+
+fn observing(images_present: &[&str]) -> Snapshot {
+    let mut v = serde_json::to_value(busy()).unwrap();
+    v["repos"]["spira"]["images_present"] = serde_json::json!(images_present);
+    serde_json::from_value(v).unwrap()
+}
+
+fn assembled_ids(acts: &[Act]) -> Vec<String> {
+    let leg: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == ASSEMBLE).expect("a cut").input).unwrap();
+    leg.members.into_iter().map(|(id, _)| id).collect()
+}
+
+fn awaiting_image(failed: bool) -> Carry {
+    let rc = rc_of(serde_json::json!({
+        "state": "Idle", "round_key": null,
+        "refused": {"sp-b": ["t2", "b1", "image-absent"]},
+        "images": {"tagz": {"tip": "t2", "members": ["sp-b"], "unit": null, "failed": failed}},
+    }));
+    Carry { repos: [("spira".to_string(), rc)].into() }
+}
+
+#[test_id(t98kfsc)]
+#[test]
+fn sp_4pne6q_an_image_absent_member_is_cut_once_the_store_holds_its_tag_at_the_same_tip_and_base() {
+    for failed in [false, true] {
+        let (waiting, acts) = decide(&awaiting_image(failed), &observing(&["other"]));
+        assert_eq!(assembled_ids(&acts), ["sp-a"], "stays out while the tag is absent");
+        assert!(waiting.repos["spira"].refused.contains_key("sp-b"));
+        let (ready, acts) = decide(&awaiting_image(failed), &observing(&["tagz"]));
+        assert_eq!(assembled_ids(&acts), ["sp-a", "sp-b"], "failed={failed}: a hand build readmits too");
+        assert!(ready.repos["spira"].refused.is_empty());
+        assert!(image_wants(&ready).as_object().is_none_or(|m| m.is_empty()), "{:?}", image_wants(&ready));
+    }
+}
+
+#[test_id(tgdrrw3)]
+#[test]
+fn sp_4pne6q_a_want_whose_members_tips_moved_is_pruned() {
+    let mut snap = observing(&[]);
+    snap.repos.get_mut("spira").unwrap().pool[1] = member("sp-b", "t9");
+    let (next, acts) = decide(&awaiting_image(true), &snap);
+    assert_eq!(assembled_ids(&acts), ["sp-a", "sp-b"]);
+    assert!(image_wants(&next).as_object().is_none_or(|m| m.is_empty()), "{:?}", image_wants(&next));
+}
+
+#[test_id(ttb73yy)]
+#[test]
+fn sp_4pne6q_one_image_build_starts_per_tag_however_many_members_need_it() {
+    let (carry, acts) = refusing_image(&opening(), &[("sp-b", "tagz"), ("sp-c", "tagz")]);
+    let first = builds(&acts);
+    assert_eq!(first.len(), 1, "{acts:?}");
+    assert_eq!(acts.iter().find(|a| a.effect == BUILD).unwrap().key, "spira:image:tagz");
+    assert!(acts.iter().any(|a| a.effect == ROUND_OPEN), "the others' round does not wait: {acts:?}");
+    assert_eq!(image_wants(&carry)["tagz"]["members"], serde_json::json!(["sp-b", "sp-c"]));
+
+    let again = |carry: &Carry, tag: &str| {
+        let mut next = carry.clone();
+        let rc = next.repos.get_mut("spira").unwrap();
+        (rc.state, rc.members) = (State::Opened, vec![("sp-a".into(), "t1".into()), ("sp-d".into(), "t4".into())]);
+        refusing_image(&next, &[("sp-d", tag)])
+    };
+    let (joined, acts) = again(&carry, "tagz");
+    assert!(builds(&acts).is_empty(), "a want that is building starts nothing: {acts:?}");
+    assert_eq!(image_wants(&joined)["tagz"]["members"], serde_json::json!(["sp-b", "sp-c", "sp-d"]));
+    let (_, acts) = again(&carry, "tagy");
+    assert_eq!(builds(&acts).len(), 1, "another tag is another build: {acts:?}");
+
+    let mut failed = serde_json::to_value(&carry).unwrap();
+    failed["repos"]["spira"]["images"]["tagz"]["failed"] = true.into();
+    let (_, acts) = again(&serde_json::from_value(failed).unwrap(), "tagz");
+    assert!(builds(&acts).is_empty(), "a failed tag is not built again: {acts:?}");
+}
+
+fn building() -> (Carry, String) {
+    let (carry, acts) = refusing_image(&opening(), &[("sp-b", "tagz"), ("sp-c", "tagz")]);
+    let unit = builds(&acts).first().expect("a build").unit.clone();
+    (carry, unit)
+}
+
+fn image_ran(carry: &Carry, unit: &str, code: i32, said: &str) -> (Carry, Vec<Act>) {
+    let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, unit).unwrap(), exit: runtime::units::Exit::Code(code), duration_ms: 1 };
+    let out = runtime::units::RanOutput { stdout_tail: Some(said.into()), stderr_tail: None };
+    on_ran_with(carry, &ran, &out, NOW).expect("an image build's run is this task's")
+}
+
+#[test_id(tb7g8z3)]
+#[test]
+fn sp_4pne6q_a_failed_image_build_marks_the_want_failed_and_pages_the_hand_build_once() {
+    let (carry, unit) = building();
+    assert_eq!(unit, "spira.image-tagz");
+    let (next, acts) = image_ran(&carry, &unit, 3, "STEP 4/9\nerror: no such package\n");
+    assert_eq!(image_wants(&next)["tagz"]["failed"], true);
+    let lines: Vec<&Act> = acts.iter().filter(|a| a.effect == INBOX_APPEND).collect();
+    assert_eq!(lines.len(), 1, "{acts:?}");
+    for want in ["tagz", "sp-b", "sp-c", "exit 3", "error: no such package", spira_config::recipe::HAND_BUILD] {
+        assert!(lines[0].input.contains(want), "{want}: {}", lines[0].input);
+    }
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [IMAGE_CLEAN, INBOX_APPEND], "nothing is started");
+    let (_, again) = image_ran(&next, &unit, 3, "");
+    assert!(!again.iter().any(|a| a.effect == INBOX_APPEND || a.effect == BUILD), "a second delivery pages nothing: {again:?}");
+}
+
+#[test_id(tciy8zr)]
+#[test]
+fn sp_4pne6q_a_build_that_succeeds_only_removes_its_checkout() {
+    let (carry, unit) = building();
+    let (next, acts) = image_ran(&carry, &unit, 0, "");
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [IMAGE_CLEAN], "{acts:?}");
+    assert_eq!(image_wants(&next)["tagz"]["failed"], false);
+    assert!(next.repos["spira"].refused.contains_key("sp-b"), "the member waits for the store to hold the tag");
+    let (_, acts) = image_ran(&Carry::default(), &unit, 0, "");
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [IMAGE_CLEAN], "a want already readmitted still loses its checkout");
+}
+
+#[test_id(trs5e7x)]
+#[test]
+fn sp_4pne6q_a_build_that_could_not_start_is_failed_and_one_lost_at_a_restart_is_asked_again() {
+    let (carry, _) = building();
+    let (_, acts) = refusing_image(&opening(), &[("sp-b", "tagz")]);
+    let leg = builds(&acts).remove(0);
+    let (failed, acts) = on_outcome(&carry, BUILD, false, "no unit manager configured", &leg, NOW);
+    assert_eq!(image_wants(&failed)["tagz"]["failed"], true);
+    assert!(acts.iter().any(|a| a.effect == INBOX_APPEND && a.input.contains("no unit manager")), "{acts:?}");
+    let (lost, acts) = on_outcome(&carry, BUILD, false, runtime::engine::LOST_AT_RESTART, &leg, NOW);
+    assert_eq!(builds(&acts), [leg], "the effect is idempotent over a running unit");
+    assert_eq!(image_wants(&lost)["tagz"]["failed"], false);
+}
+
+#[test_id(tupb5j6)]
+#[test]
+fn sp_4pne6q_a_build_past_the_wall_with_no_result_is_stopped_and_failed() {
+    let (carry, _) = building();
+    let wall = Policy::default().wall_ms + LEG_GRACE_MS;
+    let at = |ms: u64| Snapshot { now_ms: NOW + ms, ..observing(&[]) };
+    let (_, acts) = decide(&carry_idle(&carry), &at(wall));
+    assert!(!acts.iter().any(|a| a.effect == runtime::units::UNIT_STOP), "{acts:?}");
+    let (next, acts) = decide(&carry_idle(&carry), &at(wall + 1));
+    assert!(acts.iter().any(|a| a.effect == runtime::units::UNIT_STOP), "{acts:?}");
+    assert!(acts.iter().any(|a| a.effect == INBOX_APPEND && a.input.contains("tagz")), "{acts:?}");
+    assert_eq!(image_wants(&next)["tagz"]["failed"], true);
+}
+
+/// `carry` with its round gone and only what the repo shares left, its members' refusals kept.
+fn carry_idle(carry: &Carry) -> Carry {
+    let rc = &carry.repos["spira"];
+    let idle = RepoCarry { refused: rc.refused.clone(), images: rc.images.clone(), ..RepoCarry::default() };
+    Carry { repos: [("spira".to_string(), idle)].into() }
+}
+
+#[test_id(tj53t42)]
+#[test]
+fn sp_4pne6q_only_a_wanted_tag_is_looked_up_in_the_store() {
+    let none = images_held(&RepoCarry::default(), &|tag| panic!("an idle observe looked up {tag}"));
+    assert!(none.is_empty());
+    let (carry, _) = building();
+    assert_eq!(images_held(&carry.repos["spira"], &|tag| tag == "tagz"), ["tagz"]);
+}
+
 /// A refusal the pool read already shows (held, state) is not remembered: once the pool lists the
 /// member again at the same tip and base it is cut; one the pool cannot see stays out.
 #[test_id(trov4c8)]

@@ -1833,14 +1833,11 @@ fn image_absent(w: &World, repo: &Path, wt: &Path, base: &str, m: &Member) -> Op
     if held_by_ami {
         return None;
     }
-    Some(skip(
-        &m.id,
-        "image-absent",
-        format!(
-            "{}: {} needs testenv image localhost/spira-testenv:{tag}, which neither this host nor a round AMI holds, and no round builds one — not admitted; build it from a checkout of {} with `{}`",
-            m.id, m.tip, m.tip, spira_config::recipe::HAND_BUILD
-        ),
-    ))
+    let why = format!(
+        "{}: {} needs testenv image localhost/spira-testenv:{tag}, which neither this host nor a round AMI holds, and no round builds one — not admitted; build it from a checkout of {} with `{}`",
+        m.id, m.tip, m.tip, spira_config::recipe::HAND_BUILD
+    );
+    Some(Skip { image: Some(tag), ..skip(&m.id, "image-absent", why) })
 }
 
 /// One named member `round open` did not admit: its id, the kind of refusal (a word a caller
@@ -1848,6 +1845,8 @@ fn image_absent(w: &World, repo: &Path, wt: &Path, base: &str, m: &Member) -> Op
 pub struct Skip {
     pub id: String,
     pub kind: &'static str,
+    /// The testenv tag an `image-absent` skip needs.
+    pub image: Option<String>,
     pub why: String,
 }
 
@@ -1855,14 +1854,16 @@ fn skip(id: &str, kind: &'static str, why: String) -> Skip {
     Skip {
         id: id.to_string(),
         kind,
+        image: None,
         why,
     }
 }
 
 /// The typed record a refused open prints on stdout for each member it did not admit, one per
-/// line: `refused=<id> kind=<kind> why=<line>`. A caller re-cuts without these members.
+/// line: `refused=<id> kind=<kind> [image=<tag>] why=<line>`. A caller re-cuts without these members.
 pub fn refused_record(s: &Skip) -> String {
-    format!("refused={} kind={} why={}", s.id, s.kind, s.why)
+    let image = s.image.as_ref().map(|tag| format!(" image={tag}")).unwrap_or_default();
+    format!("refused={} kind={}{image} why={}", s.id, s.kind, s.why)
 }
 
 fn refuse_open(w: &World, label: &str, repo: &str, named: usize, skips: &[Skip]) -> i32 {
