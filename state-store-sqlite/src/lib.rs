@@ -120,7 +120,8 @@ const GAUGE_EVERY: Duration = Duration::from_secs(60);
 const RESTART_POLL: Duration = Duration::from_millis(1);
 const GATE_HOLD: Duration = Duration::from_millis(50);
 
-/// WAL bytes past which a restart holds the read gate until every read in flight has ended.
+/// WAL bytes past which a restart is forced: it holds the read gate until every read in flight
+/// has ended. The routine reset starts at half of this.
 pub const WAL_LINE_BYTES: u64 = 8 << 20;
 const RETRY_AFTER: Duration = Duration::from_secs(1);
 
@@ -280,9 +281,18 @@ struct Checkpointer {
     wake: Condvar,
     done: Condvar,
     every: u64,
+    /// WAL bytes at which the routine reset starts, below `line` so it can give up and retry
+    /// before a restart has to force.
+    early: u64,
     line: u64,
     wal: PathBuf,
     clock: Arc<dyn Clock>,
+}
+
+/// Whether a commit wakes the checkpointer. Crossing `early` wakes it once, not every commit
+/// above it, so a pass that gave up keeps its retry spacing.
+fn wake_due(prev_wal: u64, wal: u64, pending: u64, every: u64, early: u64, line: u64) -> bool {
+    pending >= every || wal >= line || (prev_wal < early && wal >= early)
 }
 
 impl Checkpointer {
@@ -290,9 +300,9 @@ impl Checkpointer {
         let wal_bytes = wal_len(&self.wal);
         let mut s = lock(&self.state);
         s.pending += 1;
-        s.wal_bytes = wal_bytes;
+        let prev_wal = std::mem::replace(&mut s.wal_bytes, wal_bytes);
         phases::set_wal_over_line(wal_bytes >= self.line);
-        if s.pending >= self.every || s.wal_bytes >= self.line {
+        if wake_due(prev_wal, wal_bytes, s.pending, self.every, self.early, self.line) {
             self.wake.notify_one();
         }
     }
@@ -323,7 +333,7 @@ impl Checkpointer {
         loop {
             let (seen, size) = {
                 let mut s = lock(&self.state);
-                if !s.stop && ((s.pending < self.every && s.wal_bytes < self.line) || wait == RETRY_AFTER) {
+                if !s.stop && ((s.pending < self.every && s.wal_bytes < self.early) || wait == RETRY_AFTER) {
                     s = self.wake.wait_timeout(s, wait).unwrap_or_else(|p| p.into_inner()).0;
                 }
                 if s.stop {
@@ -332,7 +342,7 @@ impl Checkpointer {
                 (s.pending, s.wal_bytes)
             };
             wait = GAUGE_EVERY;
-            if seen >= self.every || owed || size >= self.line {
+            if seen >= self.every || owed || size >= self.early {
                 let mut passive_done = None;
                 let step = checkpoint_step(&conn, &writer, &gate, &RestartTerms { clock: &*self.clock, max_read_ms: max_read_ms.load(Ordering::SeqCst), line: self.line }, seen >= self.every, |done| {
                     passive_done = Some(done);
@@ -421,7 +431,8 @@ pub struct Options {
     pub day_receipts: bool,
     /// Commits between background PASSIVE checkpoints.
     pub checkpoint_every: u64,
-    /// WAL bytes past which a restart waits out every read in flight; see [`restart_wal`].
+    /// WAL bytes past which a restart is forced and waits out every read in flight; see
+    /// [`restart_wal`]. The routine background reset starts at half of this.
     pub wal_line_bytes: u64,
     /// Where the checkpointer reports its gauge; `None` reports nowhere.
     pub metrics: Option<spira_otel::metrics::MetricsSink>,
@@ -1329,6 +1340,7 @@ impl SqliteBackend {
             wake: Condvar::new(),
             done: Condvar::new(),
             every: opts.checkpoint_every.max(1),
+            early: (opts.wal_line_bytes / 2).max(1),
             line: opts.wal_line_bytes,
             wal: wal_of(path),
             clock: opts.clock.clone(),
@@ -2587,6 +2599,27 @@ pub(crate) fn take_opener(from: &Path) -> Result<File> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(tc7vna7)]
+    #[test]
+    fn the_checkpointer_wakes_once_on_crossing_half_the_line_and_on_every_commit_past_it() {
+        const EVERY: u64 = 250;
+        const EARLY: u64 = 300;
+        const LINE: u64 = 700;
+        let woken = |prev, wal, pending| wake_due(prev, wal, pending, EVERY, EARLY, LINE);
+        assert!(woken(EARLY - 1, EARLY, 1), "crossing half the line");
+        assert!(woken(0, LINE - 1, 1), "crossing half the line in one commit");
+        assert!(!woken(EARLY, EARLY + 1, 1), "already past half the line");
+        assert!(!woken(EARLY, LINE - 1, 1), "just below the line");
+        assert!(!woken(0, EARLY - 1, 1), "still below half the line");
+        for prev in [0, EARLY, LINE, LINE + 1] {
+            assert!(woken(prev, LINE, 1), "at the line, from {prev}");
+            assert!(woken(prev, LINE + 1, 1), "past the line, from {prev}");
+        }
+        for (prev, wal) in [(0, 0), (EARLY, EARLY), (LINE, 0)] {
+            assert!(woken(prev, wal, EVERY), "a full interval of commits, {prev} to {wal}");
+        }
+    }
 
     #[test_id(t9yk1vi)]
     #[test]
