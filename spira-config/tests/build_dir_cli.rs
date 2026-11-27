@@ -248,9 +248,9 @@ fn a_lease_after_the_holder_exits_reuses_the_warm_directory_with_a_selective_cle
         "dependencies stay warm"
     );
     assert_eq!(
-        std::fs::read_to_string(&b.log).unwrap().trim(),
+        cargo_log(&b),
         "",
-        "only the changed crate is cleaned: {err}"
+        "the changed crate loses its fingerprints; cargo cleans nothing: {err}"
     );
     let _ = (p2.kill(), p2.wait());
 }
@@ -512,8 +512,8 @@ fn a_unit_with_no_timestamp_is_removed_and_a_deleted_file_cleans_its_crate() {
     std::fs::remove_file(b.tree.join("b/src/lib.rs")).unwrap();
     let fresh = unit(&d2, "crate-b-0123456789abcdef", Some(std::time::SystemTime::now() + Duration::from_secs(3600)));
     release(&b, &mut p2);
-    assert!(fresh.exists());
-    assert_eq!(cargo_log(&b), "", "a deleted file cleans the crate whatever its units");
+    assert!(!fresh.exists(), "a deleted file drops the crate's fingerprints whatever their stamps");
+    assert_eq!(cargo_log(&b), "", "and cargo cleans nothing");
 }
 
 // These spawn the clean script because it is what is under test: the rule exists only in it.

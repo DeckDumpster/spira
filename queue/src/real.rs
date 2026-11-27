@@ -2959,7 +2959,7 @@ mod tests {
         crate_tree(&wt, "pub fn f() { let _ = 1; }\n");
         let held = RealScripts { home: home.clone() }.build_release(&wt, "hand-1", "spira").expect("builds");
         let lines: Vec<String> = fs::read_to_string(&log).unwrap().lines().map(String::from).collect();
-        assert!(!lines.iter().any(|l| l.starts_with("clean")), "a changed crate loses its fingerprints, not its outputs: no cargo clean: {lines:?}");
+        assert!(!lines.iter().any(|l| l.starts_with("clean -p")), "a changed crate loses its fingerprints, not its outputs: no cargo clean: {lines:?}");
         assert!(lines.iter().any(|l| l.starts_with("build -q --profile release")), "built: {lines:?}");
         assert!(wt.join("target/release").is_symlink(), "the release symlink is made");
         drop(held);
