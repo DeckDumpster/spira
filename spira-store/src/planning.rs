@@ -1,5 +1,5 @@
-//! The planning plane's write rule: which bd calls change planning data, and the stamp that
-//! must follow each one so the planning watermark moves (`spira-lc plan stamp`).
+//! The planning plane's write rule: which bd calls change planning data, so each can be
+//! followed by the stamp that moves the planning watermark (`spira-lc plan stamp`).
 
 /// bd verbs that never change a bead, an edge, a label, a comment or a memory. Anything else is
 /// a planning write: a verb missing here costs a spare stamp, while a write missing from a
@@ -59,17 +59,6 @@ pub fn claim_inputs_changed<S: AsRef<str>>(args: &[S], stdout: &str) -> Vec<Stri
         Some("label") if matches!(words.get(1).copied(), Some("add" | "remove" | "rm")) => word(2),
         Some("update") if all.iter().any(|a| ["--parent", "--add-label", "--remove-label"].iter().any(|f| a == f || a.starts_with(&format!("{f}=")))) => word(1),
         _ => Vec::new(),
-    }
-}
-
-/// Runs `spira-lc plan stamp` after a planning write `caller` made. A stamp that fails is
-/// reported, never raised: the write it follows has already landed.
-pub fn stamp_after(caller: &str) {
-    let stamped = crate::lc_call::LcClient::configured().and_then(|c| c.within(crate::lc_call::LC_TIMEOUT).call(&["plan", "stamp"]).map_err(String::from));
-    match stamped {
-        Ok(r) if r.code == 0 => {}
-        Ok(r) => eprintln!("{caller}: the planning write landed but the watermark did not advance: {}", r.text()),
-        Err(e) => eprintln!("{caller}: the planning write landed but the watermark did not advance: {e}"),
     }
 }
 
