@@ -2312,10 +2312,15 @@ impl Machine<'_> {
         self.acts.push(Act::new(INBOX_APPEND, page.clone()).with_input(page_line(self.now_ms, &page)));
     }
 
-    /// A build with no result past the wall is stopped and failed.
+    /// A build with no result past the wall is stopped and failed, and so is a green one whose
+    /// tag the store still does not hold a wall later.
     fn expire_image_builds(&mut self, policy: &Policy, repo: &Repo) {
-        let overdue: Vec<(String, String)> = self.rc.images.iter().filter(|(tag, w)| !repo.images_present.contains(tag) && self.now_ms.saturating_sub(w.at_ms) > policy.wall_ms + LEG_GRACE_MS).filter_map(|(tag, w)| Some((tag.clone(), w.unit.clone()?))).collect();
+        let overdue: Vec<(String, Option<String>)> = self.rc.images.iter().filter(|(tag, w)| !w.failed && !repo.images_present.contains(tag) && self.now_ms.saturating_sub(w.at_ms) > policy.wall_ms + LEG_GRACE_MS).map(|(tag, w)| (tag.clone(), w.unit.clone())).collect();
         for (tag, unit) in overdue {
+            let Some(unit) = unit else {
+                self.image_failed(&tag, "it passed but the host store does not hold the tag", "");
+                continue;
+            };
             self.stop_unit(&unit);
             self.acts.push(image_clean(self.repo, &tag));
             self.image_failed(&tag, "no result within the wall", "");
@@ -2986,6 +2991,7 @@ fn image_ran(carry: &Carry, repo: &str, tag: &str, exit: Exit, out: &RanOutput, 
         if green(exit) {
             if let Some(want) = m.rc.images.get_mut(tag) {
                 want.unit = None;
+                want.at_ms = now_ms;
             }
         } else {
             m.image_failed(tag, &exit_words(exit), &said_by(out));
@@ -3374,12 +3380,14 @@ pub mod edge {
         spira_config::bounded::bounded("podman").args(round_vm::host::image_exists_args(tag)).output().is_ok_and(|o| o.status.success())
     }
 
-    fn unit_running(e: &Effects, task: &str, key: &str) -> bool {
+    /// An unreadable unit is an error, never "not running": its checkout may be in use.
+    fn unit_running(e: &Effects, task: &str, key: &str) -> Result<bool, String> {
         use runtime::units::{UnitFacts, UnitHandle, UnitState};
-        let Some(units) = e.units.as_deref() else { return false };
-        let Ok(handle) = UnitHandle::of(task, key) else { return false };
-        let facts = json(&handle).and_then(|h| runtime::units::effect(units, runtime::units::UNIT_FACTS, &h));
-        facts.ok().and_then(|f| serde_json::from_str::<UnitFacts>(&f).ok()).is_some_and(|f| matches!(f.state, UnitState::Active | UnitState::Activating))
+        let units = e.units.as_deref().ok_or("no unit manager configured")?;
+        let handle = UnitHandle::of(task, key).map_err(|e| e.0)?;
+        let facts = runtime::units::effect(units, runtime::units::UNIT_FACTS, &json(&handle)?)?;
+        let facts: UnitFacts = serde_json::from_str(&facts).map_err(|e| format!("unit facts of {key}: {e}"))?;
+        Ok(matches!(facts.state, UnitState::Active | UnitState::Activating))
     }
 
     pub fn image_tree(run: &Path, repo: &str, tag: &str) -> PathBuf {
@@ -3389,7 +3397,7 @@ pub mod edge {
     /// Cuts the build's checkout and starts the build as its own unit, a scope so that what it
     /// wrote comes back on its `unit.ran`. A build of the tag already running is left alone.
     pub fn start_image_build(e: &Effects, repo: &batcher_cut::io::Repo, run: &Path, testenv: String, vars: Vec<(String, String)>, leg: &Leg) -> Result<String, String> {
-        if unit_running(e, super::NAME, &leg.unit) {
+        if unit_running(e, super::NAME, &leg.unit)? {
             return Ok("{}".into());
         }
         let tree = image_tree(run, &leg.repo, &leg.image);
@@ -3405,7 +3413,7 @@ pub mod edge {
     }
 
     pub fn remove_image_tree(e: &Effects, repo: &batcher_cut::io::Repo, run: &Path, leg: &Leg) -> Result<String, String> {
-        if !unit_running(e, super::NAME, &leg.unit) {
+        if !unit_running(e, super::NAME, &leg.unit)? {
             io::worktree_remove(repo, &image_tree(run, &leg.repo, &leg.image))?;
         }
         Ok("{}".into())

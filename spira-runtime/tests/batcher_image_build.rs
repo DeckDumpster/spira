@@ -48,6 +48,11 @@ fn sp_4pne6q_the_build_unit_runs_testenv_on_a_checkout_of_the_tip_which_goes_whe
     edge::remove_image_tree(&e, &repo, &run, &leg).unwrap();
     assert!(tree.join("in-progress").exists() && units.scopes().len() == 1, "a running build is left alone");
 
+    let blind = spira_runtime::Effects::default();
+    assert!(edge::remove_image_tree(&blind, &repo, &run, &leg).is_err());
+    assert!(edge::start_image_build(&blind, &repo, &run, "bin/testenv".into(), vec![], &leg).is_err());
+    assert!(tree.join("in-progress").exists(), "a checkout whose build cannot be read is left alone");
+
     runtime::units::Units::stop(&*units, &UnitHandle::of(NAME, &leg.unit).unwrap()).unwrap();
     edge::remove_image_tree(&e, &repo, &run, &leg).unwrap();
     assert!(!tree.exists());

@@ -1445,6 +1445,20 @@ fn sp_4pne6q_a_build_past_the_wall_with_no_result_is_stopped_and_failed() {
     assert_eq!(image_wants(&next)["tagz"]["failed"], true);
 }
 
+#[test_id(tu9kif6)]
+#[test]
+fn sp_4pne6q_a_green_build_whose_tag_the_store_never_holds_is_failed_and_paged() {
+    let (carry, unit) = building();
+    let (green, _) = image_ran(&carry, &unit, 0, "");
+    let late = Snapshot { now_ms: NOW + Policy::default().wall_ms + LEG_GRACE_MS + 1, ..observing(&[]) };
+    let (next, acts) = decide(&carry_idle(&green), &late);
+    assert!(acts.iter().any(|a| a.effect == INBOX_APPEND && a.input.contains("tagz") && a.input.contains("does not hold")), "{acts:?}");
+    assert!(!acts.iter().any(|a| a.effect == runtime::units::UNIT_STOP || a.effect == BUILD), "nothing runs to stop: {acts:?}");
+    assert_eq!(image_wants(&next)["tagz"]["failed"], true);
+    let (_, again) = decide(&carry_idle(&next), &late);
+    assert!(!again.iter().any(|a| a.effect == INBOX_APPEND && a.input.contains("tagz")), "{again:?}");
+}
+
 /// `carry` with its round gone and only what the repo shares left, its members' refusals kept.
 fn carry_idle(carry: &Carry) -> Carry {
     let rc = &carry.repos["spira"];
