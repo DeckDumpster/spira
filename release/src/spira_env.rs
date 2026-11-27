@@ -93,27 +93,35 @@ pub fn build(nix: &dyn Nix, release_root: &Path, home: &Path) -> Result<Built, S
     }
     let before = std::fs::canonicalize(&out).ok();
     let digest = flake_digest(release_root)?;
-    let stamp = home.join(spira_config::SPIRA_ENV_SOURCE_REL);
-    let stamp_before = std::fs::read_to_string(&stamp).ok();
+    let stamp_before = std::fs::read_to_string(home.join(spira_config::SPIRA_ENV_SOURCE_REL)).ok();
     nix.build(&target(release_root), &out)?;
     let after = std::fs::canonicalize(&out).map_err(|e| format!("the build left no env at {}: {e}", out.display()))?;
     let built = Built { before, after, stamp_before };
     if let Some(old) = built.replaced() {
         let prev = home.join(spira_config::SPIRA_ENV_PREV_REL);
         if let Err(e) = nix.add_root(&prev, old) {
-            return Err(format!("cannot root the previous spira-env {}: {e}{}", old.display(), put_back(home, &built)));
+            return Err(format!("cannot root the previous spira-env {}: {e}{}", old.display(), put_back(home, &built, &digest)));
         }
     }
-    if let Err(e) = fsutil::write_atomic(&stamp, &format!("{digest}\n")) {
-        return Err(format!("{e}{}", put_back(home, &built)));
+    if let Err(e) = write_stamp(home, &digest) {
+        return Err(format!("{e}{}", put_back(home, &built, &digest)));
     }
     Ok(built)
 }
 
+fn write_stamp(home: &Path, digest: &str) -> Result<(), String> {
+    fsutil::write_atomic(&home.join(spira_config::SPIRA_ENV_SOURCE_REL), &format!("{digest}\n"))
+}
+
 /// Restores the link a failed build moved; "" or why it still names the new env.
-fn put_back(home: &Path, built: &Built) -> String {
+fn put_back(home: &Path, built: &Built, digest: &str) -> String {
     let Some(old) = built.replaced() else { return String::new() };
-    restore(home, old).err().map(|r| format!("; the env link still names {}: {r}", built.after.display())).unwrap_or_default()
+    let Err(e) = restore(home, old) else { return String::new() };
+    // The old stamp would describe an env that is no longer linked: stamp the new one, or none.
+    if write_stamp(home, digest).is_err() {
+        let _ = std::fs::remove_file(home.join(spira_config::SPIRA_ENV_SOURCE_REL));
+    }
+    format!("; the env link still names {}: {e}", built.after.display())
 }
 
 /// Puts the source stamp back to what it was before `built`.

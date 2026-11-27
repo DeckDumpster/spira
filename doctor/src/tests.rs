@@ -1631,6 +1631,27 @@ fn spira_env_names_a_provided_tool_missing_from_the_env() {
     assert!(missing[0].msg.contains("h/.local/lib/spira-env/bin/clang"), "{out:?}");
 }
 
+#[test_id(tjmsxum)]
+#[test]
+fn the_real_world_reads_the_stamp_the_releases_digest_and_the_env_bin() {
+    let t = testkit::TempDir::new("doctor-env-real");
+    let (home, release) = (t.join("home"), t.join("release"));
+    std::fs::create_dir_all(home.join(spira_config::SPIRA_ENV_REL).join("bin")).unwrap();
+    std::fs::create_dir_all(release.join("spira")).unwrap();
+    for (name, body) in [("flake.nix", "a"), ("flake.lock", "bc")] {
+        std::fs::write(release.join(name), body).unwrap();
+    }
+    std::fs::write(home.join(spira_config::SPIRA_ENV_REL).join("bin/bd"), "").unwrap();
+    let env = [("HOME".to_string(), home.display().to_string())].into();
+    let real = crate::real::Real { home: release.join("spira"), env, lc: String::new(), child_env: Vec::new() };
+    assert_eq!(real.spira_env_recorded(), None);
+    let digest = spira_config::flake_digest(&release).unwrap();
+    std::fs::write(home.join(spira_config::SPIRA_ENV_SOURCE_REL), format!("{digest}\n")).unwrap();
+    assert_eq!(real.spira_env_recorded(), Some(digest.clone()));
+    assert_eq!(real.spira_env_wanted(), Ok(digest));
+    assert!(real.env_file_exists("bd") && !real.env_file_exists("clang"));
+}
+
 // ============================================================================ mail submission
 
 fn submission(status: &str) -> Vec<Line> {
