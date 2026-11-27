@@ -90,7 +90,7 @@ Refusals:
     Fix: drop --for
 
 ### work split
-Files a bead for a piece of your own bead's scope, parented to it.
+Files a bead for a piece of your own bead's scope: a child of it, or with `--prerequisite` a bead beside it that yours waits on.
 Use when: Part of this bead's scope is better landed on its own. Use `--prerequisite` when the piece must land before your bead can.
 Arguments:
   "<title>"
@@ -98,8 +98,9 @@ Arguments:
   --body-file -
   --prerequisite   (this piece lands first; your bead waits on it)
 Checks:
-  - the parent is your bead, except with `--prerequisite`, which files beside it and makes your bead wait
-  - the child never carries your `branch:` label
+  - without `--prerequisite` the parent is your bead; with it the new bead has no parent and yours waits on it
+  - the new bead never carries your `branch:` label
+  - `--prerequisite` is refused with `--after-landing`, and for a filer whose lane carries the incident label
 
 ## 4. The law
 ### work statute-check

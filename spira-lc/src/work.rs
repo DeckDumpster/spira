@@ -1158,15 +1158,32 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str) -> (i32, String) {
         Ok(r) => r,
         Err(e) => return (CANNOT_TELL, format!("refused: work {verb}: {e}")),
     };
+    if prerequisite {
+        let read = spira_config::resolve::locate_home_for_process().and_then(|home| Ok((home, spira_config::process::cfg("SPIRA_INCIDENT_LABEL")?)));
+        let (home, incident) = match read {
+            Ok(r) => r,
+            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+        };
+        if let Some(why) = incident_lane_refusal(&persona, &spira_config::runes::rune_get(&home, &persona, "RUNE_LABELS", ""), &incident) {
+            return (REFUSED, why);
+        }
+    }
     let actor = flag(args, "--actor").unwrap_or_default();
     let body = split_reserved(args).stdin;
     let register = |new_id: &str| crate::plane::call(&[s("create-bead"), new_id.to_string(), s("--ready"), s("--repo"), repo.clone()]);
     let filing = Filing { verb, actor: &actor, title, persona: &persona, repo: &repo, bound: bead_id, after_landing, prerequisite, body: body.as_deref() };
-    let filed = file_and_bind(&filing, register);
+    let file = |f: &Filing, parent: Option<&str>, considered: Option<&str>| crate::bd::file_child(f.title, f.persona, f.repo, parent, f.body, considered);
+    let filed = file_and_bind(&filing, file, register, crate::bd::label_add, crate::bd::add_blocker);
     if verb != "file-followup" || filed.0 != 0 || !lane_requires_skuld(&persona) {
         return filed;
     }
     review_followup(&filing, &filed.1, |t, b| crate::bd::file_child(t, SKULD_PERSONA, &repo, None, Some(b), None), crate::bd::add_blocker)
+}
+
+/// The store refuses a blocks edge onto an incident, and would do so only after the piece is filed.
+fn incident_lane_refusal(persona: &str, lane: &str, incident: &str) -> Option<String> {
+    let in_lane = !incident.is_empty() && lane.split(',').any(|l| l.trim() == incident);
+    in_lane.then(|| format!("refused: work split: --prerequisite files into the {persona} lane, which carries the {incident} label, and nothing may wait on an incident; nothing was filed. Record the piece with `work note` and hold your bead for it with `work blocked`"))
 }
 
 const SKULD_PERSONA: &str = "skuld";
@@ -1248,11 +1265,17 @@ fn binding<'a>(f: &Filing<'a>) -> Binding<'a> {
     Binding { parent, split_label: parent.is_some() && f.verb == "split", edge }
 }
 
-fn file_and_bind(f: &Filing, register: impl FnOnce(&str) -> (i32, String)) -> (i32, String) {
+fn file_and_bind(
+    f: &Filing,
+    file: impl FnOnce(&Filing, Option<&str>, Option<&str>) -> Result<String, String>,
+    register: impl FnOnce(&str) -> (i32, String),
+    label: impl FnOnce(&str, &str) -> Result<(), String>,
+    block: impl FnOnce(&str, &str) -> Result<(), String>,
+) -> (i32, String) {
     let bead_id = f.bound;
     let tie = binding(f);
     let pilgrim = blocking_edge(f.verb, f.actor, End::Bound, End::New).is_some();
-    let new_id = match crate::bd::file_child(f.title, f.persona, f.repo, tie.parent, f.body, pilgrim.then_some(PILGRIM_CONTRACT_REASON)) {
+    let new_id = match file(f, tie.parent, pilgrim.then_some(PILGRIM_CONTRACT_REASON)) {
         Ok(id) => id,
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
@@ -1261,7 +1284,7 @@ fn file_and_bind(f: &Filing, register: impl FnOnce(&str) -> (i32, String)) -> (i
         return (CANNOT_TELL, format!("LIFECYCLE: {new_id} was filed but has NO lifecycle row and cannot be claimed (do not file it again): {e}"));
     }
     if tie.split_label {
-        if let Err(e) = crate::bd::label_add(&new_id, spira_config::nonwork::SPLIT_LABEL) {
+        if let Err(e) = label(&new_id, spira_config::nonwork::SPLIT_LABEL) {
             return (CANNOT_TELL, format!("{new_id} was filed but could not be marked a split child, so it would be claimable before {bead_id} lands (do not file it again; add the label {}): {e}", spira_config::nonwork::SPLIT_LABEL));
         }
     }
@@ -1270,7 +1293,7 @@ fn file_and_bind(f: &Filing, register: impl FnOnce(&str) -> (i32, String)) -> (i
             End::Bound => bead_id,
             End::New => new_id.as_str(),
         };
-        if let Err(e) = crate::bd::add_blocker(id(blocked), id(blocker)) {
+        if let Err(e) = block(id(blocked), id(blocker)) {
             let failed = match blocked {
                 End::New => format!("could not be made to wait on {bead_id}"),
                 End::Bound => format!("{bead_id} could not be made to wait on it"),
@@ -2839,6 +2862,62 @@ mod tests {
             let tie = super::binding(&super::Filing { verb, after_landing: true, ..filing() });
             assert_eq!(tie, super::Binding { parent: None, split_label: false, edge: Some((super::End::New, super::End::Bound)) }, "{verb}");
         }
+    }
+
+    /// Runs `file_and_bind` over a store that records each call; `edge` is what adding it answers.
+    fn bound_calls(f: &super::Filing, edge: Result<(), String>) -> ((i32, String), Vec<String>) {
+        let calls = std::cell::RefCell::new(Vec::new());
+        let said = |c: String| calls.borrow_mut().push(c);
+        let out = super::file_and_bind(
+            f,
+            |_, parent, _| {
+                said(format!("file parent={parent:?}"));
+                Ok("sp-new".to_string())
+            },
+            |_| (0, String::new()),
+            |id, label| {
+                said(format!("label {id} {label}"));
+                Ok(())
+            },
+            |blocked, blocker| {
+                said(format!("block {blocked} on {blocker}"));
+                edge
+            },
+        );
+        (out, calls.into_inner())
+    }
+
+    #[test_id(tdx8kfm)]
+    #[test]
+    fn a_filing_makes_exactly_the_store_calls_its_binding_names() {
+        let split = || super::Filing { verb: "split", ..filing() };
+        let (out, calls) = bound_calls(&super::Filing { prerequisite: true, ..split() }, Ok(()));
+        assert_eq!(out, (0, "sp-new".to_string()));
+        assert_eq!(calls, ["file parent=None", "block sp-b0 on sp-new"]);
+        let (_, calls) = bound_calls(&split(), Ok(()));
+        assert_eq!(calls, ["file parent=Some(\"sp-b0\")", "label sp-new split-child"]);
+        let (_, calls) = bound_calls(&super::Filing { after_landing: true, ..split() }, Ok(()));
+        assert_eq!(calls, ["file parent=None", "block sp-new on sp-b0"]);
+    }
+
+    #[test_id(t69k3ex)]
+    #[test]
+    fn a_refused_edge_says_which_bead_could_not_be_made_to_wait() {
+        let split = || super::Filing { verb: "split", ..filing() };
+        let ((code, out), _) = bound_calls(&super::Filing { prerequisite: true, ..split() }, Err("no".into()));
+        assert_eq!(code, super::CANNOT_TELL);
+        assert!(out.contains("sp-new was filed but sp-b0 could not be made to wait on it (do not file it again; add the dependency): no"), "{out}");
+        let ((_, out), _) = bound_calls(&super::Filing { after_landing: true, ..split() }, Err("no".into()));
+        assert!(out.contains("sp-new was filed but could not be made to wait on sp-b0"), "{out}");
+    }
+
+    #[test_id(tnohsgp)]
+    #[test]
+    fn a_prerequisite_from_an_incident_lane_is_refused_with_a_way_through() {
+        let why = super::incident_lane_refusal("ops", "scope,incident-x", "incident-x").unwrap();
+        assert!(why.contains("nothing was filed") && why.contains("work blocked"), "{why}");
+        assert_eq!(super::incident_lane_refusal("builder", "scope,plan", "incident-x"), None);
+        assert_eq!(super::incident_lane_refusal("builder", "", ""), None);
     }
 
     // No --for: a call that slips past the flag refusals stops here and files nothing.

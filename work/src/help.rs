@@ -218,10 +218,10 @@ pub static ENTRIES: &[Entry] = &[
     Entry {
         verb: "split",
         group: Group::Followups,
-        does: "Files a bead for a piece of your own bead's scope, parented to it.",
+        does: "Files a bead for a piece of your own bead's scope: a child of it, or with `--prerequisite` a bead beside it that yours waits on.",
         when: "Part of this bead's scope is better landed on its own. Use `--prerequisite` when the piece must land before your bead can.",
         args: &["\"<title>\"", "--repo <name>   (required)", "--body-file -", "--prerequisite   (this piece lands first; your bead waits on it)"],
-        checks: &["the parent is your bead, except with `--prerequisite`, which files beside it and makes your bead wait", "the child never carries your `branch:` label"],
+        checks: &["without `--prerequisite` the parent is your bead; with it the new bead has no parent and yours waits on it", "the new bead never carries your `branch:` label", "`--prerequisite` is refused with `--after-landing`, and for a filer whose lane carries the incident label"],
         refusals: &[],
     },
     Entry {

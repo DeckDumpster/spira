@@ -97,13 +97,13 @@ pub fn followup_brief(bead_id: &str) -> String {
     format!(
         "**File it as a bead** — `work file-followup \"<title>\" --repo <name>` for work that follows
   from this one, `work split \"<title>\" --repo <name>` for a piece of this bead's own scope.
-  Both are parented to `{bead_id}` for you and never carry its `branch:` label. `--repo` is
-  required and is the repo the child's work lives in; it is never copied from this bead.
-  A child for a builder needs a body (`--body-file -`, text on stdin) with a `## Build` section
+  Both are parented to `{bead_id}` for you. For a piece that must land before this bead can,
+  use `work split … --prerequisite`: it is filed beside this bead, not under it, and this bead
+  waits on it. None carries this bead's `branch:` label. `--repo` is required and is the repo
+  the new bead's work lives in; it is never copied from this bead.
+  A bead for a builder needs a body (`--body-file -`, text on stdin) with a `## Build` section
   naming the artifact, component or change to make, and where. A problem with no named
-  deliverable is not builder work: say so in your submission instead of filing it.
-  For a piece that must land before this bead can, use `work split … --prerequisite`: it is
-  filed beside this bead, not under it, and this bead waits on it."
+  deliverable is not builder work: say so in your submission instead of filing it."
     )
 }
 
@@ -137,9 +137,9 @@ When you discover other work rather than doing it:
     work file-followup \"<title>\" --repo <name>
     work split \"<title>\" --repo <name>
 
-Both file through `bead.sh`'s own contract, parented to `{bead_id}` — you never name the
-parent yourself. The exception is a piece that must land first: `work split … --prerequisite`
-files it beside this bead, not under it, and this bead waits on it.
+Both file through `bead.sh`'s own contract, and both are parented to `{bead_id}` unless you add
+a flag — you never name the parent yourself. For a piece that must land first, use
+`work split … --prerequisite`: it is filed beside this bead, not under it, and this bead waits on it.
 
 When you believe this bead's work already landed under another id:
 
