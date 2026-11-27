@@ -1618,6 +1618,9 @@ impl<'a> Run<'a> {
             }
             let ceiling = spira_config::process::cfg_parse(bd::CEILING_ENV).map_err(Abort::Harness)?;
             let lease = bd::lease_for(&bases, &self.s.bead, &self.s.repo_name, ceiling).map_err(|e| Abort::Harness(format!("cannot lease a build directory under {}: {e}", self.conf.s(bd::BASE_ENV))))?;
+            for note in &lease.notes {
+                self.log(&format!("{f}: {note}"));
+            }
             let dir = lease.dir().to_path_buf();
             self.log(&format!("{f}: build directory {} — {}", dir.display(), lease.start()));
             // The shared selective clean: only the workspace crates whose bytes differ from the

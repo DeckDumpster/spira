@@ -138,6 +138,9 @@ fn take(who: &str, root: &Path, repo: &str, out: &mut impl Write) -> Result<bd::
     }
     let ceiling = spira_config::process::cfg_parse(bd::CEILING_ENV)?;
     let lease = bd::lease_for(&bases, who, repo, ceiling).map_err(|e| format!("cannot lease a build directory under {bases:?}: {e}"))?;
+    for note in &lease.notes {
+        let _ = writeln!(out, "# {note}");
+    }
     let path = std::env::var("PATH").unwrap_or_default();
     match bd::clean(&script()?, root, lease.dir(), &path, false, who, Some(repo)) {
         Ok(text) => {

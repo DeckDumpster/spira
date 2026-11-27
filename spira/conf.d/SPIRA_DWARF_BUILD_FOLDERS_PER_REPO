@@ -1,10 +1,10 @@
 TYPE=u32
 GROUP=dwarf
-DOC=THE BUILD FOLDERS ONE REPOSITORY MAY HOLD LEASED AT ONCE: the builds that can run at once. Measured 2026-11-26 as max_dwarves 4 + directed 1 + lane 1 + gate worker 1; re-measure when any of those counts changes. A lease past it is refused.
+DOC=THE BUILD FOLDERS ONE REPOSITORY MAY HOLD LEASED AT ONCE: the builds that can run at once. A count, not an observed peak (the design's, 2026-11-26): max_dwarves 4 + directed 1 + lane 1 + gate worker 1; release builds and hand builds draw on it too. Re-measure when any of those counts changes or a lease is refused by it.
 SCHEMA=Build folders one repository may hold leased at once, the most builds that can run at once (unit: folders; integer; default 7). A lease past it is refused by name.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # THE BUILD FOLDERS ONE REPOSITORY MAY HOLD LEASED AT ONCE: the builds that can run at once.
-    # Measured 2026-11-26 as max_dwarves 4 + directed 1 + lane 1 + gate worker 1; re-measure when
-    # any of those counts changes (law-a-concurrency-ceiling-names-its-measurement).
+    # Re-measure when a count in the DOC changes or a lease is refused by it
+    # (law-a-concurrency-ceiling-names-its-measurement).
     : "${SPIRA_DWARF_BUILD_FOLDERS_PER_REPO:=7}"
 SPIRA_CONF_DEFAULT_EOF
