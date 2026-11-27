@@ -1,7 +1,0 @@
-TYPE=u32
-GROUP=concierge
-DOC=PUSH CAP, seconds: the longest an urgent burst is held before it is delivered as ONE wake, however steadily lines keep arriving.
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # PUSH CAP, seconds: the longest an urgent burst is held before it is delivered as ONE wake, however steadily lines keep arriving.
-    : "${SPIRA_CONCIERGE_PUSH_WINDOW:=5}"
-SPIRA_CONF_DEFAULT_EOF

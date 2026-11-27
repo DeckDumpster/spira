@@ -831,8 +831,6 @@ mod tests {
             inbox: d.join("inbox.log"),
             cursor: d.join("inbox.cursor"),
             bus: inbox_rules::Bus::Off,
-            wake: String::new(),
-            pattern: String::new(),
             name: "batcher".into(),
         }
     }

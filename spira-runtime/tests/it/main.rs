@@ -109,7 +109,7 @@ mod task_g_submission;
 mod task_g_unit_ran;
 mod unit_ran_routing;
 mod view_parity;
-mod world_inbox_push;
+mod world_inbox_announce;
 mod world_claim_count;
 mod world_supersede;
 mod watcher_asks;

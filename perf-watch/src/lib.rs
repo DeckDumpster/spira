@@ -291,12 +291,11 @@ pub fn append_inbox(sink: &Sink, line: &str) {
 }
 
 /// The sink for a run: the configured inbox, unless `--inbox` names another file. That one is
-/// not the Concierge inbox, so nothing is announced or pushed for it.
+/// not the Concierge inbox, so nothing is announced for it.
 pub fn inbox_sink(mut configured: Sink, named: Option<std::path::PathBuf>) -> Sink {
     if let Some(path) = named.filter(|p| *p != configured.inbox) {
         configured.inbox = path;
         configured.bus = inbox_rules::Bus::Off;
-        configured.wake = String::new();
     }
     configured
 }
@@ -467,7 +466,7 @@ mod tests {
         let cfg = Settings { budget_ms: 500, interval_secs: 0, remind_secs: 1800 };
         let dir = testkit::TempDir::new("perf-inbox");
         let inbox = dir.path().join("inbox");
-        let sink = Sink { inbox: inbox.clone(), cursor: dir.path().join("cursor"), bus: inbox_rules::Bus::Off, wake: String::new(), pattern: String::new(), name: "perf-watch".into() };
+        let sink = Sink { inbox: inbox.clone(), cursor: dir.path().join("cursor"), bus: inbox_rules::Bus::Off, name: "perf-watch".into() };
         let mut health = Health::default();
         let pass_at = |epoch: u64, health: &mut Health| {
             clock.epoch.set(epoch);
@@ -488,14 +487,14 @@ mod tests {
 
     #[test_id(tduekw2)]
     #[test]
-    fn only_the_configured_inbox_is_announced_and_pushed() {
-        let configured = Sink { inbox: "concierge".into(), cursor: "cursor".into(), bus: inbox_rules::Bus::Configured, wake: "wake".into(), pattern: "P0".into(), name: "perf-watch".into() };
+    fn only_the_configured_inbox_is_announced() {
+        let configured = Sink { inbox: "concierge".into(), cursor: "cursor".into(), bus: inbox_rules::Bus::Configured, name: "perf-watch".into() };
         for named in [None, Some("concierge".into())] {
             let same = inbox_sink(configured.clone(), named);
-            assert_eq!((same.inbox.to_str(), &same.bus, same.wake.as_str()), (Some("concierge"), &inbox_rules::Bus::Configured, "wake"));
+            assert_eq!((same.inbox.to_str(), &same.bus), (Some("concierge"), &inbox_rules::Bus::Configured));
         }
         let other = inbox_sink(configured, Some("scratch".into()));
-        assert_eq!((other.inbox.to_str(), &other.bus, other.wake.as_str()), (Some("scratch"), &inbox_rules::Bus::Off, ""));
+        assert_eq!((other.inbox.to_str(), &other.bus), (Some("scratch"), &inbox_rules::Bus::Off));
     }
 
     #[test_id(tw6opme)]

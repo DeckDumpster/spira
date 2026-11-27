@@ -991,7 +991,6 @@ dependencies = [
 name = "inbox-rules"
 version = "1.0.0"
 dependencies = [
- "libc",
  "ports",
  "regex",
  "serde_json",
@@ -1006,8 +1005,6 @@ name = "inbox-triage"
 version = "1.0.0"
 dependencies = [
  "inbox-rules",
- "libc",
- "regex",
  "serde_json",
  "spira-config",
  "spira-otel",

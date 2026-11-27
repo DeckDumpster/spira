@@ -15,8 +15,8 @@ const OWN_SOURCE: &str = "spira-lint/src/rules/concierge_send_keys_fence.rs";
 
 /// May name `send-keys`: the wake verb itself and the cockpit tools that drive their own panes.
 const KEYS_ALLOWED: &[&str] = &["concierge.sh", "cockpit/"];
-/// May call the wake verb: the push flusher, the mail
-/// deliverer's `mail.wake` task, and the config that names the verb.
+/// May call the wake verb: the mail deliverer's `mail.wake` task, and the config that names the
+/// verb.
 const WAKE_ALLOWED: &[&str] = &[
     "concierge.sh",
     "spira-runtime/src/tasks/g/mail_wake.rs",
@@ -92,8 +92,7 @@ impl Rule for ConciergeSendKeysFence {
     fn hint(&self) -> &'static str {
         "Signal the Concierge by writing a row to its inbox (spira/inbox-append.sh). Never type \
 into its pane: keystrokes land inside a person's half-written message. Only \
-the push flusher and the mail deliverer may call `concierge.sh wake`, which holds until the \
-input line is empty."
+the mail deliverer may call `concierge.sh wake`, which holds until the input line is empty."
     }
 }
 

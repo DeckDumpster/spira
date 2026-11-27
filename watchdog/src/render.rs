@@ -62,11 +62,10 @@ fn sd_quote(s: &str) -> String {
 }
 
 fn systemd(t: &TimerSpec, prog: &str) -> Vec<(String, String)> {
-    // KillMode=process: a page's detached push flusher outlives the pass that started it.
     let exec: Vec<String> = std::iter::once(prog).chain(t.args.iter().map(String::as_str)).map(sd_quote).collect();
     let env: String = t.env.iter().map(|(k, v)| format!("Environment={}\n", sd_quote(&format!("{k}={v}")))).collect();
     let service = format!(
-        "[Unit]\nDescription={label} — one pass: restart and page when the scheduler is wedged or absent\n\n[Service]\nType=oneshot\nKillMode=process\n{env}ExecStart={exec}\nTimeoutStartSec={every}\n",
+        "[Unit]\nDescription={label} — one pass: restart and page when the scheduler is wedged or absent\n\n[Service]\nType=oneshot\n{env}ExecStart={exec}\nTimeoutStartSec={every}\n",
         label = t.label,
         exec = exec.join(" "),
         every = t.every_s,
@@ -142,7 +141,7 @@ mod tests {
         assert_eq!(files.len(), 2);
         assert_eq!(
             file(&files, "spira-watchdog.service"),
-            "[Unit]\nDescription=spira-watchdog — one pass: restart and page when the scheduler is wedged or absent\n\n[Service]\nType=oneshot\nKillMode=process\nEnvironment=\"SPIRA_SITE=etc/spira dir/site.conf\"\nExecStart=opt/spira/bin/spira-watchdog pass\nTimeoutStartSec=120\n"
+            "[Unit]\nDescription=spira-watchdog — one pass: restart and page when the scheduler is wedged or absent\n\n[Service]\nType=oneshot\nEnvironment=\"SPIRA_SITE=etc/spira dir/site.conf\"\nExecStart=opt/spira/bin/spira-watchdog pass\nTimeoutStartSec=120\n"
         );
         assert_eq!(
             file(&files, "spira-watchdog.timer"),
