@@ -1879,7 +1879,7 @@ pub fn pr_close(gh: &dyn Gh, repo: &Path, pr_n: &str) -> Out {
 
 pub fn pr_comment(gh: &dyn Gh, repo: &Path, pr_n: &str, body: &str) -> Out {
     let r = gh.call(Some(repo), &["pr", "comment", pr_n, "--body", body]);
-    ok(passthrough(&r))
+    Out { code: r.code, lines: passthrough(&r) }
 }
 
 pub fn dispatch(gh: &dyn Gh, repo: &Path, workflow: &str, ref_: &str, suites: &str) -> Out {

@@ -1887,11 +1887,15 @@ fn open_round_pr(
     regreen_seconds: Option<u64>,
     deny: Option<&vm::DenySnapshot>,
 ) -> Result<(), String> {
+    let base_sha = io::confirm_base(repo, batch_head)?;
+    let loom = spira_config::process::cfg("SPIRA_LOOM_ADDR").ok();
+    let shots = io::batch_shots_section(&env_.testenv_bin, &env_.run, loom.as_deref(), &repo.name, &base_sha, batch_head);
     batcher_cut::open_round_pr(
         env_,
         repo,
         merged,
         batch_head,
+        &shots,
         round_start,
         attribution_seconds,
         regreen_seconds,

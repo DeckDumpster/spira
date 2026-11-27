@@ -3496,6 +3496,15 @@ fn forge_run(repo: &Repo, verb: &str, args: &[&str]) -> Result<forge::client::Re
     }
 }
 
+pub fn forge_pr_comment(repo: &Repo, pr: &str, body: &str) -> Result<(), String> {
+    let r = forge_run(repo, "pr-comment", &[pr, body])?;
+    if r.ok() {
+        Ok(())
+    } else {
+        Err(format!("forge pr-comment {pr} exited {}: {}", r.code, r.err.trim()))
+    }
+}
+
 /// The reconciler: arms every open batch PR found without auto-merge.
 pub fn forge_arm_queue(repo: &Repo) -> Result<(), String> {
     armed(&repo.name, forge_run(repo, "pr-arm-queue", &["merge"])?)

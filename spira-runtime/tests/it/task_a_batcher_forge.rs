@@ -378,6 +378,43 @@ fn a_carried_assembling_round_with_nothing_in_flight_is_cut_through_the_handler(
     assert_eq!(leg.members, [("sp-0iavy8.1".to_string(), "t1".to_string())]);
 }
 
+/// The PR opens without its screenshots; they are asked for once, after it exists.
+#[test_id(t4swm4o)]
+#[test]
+fn an_opened_batch_pr_asks_for_its_shots_once() {
+    use spira_runtime::tasks::a::batcher_local::{Assembled, Leg};
+    let mut world = one_submitted_flying(None);
+    let before = serde_json::to_string(&world).unwrap();
+    world.repos.get_mut("deckdumpster").unwrap().open_batch = Some(Batch { pr: 378, head: "h-round".into(), members: vec!["sp-0iavy8.1".into()] });
+    let after = serde_json::to_string(&world).unwrap();
+    let opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let saw = opened.clone();
+    let assembled = serde_json::to_string(&Assembled { merged: vec![("sp-0iavy8.1".into(), "t1".into())], base: "b1".into(), suites: false, ..Assembled::default() }).unwrap();
+    let mut r = TaskRig::new(1, BatcherForge::new(BTreeMap::new()).registration())
+        .unwrap()
+        .double(OBSERVE, move |_| Ok(if saw.load(std::sync::atomic::Ordering::SeqCst) { after.clone() } else { before.clone() }))
+        .double(ASSEMBLE, move |_| Ok(assembled.clone()))
+        .double(BATCH_OPEN, move |_| {
+            opened.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(r#"{"pr":"378","head":"h-round"}"#.into())
+        });
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, ASSEMBLE, BATCH_OPEN].contains(e)) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.tick(STREAM, EventKind::new(STATE, &serde_json::to_string(&waiting_on_a_round(State::Assembling)).unwrap())).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(CADENCE_MS * 2).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let names: Vec<&str> = r.requested().iter().map(|q| q.name.as_str()).collect();
+    let open = names.iter().position(|n| *n == BATCH_OPEN).unwrap_or_else(|| panic!("no batch_open was requested: {names:?}"));
+    let shots: Vec<usize> = (0..names.len()).filter(|i| names[*i] == SHOTS).collect();
+    assert!(matches!(shots[..], [at] if at > open), "one shots request follows the open: {names:?}");
+    let input = &r.requested()[shots[0]].input;
+    let leg: Leg = serde_json::from_str(input).unwrap();
+    assert_eq!((leg.repo.as_str(), leg.base.as_str(), leg.head.as_str(), leg.key.as_str()), ("deckdumpster", "b1", "h-round", "deckdumpster:b1:h-round"));
+    assert_eq!(serde_json::from_str::<serde_json::Value>(input).unwrap()["pr"], "378", "{input}");
+}
+
 /// The rig after three cadences with `hung` requested and never answered.
 fn waiting_out_a_hung(hung: &str) -> TaskRig {
     let assembled = serde_json::to_string(&spira_runtime::tasks::a::batcher_local::Assembled { merged: vec![("dd-a".into(), "t1".into())], ..Default::default() }).unwrap();
