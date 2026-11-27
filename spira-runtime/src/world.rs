@@ -560,7 +560,7 @@ impl World {
         });
         let targets = pr_targets(rows, &self.home_repo, &|r| reg.as_ref().and_then(|reg| forge_tip(reg, git, r)));
         let records = self.recorded_prs(&targets);
-        pr_snapshot_from(&records, &targets, forge, &carry, &|repo, spec| git_ok_with(git, repo, &["show", spec]).ok().map(|out| String::from_utf8_lossy(&out).into_owned()))
+        pr_snapshot_from(&records, &targets, forge, &carry, &|repo, spec| git_ok_with(git, repo, &["cat-file", "blob", spec]).ok().map(|out| String::from_utf8_lossy(&out).into_owned()))
     }
 
     /// Per repo, the PR numbers its batch record and its publish record name; an `Err` where
