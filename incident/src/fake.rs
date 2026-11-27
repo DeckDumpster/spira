@@ -8,11 +8,13 @@ use crate::decide::{BeadRow, BeadStatus, Scope};
 use crate::ports::{Bd, Clock, Mailer};
 use crate::run::FileConfig;
 
+/// One `list` call: `(scope, label, closed_after, external_ref)`.
+pub(crate) type ListCall = (Scope, Option<String>, Option<String>, Option<String>);
+
 #[derive(Default)]
 pub(crate) struct FakeBd {
     pub(crate) rows: RefCell<Vec<BeadRow>>,
-    /// Every `list` call's `(scope, label, closed_after, external_ref)`.
-    pub(crate) lists: RefCell<Vec<(Scope, Option<String>, Option<String>, Option<String>)>>,
+    pub(crate) lists: RefCell<Vec<ListCall>>,
     pub(crate) reachable: bool,
     /// The lifecycle machine does not answer: every dedup pass is blind.
     pub(crate) lc_down: bool,
