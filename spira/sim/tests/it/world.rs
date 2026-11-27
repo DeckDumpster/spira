@@ -1,6 +1,6 @@
 use spira_sim::world::{
     broker_pid_file, broker_socket, control_store, db_root, down, is_world_serve, lc_pid_file, lc_socket, release_source,
-    serve_argv, ProcessSteps, ReleaseSource, Steps, RELEASE_ENV, TESTENV_ENV,
+    serve_argv, start_broker, ProcessSteps, ReleaseSource, Steps, RELEASE_ENV, TESTENV_ENV,
 };
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -136,7 +136,10 @@ fn the_worlds_real_broker_accepts_once_up_and_down_leaves_no_process_behind() {
     let template = "mosquitto.conf";
     std::fs::copy(testkit::manifest_dir().join("../../systemd").join(template), systemd.join(template)).unwrap();
 
-    ProcessSteps.broker_up(&dir).unwrap();
+    // The PATH `mosquitto`, as `testkit::broker`: a round's HOME holds no pinned environment.
+    let path = std::env::var_os("PATH").expect("PATH is set");
+    let mosquitto = std::env::split_paths(&path).map(|d| d.join("mosquitto")).find(|p| p.is_file()).expect("a mosquitto on PATH");
+    start_broker(&dir, mosquitto.to_str().expect("a UTF-8 path")).unwrap();
 
     let pid: u32 = std::fs::read_to_string(broker_pid_file(&dir)).unwrap().parse().unwrap();
     let socket = broker_socket(&dir);

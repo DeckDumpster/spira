@@ -63,8 +63,8 @@ const LC_STOP_DEADLINE: Duration = Duration::from_secs(5); // batch-job: serve e
 /// The PID world up recorded for the world's mosquitto; world down signals only it.
 const BROKER_PID: &str = "broker.pid";
 const BROKER_LOG: &str = "broker.log";
-/// The HOME world up found the broker's binary under.
-const BROKER_HOME: &str = "broker.home";
+/// The program world up started the broker with.
+const BROKER_PROGRAM: &str = "broker.program";
 const BROKER_READY_DEADLINE: Duration = Duration::from_secs(30); // batch-job: mosquitto start to its READY=1
 /// Every key declared: a process resolves its config only from a file that declares them all
 /// (spira-config/src/process.rs), so the world's config starts from the complete fixture, read
@@ -343,19 +343,28 @@ pub fn broker_pid_file(world: &Path) -> PathBuf {
     world.join(BROKER_PID)
 }
 
-/// The argv world up starts the world's broker with: the pinned environment's `mosquitto`
-/// under `home`, never one found on PATH, on a config inside the world.
-pub fn broker_argv(home: &str, world: &Path) -> Vec<String> {
+/// The broker a world runs: the pinned environment's `mosquitto` under `home`, never one found
+/// on PATH. Refused, naming the path, when it is not there.
+fn broker_program(home: &str) -> Result<String, String> {
+    let program = format!("{}/mosquitto", spira_config::spira_env_bin(home));
+    if !Path::new(&program).is_file() {
+        return Err(format!("the world's broker needs {program}, which is not there"));
+    }
+    Ok(program)
+}
+
+/// The argv the world's broker is started with: `program` on a config inside the world.
+pub fn broker_argv(program: &str, world: &Path) -> Vec<String> {
     vec![
-        format!("{}/mosquitto", spira_config::spira_env_bin(home)),
+        program.to_string(),
         "-c".to_string(),
         world.join("run").join(release::broker::CONF_FILE).display().to_string(),
     ]
 }
 
 /// Whether a `/proc/<pid>/cmdline` (NUL-separated) is exactly this world's broker.
-pub fn is_world_broker(cmdline: &[u8], home: &str, world: &Path) -> bool {
-    is_argv(cmdline, &broker_argv(home, world))
+pub fn is_world_broker(cmdline: &[u8], program: &str, world: &Path) -> bool {
+    is_argv(cmdline, &broker_argv(program, world))
 }
 
 /// A world's socket path must fit `sun_path`; refused before anything is built.
@@ -650,58 +659,60 @@ impl Steps for ProcessSteps {
     }
 
     fn broker_up(&self, world: &Path) -> Result<(), String> {
-        let home = invoking_home()?;
-        let argv = broker_argv(&home, world);
-        if !Path::new(&argv[0]).is_file() {
-            return Err(format!("the world's broker needs {}, which is not there", argv[0]));
-        }
-        let run_dir = world.join("run");
-        let socket = broker_socket(world);
-        let socket = socket.to_str().ok_or_else(|| format!("{} is not UTF-8", socket.display()))?;
-        release::broker::place_conf(&world.join("release/systemd"), socket, &run_dir)?;
-        let notify_path = run_dir.join(BROKER_NOTIFY);
-        let _ = std::fs::remove_file(&notify_path);
-        let notify = UnixDatagram::bind(&notify_path).map_err(at(&notify_path))?;
-        notify.set_read_timeout(Some(Duration::from_millis(20))).map_err(at(&notify_path))?;
-        let log_path = world.join(BROKER_LOG);
-        let log = std::fs::File::create(&log_path).map_err(at(&log_path))?;
-        let mut child = Command::new(&argv[0]) // batch-job: the world's broker lives as long as the world, and down stops it
-            .args(&argv[1..])
-            .env_clear()
-            .env("NOTIFY_SOCKET", &notify_path)
-            .stdin(Stdio::null())
-            .stdout(log.try_clone().map_err(|e| e.to_string())?)
-            .stderr(log)
-            .spawn()
-            .map_err(|e| format!("{}: {e}", argv[0]))?;
-        std::fs::write(broker_pid_file(world), child.id().to_string()).map_err(at(world))?;
-        std::fs::write(world.join(BROKER_HOME), &home).map_err(at(world))?;
-        let said = |what: String| format!("{what}: {}", std::fs::read_to_string(&log_path).unwrap_or_default().trim());
-        let start = Instant::now();
-        let mut buf = [0u8; 64];
-        loop {
-            if notify.recv(&mut buf).is_ok_and(|n| &buf[..n] == b"READY=1") {
-                let _ = std::fs::remove_file(&notify_path);
-                return Ok(());
-            }
-            if let Some(st) = child.try_wait().map_err(|e| e.to_string())? {
-                return Err(said(format!("the world's mosquitto exited before it was ready: {st}")));
-            }
-            if start.elapsed() > BROKER_READY_DEADLINE {
-                return Err(said(format!("the world's mosquitto was not ready within {}s", BROKER_READY_DEADLINE.as_secs())));
-            }
-        }
+        start_broker(world, &broker_program(&invoking_home()?)?)
     }
 
     fn broker_stop(&self, world: &Path, pid: u32) -> Result<(), String> {
-        // The HOME up used, not this caller's: a `down` under another would leave the broker running.
-        let home = std::fs::read_to_string(world.join(BROKER_HOME)).map_err(at(&world.join(BROKER_HOME)))?;
+        // What up started, not what this caller would: a `down` under another HOME still stops it.
+        let recorded = world.join(BROKER_PROGRAM);
+        let program = std::fs::read_to_string(&recorded).map_err(at(&recorded))?;
         let cmdline = std::fs::read(format!("{}/{pid}/cmdline", system_paths::PROC)).unwrap_or_default();
-        if !alive(pid) || !is_world_broker(&cmdline, &home, world) {
+        if !alive(pid) || !is_world_broker(&cmdline, &program, world) {
             eprintln!("sim: broker pid {pid} is gone or is no longer this world's broker; nothing signalled");
             return Ok(());
         }
         terminate(pid, "mosquitto")
+    }
+}
+
+/// [`Steps::broker_up`] with the broker `program` named by the caller.
+pub fn start_broker(world: &Path, program: &str) -> Result<(), String> {
+    let argv = broker_argv(program, world);
+    let run_dir = world.join("run");
+    let socket = broker_socket(world);
+    let socket = socket.to_str().ok_or_else(|| format!("{} is not UTF-8", socket.display()))?;
+    release::broker::place_conf(&world.join("release/systemd"), socket, &run_dir)?;
+    let notify_path = run_dir.join(BROKER_NOTIFY);
+    let _ = std::fs::remove_file(&notify_path);
+    let notify = UnixDatagram::bind(&notify_path).map_err(at(&notify_path))?;
+    notify.set_read_timeout(Some(Duration::from_millis(20))).map_err(at(&notify_path))?;
+    let log_path = world.join(BROKER_LOG);
+    let log = std::fs::File::create(&log_path).map_err(at(&log_path))?;
+    let mut child = Command::new(&argv[0]) // batch-job: the world's broker lives as long as the world, and down stops it
+        .args(&argv[1..])
+        .env_clear()
+        .env("NOTIFY_SOCKET", &notify_path)
+        .stdin(Stdio::null())
+        .stdout(log.try_clone().map_err(|e| e.to_string())?)
+        .stderr(log)
+        .spawn()
+        .map_err(|e| format!("{}: {e}", argv[0]))?;
+    std::fs::write(broker_pid_file(world), child.id().to_string()).map_err(at(world))?;
+    std::fs::write(world.join(BROKER_PROGRAM), program).map_err(at(world))?;
+    let said = |what: String| format!("{what}: {}", std::fs::read_to_string(&log_path).unwrap_or_default().trim());
+    let start = Instant::now();
+    let mut buf = [0u8; 64];
+    loop {
+        if notify.recv(&mut buf).is_ok_and(|n| &buf[..n] == b"READY=1") {
+            let _ = std::fs::remove_file(&notify_path);
+            return Ok(());
+        }
+        if let Some(st) = child.try_wait().map_err(|e| e.to_string())? {
+            return Err(said(format!("the world's mosquitto exited before it was ready: {st}")));
+        }
+        if start.elapsed() > BROKER_READY_DEADLINE {
+            return Err(said(format!("the world's mosquitto was not ready within {}s", BROKER_READY_DEADLINE.as_secs())));
+        }
     }
 }
 
@@ -1490,8 +1501,8 @@ mod locator_tests {
         let w = Path::new("tmp/w1");
         let line = |args: &[&str]| args.iter().flat_map(|a| a.bytes().chain([0])).collect::<Vec<u8>>();
         let ours = "h/.local/lib/spira-env/bin/mosquitto";
-        assert!(is_world_broker(&line(&[ours, "-c", "tmp/w1/run/mosquitto.conf"]), "h", w));
-        assert_eq!(broker_argv("h", w), vec![ours, "-c", "tmp/w1/run/mosquitto.conf"]);
+        assert!(is_world_broker(&line(&[ours, "-c", "tmp/w1/run/mosquitto.conf"]), ours, w));
+        assert_eq!(broker_argv(ours, w), vec![ours, "-c", "tmp/w1/run/mosquitto.conf"]);
         for other in [
             line(&[ours, "-c", "tmp/w2/run/mosquitto.conf"]), // another world
             line(&["mosquitto", "-c", "tmp/w1/run/mosquitto.conf"]), // one found on PATH
@@ -1499,8 +1510,20 @@ mod locator_tests {
             line(&["sleep", "30"]),
             Vec::new(), // a zombie's cmdline
         ] {
-            assert!(!is_world_broker(&other, "h", w), "{other:?}");
+            assert!(!is_world_broker(&other, ours, w), "{other:?}");
         }
+    }
+
+    #[test_id(tcn1jbg)]
+    #[test]
+    fn a_worlds_broker_is_the_pinned_environments_and_its_absence_is_refused_naming_it() {
+        let t = testkit::TempDir::new("simbp");
+        let home = t.join("home").display().to_string();
+        let want = format!("{}/mosquitto", spira_config::spira_env_bin(&home));
+        assert!(broker_program(&home).unwrap_err().contains(&want));
+        std::fs::create_dir_all(spira_config::spira_env_bin(&home)).unwrap();
+        std::fs::write(&want, "").unwrap();
+        assert_eq!(broker_program(&home).unwrap(), want);
     }
 
     #[test_id(tm3eksw)]
