@@ -396,6 +396,8 @@ mod tests {
             let outer = env_read();
             let inner = env_read();
             drop(inner);
+            // Dropping a nested guard must not forget the outer hold.
+            drop(env_read());
             nested_tx.send(()).unwrap();
             release_rx.recv().unwrap();
             drop(outer);

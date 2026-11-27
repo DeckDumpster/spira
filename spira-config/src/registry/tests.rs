@@ -211,3 +211,39 @@
         let registry = b.join().unwrap().expect("load_first waited for the swap to end and read the real home");
         assert!(registry.get("SPIRA_RUN").is_some());
     }
+
+    #[test_id(tamnp1o)]
+    #[test]
+    fn a_first_load_waiting_on_the_environment_lock_holds_no_other_config_lock() {
+        const CHILD: &str = "REGISTRY_LOCK_ORDER_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // Only a process that has loaded no registry takes the first-load path.
+            let name = std::thread::current().name().unwrap().to_string();
+            let out = {
+                let _g = testkit::env(&[(CHILD, Some("1"))]);
+                let mut c = std::process::Command::new(std::env::current_exe().unwrap());
+                c.args([name.as_str(), "--exact"]);
+                c.stdout(std::process::Stdio::piped()).spawn().unwrap()
+            };
+            let out = out.wait_with_output().unwrap();
+            let text = String::from_utf8_lossy(&out.stdout);
+            assert!(out.status.success() && text.contains("1 passed"), "{text}");
+            return;
+        }
+        let dir = testkit::TempDir::new("registry-lock-order");
+        let path = dir.path().join("spira.toml");
+        std::fs::write(&path, "[spira]\n").unwrap();
+        let (b_done_tx, b_done_rx) = std::sync::mpsc::channel::<()>();
+        let held = testkit::env(&[]);
+        let b = std::thread::spawn(move || {
+            let _done = b_done_tx;
+            let _ = crate::load(&path);
+        });
+        // B cannot end while the lock is held; the timeout is the time it has to reach it.
+        let _ = b_done_rx.recv_timeout(std::time::Duration::from_millis(300));
+        let free = crate::LAST_VALIDATED.try_lock().is_ok();
+        drop(held);
+        b.join().unwrap();
+        assert!(free, "load_layered waits on the environment lock while holding LAST_VALIDATED");
+    }
+
