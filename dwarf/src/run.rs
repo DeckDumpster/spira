@@ -1550,7 +1550,14 @@ impl<'a> Run<'a> {
         self.s.session_started = true;
         let agent = self.agent_bin();
         let child = env.child();
+        let site = (self.rune.name == pilgrim_world::RUNE)
+            .then(|| pilgrim_world::mcp_server(&self.conf.s(pilgrim_world::MCP_SERVERS_KEY), &self.s.repo_name))
+            .flatten();
+        if let Some((name, _)) = &site {
+            pilgrim_world::allow_server(&mut argv, name);
+        }
         let mut pilgrim: Option<(String, PathBuf)> = None;
+        let mut login = String::new();
         let (prog, args, spec_env) = {
             // The model runs bound to this bead under the restricted environment (design
             // §3.5; replaces the work-env.sh wrapper process, sp-zpaq0): same allow-list,
@@ -1567,16 +1574,26 @@ impl<'a> Run<'a> {
             if self.rune.name == pilgrim_world::RUNE {
                 let world = pilgrim_world::world_dir(self.run_dir(), &bead);
                 let sim = spira_config::release_env::tool("sim").map_err(|e| Abort::Harness(format!("pilgrim world: {e}")))?;
-                let named = pilgrim_world::up(self.d.exec, &sim, &world).map_err(Abort::Harness)?;
+                if site.is_some() {
+                    login = spira_config::release_env::tool("pilgrim-login").map_err(|e| Abort::Harness(format!("pilgrim sign-in: {e}")))?;
+                } else {
+                    self.log(&format!("{}: {} names no pilgrim MCP server — this walk has no site sign-in", self.f(), self.s.repo_name));
+                }
+                let signin = site_sign_in(&site, &agent, &login, &bead, work);
+                let (named, said) = pilgrim_world::open(self.d.exec, &sim, &world, signin.as_ref(), &|k| self.conf.s(k)).map_err(Abort::Harness)?;
+                for l in said.lines().filter(|l| !l.trim().is_empty()) {
+                    self.log(&format!("{}: {l}", self.f()));
+                }
                 model_env.extend(named);
                 pilgrim = Some((sim, world));
             }
-            (agent, argv, model_env)
+            (agent.clone(), argv, model_env)
         };
+        let signin = site_sign_in(&site, &agent, &login, &bead, work);
         let spec = SessionSpec { prog, args, stdin_file: task_file, log: logf, cwd: work.to_path_buf(), env: spec_env, timeout: self.rune.timeout_seconds, halted: Some(self.run_dir().join("world.halted")) };
         if let Some(why) = brief::spent_wall(self.s.wall_deadline, self.now()) {
             if let Some((sim, world)) = &pilgrim {
-                pilgrim_world::down(self.d.exec, sim, world);
+                pilgrim_world::close(self.d.exec, sim, world, signin.as_ref());
             }
             return Err(Abort::Die(format!("{}: {bead}: {why}", self.f())));
         }
@@ -1593,7 +1610,7 @@ impl<'a> Run<'a> {
             feed.ended(exited, rc, (exited - launched).max(0));
         }
         if let Some((sim, world)) = &pilgrim {
-            pilgrim_world::down(self.d.exec, sim, world);
+            pilgrim_world::close(self.d.exec, sim, world, signin.as_ref());
         }
         self.s.session_exited_at = Some(exited);
         self.s.session_wall_s = Some((exited - launched).max(0));
@@ -1925,6 +1942,10 @@ pub const FIXTURE_DROP: &str = r#"IFS= read -r -d '' __lib || exit 96
 TESTDB_SHARED=0
 . "$__lib" && testdb_drop
 "#;
+
+fn site_sign_in<'a>(site: &'a Option<(String, String)>, agent: &'a str, login: &'a str, bead: &'a str, work: &'a Path) -> Option<pilgrim_world::SignIn<'a>> {
+    site.as_ref().map(|(name, url)| pilgrim_world::SignIn { name, url, agent, login, bead, work })
+}
 
 pub fn is_executable(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
