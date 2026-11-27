@@ -7722,6 +7722,102 @@ fn a_ci_entry_that_wrote_no_verdict_is_a_faulted_pass_naming_the_round_fault_not
     assert!(!t.out().contains("red=testenv"), "{}", t.out());
 }
 
+/// A one-member own-testenv round whose CI entry never ran, certified twice. The landing ref
+/// declares what the round does; `vary` departs from that before the first certify.
+fn two_passes_whose_ci_entry_never_ran(vary: impl FnOnce(&T)) -> T {
+    let t = round_world();
+    *t.scripts.repo_testenv.borrow_mut() = RunOut {
+        rc: 1,
+        out: String::new(),
+        err: String::new(),
+    };
+    t.scripts.repo_no_ci_result.set(true);
+    *t.scripts.repo_round_fault.borrow_mut() = Some("ROUND-FAULT: FAULT with no phase marker (the VM script never reached its EXIT trap, or round-phase did not come back) (read from the launcher's stderr: the script left no log): round-vm: podman pull /work failed\n".into());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    declare_own_testenv(&t);
+    t.git.files.borrow_mut().insert(
+        "local/main:.spira/testenv.toml".into(),
+        format!("ci_entry = \"deploy/ci.sh all\"\nimage = \"{OWN_IMAGE}\"\n"),
+    );
+    vary(&t);
+    for _ in 0..2 {
+        assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
+    }
+    t
+}
+
+#[test_id(t8lcaa9)]
+#[test]
+fn a_one_member_round_whose_ci_entry_never_ran_twice_ejects_nobody_and_pages_the_infrastructure() {
+    let t = two_passes_whose_ci_entry_never_ran(|_| {});
+    assert!(t.out().contains("fault=infra-fault"), "{}", t.out());
+    assert!(!t.lib.has("bead_reopen sp-a"), "{:?}", t.lib.calls.borrow());
+    assert!(kv_of(&t, "round")["members"].contains("sp-a"));
+    let calls = t.lib.calls.borrow();
+    let paged = calls
+        .iter()
+        .filter(|c| c.starts_with("notify") && c.contains("cannot be placed"))
+        .count();
+    assert_eq!(paged, 1, "{calls:?}");
+}
+
+#[test_id(t1bn5r8)]
+#[test]
+fn a_one_member_round_whose_changed_declaration_stops_the_entry_twice_ejects_the_member() {
+    let t = two_passes_whose_ci_entry_never_ran(|t| {
+        t.git.files.borrow_mut().insert(
+            "local/main:.spira/testenv.toml".into(),
+            "ci_entry = \"deploy/ci.sh all\"\nimage = \"docker.io/library/rust:landed\"\n".into(),
+        );
+    });
+    assert!(t.lib.has("bead_reopen sp-a eject-red"), "{:?}", t.lib.calls.borrow());
+    assert!(!t.out().contains("fault=infra-fault"), "{}", t.out());
+    assert!(
+        t.err().contains(".spira/testenv.toml differs from the landing ref"),
+        "{}",
+        t.err()
+    );
+    let calls = t.lib.calls.borrow();
+    assert!(
+        calls.iter().any(|c| c.contains("podman pull /work failed")),
+        "{calls:?}"
+    );
+}
+
+#[test_id(tyfjvom)]
+#[test]
+fn a_ci_entry_that_hung_twice_under_the_landed_declaration_is_still_a_faulted_pass() {
+    let t = two_passes_whose_ci_entry_never_ran(|t| t.scripts.repo_testenv.borrow_mut().rc = 124);
+    assert!(t.lib.has("bead_reopen sp-a eject-red"), "{:?}", t.lib.calls.borrow());
+    assert!(!t.out().contains("fault=infra-fault"), "{}", t.out());
+}
+
+#[test_id(tp6xdds)]
+#[test]
+fn a_run_that_faulted_twice_after_writing_a_ci_result_is_still_a_faulted_pass() {
+    let t = two_passes_whose_ci_entry_never_ran(|t| {
+        t.scripts.repo_testenv.borrow_mut().rc = 3;
+        t.scripts.repo_no_ci_result.set(false);
+        *t.scripts.repo_ci_status.borrow_mut() = Some("ok".into());
+    });
+    assert!(t.lib.has("bead_reopen sp-a eject-red"), "{:?}", t.lib.calls.borrow());
+    assert!(!t.out().contains("fault=infra-fault"), "{}", t.out());
+}
+
+#[test_id(tncoyp8)]
+#[test]
+fn a_ci_entry_that_never_ran_with_no_landing_ref_to_compare_ejects_nobody() {
+    let t = two_passes_whose_ci_entry_never_ran(|t| t.lib.r.borrow_mut().landref = None);
+    assert!(t.out().contains("fault=infra-fault"), "{}", t.out());
+    assert!(!t.lib.has("bead_reopen sp-a"), "{:?}", t.lib.calls.borrow());
+}
+
 #[test_id(tnljucv)]
 #[test]
 fn a_ci_entry_exit_1_with_no_verdict_and_no_round_fault_is_a_faulted_pass_naming_the_exit() {
