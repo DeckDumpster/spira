@@ -87,6 +87,11 @@ path = "tests/cadence_tool.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "configure_tool"
+path = "tests/configure_tool.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "deploy_script"
 path = "tests/deploy_script.rs"
 required-features = ["integration"]

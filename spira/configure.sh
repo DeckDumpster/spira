@@ -23,12 +23,12 @@
 #
 #   SPIRA_DOLT_DATA    Dolt server data directory. install.sh creates it, writes
 #                      dolt-server.yaml, and starts dolt-beads.service. install
-#                      refuses it empty.
+#                      refuses it empty, so configure does too.
 #
 # USAGE
 #   configure.sh [--out PATH] [--prod PATH] [--max-dwarves N]
 #                [--max-live-dwarves N|""] [--loom-addr ADDR]
-#                [--dolt-data PATH|""]
+#                [--dolt-data PATH]
 #
 # NON-INTERACTIVE — every prompt has an env-var path:
 #   CONFIGURE_OUT             output file (default: ${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml)
@@ -36,7 +36,7 @@
 #   CONFIGURE_MAX_DWARVES       SPIRA_MAX_DWARVES
 #   CONFIGURE_MAX_LIVE_DWARVES  SPIRA_MAX_LIVE_DWARVES (empty string = the registered default)
 #   CONFIGURE_LOOM_ADDR       SPIRA_LOOM_ADDR
-#   CONFIGURE_DOLT_DATA       SPIRA_DOLT_DATA
+#   CONFIGURE_DOLT_DATA       SPIRA_DOLT_DATA (empty is refused)
 #
 # An unset env var triggers an interactive prompt if stdin is a TTY, or falls
 # through to the derived default with a notice if not.
@@ -46,7 +46,9 @@
 #   default, because the resolver refuses a key the file does not declare. Further
 #   inputs: CONFIGURE_INSTANCE, CONFIGURE_ID_PREFIX, CONFIGURE_HOME_REPO,
 #   CONFIGURE_HOME_REPO_PATH, CONFIGURE_DB, CONFIGURE_RUN, CONFIGURE_RELEASES,
-#   CONFIGURE_OPERATED (0 = nobody reads escalations: doctor warns rather than fails).
+#   CONFIGURE_OPERATED (0 = nobody reads escalations: doctor warns rather than fails),
+#   CONFIGURE_GATE_TARGET_CAP_MIB and CONFIGURE_METRICS_FLUSH_MINUTES (no registered
+#   default: init refuses to write the file without them).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # spira-config reads the key registry of the release this script ships in.
@@ -92,6 +94,12 @@ done
 if [ -z "$_out" ]; then
     _out="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml"
 fi
+_data="${XDG_DATA_HOME:-$HOME/.local/share}/spira"
+
+if [ -n "$_dolt_given" ] && [ -z "$_dolt" ]; then
+    printf 'configure: ERROR: SPIRA_DOLT_DATA is empty — install refuses it; give --dolt-data the directory the dolt server serves, or leave it unset for %s\n' "$_data/dolt" >&2
+    exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Guard: never overwrite an existing config.
@@ -106,7 +114,6 @@ fi
 # Defaults for the keys asked about and the paths a fresh box must name. Every other
 # key is left to `spira-config init`, which writes it at its registered default.
 # ---------------------------------------------------------------------------
-_data="${XDG_DATA_HOME:-$HOME/.local/share}/spira"
 _releases="${CONFIGURE_RELEASES:-$_data/releases}"
 declare -A _defaults=(
     [SPIRA_PROD]="$_releases/current"
@@ -173,7 +180,7 @@ if [ -z "$_dolt_given" ]; then
     _dolt="$(_ask \
         "SPIRA_DOLT_DATA — the Dolt server's data directory.
   install.sh creates this directory, writes dolt-server.yaml, and starts
-  dolt-beads.service to manage the server. install refuses it empty." \
+  dolt-beads.service to manage the server. Empty is refused." \
         SPIRA_DOLT_DATA "$(_def SPIRA_DOLT_DATA)")"
 fi
 
@@ -191,18 +198,18 @@ _init_args=(
     --db "${CONFIGURE_DB:-$_data/db}"
     --run "${CONFIGURE_RUN:-$_data/run}"
     --releases "$_releases"
-    --dolt_data "${_dolt:-$_data/dolt}"
+    --dolt_data "$_dolt"
     --prod "$_prod"
     --max_dwarves "${_maxdwarves:-4}"
     --loom_addr "${_loom:-127.0.0.1:8788}"
 )
 [ -n "$_maxlive" ] && _init_args+=(--max_live_dwarves "$_maxlive")
 [ -n "${CONFIGURE_OPERATED:-}" ] && _init_args+=(--operated "$CONFIGURE_OPERATED")
+[ -n "${CONFIGURE_GATE_TARGET_CAP_MIB:-}" ] && _init_args+=(--gate_target_cap_mib "$CONFIGURE_GATE_TARGET_CAP_MIB")
+[ -n "${CONFIGURE_METRICS_FLUSH_MINUTES:-}" ] && _init_args+=(--metrics_flush_minutes "$CONFIGURE_METRICS_FLUSH_MINUTES")
 mkdir -p "$(dirname "$_out")"
 spira-config init "${_init_args[@]}" >/dev/null </dev/null \
     || { rm -f "$_out"; printf 'configure: ERROR: could not write %s\n' "$_out" >&2; exit 1; }
-[ -n "$_dolt" ] || spira-config set spira.dolt_data "" "$_out" >/dev/null \
-    || { rm -f "$_out"; printf 'configure: ERROR: could not write dolt_data\n' >&2; exit 1; }
 
 # Round-trip: the generated file must pass spira-config's own validation.
 if ! _rt_warn="$(spira-config validate "$_out" 2>&1)"; then

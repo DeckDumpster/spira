@@ -381,7 +381,7 @@ pub fn check_store(w: &dyn World) -> Vec<Line> {
                 if m.dolt_mode.as_deref() == Some("embedded") {
                     out.push(fail(
                         "store is in embedded mode — one client at a time, every call serialises on one lock",
-                        format!("Set SPIRA_DOLT_DATA in {conf} and re-run install.sh to migrate to server mode."),
+                        format!("Move {db}/.beads aside (its beads are not migrated) and re-run install to create a server store."),
                     ));
                 } else {
                     out.push(ok(format!("store mode: {}", m.dolt_mode.unwrap_or_else(|| "unknown".to_string()))));
@@ -431,6 +431,11 @@ pub fn check_store(w: &dyn World) -> Vec<Line> {
                 "The database is unreachable without the server. Start it:\n        systemctl --user start dolt-beads.service\n        Or run install.sh to enable and start it.",
             ));
         }
+    } else if install {
+        out.push(fail(
+            "SPIRA_DOLT_DATA is unset — install refuses it in phase 3",
+            format!("Set spira.dolt_data in {conf} to the directory the dolt server serves."),
+        ));
     } else {
         let meta_srv = Path::new(&db).join(".beads").join("metadata.json");
         if w.file_exists(&meta_srv) {

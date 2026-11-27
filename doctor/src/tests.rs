@@ -556,7 +556,10 @@ fn store_embedded_mode_fails() {
     f.files.borrow_mut().push(PathBuf::from("db/.beads/metadata.json"));
     f.store_meta.borrow_mut().insert(PathBuf::from("db/.beads/metadata.json"), StoreMeta { dolt_mode: Some("embedded".into()), ..Default::default() });
     let out = check_store(&f);
-    assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("embedded mode")));
+    let embedded = out.iter().find(|l| l.level == Level::Fail && l.msg.contains("embedded mode")).expect("an embedded store fails");
+    let detail = embedded.detail.as_deref().unwrap_or("");
+    assert!(!detail.contains("migrate to") && !detail.contains("to migrate"), "install does not migrate: {detail}");
+    assert!(detail.contains("db/.beads"), "{detail}");
 }
 
 #[test_id(tf8zcaf)]
@@ -605,6 +608,37 @@ fn store_dolt_server_unreachable_fails() {
     f.store_meta.borrow_mut().insert(PathBuf::from("db/.beads/metadata.json"), StoreMeta { dolt_server_host: "127.0.0.1".into(), dolt_server_port: Some(3306), ..Default::default() });
     let out = check_store(&f);
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("no server answers")));
+}
+
+fn assert_install_refuses_an_unnamed_dolt_data_dir(out: &[Line]) {
+    let named = out.iter().find(|l| l.level == Level::Fail && l.msg.contains("SPIRA_DOLT_DATA"));
+    let named = named.unwrap_or_else(|| panic!("no FAIL names SPIRA_DOLT_DATA: {out:?}"));
+    assert!(named.detail.as_deref().unwrap_or("").contains("spira.dolt_data"), "{named:?}");
+    assert!(!out.iter().any(|l| l.msg.contains("managed independently") || l.msg.contains("server answering")), "{out:?}");
+}
+
+// covers: UC-config-store-preflight-07
+#[test_id(tsks6b7)]
+#[test]
+fn store_unset_dolt_data_fails_during_install() {
+    let f = Fake::default();
+    f.set("SPIRA_DB", "db");
+    f.set("SPIRA_DOCTOR_INSTALLING", "1");
+    assert_install_refuses_an_unnamed_dolt_data_dir(&check_store(&f));
+}
+
+// covers: UC-config-store-preflight-07
+#[test_id(t6g5llx)]
+#[test]
+fn store_empty_dolt_data_fails_during_install_even_with_a_server_answering() {
+    let f = Fake::default();
+    f.set("SPIRA_DB", "db");
+    f.set("SPIRA_DOCTOR_INSTALLING", "1");
+    f.set("SPIRA_DOLT_DATA", "");
+    *f.tcp_open.borrow_mut() = true;
+    f.files.borrow_mut().push(PathBuf::from("db/.beads/metadata.json"));
+    f.store_meta.borrow_mut().insert(PathBuf::from("db/.beads/metadata.json"), StoreMeta { dolt_server_host: "127.0.0.1".into(), dolt_server_port: Some(3306), ..Default::default() });
+    assert_install_refuses_an_unnamed_dolt_data_dir(&check_store(&f));
 }
 
 // ============================================================================ duckdb
