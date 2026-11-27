@@ -11,6 +11,7 @@ not repeated here unless they have no other home.
 | `sweep.escape_census` | `escape-classify.sh census` | weekly | escape-by-class census |
 | `sweep.export_beads` | in-process (`spira-runtime`) | every 6 h | regenerate the bead mirror |
 | `watch.sop_lint` | `sop-lint-watch.sh` | every 1 h | lint the SOP shelf |
+| `incident.drain` | in-process (`spira-runtime`) | every 1 min while the spool holds anything | file spooled events, one filing per reference; note a stuck spool to the Concierge |
 | `incident.settle` | `incident settle` | every 5 min | close incidents whose fix landed and detector is quiet |
 
 Long-running services with no timer: `spira-runtime`, `dolt-beads`, `dolt-persist`,

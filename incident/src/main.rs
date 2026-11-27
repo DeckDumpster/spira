@@ -4,7 +4,7 @@
 //!   incident systemd <unit>           file an incident for a failed systemd user unit
 //!   incident file <title> [-|<file>]  file one from an arbitrary payload
 //!   incident alarm <title> [-|<file>]  note a detector's condition in the Concierge inbox, no bead
-//!   incident drain                    file everything the spool is holding
+//!   incident drain                    one pass over the spool, one filing per reference
 //!   incident list                     open incidents
 //!   incident settle                   close incidents whose fixes landed and whose detector is quiet
 //!   incident collapse <dup> --of <keep>  mark <dup> a duplicate of <keep> and label it for the meter
@@ -412,7 +412,7 @@ fn main() -> ExitCode {
             }
         }
         _ => {
-            eprintln!("incident.sh — turn a production event into a bead Ops can claim\n\n  incident systemd <unit>           file an incident for a failed systemd user unit\n  incident file <title> [-|<file>]  file one from an arbitrary payload\n  incident drain                    file everything the spool is holding\n  incident list                     open incidents\n  incident settle                   close incidents whose fix landed and detector is quiet\n  incident collapse <dup> --of <keep>  mark a duplicate incident\n  incident alarms-pass [--no-fallback]  the alarms component's minute pass\n  incident floor-cleared            exit 0 once the goodput rate is back at its floor\n  incident page --no-fallback --probe <mailbox> [--interval S] | --probe-health [--max-age S]");
+            eprintln!("incident.sh — turn a production event into a bead Ops can claim\n\n  incident systemd <unit>           file an incident for a failed systemd user unit\n  incident file <title> [-|<file>]  file one from an arbitrary payload\n  incident drain                    one pass over the spool, one filing per reference\n  incident list                     open incidents\n  incident settle                   close incidents whose fix landed and detector is quiet\n  incident collapse <dup> --of <keep>  mark a duplicate incident\n  incident alarms-pass [--no-fallback]  the alarms component's minute pass\n  incident floor-cleared            exit 0 once the goodput rate is back at its floor\n  incident page --no-fallback --probe <mailbox> [--interval S] | --probe-health [--max-age S]");
             ExitCode::from(1)
         }
     }
