@@ -2142,20 +2142,20 @@ fn open_timed(
                 Some(tip) if tip.starts_with(&m.tip) => match super::in_force::refusal(&m.id, in_force.not_in_force(&m.id, &riding), "admitted") {
                     Some((class, why)) => skips.push(skip(&m.id, class, why)),
                     None => match r.blocked_by.iter().find(|d| !named.contains(d)) {
-                    Some(dep) => {
-                        let state = w.lc.bead_row(dep).map(|d| d.state).unwrap_or_else(|| "unknown".into());
-                        skips.push(skip(&m.id, "blocked", format!("{}: depends on {dep} ({state}) — not admitted until it lands", m.id)))
-                    }
-                    None if super::simple::lands_by_lint(w, &c.s, &c.r.name, &path, &base, &tip) => {
-                        skips.push(skip(&m.id, "text-only", crate::text_only::skip_line(&m.id)))
-                    }
-                    None => {
-                        if r.state == "SUBMITTED" {
-                            provisional.push(m.id.clone());
+                        Some(dep) => {
+                            let state = w.lc.bead_row(dep).map(|d| d.state).unwrap_or_else(|| "unknown".into());
+                            skips.push(skip(&m.id, "blocked", format!("{}: depends on {dep} ({state}) — not admitted until it lands", m.id)))
                         }
-                        blockers.insert(m.id.clone(), r.blocked_by.clone());
-                        admitted.push(Member { id: m.id, tip })
-                    }
+                        None if super::simple::lands_by_lint(w, &c.s, &c.r.name, &path, &base, &tip) => {
+                            skips.push(skip(&m.id, "text-only", crate::text_only::skip_line(&m.id)))
+                        }
+                        None => {
+                            if r.state == "SUBMITTED" {
+                                provisional.push(m.id.clone());
+                            }
+                            blockers.insert(m.id.clone(), r.blocked_by.clone());
+                            admitted.push(Member { id: m.id, tip })
+                        }
                     },
                 },
                 Some(tip) => skips.push(skip(&m.id, "tip-moved", format!("{}: {} is not its row's tip {tip} — not admitted", m.id, m.tip))),
