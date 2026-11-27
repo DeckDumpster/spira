@@ -107,7 +107,7 @@ pub static TASKS: &[Task] = &[
         effects: batcher_local::EFFECTS,
         runners: {
             use batcher_local::{edge as x, *};
-            &[(OBSERVE, x::observe), (FETCH, x::fetch), (ASSEMBLE, x::assemble), (ROUND_OPEN, x::round_open), (CORPUS, x::corpus), (STAGE, x::stage), (STAGE_TEST, x::stage_test), (NOTE_LEFT_OUT, x::note_left_out), (EJECT, x::eject), (EJECT_GATE_RED, x::eject_gate_red), (WITHDRAW, x::withdraw), (REBASE_STALE, x::rebase_stale), (CERTIFY, x::certify), (LC_CERTIFY, x::lc_certify), (LAND, x::land), (ABANDON, x::abandon), (PROMOTE, x::promote), (REDRIVE, x::redrive), (FILE, x::file), (SUPERSEDE_REDS, x::supersede_reds), (CLEAR_LANDED, x::clear_landed), (PAUSE, x::pause), (PAUSE_ASK, x::pause_ask), (KEEP_CERTIFY_OUTPUT, x::keep_certify_output)]
+            &[(OBSERVE, x::observe), (FETCH, x::fetch), (ASSEMBLE, x::assemble), (ROUND_OPEN, x::round_open), (CORPUS, x::corpus), (STAGE, x::stage), (STAGE_TEST, x::stage_test), (NOTE_LEFT_OUT, x::note_left_out), (EJECT, x::eject), (EJECT_GATE_RED, x::eject_gate_red), (WITHDRAW, x::withdraw), (REBASE_STALE, x::rebase_stale), (CERTIFY, x::certify), (LC_CERTIFY, x::lc_certify), (LAND, x::land), (ABANDON, x::abandon), (PROMOTE, x::promote), (REDRIVE, x::redrive), (FILE, x::file), (SUPERSEDE_REDS, x::supersede_reds), (CLEAR_LANDED, x::clear_landed), (PAUSE, x::pause), (PAUSE_ASK, x::pause_ask), (KEEP_CERTIFY_OUTPUT, x::keep_certify_output), (IMAGE_BUILD, x::image_build), (IMAGE_CLEAN, x::image_clean)]
         },
         keys: &[batcher_local::KEYS],
         build: |s| batcher_local::BatcherLocal::from_settings(s).registration(),
