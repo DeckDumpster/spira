@@ -550,15 +550,15 @@ mod outlived_tests {
     #[test_id(tpybzi5)]
     #[test]
     fn exec_start_program_strips_systemds_prefixes_and_drops_the_arguments() {
-        assert_eq!(exec_start_program("[Service]\nExecStart=-/x/prog a\n").as_deref(), Some("/x/prog"));
-        assert_eq!(exec_start_program("ExecStart=-@+!:/x/prog\n").as_deref(), Some("/x/prog"));
+        assert_eq!(exec_start_program("[Service]\nExecStart=-x/prog a\n").as_deref(), Some("x/prog"));
+        assert_eq!(exec_start_program("ExecStart=-@+!:x/prog\n").as_deref(), Some("x/prog"));
     }
 
     #[test_id(teqwpo9)]
     #[test]
     fn exec_start_program_skips_exec_start_pre_and_is_none_without_exec_start() {
-        assert_eq!(exec_start_program("ExecStartPre=/x/pre\nExecStart=/x/prog\n").as_deref(), Some("/x/prog"));
-        assert_eq!(exec_start_program("ExecStartPre=/x/pre\n"), None);
+        assert_eq!(exec_start_program("ExecStartPre=x/pre\nExecStart=x/prog\n").as_deref(), Some("x/prog"));
+        assert_eq!(exec_start_program("ExecStartPre=x/pre\n"), None);
     }
 
     #[test_id(twta34p)]
