@@ -146,9 +146,7 @@ fn is_executable_file(p: &Path) -> bool {
     std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
 }
 
-/// `command -v <name>` over `path` (a colon-separated PATH string) — the same search
-/// [`crate::env_bootstrap::resolve_bd`] makes for `bd`, generalised to any name. An empty
-/// segment means the current directory, exactly as the shell resolves one.
+/// `command -v <name>` over `path` (a colon-separated PATH string). An empty segment means the current directory, exactly as the shell resolves one.
 pub fn which(path: &str, name: &str) -> Option<std::path::PathBuf> {
     path.split(':')
         .map(|dir| Path::new(if dir.is_empty() { "." } else { dir }).join(name))

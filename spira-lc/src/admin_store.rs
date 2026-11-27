@@ -221,8 +221,7 @@ mod tests {
     #[test_id(th3i9bi)]
     #[test]
     fn the_store_callers_name_no_bd() {
-        let files: [(&str, &str); 7] = [
-            ("spira/build-bd.sh", include_str!("../../spira/build-bd.sh")),
+        let files: [(&str, &str); 6] = [
             ("spira/deploy.sh", include_str!("../../spira/deploy.sh")),
             ("spira/schema-apply.sh", include_str!("../../spira/schema-apply.sh")),
             ("spira/schema.sh", include_str!("../../spira/schema.sh")),

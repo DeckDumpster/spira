@@ -49,7 +49,7 @@ pub fn find_real(name: &str, path: &OsStr, me: &Path) -> Option<PathBuf> {
 /// [`find_real`], searching only the PATH entries **after** `invoked_from` — the directory
 /// the meter was invoked through by path (`/…/home/.local/bin/bd`), when that directory is on
 /// PATH. A wrapper ahead of it on PATH that execs the meter by path (loom's counting shim
-/// execs `$SPIRA_BD`, an absolute path since sp-34ru2) would otherwise be taken for the real
+/// execs `$TESTDB_BD`, an absolute path since sp-34ru2) would otherwise be taken for the real
 /// `bd`, and the two would exec each other until the process table refused (EAGAIN).
 pub fn find_real_after(
     name: &str,

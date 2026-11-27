@@ -50,7 +50,6 @@ refusal, exit 2 — unchanged from the bash.
 | var | default | meaning |
 |---|---|---|
 | `SPIRA_DB` | *(required)* | the beads store; missing is a refusal, exit 1 |
-| `SPIRA_BD` | `bd` | the `bd` binary |
 | `SPIRA_MAIL_BIN` | `mail` | the digest mailer |
 | `SPIRA_HOME` | `.` | where `lib.sh` lives, for `repo_root` |
 | `SPIRA_GH_INTAKE_REPO` | *(empty)* | `owner/repo` to ingest in addition to every registered repo with a GitHub remote; empty with none registered is a real no-op, exit 0 |

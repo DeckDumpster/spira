@@ -20,9 +20,9 @@
 //!                                       SPIRA_HOME/conf.d — conf.sh's own fix for its
 //!                                       symlink fence, where SPIRA_HOME resolves to a test
 //!                                       fixture but conf.d/ stays beside conf.sh's real file
-//!   spira-config env-bootstrap --sh     the PATH tail + SPIRA_BD resolution conf.sh evals
+//!   spira-config env-bootstrap --sh     the PATH tail conf.sh evals
 //!                                       after `resolve --sh-all` (sp-kfimz, "wave 4.6");
-//!                                       reads PATH, HOME, SPIRA_PATH, SPIRA_BD from this
+//!                                       reads PATH, HOME, SPIRA_PATH from this
 //!                                       process's own environment, same as `resolve` reads
 //!                                       SPIRA_HOME/SPIRA_REPO from its own
 //!   spira-config convert-legacy DIR   DIR/spira.conf + repo-map -> DIR/spira.toml, only if absent
@@ -458,25 +458,14 @@ fn cmd_resolve_sh(all: bool, file: Option<&str>, conf_d_override: Option<&str>) 
     }
 }
 
-/// `env-bootstrap --sh` (sp-kfimz, "wave 4.6") — `conf.sh`'s own `eval` target, run right
-/// after `resolve --sh-all`: the PATH tail ([`spira_config::env_bootstrap::path_tail`]) and
-/// `SPIRA_BD` resolution ([`spira_config::env_bootstrap::resolve_bd`]). `PATH`, `HOME` and
-/// `SPIRA_PATH` are read from this process's own environment — `conf.sh` passes them
-/// explicitly on the call (`PATH="$PATH" HOME="$HOME" SPIRA_PATH="${SPIRA_PATH:-}" ...`)
-/// because neither is `export`ed yet at the point this runs; `resolve --sh-all`'s own output
-/// is still a plain, un-exported shell assignment until `conf.sh`'s later, explicit export
-/// list. `SPIRA_BD` is read the same way, so a value the environment or `spira.toml` already
-/// gave `conf.sh` survives untouched (env/toml outrank derivation, same precedence as every
-/// other key in this file).
+/// `env-bootstrap --sh`: `conf.sh`'s own `eval` target, run right after `resolve --sh-all`.
+/// `PATH`, `HOME` and `SPIRA_PATH` come from this process's environment: `conf.sh` passes them
+/// on the call, none being exported yet.
 fn cmd_env_bootstrap_sh() -> ExitCode {
     let current_path = env::var("PATH").unwrap_or_default();
     let home = env::var("HOME").unwrap_or_default();
     let spira_path = env_nonempty("SPIRA_PATH").unwrap_or_default();
-    let existing_bd = env::var("SPIRA_BD").unwrap_or_default();
-    print!(
-        "{}",
-        spira_config::env_bootstrap::bootstrap_sh(&current_path, &spira_path, &home, &existing_bd)
-    );
+    print!("{}", spira_config::env_bootstrap::bootstrap_sh(&current_path, &spira_path, &home));
     ExitCode::SUCCESS
 }
 

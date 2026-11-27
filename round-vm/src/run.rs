@@ -557,7 +557,7 @@ if ! build_env; then
 fi
 env_path="$(readlink -f "$HOME/spira-env")"
 export PATH="$HOME/spira-env/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
-echo "round-vm: spira-env $env_path ($(dolt version | head -n1); bd $(bd --version 2>&1 | head -n1))" >&2
+echo "round-vm: spira-env $env_path ($(dolt version | head -n1))" >&2
 # sp-xjnzl-2: warm conf.sh's own generated fragments (conf.d.keys.generated.sh,
 # conf.d.defaults.generated.sh — gitignored, never present after a fresh clone) ONCE,
 # sequentially, before the suite batch starts. Every suite's own container sources
@@ -882,7 +882,7 @@ phase release
 # The round's one source of config: the tree's complete fixture, with this VM's own paths
 # declared over it. Nothing here is searched for or defaulted: a tree's binaries build every
 # child PATH from the declared release and `path`, never from this script's own PATH, so the
-# VM's dolt, bd and cargo (outside the release) are declared here.
+# VM's dolt and cargo (outside the release) are declared here.
 mkdir -p "$HOME/round-work/.runtime/spira" "$HOME/round-scratch"
 cat > "$HOME/round-config.toml" <<ROUNDCFG
 [spira]
@@ -5407,7 +5407,7 @@ mod tests {
 
     /// The VM's own tool directories, declared: every child PATH a tree's binary builds is
     /// the declared release plus `spira.path`, never the script's inherited PATH, and the
-    /// VM's dolt, bd and cargo live outside the release. The scratch root is declared with it.
+    /// VM's dolt and cargo live outside the release. The scratch root is declared with it.
     #[test_id(tclbqrc)]
     #[test]
     fn the_round_config_declares_the_vms_toolchain_and_scratch_root() {

@@ -37,16 +37,6 @@ date = "2026-11-12"
 bead = "sp-ugnv1x"
 
 [[use_case]]
-id = "UC-instance-lifecycle-05"
-tier = "T2"
-statement = "`build-bd.sh --from-flake` takes bd from the flake environment and refuses an environment with no bd"
-
-[use_case.uncovered]
-reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
-date = "2026-11-12"
-bead = "sp-ugnv1x"
-
-[[use_case]]
 id = "UC-instance-lifecycle-06"
 tier = "T2"
 statement = "`release.sh cut` creates an annotated tag listing bead ids landed since the previous tag on the repo-map base ref, not hardcoded `main`; a no-op cut creates no tag and `show` reads it back"

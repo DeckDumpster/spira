@@ -99,7 +99,7 @@ landing-pass -h | --help
 
 `SPIRA_HOME` (required: where lib.sh lives), and whatever conf.sh reads — the sentinel's
 dispatch passes `PATH HOME SPIRA_HOME SPIRA_RUN SPIRA_DB SPIRA_REPO SPIRA_REPO_MAP
-SPIRA_HOME_REPO SPIRA_BD SPIRA_GH SPIRA_BATCH_MAXPAR SPIRA_LAND_MAXSEC`. Everything else is
+SPIRA_HOME_REPO SPIRA_GH SPIRA_BATCH_MAXPAR SPIRA_LAND_MAXSEC`. Everything else is
 read from the context seam's answer: `SPIRA_RUN`, `SPIRA_REPO`,
 `SPIRA_LAND_MAXSEC` (3600), `SPIRA_LAND_GATE_RESERVE` (conf 2700), `SPIRA_GATE_LOCK_WAIT`,
 `SPIRA_VERDICT_TTL` (86400), `SPIRA_VERDICTS`, `SPIRA_DEFERRAL_ESCALATE_AT` (5),

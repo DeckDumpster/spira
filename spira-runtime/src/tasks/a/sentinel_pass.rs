@@ -99,7 +99,7 @@
 //! label, note, close, recompute-blocked), `spira-lc` (list, show, event, fact, hold, unhold),
 //! `spira-claim ready-count`, `hel holder-alive/stop-holder`, `systemctl`, `systemd-run`, `tsd-write`,
 //! `pilgrimage.sh`, `strand`, `watchtower` ×12, `reflect.sh`, `mail`, `bash -c lib.sh` (probe +
-//! seams). Keys (`cfg.rs:224-247,425-476`): `SPIRA_RUN`, `SPIRA_DB`, `SPIRA_BD`, `SPIRA_SCOPE_LABEL`,
+//! seams). Keys (`cfg.rs:224-247,425-476`): `SPIRA_RUN`, `SPIRA_DB`, `SPIRA_SCOPE_LABEL`,
 //! `SPIRA_ASK_LABEL`, `SPIRA_NO_LOOP_LABEL`, `SPIRA_QUEUE_WAIT_LABEL`, `SPIRA_OPEN_CHILDREN_LABEL`,
 //! `SPIRA_RED_TRACKER_LABEL`, `SPIRA_WORK_CLOSE_TYPES`, `SPIRA_RECLAIM_GRACE_SECS`, `SPIRA_LAND_MAXSEC`,
 //! `SPIRA_LAND_UNIT`, `SPIRA_LAND_STALE`, `SPIRA_LAND_ESCALATE_EVERY`, `SPIRA_INFERENCE_EVERY`,
@@ -212,7 +212,6 @@ pub const EFFECTS: &[&str] = &[OBSERVE, LC_EVENT, LC_HOLD, LC_UNHOLD, LC_FACT, L
 pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
     "SPIRA_DB",
-    "SPIRA_BD",
     "SPIRA_SCOPE_LABEL",
     "SPIRA_ASK_LABEL",
     "SPIRA_NO_LOOP_LABEL",

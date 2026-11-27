@@ -28,10 +28,10 @@ const ALLOW_FILE: &str = "spira-lint/config-literal-fallback-allow";
 /// check below already catches for everything else): the run directory, the checkout, the
 /// instance, the runes/rune roster, the data store, the workspace root, the repo map,
 /// and the config document's own location. A key NOT in this list (`SPIRA_SYSTEMCTL`,
-/// `SPIRA_BD`, `SPIRA_GH`, `SPIRA_INCIDENT_SH`, `SPIRA_FORGE`, ...) is a PROGRAM NAME this
+/// `SPIRA_GH`, `SPIRA_INCIDENT_SH`, `SPIRA_FORGE`, ...) is a PROGRAM NAME this
 /// process shells out to, resolved via `$PATH` at exec time exactly like a bare `bash`/
 /// `git` call would be — not a config value `spira_config` owns, so a short literal
-/// default there (`"systemctl"`, `"bd"`) is not this defect. Such a key still trips this
+/// default there (`"systemctl"`, `"gh"`) is not this defect. Such a key still trips this
 /// rule the moment its own literal fallback is PATH-SHAPED (contains `/`): a command name
 /// never has a `/` in it on this harness's own convention (every seam name here is bare).
 const CONFIG_IDENTITY_KEYS: &[&str] = &[
@@ -52,7 +52,7 @@ const CONFIG_IDENTITY_KEYS: &[&str] = &[
 
 /// Registered keys that name a PROGRAM this process runs from `$PATH`; a bare command-name
 /// default there is not the defect (see [`CONFIG_IDENTITY_KEYS`]).
-const PROGRAM_KEYS: &[&str] = &["SPIRA_BD", "SPIRA_GH", "SPIRA_FORGE", "SPIRA_CTRL", "SPIRA_SYSTEMCTL"];
+const PROGRAM_KEYS: &[&str] = &["SPIRA_GH", "SPIRA_FORGE", "SPIRA_CTRL", "SPIRA_SYSTEMCTL"];
 
 /// Passthrough combinators a chain may carry between the `env::var(...)` call and the
 /// `unwrap_or*` this rule looks for — each one's own argument list is skipped (balanced),

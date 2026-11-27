@@ -106,9 +106,6 @@ pub trait World {
     fn file_age_secs(&self, p: &Path) -> Option<u64>;
 
     // ---- operator channel ----
-    fn arch(&self) -> String;
-    /// `spira_bin_purpose <name>` (lib.sh seam) — one sentence on what an absent binary costs.
-    fn spira_bin_purpose(&self, name: &str) -> String;
 
     // ---- concierge singleton ----
     /// `bash <concierge.sh> _stray-holders` -> PIDs, one per line, empty when none.

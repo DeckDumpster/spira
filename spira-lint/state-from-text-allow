@@ -26,7 +26,6 @@
 1 unit-name spira-runtime/src/tasks/f/persona_ops.rs
 1 unit-name spira-world/src/scheduler.rs
 1 unit-name spira-world/src/sysctl.rs
-1 output spira/sim/src/world.rs
 1 output testenv/src/container.rs
 2 unit-name watchd/src/commands.rs
 1 unit-name watchtower/src/cpu_throttle.rs

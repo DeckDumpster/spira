@@ -122,7 +122,6 @@ the `conf.sh` default. strand never parses `spira.toml` itself.
 | db | `SPIRA_DB` | `db` | — (refuse: never fall through to bd auto-discovery) |
 | run dir | `SPIRA_RUN` | `run` | — (required) |
 | harness dir | `SPIRA_HOME` | `prod` | — (required for roster probe and mail) |
-| bd binary | `SPIRA_BD` | `bd` | `bd` |
 | ask label | `SPIRA_ASK_LABEL` | `ask_label` | conf.sh default |
 | ci label | `SPIRA_CI_LABEL` | `ci_label` | conf.sh default |
 | scope label | `SPIRA_SCOPE_LABEL` | `scope_label`, else `home_repo` | empty |

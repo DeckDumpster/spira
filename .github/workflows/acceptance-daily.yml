@@ -125,15 +125,6 @@ jobs:
             sudo apt-get update -q && sudo apt-get install -yq gh
           fi
 
-      - name: Install bd
-        # build-bd.sh --from-flake takes bd from the flake's spira-env and installs it to
-        # $HOME/.local/bin/bd and bd-embedded.
-        # The schema check is skipped when no existing store is present — correct for a
-        # fresh machine where the db has not been created yet.
-        run: |
-          export PATH="/nix/var/nix/profiles/default/bin:$PATH"
-          bash spira/build-bd.sh --from-flake --install
-
       - name: Install dolt
         # dolt comes from the harness flake's spira-env, pinned by flake.lock.
         run: |

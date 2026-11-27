@@ -86,7 +86,7 @@
 //!   - 1 `spira-lc`
 //!   - N `timeout bd -C $SPIRA_DB close`
 //!   - N `bd list` (settle check)
-//! - Config keys pinned: `SPIRA_BD`, `SPIRA_DB` (`bd.rs:9-14,80`); `SPIRA_RUN` (the halt stamp).
+//! - Config keys pinned: `SPIRA_DB`, `SPIRA_RUN` (the halt stamp).
 //!
 //! ## Reverse
 //!
@@ -115,7 +115,7 @@ pub const EFFECTS: &[&str] = &[OBSERVE, SKEW_CHECK, CLOSE];
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_RECONCILE_CONTENT_SECS";
 /// The full pass that keeps the ask and epic sweeps (a new choice: 6 h).
 pub const FULL_PASS_KEY: &str = "SPIRA_RUNTIME_RECONCILE_CONTENT_FULL_SECS";
-pub const KEYS: &[&str] = &[CADENCE_KEY, FULL_PASS_KEY, "SPIRA_BD", "SPIRA_DB", "SPIRA_RUN"];
+pub const KEYS: &[&str] = &[CADENCE_KEY, FULL_PASS_KEY, "SPIRA_DB", "SPIRA_RUN"];
 
 pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 30_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
 

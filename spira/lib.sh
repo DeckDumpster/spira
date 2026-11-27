@@ -84,15 +84,6 @@ unset _spira_lib_dir
 export BEADS_NO_AUTO_IMPORT=1
 mkdir -p "$SPIRA_RUN"
 
-# Always name the database. This repo has no .beads, so an implicit bd reads whatever store
-# the working directory resolves to, or nothing — never the database meant.
-# SPIRA_BD is the seam a suite uses for the ONE thing a real bd cannot be asked to do on
-# demand — a probe that fails. It is not a place to put a model of bd: the suites run the
-# real binary against a throwaway database (`testdb.sh`), because a partial model drifts
-# silently and its gaps surface as failures in correct code. It exists as an env var rather
-# than a PATH entry because lib.sh overwrites PATH outright, as it must to run under
-# systemd, so a directory prepended by a test would be thrown away by the export above.
-#
 # `gh` runs the way forge::real runs it: under `timeout $GH_TIMEOUT`, as $SPIRA_GH when that
 # is non-empty (empty means the system gh). It is a function so a suite can fake the outside
 # world, which a PATH entry cannot do because the export above replaces PATH.
@@ -1019,8 +1010,8 @@ census_deliberate_run_sql() {   # census_deliberate_run_sql [since_epoch_s] -> t
 #
 # PORTED (wave 4.35, sp-kelr2, row M): the 3-attempt retry (CENSUS_RETRY_DELAY_S doubling
 # each time, default 2s) moved with the query into census/src/real.rs — the one piece of
-# this family that was never pure SQL text. `CENSUS_RETRY_DELAY_S`/`SPIRA_BD`/`SPIRA_DB`
-# need no re-threading: all three are ordinary (exported-when-set) env vars, not the
+# this family that was never pure SQL text. `CENSUS_RETRY_DELAY_S`/`SPIRA_DB`
+# need no re-threading: both are ordinary (exported-when-set) env vars, not the
 # conf.sh-withheld kind `rune_get`'s shim has to carry across the exec boundary by hand.
 census_events_run_sql() {
     census sql run-events "${1:-}"
@@ -1591,7 +1582,7 @@ spira_lane_admitted() {
 # defect that motivated including it in mimir-trigger.sh, extracted here so
 # groom-trigger.sh gets the same fix rather than drifting from it).
 #
-# PORTED (wave 4.35, sp-kelr2, row V) — see spira_repo_lanes above; SPIRA_DB/SPIRA_BD are
+# PORTED (wave 4.35, sp-kelr2, row V) — see spira_repo_lanes above; SPIRA_DB is
 # already exported by conf.sh (`spira_config::resolve::EXPORT_KEYS`), so no re-threading is
 # needed here the way SPIRA_HOME needs it above.
 spira_open_trigger_count() {

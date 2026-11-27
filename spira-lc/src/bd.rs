@@ -1,6 +1,6 @@
 //! Shells to `bd` for the non-lifecycle half of the dwarf semantic layer (design §3.5):
 //! titles, descriptions, dependencies, notes and filing stay bd's job (§3.3/3.4) — this
-//! module never touches the control store. `SPIRA_BD`/`SPIRA_DB` are declared config
+//! module never touches the control store. `SPIRA_DB` is declared config
 //! (spira/conf.d), resolved from `$SPIRA_TOML` (one source of config, per Ryan 2026-10-05) —
 //! never this process's own environment. The content door's reads are not here: they are SQL
 //! (`content_sql`).
@@ -451,8 +451,7 @@ fn ask_via((mail_sh, secs): (&str, &str), argv: &[String], body: &str) -> Result
     Ok(stdout)
 }
 
-/// `bd <args>` with `stdin` piped in when given — the lane verbs' one door to bd
-/// (sp-st0mm). Same `SPIRA_BD`/`SPIRA_DB` resolution as [`run`].
+/// A content write in bd's argv with `stdin` piped in when given: the lane verbs' one door.
 pub fn run_stdin(args: &[String], stdin: Option<&str>) -> Result<String, String> {
     stamped(args, sql_only(args, stdin))
 }

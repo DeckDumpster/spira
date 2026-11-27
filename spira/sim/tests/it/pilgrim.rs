@@ -3,13 +3,13 @@
 //! `SPIRA_SIM_RELEASE` names, so it is `#[ignore]`d and run with `--ignored` where one exists.
 
 use spira_sim::pilgrim;
-use spira_sim::world::{self, lc_socket, ProcessSteps};
+use spira_sim::world::{self, lc_socket, PILGRIM_STEPS};
 use std::path::Path;
 
 struct Up<'a>(&'a Path);
 impl Drop for Up<'_> {
     fn drop(&mut self) {
-        let _ = world::down(self.0, &ProcessSteps);
+        let _ = world::down(self.0, &PILGRIM_STEPS);
     }
 }
 
@@ -60,7 +60,7 @@ fn a_pilgrim_files_links_and_closes_in_a_world_of_its_own_and_both_views_follow(
         &dir,
         "HEAD",
         &|k| std::env::var(k).ok(),
-        &ProcessSteps,
+        &PILGRIM_STEPS,
         &[world::RepoSpec::parse(pilgrim::FIXTURE_REPO).unwrap()],
         &|_| Ok(()),
     )
@@ -74,7 +74,7 @@ fn a_pilgrim_files_links_and_closes_in_a_world_of_its_own_and_both_views_follow(
         &plain,
         "HEAD",
         &|k| std::env::var(k).ok(),
-        &ProcessSteps,
+        &PILGRIM_STEPS,
         &[world::RepoSpec::parse(pilgrim::FIXTURE_REPO).unwrap()],
         &|_| Ok(()),
     )
@@ -103,7 +103,7 @@ fn a_pilgrim_files_links_and_closes_in_a_world_of_its_own_and_both_views_follow(
     let named = dwarf::pilgrim_world::model_env(&dir, &env_text).unwrap();
     assert!(named.contains(&("PILGRIM_TOML".to_string(), dir.join("config/sim.toml").display().to_string())), "{named:?}");
 
-    pilgrim::up(&dir, pilgrim::FIXTURE, &ProcessSteps).unwrap();
+    pilgrim::up(&dir, pilgrim::FIXTURE, &PILGRIM_STEPS).unwrap();
     let loom = pilgrim::Loom::start(&dir).unwrap();
     let (base_claimable, _) = pilgrim::view_counts(&pilgrim::lc_view_once(&dir).unwrap());
     assert!(
@@ -159,7 +159,7 @@ fn a_pilgrim_files_links_and_closes_in_a_world_of_its_own_and_both_views_follow(
 
 #[test_id(t3o6si4)]
 #[test]
-#[ignore = "needs SPIRA_SIM_RELEASE, SPIRA_TOML naming spira.bd, and a Dolt fixture: run with --ignored"]
+#[ignore = "needs SPIRA_SIM_RELEASE, SPIRA_TOML and dolt on PATH: run with --ignored"]
 fn a_pilgrim_session_with_no_bd_on_path_builds_a_pilgrim_world() {
     let release = std::env::var(world::RELEASE_ENV).or_else(|_| std::env::var("SPIRA_RELEASE")).expect("SPIRA_SIM_RELEASE or SPIRA_RELEASE names a release");
     let toml = std::env::var("SPIRA_TOML").unwrap_or_else(|_| panic!("SPIRA_TOML is unset"));
@@ -180,7 +180,7 @@ fn a_pilgrim_session_with_no_bd_on_path_builds_a_pilgrim_world() {
         .unwrap();
     let dir = dir.canonicalize();
     if let Ok(d) = &dir {
-        let _ = world::down(d, &ProcessSteps);
+        let _ = world::down(d, &PILGRIM_STEPS);
     }
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{err}");
@@ -227,7 +227,7 @@ fn pilgrim_up_from_non_spira_worktree(sim_release: bool, in_testenv: bool) {
     let seen = std::fs::read_to_string(dir.join("config/sim.env"));
     let built = dir.join("cache").exists();
     if let Ok(d) = &canonical {
-        let _ = world::down(d, &ProcessSteps);
+        let _ = world::down(d, &PILGRIM_STEPS);
     }
     assert!(out.status.success(), "{err}");
     assert!(seen.is_ok_and(|e| e.contains("SPIRA_LC_SOCKET")), "{err}");
@@ -236,14 +236,14 @@ fn pilgrim_up_from_non_spira_worktree(sim_release: bool, in_testenv: bool) {
 
 #[test_id(t3ugjt9)]
 #[test]
-#[ignore = "needs a release, SPIRA_TOML naming spira.bd, and a Dolt fixture: run with --ignored"]
+#[ignore = "needs a release, SPIRA_TOML and dolt on PATH: run with --ignored"]
 fn a_pilgrim_world_for_a_non_spira_worktree_is_built_from_the_release_not_the_worktree() {
     pilgrim_up_from_non_spira_worktree(true, false);
 }
 
 #[test_id(tomp7s6)]
 #[test]
-#[ignore = "needs a release, SPIRA_TOML naming spira.bd, and a Dolt fixture: run with --ignored"]
+#[ignore = "needs a release, SPIRA_TOML and dolt on PATH: run with --ignored"]
 fn a_pilgrim_world_in_testenv_needs_no_sim_release_of_its_own() {
     pilgrim_up_from_non_spira_worktree(false, true);
 }
@@ -421,10 +421,10 @@ fn a_pilgrim_claims_the_standing_bead_commits_on_its_branch_and_submits_it() {
     world::fixture_repo(&testkit::manifest_dir().join("../.."), &repo).unwrap();
     let dir = t.join("w");
     let fixture = world::RepoSpec::parse(pilgrim::FIXTURE_REPO).unwrap();
-    world::up_repos(&repo, &dir, "HEAD", &|k| std::env::var(k).ok(), &ProcessSteps, std::slice::from_ref(&fixture), &|_| Ok(())).unwrap();
+    world::up_repos(&repo, &dir, "HEAD", &|k| std::env::var(k).ok(), &PILGRIM_STEPS, std::slice::from_ref(&fixture), &|_| Ok(())).unwrap();
     let dir = dir.canonicalize().unwrap();
     let _down = Up(&dir);
-    pilgrim::up(&dir, pilgrim::FIXTURE, &ProcessSteps).unwrap();
+    pilgrim::up(&dir, pilgrim::FIXTURE, &PILGRIM_STEPS).unwrap();
 
     let bead = pilgrim::standing_bead(&dir).unwrap();
     pilgrim::claim(&dir, &bead).unwrap();

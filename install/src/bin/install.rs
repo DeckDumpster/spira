@@ -173,7 +173,7 @@ fn aerc_install_can_be_skipped(current: Option<&str>) -> bool {
 }
 
 /// Phase -1: put ~/.local/bin on PATH (for the doctor this process runs next), set dolt's
-/// metrics.disabled and bd's metrics off, and fetch every dependency doctor would otherwise FAIL on
+/// metrics.disabled, and fetch every dependency doctor would otherwise FAIL on
 /// (law-install-installs-every-dependency, operator ruling 2026-10-03: install provides every
 /// dependency, there is no optional tier) — duckdb, sccache (with its webdav backend),
 /// inotifywait, and aerc (copied from this release's own vendored binary — sp-41so3; see
@@ -201,8 +201,6 @@ fn dependencies(dry: bool) -> Result<(), String> {
         set_dolt_metrics_disabled(&dolt_global).map_err(|e| format!("cannot set dolt metrics.disabled: {e}"))?;
         info(&format!("set dolt metrics.disabled true ({})", dolt_global.display()));
     }
-
-    bd_metrics_off(dry)?;
 
     fetch_duckdb(dry, &bin)?;
     fetch_sccache(dry, &bin)?;
@@ -295,73 +293,6 @@ fn build_spira_env_with(dry: bool, home: &str, root: &Path, run: Runner, units: 
             Err(w) => warn(&w),
         }
     }
-    Ok(())
-}
-
-fn bd_config_path() -> Option<PathBuf> {
-    match std::env::var("XDG_CONFIG_HOME") {
-        Ok(x) if !x.is_empty() => Some(Path::new(&x).join("bd/config.yaml")),
-        _ => std::env::var("HOME").ok().map(|h| Path::new(&h).join(".config/bd/config.yaml")),
-    }
-}
-
-fn indent_of(line: &str) -> usize {
-    line.len() - line.trim_start().len()
-}
-
-/// `text` with `metrics.disabled: true` set, or `None` when it already is. Only the
-/// `metrics:` block is touched; every other line is kept as written.
-fn with_bd_metrics_disabled(text: &str) -> Option<String> {
-    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
-    let Some(head) = lines.iter().position(|l| l.trim_end() == "metrics:") else {
-        lines.push("metrics:".into());
-        lines.push("    disabled: true".into());
-        return Some(lines.join("\n") + "\n");
-    };
-    let mut child = None;
-    for (i, l) in lines.iter().enumerate().skip(head + 1) {
-        if l.trim().is_empty() || l.trim_start().starts_with('#') {
-            continue;
-        }
-        if indent_of(l) == 0 {
-            break;
-        }
-        if l.trim_start().starts_with("disabled:") {
-            child = Some(i);
-            break;
-        }
-    }
-    match child {
-        Some(i) if lines[i].trim() == "disabled: true" => return None,
-        Some(i) => lines[i] = format!("{}disabled: true", " ".repeat(indent_of(&lines[i]))),
-        None => lines.insert(head + 1, "    disabled: true".into()),
-    }
-    Some(lines.join("\n") + "\n")
-}
-
-/// bd keeps the flag as `metrics.disabled` in its user config; writing it directly means
-/// install never waits on a first `bd` invocation.
-fn bd_metrics_off(dry: bool) -> Result<(), String> {
-    let path = bd_config_path().ok_or("cannot find bd's config: neither XDG_CONFIG_HOME nor HOME is set")?;
-    let text = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(format!("read {}: {e}", path.display())),
-    };
-    let Some(new) = with_bd_metrics_disabled(&text) else {
-        skip("bd metrics already OFF");
-        return Ok(());
-    };
-    if dry {
-        would(&format!("set metrics.disabled true in {}", path.display()));
-        return Ok(());
-    }
-    let dir = path.parent().ok_or("no parent directory")?;
-    std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-    let tmp = dir.join(".config.yaml.new");
-    std::fs::write(&tmp, new).map_err(|e| format!("write {}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("install {}: {e}", path.display()))?;
-    info(&format!("set bd metrics OFF ({})", path.display()));
     Ok(())
 }
 
@@ -1022,22 +953,6 @@ fn run_declared(opts: Opts) -> ExitCode {
                 return ExitCode::from(2);
             }
             changes += 1;
-        }
-    }
-
-    // bd reads beads.role from the cwd's git config, not from -C; every caller runs from some
-    // other checkout, so only the user-global value reaches all of them.
-    let role_set = spira_config::bounded::bounded("git").args(["config", "--global", "--get", "beads.role"]).output().map(|o| o.status.success() && !o.stdout.is_empty()).unwrap_or(false);
-    if role_set {
-        skip("beads.role already set (git config --global)");
-    } else if opts.dry {
-        would("run: git config --global beads.role maintainer");
-    } else {
-        if spira_config::bounded::bounded("git").args(["config", "--global", "beads.role", "maintainer"]).status().map(|s| s.success()).unwrap_or(false) {
-            info("set beads.role maintainer (git config --global)");
-            changes += 1;
-        } else {
-            eprintln!("install: could not set beads.role — run: git config --global beads.role maintainer");
         }
     }
 
@@ -2308,18 +2223,6 @@ mod dolt_yaml_tests {
 #[cfg(test)]
 mod dolt_metrics_tests {
     use super::*;
-
-    #[test_id(tm2v2ax)]
-    #[test]
-    fn bd_metrics_disabled_is_edited_in_its_block_without_running_bd() {
-        assert_eq!(with_bd_metrics_disabled("").unwrap(), "metrics:\n    disabled: true\n");
-        assert_eq!(with_bd_metrics_disabled("json: true\n").unwrap(), "json: true\nmetrics:\n    disabled: true\n");
-        let on = "metrics:\n  disabled: false\n  endpoint: e\nx: 1\n";
-        assert_eq!(with_bd_metrics_disabled(on).unwrap(), "metrics:\n  disabled: true\n  endpoint: e\nx: 1\n");
-        assert_eq!(with_bd_metrics_disabled("metrics:\n  endpoint: e\n").unwrap(), "metrics:\n    disabled: true\n  endpoint: e\n");
-        assert!(with_bd_metrics_disabled("metrics:\n    disabled: true\n    endpoint: e\n").is_none());
-        assert!(with_bd_metrics_disabled("other:\n  disabled: false\nmetrics:\n  disabled: true\n").is_none());
-    }
 
     #[test_id(tmz8fsg)]
     #[test]

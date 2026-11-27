@@ -288,7 +288,7 @@ unset _spira_conf_here _spira_conf_home_env _spira_conf_real_dir
 
 # --------------------------------------------------------------------------------------
 # ENVIRONMENT BOOTSTRAP (sp-kfimz, "wave 4.6: environment bootstrap into spira-config"):
-# the PATH tail and SPIRA_BD resolution are one call into spira-config, so this logic exists exactly
+# the PATH tail is one call into spira-config, so this logic exists exactly
 # once rather than in bash and in a Rust re-implementation that could drift from it.
 #
 # THE LAUNCHER'S PATH COMES FIRST AND IS NEVER REWRITTEN (sp-gypjk): every Spira tool is
@@ -296,11 +296,7 @@ unset _spira_conf_here _spira_conf_home_env _spira_conf_real_dir
 # PATH. `env-bootstrap` only APPENDS the box's own tail — SPIRA_PATH (the config's
 # business), then ~/.local/bin, ~/.cargo/bin (cargo, for the gate and testenv that build a
 # tree under test — it holds no Spira tool) and the system directories — each segment
-# once, so re-sourcing does not grow PATH. It then resolves SPIRA_BD from that PATH, unless
-# the environment or spira.toml already gave it one (sp-s2zvn, scar from 2026-09-08: a bare
-# ${SPIRA_BD:-bd} fallback in lib.sh could silently pick a different binary depending on
-# whether the caller was a login shell, a systemd unit or a dwarf's confined environment —
-# all three disagree about PATH order).
+# once, so re-sourcing does not grow PATH.
 #
 # PATH, HOME and SPIRA_PATH are passed on THIS ONE CALL'S OWN ENVIRONMENT, not by exporting
 # them first — SPIRA_PATH is resolved above but not yet `export`ed (that happens only in
@@ -309,13 +305,13 @@ unset _spira_conf_here _spira_conf_home_env _spira_conf_real_dir
 #
 # FAIL CLOSED, matching the guard above: `spira-config` was already confirmed present on
 # PATH before this file got this far, so only a crash or a truly empty result can leave
-# PATH/SPIRA_BD unset — checking the exit code here, rather than trusting empty output to
+# PATH unset — checking the exit code here, rather than trusting empty output to
 # mean "nothing to do", is what keeps that failure loud instead of silent.
-_spira_env_bootstrap="$(PATH="$PATH" HOME="$HOME" SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_BD="${SPIRA_BD:-}" spira-config env-bootstrap --sh)"
+_spira_env_bootstrap="$(PATH="$PATH" HOME="$HOME" SPIRA_PATH="${SPIRA_PATH:-}" spira-config env-bootstrap --sh)"
 _spira_env_bootstrap_rc=$?
 if [ "$_spira_env_bootstrap_rc" -ne 0 ]; then
     unset _spira_env_bootstrap _spira_env_bootstrap_rc
-    printf 'spira: spira-config env-bootstrap failed — PATH/SPIRA_BD could not be resolved\n' >&2
+    printf 'spira: spira-config env-bootstrap failed — PATH could not be resolved\n' >&2
     exit 1
 fi
 eval "$_spira_env_bootstrap"
@@ -380,7 +376,6 @@ export COCKPIT_BOTTOM_PCT \
     COCKPIT_RIGHT_PCT \
     SPIRA_ALERT_GLOB \
     SPIRA_ASK_LABEL \
-    SPIRA_BD \
     SPIRA_CI_LABEL \
     SPIRA_CI_PARK_MAX \
     SPIRA_CTRL \

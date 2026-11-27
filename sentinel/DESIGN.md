@@ -176,7 +176,7 @@ environment has no effect.
 - `RuntimeMaxSec=${SPIRA_LAND_MAXSEC:-3600}`
 - stdout and stderr to `landing.log`
 - `--setenv` for `PATH HOME SPIRA_HOME SPIRA_RUN SPIRA_DB SPIRA_REPO SPIRA_REPO_MAP
-  SPIRA_HOME_REPO SPIRA_BD SPIRA_GH SPIRA_BATCH_MAXPAR SPIRA_LAND_MAXSEC`
+  SPIRA_HOME_REPO SPIRA_GH SPIRA_BATCH_MAXPAR SPIRA_LAND_MAXSEC`
 
 **Liveness query:** `${SPIRA_SYSTEMCTL:-systemctl} --user is-active <unit>.service`
 (`active` means in flight).
@@ -209,7 +209,6 @@ names live as plain `Cfg` fields so a unit test can point one at a fixture.
 | key | default | used by |
 |---|---|---|
 | `SPIRA_DB`, `SPIRA_RUN`, `SPIRA_HOME` | conf.sh | everything |
-| `SPIRA_BD` | `bd` | store |
 | `BD_TIMEOUT` | 180 | every bd call (lib.sh `bdq`) |
 | `SPIRA_BDQ_CONN_RETRIES` | 2 | retry on `invalid connection` |
 | `SPIRA_BDJSON_FIXTURE` | — | test seam: `bdsim <fixture> …` |

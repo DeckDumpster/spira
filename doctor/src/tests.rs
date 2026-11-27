@@ -46,8 +46,6 @@ pub struct Fake {
     pub spira_unit: RefCell<String>,
     pub spira_unit_asked: RefCell<Vec<(String, String)>>,
     pub file_ages: RefCell<BTreeMap<PathBuf, u64>>,
-    pub arch: RefCell<String>,
-    pub bin_purpose: RefCell<String>,
     pub stray: RefCell<Vec<String>>,
     pub stdout: RefCell<Vec<String>>,
     pub sccache_help: RefCell<Option<String>>,
@@ -104,8 +102,6 @@ impl Default for Fake {
             spira_unit: RefCell::new(String::new()),
             spira_unit_asked: RefCell::new(Vec::new()),
             file_ages: RefCell::new(BTreeMap::new()),
-            arch: RefCell::new(String::new()),
-            bin_purpose: RefCell::new(String::new()),
             stray: RefCell::new(Vec::new()),
             stdout: RefCell::new(Vec::new()),
             sccache_help: RefCell::new(None),
@@ -231,12 +227,6 @@ impl World for Fake {
     }
     fn file_age_secs(&self, p: &Path) -> Option<u64> {
         self.file_ages.borrow().get(p).copied()
-    }
-    fn arch(&self) -> String {
-        self.arch.borrow().clone()
-    }
-    fn spira_bin_purpose(&self, _name: &str) -> String {
-        self.bin_purpose.borrow().clone()
     }
     fn concierge_stray_holders(&self, _concierge_sh: &Path) -> Vec<String> {
         self.stray.borrow().clone()
@@ -541,7 +531,7 @@ fn store_bd_read_ok_and_server_mode() {
     f.store_meta.borrow_mut().insert(PathBuf::from("db/.beads/metadata.json"), StoreMeta { dolt_mode: Some("server".into()), ..Default::default() });
     let out = check_store(&f);
     assert!(out.iter().any(|l| l.msg.contains("has a .beads")));
-    assert!(out.iter().any(|l| l.msg == "bd can read it"));
+    assert!(out.iter().any(|l| l.msg == "the store answers"));
     assert!(out.iter().any(|l| l.msg.contains("store mode: server")));
     assert!(out.iter().all(|l| l.level != Level::Fail));
 }
@@ -561,7 +551,7 @@ fn store_embedded_mode_fails() {
 
 #[test_id(tf8zcaf)]
 #[test]
-fn store_bd_cannot_read_softens_during_install_when_server_not_active() {
+fn store_cannot_be_read_softens_during_install_when_server_not_active() {
     let f = Fake::default();
     f.set("SPIRA_DB", "db");
     f.set("SPIRA_DOCTOR_INSTALLING", "1");
@@ -569,18 +559,18 @@ fn store_bd_cannot_read_softens_during_install_when_server_not_active() {
     f.dirs.borrow_mut().push(PathBuf::from("db/.beads"));
     *f.bd_list.borrow_mut() = Err("connection refused".into());
     let out = check_store(&f);
-    assert!(out.iter().any(|l| l.level == Level::Warn && l.msg.contains("bd cannot read")));
+    assert!(out.iter().any(|l| l.level == Level::Warn && l.msg.contains("cannot read the store")));
 }
 
 #[test_id(tydqmdj)]
 #[test]
-fn store_bd_cannot_read_fails_outside_install() {
+fn store_cannot_be_read_fails_outside_install() {
     let f = Fake::default();
     f.set("SPIRA_DB", "db");
     f.dirs.borrow_mut().push(PathBuf::from("db/.beads"));
     *f.bd_list.borrow_mut() = Err("connection refused".into());
     let out = check_store(&f);
-    assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("bd cannot read")));
+    assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("cannot read the store")));
 }
 
 #[test_id(tfauuse)]
@@ -1232,8 +1222,6 @@ fn snapshot_threshold_key_decides_between_fresh_and_stale() {
 fn operator_channel_everything_present() {
     let f = Fake::default();
     f.which.borrow_mut().insert("inotifywait".into(), "bin/inotifywait".into());
-    f.which.borrow_mut().insert("go".into(), "usr/bin/go".into());
-    f.exec_files.borrow_mut().push("usr/bin/go".into());
     let out = check_operator_channel(&f);
     assert!(out.iter().all(|l| l.level == Level::Ok));
 }
@@ -1243,8 +1231,6 @@ fn operator_channel_everything_present() {
 fn operator_channel_reports_mail_mute_only_when_on() {
     let f = Fake::default();
     f.which.borrow_mut().insert("inotifywait".into(), "bin/inotifywait".into());
-    f.which.borrow_mut().insert("go".into(), "usr/bin/go".into());
-    f.exec_files.borrow_mut().push("usr/bin/go".into());
     let has = |f: &Fake| check_operator_channel(f).iter().any(|l| l.msg.contains("mail is muted"));
     assert!(!has(&f));
     f.set("SPIRA_MAIL_MUTE", "0");
@@ -1260,8 +1246,6 @@ fn operator_channel_reports_mail_mute_only_when_on() {
 #[test]
 fn operator_channel_missing_inotify_fails_when_operated() {
     let f = Fake::default();
-    f.exec_files.borrow_mut().push("usr/bin/go".into());
-    f.which.borrow_mut().insert("go".into(), "usr/bin/go".into());
     let out = check_operator_channel(&f);
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("inotifywait")));
 }
@@ -1271,37 +1255,8 @@ fn operator_channel_missing_inotify_fails_when_operated() {
 fn operator_channel_missing_inotify_warns_when_not_operated() {
     let f = Fake::default();
     f.set("SPIRA_OPERATED", "0");
-    f.exec_files.borrow_mut().push("usr/bin/go".into());
-    f.which.borrow_mut().insert("go".into(), "usr/bin/go".into());
     let out = check_operator_channel(&f);
     assert!(out.iter().any(|l| l.level == Level::Warn && l.msg.contains("inotifywait")));
-}
-
-#[test_id(tx14knk)]
-#[test]
-fn operator_channel_no_go_with_a_prebuilt_bd_is_ok() {
-    let f = Fake::default();
-    f.which.borrow_mut().insert("inotifywait".into(), "bin/inotifywait".into());
-    *f.arch.borrow_mut() = "x86_64".into();
-    let out = check_operator_channel(&f);
-    assert!(out.iter().all(|l| l.level == Level::Ok), "{:?}", out.iter().map(|l| &l.msg).collect::<Vec<_>>());
-}
-
-#[test_id(ttw7oua)]
-#[test]
-fn operator_channel_no_go_and_no_prebuilt_fails_only_without_a_bd() {
-    let f = Fake::default();
-    f.which.borrow_mut().insert("inotifywait".into(), "bin/inotifywait".into());
-    *f.arch.borrow_mut() = "riscv64".into();
-    let out = check_operator_channel(&f);
-    assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("go is not on PATH")));
-    f.which.borrow_mut().insert("bd".into(), "bin/bd".into());
-    let out = check_operator_channel(&f);
-    assert!(out.iter().all(|l| l.level == Level::Ok));
-    f.set("SPIRA_BD", "elsewhere/bd");
-    assert!(check_operator_channel(&f).iter().any(|l| l.level == Level::Fail), "the configured bd is the one looked for");
-    f.which.borrow_mut().insert("elsewhere/bd".into(), "elsewhere/bd".into());
-    assert!(check_operator_channel(&f).iter().all(|l| l.level == Level::Ok));
 }
 
 #[test_id(tp7f6jl)]
@@ -1309,8 +1264,6 @@ fn operator_channel_no_go_and_no_prebuilt_fails_only_without_a_bd() {
 fn operator_channel_hunk_checked_only_when_configured() {
     let f = Fake::default();
     f.which.borrow_mut().insert("inotifywait".into(), "bin/inotifywait".into());
-    f.which.borrow_mut().insert("go".into(), "usr/bin/go".into());
-    f.exec_files.borrow_mut().push("usr/bin/go".into());
     f.set("COCKPIT_SESSIONS", "chat hunk");
     let out = check_operator_channel(&f);
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("hunk")));

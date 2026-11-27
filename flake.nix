@@ -55,7 +55,6 @@
           name = "spira-env";
           paths = with pkgs; [
             dolt          # 2.4.2 — the SQL server under both stores
-            beads         # 1.3.1 — bd, from gastownhall/beads (the official upstream)
             duckdb        # the query layer over run/tsd
             gh
             mosquitto     # 2.1.2 — the harness's MQTT broker (systemd/spira-broker.service)
@@ -76,6 +75,11 @@
             mold                # the linker for workspace builds (sp-mgmjhy)
             llvmPackages.clang-unwrapped  # proc-starts/bpf/regen.sh: `clang -target bpf`; the wrapped clang's hardening flags break that target
           ] ++ [ terraform ];
+        };
+        # Test fixtures only: install builds spira-env, which carries no bd.
+        spira-dev-env = pkgs.buildEnv {
+          name = "spira-dev-env";
+          paths = [ pkgs.beads ];   # 1.3.1 — bd, from gastownhall/beads (the official upstream)
         };
         default = self.packages.${system}.spira-env;
       };

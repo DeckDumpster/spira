@@ -40,7 +40,7 @@ row and the bad token) on an unknown mode or lane label; `lane-admitted` is exit
 (0 admitted, 1 not); `open-trigger-count` prints the integer count.
 
 Reads its
-configuration from environment (`SPIRA_RUN`, `SPIRA_HOME`, `SPIRA_DB`, `SPIRA_BD`,
+configuration from environment (`SPIRA_RUN`, `SPIRA_HOME`, `SPIRA_DB`,
 `SPIRA_REPO_MAP`, `SPIRA_SCOPE_LABEL`, `SPIRA_MIMIR_LABEL`, `SPIRA_MIMIR_LANDING_INTERVAL`,
 `SPIRA_MIMIR_MAX_GAP_SECONDS`, `SPIRA_MIMIR_MAX_BEADS`), exactly as the bash did, so
 `conf.sh` and the systemd unit need no changes.

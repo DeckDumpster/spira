@@ -4,9 +4,7 @@
 /// `(path or directory prefix ending in '/', crates whose tests read it)`.
 const READERS: &[(&str, &[&str])] = &[
     ("systemd/", &["release", "spira-world"]),
-    ("spira/conf.d/SPIRA_BD_TAG", &["spira-lc"]),
     ("spira/pre-activate.sh", &["release", "spira-lc"]),
-    ("spira/build-bd.sh", &["spira-lc"]),
     ("spira/runes/", &["spira-config", "dwarf"]),
     ("spira/conf.d/", CONFIG_READERS),
     ("spira/conf.toml.d/", CONFIG_READERS),
@@ -60,6 +58,5 @@ mod tests {
     fn the_pre_activate_script_and_the_units_keep_their_readers() {
         assert_eq!(readers_of("spira/pre-activate.sh"), ["release", "spira-lc"]);
         assert_eq!(readers_of("systemd/a.service"), ["release", "spira-world"]);
-        assert!(readers_of("spira/conf.d/SPIRA_BD_TAG").contains(&"spira-lc"));
     }
 }

@@ -78,9 +78,8 @@ fn a_worlds_config_moves_every_fixture_path_inside_it_and_registers_only_its_rep
 #[test]
 fn a_world_registers_one_queue_local_row_and_names_its_tools_absolutely() {
     assert_eq!(registry_rows(Path::new("w"), &repo_set(&[]).unwrap()), format!("{REPO_NAME}|w/work|queue.local|local/main|||plan\n"));
-    let s = home_settings(Path::new("w"), "fx/f1\n", Path::new("usr/bin/bd"));
+    let s = home_settings(Path::new("w"), "fx/f1\n");
     let get = |k: &str| s.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
-    assert_eq!(get("spira.bd"), Some("usr/bin/bd"));
     assert_eq!(get("spira.db"), Some(bead_db("fx/f1").to_str().unwrap()));
     assert_eq!(get("spira.home_repo"), Some(REPO_NAME));
     assert_eq!(get("spira.prod"), Some("w/release/spira"));
@@ -220,7 +219,7 @@ fn a_file_step_carries_a_body_and_only_a_file_step_may() {
 #[test_id(t6o8c0k)]
 #[test]
 fn a_world_names_the_stub_agent_launcher_as_its_agent_and_the_launcher_carries_the_paths_the_dwarf_drops() {
-    let s = home_settings(Path::new("w"), "fx/f1\n", Path::new("usr/bin/bd"));
+    let s = home_settings(Path::new("w"), "fx/f1\n");
     let get = |k: &str| s.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
     assert_eq!(get("spira.agent"), Some("w/bin/sim-dwarf-agent"));
     assert_eq!(get("spira.call_jitter"), Some("0"));

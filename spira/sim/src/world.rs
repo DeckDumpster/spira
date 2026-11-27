@@ -198,7 +198,7 @@ pub fn refuse_production(env: &dyn Fn(&str) -> Option<String>) -> Result<(), Str
     }
 }
 
-pub const BD_ENV: &str = "SPIRA_BD";
+pub const BD_ENV: &str = "TESTDB_BD";
 
 /// The absolute path of a store tool: the declared one, else `name` on `path`. A pilgrim's PATH
 /// carries neither `bd` nor `dolt`, so a bare name there is a refusal that names the key.
@@ -216,17 +216,45 @@ pub fn dolt_for(bd: &Path, path: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("dolt is not on PATH nor beside {}", bd.display()))
 }
 
-/// What `sim world up --pilgrim` does to its own environment before building: name the store
-/// tools (from the environment, else `pinned_bd`, the install's configured `bd`, and
-/// `dolt` is found beside it) and set aside the production locators a pilgrim session always carries.
-pub fn pilgrim_session_env(env: &dyn Fn(&str) -> Option<String>, pinned_bd: Option<String>) -> (Vec<(&'static str, String)>, Vec<&'static str>) {
+/// What `sim world up --pilgrim` does to its own environment before building: name the release
+/// and set aside the production locators a pilgrim session always carries.
+pub fn pilgrim_session_env(env: &dyn Fn(&str) -> Option<String>) -> (Vec<(&'static str, String)>, Vec<&'static str>) {
     let set = |k: &str| env(k).filter(|v| !v.is_empty());
-    let path = env("PATH").unwrap_or_default();
-    let bd = set(BD_ENV).or(pinned_bd.filter(|v| !v.is_empty())).or_else(|| on_path("bd", &path).map(|p| p.display().to_string()));
-    let mut sets: Vec<(&'static str, String)> = bd.map(|b| (BD_ENV, b)).into_iter().collect();
-    sets.extend(set("SPIRA_RELEASE").map(|r| (RELEASE_ENV, r)));
+    let sets = set("SPIRA_RELEASE").map(|r| (RELEASE_ENV, r)).into_iter().collect();
     let removes = PRODUCTION_LOCATORS.iter().copied().filter(|k| set(k).is_some()).collect();
     (sets, removes)
+}
+
+/// The beads store's schema, which `testdb up --schema` loads with dolt alone.
+const BEADS_SCHEMA: &str = include_str!("../../../spira-lc/beads-schema.sql");
+
+/// How a world's beads store is made. A pilgrim walks on the production box, which has no bd;
+/// a `sim run` scenario's own steps drive bd, so its store is bd's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BeadStore {
+    Schema,
+    Bd,
+}
+
+/// The `testenv` argv that brings up `world`'s Dolt fixture.
+pub fn db_up_argv(store: BeadStore, world: &Path, env: &dyn Fn(&str) -> Option<String>) -> Result<Vec<String>, String> {
+    let path = env("PATH").unwrap_or_default();
+    let mut argv: Vec<String> = ["testdb", "up", "--tag", "simworld"].map(String::from).to_vec();
+    let dolt = match store {
+        BeadStore::Schema => {
+            let schema = world.join("beads-schema.sql");
+            std::fs::write(&schema, BEADS_SCHEMA).map_err(|e| format!("{}: {e}", schema.display()))?;
+            argv.extend(["--schema".to_string(), schema.display().to_string()]);
+            on_path("dolt", &path).ok_or("dolt is not on PATH: a world's store is built on it")?
+        }
+        BeadStore::Bd => {
+            let bd = store_tool("bd", env(BD_ENV), &path, BD_ENV)?;
+            argv.extend(["--bd".to_string(), bd.display().to_string()]);
+            dolt_for(&bd, &path)?
+        }
+    };
+    argv.extend(["--dolt".to_string(), dolt.display().to_string(), "--root".to_string(), db_root(world, env).display().to_string()]);
+    Ok(argv)
 }
 
 /// What a world needs from outside itself: a release build and a private Dolt server.
@@ -234,8 +262,6 @@ pub trait Steps {
     fn release(&self, repo: &Path, tree: &str, cache: &Path) -> Result<PathBuf, String>;
     fn db_up(&self, world: &Path) -> Result<String, String>;
     fn db_down(&self, fixture: &str) -> Result<(), String>;
-    /// The absolute `bd` the world's config names; its bead store is only reachable through it.
-    fn bd(&self) -> Result<PathBuf, String>;
     fn lifecycle(&self, release: &Path, fixture: &str, lifecycle: &Path, config: &Path) -> Result<(), String>;
     fn config_set(&self, release: &Path, file: &Path, key: &str, value: &str) -> Result<(), String>;
     fn config_set_all(&self, release: &Path, file: &Path, pairs: &[(String, String)]) -> Result<(), String> {
@@ -407,8 +433,18 @@ pub fn ask_body(socket: &Path, argv: &[&str]) -> Option<(i32, String)> {
     Some((code, String::from_utf8(body).ok()?))
 }
 
-#[derive(Default)]
-pub struct ProcessSteps;
+pub struct ProcessSteps {
+    pub store: BeadStore,
+}
+
+/// The real steps of a `sim run` world, and of a pilgrim's.
+pub const RUN_STEPS: ProcessSteps = ProcessSteps { store: BeadStore::Bd };
+pub const PILGRIM_STEPS: ProcessSteps = ProcessSteps { store: BeadStore::Schema };
+
+/// The steps `sim world up` brings a world up with, by whether `--pilgrim` was given.
+pub fn up_steps(pilgrim: bool) -> &'static ProcessSteps {
+    if pilgrim { &PILGRIM_STEPS } else { &RUN_STEPS }
+}
 
 pub fn run(cmd: &mut Command, deadline: Duration) -> Result<String, String> {
     let name = format!("{:?}", cmd.get_program());
@@ -509,17 +545,8 @@ impl Steps for ProcessSteps {
         Ok(out)
     }
     fn db_up(&self, world: &Path) -> Result<String, String> {
-        let bd = self.bd()?;
-        let out = run(
-            Command::new(spira_config::release_env::tool("testenv")?)
-                .args(["testdb", "up", "--tag", "simworld", "--bd"])
-                .arg(&bd)
-                .arg("--dolt")
-                .arg(dolt_for(&bd, &std::env::var("PATH").unwrap_or_default())?)
-                .arg("--root")
-                .arg(db_root(world, &|k| std::env::var(k).ok())),
-            CALL_DEADLINE,
-        )?;
+        let argv = db_up_argv(self.store, world, &|k| std::env::var(k).ok())?;
+        let out = run(Command::new(spira_config::release_env::tool("testenv")?).args(argv), CALL_DEADLINE)?;
         out.lines()
             .find_map(|l| l.strip_prefix("TESTDB_FIXTURE="))
             .map(str::to_string)
@@ -556,10 +583,6 @@ impl Steps for ProcessSteps {
         self.config_set(release, &toml, "spira.lc_store_path", &control_store(world).display().to_string())?;
         self.config_set(release, &toml, "spira.lc_lifecycle_on_store", "1")?;
         Ok(())
-    }
-
-    fn bd(&self) -> Result<PathBuf, String> {
-        store_tool("bd", std::env::var(BD_ENV).ok(), &std::env::var("PATH").unwrap_or_default(), BD_ENV)
     }
 
     fn db_down(&self, fixture: &str) -> Result<(), String> {
@@ -793,9 +816,8 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
         std::fs::write(home.join(REGISTRY_ROWS), registry_rows(dir, repos)).map_err(|e| e.to_string())?;
         std::fs::write(&file, base_config(repo, &home)?).map_err(|e| e.to_string())?;
         let t = Instant::now();
-        let bd = steps.bd()?;
         let port = std::fs::read_to_string(Path::new(fixture).join("server.port")).unwrap_or_default();
-        let settings: Vec<(String, String)> = config_settings(dir, repos, &gh_bin).into_iter().chain(home_settings(dir, fixture, &bd)).chain(lc_settings(dir)).chain(content_sql_settings(port.trim())).collect();
+        let settings: Vec<(String, String)> = config_settings(dir, repos, &gh_bin).into_iter().chain(home_settings(dir, fixture)).chain(lc_settings(dir)).chain(content_sql_settings(port.trim())).collect();
         steps.config_set_all(&release, &file, &settings)?;
         mark(dir, "up.config-set", t);
         std::fs::write(config.join("sim.env"), sim_env_text(dir, &sim_exe, port.trim(), fixture))
@@ -1206,10 +1228,9 @@ pub fn on_path(name: &str, path: &str) -> Option<PathBuf> {
 
 /// What the world's tools find at locators the base's moved paths leave empty: the release's
 /// own harness tree, and the world's bead store.
-pub fn home_settings(world: &Path, fixture: &str, bd: &Path) -> Vec<(String, String)> {
+pub fn home_settings(world: &Path, fixture: &str) -> Vec<(String, String)> {
     let spira = world.join("release/spira");
     vec![
-        ("spira.bd".to_string(), bd.display().to_string()),
         ("spira.prod".to_string(), spira.display().to_string()),
         ("spira.runes_dir".to_string(), spira.join("runes").display().to_string()),
         ("spira.db".to_string(), bead_db(fixture).display().to_string()),
@@ -1398,29 +1419,44 @@ mod locator_tests {
         assert!(e.contains("env -u SPIRA_LC_SOCKET -u SPIRA_TOML") && e.contains("--pilgrim"), "{e}");
     }
 
-    #[test_id(tyitj65)]
+    #[test_id(tfh3ys7)]
     #[test]
-    fn a_pilgrim_session_names_its_store_tools_from_the_pinned_bd_with_no_bd_on_path() {
-        let t = testkit::TempDir::new("pilgrim-tools");
-        let d = t.path().to_path_buf();
-        std::fs::write(d.join("dolt"), "").unwrap();
-        let bd = d.join("bd").display().to_string();
+    fn a_pilgrim_session_names_no_bd_and_sets_aside_the_production_locators() {
         let env = |k: &str| match k {
-            "PATH" => Some(system_paths::NONEXISTENT.to_string()),
             "SPIRA_TOML" | "SPIRA_LC_SOCKET" => Some("p".to_string()),
             _ => None,
         };
-        let (sets, removes) = pilgrim_session_env(&env, Some(bd.clone()));
-        assert_eq!(sets, vec![(BD_ENV, bd.clone())]);
-        assert_eq!(dolt_for(Path::new(&bd), system_paths::NONEXISTENT).unwrap(), d.join("dolt"));
+        let (sets, removes) = pilgrim_session_env(&env);
+        assert!(sets.is_empty(), "{sets:?}");
         assert_eq!(removes, vec!["SPIRA_LC_SOCKET", "SPIRA_TOML"]);
+    }
+
+    #[test_id(tso5vgz)]
+    #[test]
+    fn a_pilgrim_worlds_store_is_built_from_the_schema_with_no_bd_on_path() {
+        let t = testkit::TempDir::new("pilgrim-store");
+        let d = t.path().to_path_buf();
+        std::fs::write(d.join("dolt"), "").unwrap();
+        let env = |k: &str| (k == "PATH").then(|| d.display().to_string());
+        let argv = db_up_argv(BeadStore::Schema, &d, &env).unwrap();
+        assert!(argv.iter().any(|a| a == "--schema") && !argv.iter().any(|a| a == "--bd"), "{argv:?}");
+        assert!(std::fs::read_to_string(d.join("beads-schema.sql")).unwrap().contains("'issue_prefix'"));
+        let refused = db_up_argv(BeadStore::Bd, &d, &env).unwrap_err();
+        assert!(refused.contains("bd is not on PATH"), "positive control: this PATH holds no bd: {refused}");
+    }
+
+    #[test_id(t93fcjy)]
+    #[test]
+    fn only_world_up_with_the_pilgrim_flag_builds_its_store_without_bd() {
+        assert_eq!(up_steps(true).store, BeadStore::Schema);
+        assert_eq!(up_steps(false).store, BeadStore::Bd);
     }
 
     #[test_id(tdjuyn8)]
     #[test]
     fn a_pilgrim_session_builds_its_world_from_the_active_release() {
         let env = |k: &str| (k == "SPIRA_RELEASE").then(|| "rel".to_string());
-        let (sets, _) = pilgrim_session_env(&env, None);
+        let (sets, _) = pilgrim_session_env(&env);
         assert!(sets.contains(&(RELEASE_ENV, "rel".to_string())), "{sets:?}");
     }
 
@@ -1450,7 +1486,7 @@ mod locator_tests {
     #[test]
     fn a_store_tool_missing_from_path_and_undeclared_is_refused_naming_its_key() {
         let e = store_tool("bd", None, system_paths::NONEXISTENT, BD_ENV).unwrap_err();
-        assert!(e.contains("SPIRA_BD is not set"), "{e}");
+        assert!(e.contains("TESTDB_BD is not set"), "{e}");
     }
 }
 

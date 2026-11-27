@@ -245,13 +245,13 @@ anywhere a test module's own `mod name;` loads transitively.
   `SPIRA_CONF`, `SPIRA_HOME_REPO` — "where/who/which copy") trip it on ANY literal default;
   every other `SPIRA_*` key trips it only when the default is PATH-SHAPED (contains `/`).
   A key outside that list with a short, non-path default (`SPIRA_SYSTEMCTL` defaulting to
-  `"systemctl"`, `SPIRA_BD` to `"bd"`, `SPIRA_GH` to `"gh"`) is a PROGRAM NAME this process
+  `"systemctl"`, `SPIRA_GH` to `"gh"`) is a PROGRAM NAME this process
   shells out to on `$PATH` at exec time — not a config value `spira_config` owns, and not
   this defect; a `/` in that default would still mean it is secretly a path, so it still
   counts.
 
   A key with an entry under `spira/conf.d/` (a registered config key, other than a program
-  name: `SPIRA_BD`, `SPIRA_GH`, `SPIRA_FORGE`, `SPIRA_CTRL`, `SPIRA_SYSTEMCTL`) is refused ANY
+  name: `SPIRA_GH`, `SPIRA_FORGE`, `SPIRA_CTRL`, `SPIRA_SYSTEMCTL`) is refused ANY
   literal default and `.unwrap_or_default()` too: the registry owns the default, so an
   env read that supplies its own bypasses the config store.
 
@@ -560,7 +560,7 @@ long as the far side likes, and holds whatever the caller holds meanwhile.
   such word; a `Duration::from_*` literal above 5 s in a statement that names a call
   (`timeout`, `deadline`, `Command`, `connect`, `.output()`, `run(…)`, …).
 - Shell: a command from a fixed set (`bd`, `spira-bd`, `dolt`, `curl`, `wget`, `gh`, `ssh`,
-  `scp`, `rsync`, `nc`, `psql`, `mysql`, `podman`, `docker`, `$BD`, `$SPIRA_BD`, `$DOLT_BIN`,
+  `scp`, `rsync`, `nc`, `psql`, `mysql`, `podman`, `docker`, `$BD`, `$DOLT_BIN`,
   `git fetch|pull|push|clone|ls-remote`) not run under `timeout`, or `curl`/`wget` without
   `--max-time`/`--timeout`; any `timeout` whose literal duration exceeds 5 s.
 
@@ -1534,12 +1534,15 @@ words before it, and is otherwise left in place so it is reported and the caller
 
 ## Rule `store-door`
 
-Only the store's door invokes dolt or bd: Rust `Command::new`/`bounded` of `dolt` or `bd`
-(bare or a path ending in either), a shell command word `dolt`/`bd`/`$DOLT`/`$BD`, and a
-MySQL connection (`mysql://`, a MySQL crate, a `mysql` command). The allow-list is the
-`DOORS` table in `store_door.rs`, each entry with its reason; `legacy:` entries are
-shrink-only. `STORE_DOOR_CONSIDERED="<why>"` on the line passes it and logs `store-door:
-considered <path>:<line>: <why>` to stderr.
+Only the store's door invokes dolt, and nothing in production invokes bd: Rust
+`Command::new`/`bounded` of `dolt` or `bd` (bare or a path ending in either), a shell command
+word `dolt`/`bd`/`$DOLT`/`$BD`, and a MySQL connection (`mysql://`, a MySQL crate, a `mysql`
+command). The doors are the `DOORS` table in `store_door.rs`, each entry with its reason and
+what it admits: everything (fixtures and detectors), or dolt and its SQL but never bd
+(`spira-lc/`, `install/`, the dolt operators). `legacy:` entries are shrink-only.
+`spira-lint/store-door-allow` counts the executors left, which only shrinks.
+`STORE_DOOR_CONSIDERED="<why>"` on the line passes it and logs `store-door: considered
+<path>:<line>: <why>` to stderr.
 
 **Refuses** (exit 3): no `.rs`/`.sh` file in scope.
 

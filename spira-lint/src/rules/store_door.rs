@@ -1,6 +1,7 @@
-//! `store-door` — only the store's own door invokes dolt or bd. Everything else reads and
-//! writes the store through spira-lc, so one program owns its credentials, deadlines and
-//! lifecycle rules. Three forms are refused: a Rust `Command::new`/`bounded`/`bounded_for` of
+//! `store-door` — only the store's own door invokes dolt, and nothing in production invokes bd.
+//! Everything else reads and writes the store through spira-lc, so one program owns its
+//! credentials, deadlines and lifecycle rules. A box needs no bd, so the doors that operate
+//! dolt are not doors for bd. Three forms are refused: a Rust `Command::new`/`bounded`/`bounded_for` of
 //! `dolt`, `bd`, `bd-embedded` or `bdq` — by literal, or by a name its crate binds from a program key (`SPIRA_BD`,
 //! `SPIRA_DOLT_BIN`) — a shell command word that names either (`bd`, `$SPIRA_BD`, …), and a
 //! MySQL connection to the dolt server.
@@ -25,25 +26,74 @@ const NAME: &str = "store-door";
 const OVERRIDE: &str = "STORE_DOOR_CONSIDERED=";
 const ALLOW_FILE: &str = "spira-lint/store-door-allow";
 
+/// What a door admits: everything (test fixtures and the detectors' own text), or the dolt
+/// server and its SQL but never bd.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Door {
+    Everything,
+    Dolt,
+}
+
 /// Path prefixes (or exact files) allowed to invoke the store, each with why.
-const DOORS: &[(&str, &str)] = &[
-    ("spira-lc/", "the door: the one program that talks to the stores"),
-    ("spira/bead.sh", "the sanctioned bd wrapper (bead) for content"),
-    ("spira-lint/", "the rule's own fixtures and detectors name the programs it refuses"),
-    ("lifecycle-guard/", "detectors for direct bd calls carry them as fixtures"),
-    ("testenv/", "builds and tears down the throwaway fixture databases tests run on"),
-    ("install/", "starts the dolt server and asks it a first query before the store exists"),
-    ("spira/testdb", "throwaway fixture database on an embedded dolt"),
-    ("spira/dolt-", "operates the dolt server process"),
-    ("spira/build-bd.sh", "builds the bd binary"),
-    ("spira/test-", "legacy: suite fixtures drive the throwaway store they created; shrink-only"),
-    ("store-persist/", "legacy: the persistence probe operates dolt itself; shrink-only"),
-    ("spira/lc-backup.sh", "legacy: dolt backup and restore of the stores; shrink-only"),
-    ("docs/spikes/", "recorded measurement reruns of bd, never run by the loop"),
+const DOORS: &[(&str, Door, &str)] = &[
+    ("spira-lc/", Door::Dolt, "the door: the one program that talks to the stores"),
+    ("spira-lint/", Door::Everything, "the rule's own fixtures and detectors name the programs it refuses"),
+    ("lifecycle-guard/", Door::Everything, "detectors for direct bd calls carry them as fixtures"),
+    ("testenv/", Door::Everything, "builds and tears down the throwaway fixture databases tests run on"),
+    ("install/", Door::Dolt, "starts the dolt server and asks it a first query before the store exists"),
+    ("spira/testdb", Door::Everything, "throwaway fixture database on an embedded dolt"),
+    ("spira/dolt-", Door::Dolt, "operates the dolt server process"),
+    ("spira/test-", Door::Everything, "legacy: suite fixtures drive the throwaway store they created; shrink-only"),
+    ("store-persist/", Door::Dolt, "legacy: the persistence probe operates dolt itself; shrink-only"),
+    ("spira/lc-backup.sh", Door::Dolt, "legacy: dolt backup and restore of the stores; shrink-only"),
 ];
 
-fn door(path: &str) -> bool {
-    DOORS.iter().any(|(p, _)| path.starts_with(p))
+fn door(path: &str) -> Option<Door> {
+    DOORS.iter().find(|(p, _, _)| path.starts_with(p)).map(|(_, d, _)| *d)
+}
+
+/// The programs a scan refuses: every store program, or bd alone behind a dolt door.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Refused {
+    Store,
+    BdOnly,
+}
+
+struct Matchers {
+    read: Regex,
+    literal: Regex,
+    shell_var: Regex,
+    bases: &'static [&'static str],
+}
+
+impl Matchers {
+    fn build(keys: &str, names: &str, vars: &str, bases: &'static [&'static str]) -> Matchers {
+        let compile = |p: String| Regex::new(&p).expect("static regex");
+        Matchers {
+            read: compile(format!(r#"^[A-Za-z_][\w:.]*\s*\(\s*"(?:{keys})""#)),
+            literal: compile(format!(r#"^\s*(?:"(?:[^"]*/)?(?:{names})"|[\w:]*\btool\s*\(\s*"(?:{names})"\s*\)\s*\??)\s*(?:(?:\.(?:to_string|to_owned|into)\(\)|\.\s*clone\(\))?\s*(?:$|[,;)}}])|\.\s*(?:unwrap|expect|unwrap_or\w*)\s*\()"#)),
+            shell_var: compile(format!(r"^\$(?:\{{(?:{vars})(?::?[-=][^}}]*)?\}}|(?:{vars})$)")),
+            bases,
+        }
+    }
+}
+
+impl Refused {
+    fn matchers(self) -> &'static Matchers {
+        static STORE: OnceLock<Matchers> = OnceLock::new();
+        static BD: OnceLock<Matchers> = OnceLock::new();
+        match self {
+            Refused::Store => STORE.get_or_init(|| {
+                Matchers::build(
+                    "SPIRA_BD|SPIRA_DOLT_BIN",
+                    "dolt|bd-embedded|bdq|bd",
+                    "SPIRA_BD|SPIRA_BDQ|SPIRA_DOLT_BIN|DOLT|BD|BDQ|BD_BIN",
+                    &["dolt", "bd", "bd-embedded", "bdq", "bdjson"],
+                )
+            }),
+            Refused::BdOnly => BD.get_or_init(|| Matchers::build("SPIRA_BD|SPIRA_BDQ", "bd-embedded|bdq|bd", "SPIRA_BD|SPIRA_BDQ|BD|BDQ|BD_BIN", &["bd", "bd-embedded", "bdq", "bdjson"])),
+        }
+    }
 }
 
 fn re(cell: &'static OnceLock<Regex>, pat: &str) -> &'static Regex {
@@ -53,13 +103,12 @@ fn re(cell: &'static OnceLock<Regex>, pat: &str) -> &'static Regex {
 /// An expression that evaluates to a store program: a read of a program key
 /// (`cfg("SPIRA_BD")?`, `self.env("SPIRA_DOLT_BIN").unwrap_or(…)`), or a path to a name already
 /// bound to one (`&self.bd`, `cfg.bd_bin.clone()`).
-fn is_program(expr: &str, tainted: &BTreeSet<String>) -> bool {
-    static READ: OnceLock<Regex> = OnceLock::new();
+fn is_program(expr: &str, tainted: &BTreeSet<String>, refused: Refused) -> bool {
     static PATH: OnceLock<Regex> = OnceLock::new();
     let e = expr.trim_start();
     let e = e.strip_prefix("match ").unwrap_or(e).trim_start_matches(['&', ' ']);
     let e = e.strip_prefix("mut ").unwrap_or(e);
-    if re(&READ, r#"^[A-Za-z_][\w:.]*\s*\(\s*"(?:SPIRA_BD|SPIRA_DOLT_BIN)""#).is_match(e) {
+    if refused.matchers().read.is_match(e) {
         return true;
     }
     let path = r"^(?:[A-Za-z_]\w*\s*\.\s*)*([A-Za-z_]\w*)\s*(?:\.(?:clone|to_string|to_owned|as_str|as_ref|into)\(\)|\?)*\s*(?:$|[,;)}{])";
@@ -98,14 +147,14 @@ fn bindings(line: &str) -> Vec<(String, &str)> {
 }
 
 /// Every name a crate binds to a store program, followed to a fixed point.
-fn tainted_names(texts: &[String]) -> BTreeSet<String> {
+fn tainted_names(texts: &[String], refused: Refused) -> BTreeSet<String> {
     let mut tainted = BTreeSet::new();
     loop {
         let before = tainted.len();
         for line in texts.iter().flat_map(|t| t.lines()) {
             for (name, rhs) in bindings(line) {
                 // A one-letter name is a closure's or a loop's, reused for anything in a crate.
-                if name.len() > 1 && !tainted.contains(&name) && (is_program(rhs, &tainted) || names_store_literally(rhs)) {
+                if name.len() > 1 && !tainted.contains(&name) && (is_program(rhs, &tainted, refused) || names_store_literally(rhs, refused)) {
                     tainted.insert(name);
                 }
             }
@@ -140,11 +189,9 @@ pub(crate) fn rust_text(src: &[u8]) -> String {
     String::from_utf8_lossy(&rust::classify(src).without_comments()).into_owned()
 }
 
-/// `"bd"`, `"/opt/x/bdq"`, or `tool("bdq")?`: a store program named outright.
-fn names_store_literally(expr: &str) -> bool {
-    static LIT: OnceLock<Regex> = OnceLock::new();
-    let e = expr.trim_start().trim_start_matches('&');
-    re(&LIT, r#"^\s*(?:"(?:[^"]*/)?(?:dolt|bd-embedded|bdq|bd)"|[\w:]*\btool\s*\(\s*"(?:dolt|bd-embedded|bdq|bd)"\s*\)\s*\??)\s*(?:(?:\.(?:to_string|to_owned|into)\(\)|\.\s*clone\(\))?\s*(?:$|[,;)}])|\.\s*(?:unwrap|expect|unwrap_or\w*)\s*\()"#).is_match(e)
+/// `"bd"`, `"/opt/x/bdq"`, or `tool("bdq")?`: a refused program named outright.
+fn names_store_literally(expr: &str, refused: Refused) -> bool {
+    refused.matchers().literal.is_match(expr.trim_start().trim_start_matches('&'))
 }
 
 /// The top-level elements of an array literal whose `[` has been consumed.
@@ -170,7 +217,7 @@ fn elements(rest: &str) -> Vec<&str> {
     out
 }
 
-fn rust_hits(text: &str, tainted: &BTreeSet<String>) -> Vec<(usize, &'static str)> {
+fn rust_hits(text: &str, tainted: &BTreeSet<String>, refused: Refused) -> Vec<(usize, &'static str)> {
     static CMD: OnceLock<Regex> = OnceLock::new();
     static SQL: OnceLock<Regex> = OnceLock::new();
     let mut out = Vec::new();
@@ -179,21 +226,21 @@ fn rust_hits(text: &str, tainted: &BTreeSet<String>) -> Vec<(usize, &'static str
         let hit = if m.as_str().starts_with(".args") {
             // A wrapper's argv: `.args([secs, &bd, "-C", db])`.
             let inner = arg.trim().trim_start_matches('&').trim_start_matches("vec!").trim();
-            inner.strip_prefix('[').is_some_and(|rest| elements(rest).iter().any(|e| is_program(e, tainted)))
+            inner.strip_prefix('[').is_some_and(|rest| elements(rest).iter().any(|e| is_program(e, tainted, refused)))
         } else if m.as_str().starts_with("prog") {
             // A spawn spec's program field: `Spec { prog: &self.bdq, … }`.
-            names_store_literally(arg) || is_program(arg, tainted)
+            names_store_literally(arg, refused) || is_program(arg, tainted, refused)
         } else if m.as_str().starts_with(".arg") {
-            is_program(arg, tainted)
+            is_program(arg, tainted, refused)
         } else {
-            names_store_literally(arg) || is_program(arg, tainted)
+            names_store_literally(arg, refused) || is_program(arg, tainted, refused)
         };
         if hit {
             out.push((line_at(text, m.start()), "invokes dolt or bd directly"));
         }
     }
     let sql = re(&SQL, r#"mysql://|\bmysql_async\b|\bsqlx::mysql\b|\buse\s+mysql\b|\bmysql::"#);
-    for (i, l) in text.lines().enumerate() {
+    for (i, l) in text.lines().enumerate().filter(|_| refused == Refused::Store) {
         if sql.is_match(l) {
             out.push((i + 1, "connects to the dolt server over MySQL"));
         }
@@ -201,13 +248,12 @@ fn rust_hits(text: &str, tainted: &BTreeSet<String>) -> Vec<(usize, &'static str
     out
 }
 
-/// A command word that names the store's program: `bd`/`dolt` by path, or a parameter the
+/// A command word that names a refused program: `bd`/`dolt` by path, or a parameter the
 /// config fills with one (`$SPIRA_BD`, `${SPIRA_DOLT_BIN:-dolt}`, …).
-fn store_program(word: &str) -> bool {
-    static VAR: OnceLock<Regex> = OnceLock::new();
+fn store_program(word: &str, refused: Refused) -> bool {
+    let m = refused.matchers();
     let base = word.rsplit('/').next().unwrap_or("");
-    matches!(base, "dolt" | "bd" | "bd-embedded" | "bdq" | "bdjson")
-        || re(&VAR, r"^\$(?:\{(?:SPIRA_BD|SPIRA_BDQ|SPIRA_DOLT_BIN|DOLT|BD|BDQ|BD_BIN)(?::?[-=][^}]*)?\}|(?:SPIRA_BD|SPIRA_BDQ|SPIRA_DOLT_BIN|DOLT|BD|BDQ|BD_BIN)$)").is_match(word)
+    m.bases.contains(&base) || m.shell_var.is_match(word)
 }
 
 /// The argv a wrapper (`exec`, `command`, `timeout DUR`) runs.
@@ -225,22 +271,22 @@ pub(crate) fn unwrapped(argv: &[shell::Word]) -> &[shell::Word] {
     }
 }
 
-fn shell_hits(src: &[u8]) -> Vec<(usize, &'static str)> {
+fn shell_hits(src: &[u8], refused: Refused) -> Vec<(usize, &'static str)> {
     static SQL: OnceLock<Regex> = OnceLock::new();
     let mut out = Vec::new();
     for cmd in shell::parse(src) {
         let (_, argv) = cmd.split_env();
         let Some(head) = unwrapped(argv).first() else { continue };
         let name = head.unquoted();
-        if store_program(&name) {
+        if store_program(&name, refused) {
             out.push((head.line, "invokes dolt or bd directly"));
-        } else if name.rsplit('/').next() == Some("mysql") {
+        } else if refused == Refused::Store && name.rsplit('/').next() == Some("mysql") {
             out.push((head.line, "connects to the dolt server over MySQL"));
         }
     }
     let sql = re(&SQL, r"mysql://");
     for (i, l) in String::from_utf8_lossy(src).lines().enumerate() {
-        if !l.trim_start().starts_with('#') && sql.is_match(l) {
+        if refused == Refused::Store && !l.trim_start().starts_with('#') && sql.is_match(l) {
             out.push((i + 1, "connects to the dolt server over MySQL"));
         }
     }
@@ -280,21 +326,26 @@ fn is_script(e: &Entry) -> bool {
 /// Every unexcused executor in the walk, before the allow list.
 fn violations(tree: &Tree) -> Result<Vec<Finding>, LintError> {
     let files = crate::scope(tree, &StoreDoor)?;
-    let mut crates: BTreeMap<&str, Vec<RustFile>> = BTreeMap::new();
+    let mut crates: BTreeMap<&str, (Refused, Vec<RustFile>)> = BTreeMap::new();
     let mut out = Vec::new();
-    for e in files.iter().filter(|e| !door(&e.path)) {
+    for e in &files {
+        let refused = match door(&e.path) {
+            Some(Door::Everything) => continue,
+            Some(Door::Dolt) => Refused::BdOnly,
+            None => Refused::Store,
+        };
         let Some(c) = tree.content(e) else { continue };
         if e.path.ends_with(".rs") {
-            crates.entry(crate_of(&e.path)).or_default().push((&e.path, c, rust_text(c)));
+            crates.entry(crate_of(&e.path)).or_insert_with(|| (refused, Vec::new())).1.push((&e.path, c, rust_text(c)));
         } else {
-            out.extend(scan(&e.path, c, shell_hits(c)));
+            out.extend(scan(&e.path, c, shell_hits(c, refused)));
         }
     }
-    for files in crates.values() {
+    for (refused, files) in crates.values() {
         let texts: Vec<String> = files.iter().map(|(_, _, t)| t.clone()).collect();
-        let tainted = tainted_names(&texts);
+        let tainted = tainted_names(&texts, *refused);
         for (path, src, text) in files {
-            out.extend(scan(path, src, rust_hits(text, &tainted)));
+            out.extend(scan(path, src, rust_hits(text, &tainted, *refused)));
         }
     }
     Ok(out)
@@ -408,6 +459,35 @@ mod tests {
         t.write("spira-lc/src/a.rs", "fn f() { Command::new(\"dolt\"); }\n");
         t.write("foo/src/b.rs", "fn f() {}\n");
         assert_eq!(run(&t, &["spira-lc/src/a.rs", "foo/src/b.rs"]).unwrap(), Vec::<String>::new());
+    }
+
+    #[test_id(tv236zk)]
+    #[test]
+    fn a_planted_bd_spawn_is_refused_in_the_door_installer_and_release() {
+        let t = TempDir::new("sd-bd-doors");
+        let files = ["spira-lc/src/a.rs", "install/src/a.rs", "release/src/a.rs"];
+        for f in files {
+            t.write(f, "fn f() { Command::new(\"bd\"); }\n");
+        }
+        let got = run(&t, &files).unwrap();
+        assert_eq!(got.len(), 3, "{got:?}");
+        for f in files {
+            assert!(got.iter().any(|g| g.contains(f)), "{f}: {got:?}");
+        }
+    }
+
+    #[test_id(tlcak64)]
+    #[test]
+    fn a_dolt_door_still_invokes_dolt_but_not_bd_by_name_or_config() {
+        let t = TempDir::new("sd-dolt-doors");
+        t.write("spira-lc/src/a.rs", "fn f() { let dolt = cfg(\"SPIRA_DOLT_BIN\")?; Command::new(&dolt); let u = \"mysql://h/db\"; }\n");
+        t.write("install/src/a.rs", "fn f() { Command::new(\"dolt\"); }\n");
+        let clean = ["spira-lc/src/a.rs", "install/src/a.rs"];
+        assert_eq!(run(&t, &clean).unwrap(), Vec::<String>::new());
+        t.write("spira-lc/src/b.rs", "fn g() { let prog = cfg(\"SPIRA_BD\")?; Command::new(&prog); }\n");
+        t.write("spira/dolt-x.sh", "dolt sql -q 'select 1'\nbd list\n");
+        let got = run(&t, &["spira-lc/src/a.rs", "spira-lc/src/b.rs", "spira/dolt-x.sh"]).unwrap();
+        assert_eq!(got.len(), 2, "{got:?}");
     }
 
     #[test_id(trw9pom)]
@@ -538,13 +618,13 @@ mod tests {
         assert_eq!(run(&t, &["spira/x.sh"]).unwrap(), Vec::<String>::new());
     }
 
-    #[test_id(t38qrty)]
+    #[test_id(twqxlh9)]
     #[test]
-    fn the_shipped_list_counts_the_known_executors() {
+    fn the_shipped_list_names_no_production_executor() {
         let list = parse_count_allow(ALLOW_FILE, include_str!("../../store-door-allow")).unwrap();
-        for p in ["dwarf/src/session.rs", "spira-claim/src/store.rs", "incident/src/real.rs", "spira/lib.sh"] {
-            assert!(list.contains_key(p), "{p} missing from the allow list");
-        }
+        assert!(!list.is_empty(), "positive control: the list parsed");
+        let production: Vec<&String> = list.keys().filter(|p| !p.starts_with("docs/spikes/")).collect();
+        assert!(production.is_empty(), "{production:?}");
     }
 
     #[test_id(tn3z0dc)]

@@ -359,18 +359,18 @@ pub fn check_store(w: &dyn World) -> Vec<Line> {
     if w.dir_exists(&beads_dir) {
         out.push(ok(format!("{db} has a .beads")));
         match w.bd_list(60) {
-            Ok(_) => out.push(ok("bd can read it")),
-            Err(bd_out) => {
+            Ok(_) => out.push(ok("the store answers")),
+            Err(read_out) => {
                 let dolt_data = w.env("SPIRA_DOLT_DATA").filter(|v| !v.is_empty());
                 if install && dolt_data.is_some() && !w.systemd_user_is_active("dolt-beads.service") {
                     out.push(warn(
-                        format!("bd cannot read {db} — dolt-beads.service not active; install.sh will start it in phase 4"),
-                        bd_out.lines().take(2).collect::<Vec<_>>().join("\n"),
+                        format!("cannot read the store at {db} — dolt-beads.service not active; install.sh will start it in phase 4"),
+                        read_out.lines().take(2).collect::<Vec<_>>().join("\n"),
                     ));
                 } else {
                     out.push(fail(
-                        format!("bd cannot read {db}"),
-                        format!("{}\n        A Dolt server may be down. Try: bd -C {db} dolt start", bd_out.lines().take(2).collect::<Vec<_>>().join("\n")),
+                        format!("cannot read the store at {db}"),
+                        format!("{}\n        A Dolt server may be down. Try: systemctl --user restart dolt-beads.service", read_out.lines().take(2).collect::<Vec<_>>().join("\n")),
                     ));
                 }
             }
@@ -380,7 +380,7 @@ pub fn check_store(w: &dyn World) -> Vec<Line> {
             if let Some(m) = w.read_store_meta(&meta) {
                 if m.dolt_mode.as_deref() == Some("embedded") {
                     out.push(fail(
-                        "store is in embedded mode — one client at a time, every bd call serialises on one lock",
+                        "store is in embedded mode — one client at a time, every call serialises on one lock",
                         format!("Set SPIRA_DOLT_DATA in {conf} and re-run install.sh to migrate to server mode."),
                     ));
                 } else {
@@ -469,7 +469,7 @@ pub fn check_root_closed(w: &dyn World) -> Vec<Line> {
     match w.dolt_root_passwordless(&host, port) {
         Some(true) => vec![fail(
             format!("dolt root on {host}:{port} is passwordless"),
-            "Anyone on the host can administer the store. Run install: it gives bd its own user and\n        moves root onto the password in the admin credential file.",
+            "Anyone on the host can administer the store. Run install: it gives the store its own user and\n        moves root onto the password in the admin credential file.",
         )],
         Some(false) => vec![ok(format!("dolt root on {host}:{port} requires a password"))],
         None => Vec::new(),
@@ -797,7 +797,7 @@ pub fn check_events_probe(w: &dyn World) -> Vec<Line> {
     if count_positive {
         return vec![ok("events write/read round trip")];
     }
-    let path = format!("bd sql (server mode at {db})");
+    let path = format!("SQL (server mode at {db})");
     if !wrote {
         vec![fail(
             format!("events write/read round trip failed — the write via {path} was refused (anchor bead: {id})"),
@@ -1031,25 +1031,6 @@ pub fn check_operator_channel(w: &dyn World) -> Vec<Line> {
                 "hunk is not on PATH — the cockpit review pane is unavailable; rebuild.sh creates a hunk session with no program behind it".into(),
                 "Install: npm install -g --prefix ~/.local hunkdiff (bin lands at ~/.local/bin/hunk; ensure ~/.local/bin is in SPIRA_PATH in spira.conf)".into(),
             )),
-        }
-    }
-
-    let via_path = w.which("go").map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-    let go_candidates = [w.env("GO").unwrap_or_default(), format!("{}/.local/go/bin/go", w.env("HOME").unwrap_or_default()), via_path];
-    let go_found = go_candidates.into_iter().find(|c| !c.is_empty() && w.is_executable_file(c));
-    if let Some(g) = go_found {
-        out.push(ok(format!("go — {g}")));
-    } else {
-        let arch = w.arch();
-        let prebuilt = matches!(arch.as_str(), "x86_64" | "aarch64");
-        let bd = w.env("SPIRA_BD").filter(|b| !b.is_empty()).unwrap_or_else(|| "bd".to_string());
-        if !prebuilt && w.which(&bd).is_none() {
-            out.push(make(
-                format!("go is not on PATH — {}", w.spira_bin_purpose("go")),
-                format!("{bd} is not a program here and no prebuilt exists for {arch}. Install Go: https://go.dev/dl/ or use $HOME/.local/go/bin/go"),
-            ));
-        } else {
-            out.push(ok(format!("go absent — prebuilt bd {} for {arch}", if prebuilt { "available" } else { "unavailable, one is installed" })));
         }
     }
 
