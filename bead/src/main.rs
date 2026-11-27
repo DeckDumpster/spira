@@ -67,7 +67,7 @@ fn main() {
         },
         _ => {
             eprintln!(
-                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--contract-fix] [--depends-on <id>]... [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--part N (proposal)] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh pilgrimage <design-file> --repo <name> --after <build-id>... [--priority N]\n       bead.sh amend <id> [--note \"<text>\"] [--priority N] [--body-file F --replace | --append-body F] [--express]\n       bead.sh amend <id> --live --note \"<text>\" | --append-body F [--ack-within <dur>]\n       bead.sh amend <id> --ack <amend-id> --accept | --decline \"<why>\"\n       bead.sh amend --enforce <amend-id>\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh ideas [--json]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
+                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted --tip <sha>] [--contract-fix] [--depends-on <id>]... [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--part N (proposal)] [--priority N] [--body-file F] [--express] [--submitted --tip <sha>] [--json]\n       --submitted --tip <sha> files the item SUBMITTED at <sha> and creates refs/heads/spira/<id> there in the repo checkout\n       bead.sh pilgrimage <design-file> --repo <name> --after <build-id>... [--priority N]\n       bead.sh amend <id> [--note \"<text>\"] [--priority N] [--body-file F --replace | --append-body F] [--express]\n       bead.sh amend <id> --live --note \"<text>\" | --append-body F [--ack-within <dur>]\n       bead.sh amend <id> --ack <amend-id> --accept | --decline \"<why>\"\n       bead.sh amend --enforce <amend-id>\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh ideas [--json]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
             );
             2
         }
@@ -97,6 +97,39 @@ fn lc() -> Result<spira_store::lc_call::LcClient, String> {
         return Ok(c);
     }
     spira_store::lc_call::LcClient::configured()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Every git call a test's filing made, and the (subcommand, exit, output) it is answered with.
+    static TEST_GIT: std::cell::RefCell<(Vec<Vec<String>>, Vec<(&'static str, i32, &'static str)>)> = const { std::cell::RefCell::new((Vec::new(), Vec::new())) };
+    static TEST_SAID: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The git a submitted filing runs: exit, with stdout on success and stderr otherwise.
+fn git(args: &[&str]) -> (i32, String) {
+    #[cfg(test)]
+    {
+        TEST_GIT.with(|g| {
+            let mut g = g.borrow_mut();
+            g.0.push(args.iter().map(|a| a.to_string()).collect());
+            g.1.iter().find(|(verb, _, _)| args.get(2) == Some(verb)).map_or((0, String::new()), |(_, code, out)| (*code, out.to_string()))
+        })
+    }
+    #[cfg(not(test))]
+    match spira_config::bounded::bounded("git").args(args).output() {
+        Ok(o) => {
+            let said = if o.status.success() { &o.stdout } else { &o.stderr };
+            (o.status.code().unwrap_or(-1), String::from_utf8_lossy(said).into_owned())
+        }
+        Err(e) => (-1, format!("cannot run git: {e}")),
+    }
+}
+
+fn complain(line: &str) {
+    #[cfg(test)]
+    TEST_SAID.with(|s| s.borrow_mut().push(line.to_string()));
+    eprintln!("{line}");
 }
 
 /// A read through the content door.
@@ -187,12 +220,12 @@ fn parent_labels(id: &str) -> Vec<String> {
 /// set that incident is wired to block on the new bead in the same step
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
 #[allow(clippy::too_many_arguments)]
-fn door_create(out: &mut dyn std::io::Write, args: &[String], body: Option<&str>, incident: Option<(&str, &[String])>, blockers: &[String], title: Option<&str>, lookup_title: Option<&str>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>, drafted_by: Option<&str>) -> i32 {
+fn door_create(out: &mut dyn std::io::Write, args: &[String], body: Option<&str>, incident: Option<(&str, &[String])>, blockers: &[String], title: Option<&str>, lookup_title: Option<&str>, express: bool, submitted: Option<(&str, &str)>, repo: Option<&str>, drafted_by: Option<&str>) -> i32 {
     if incident.is_none() && blockers.is_empty() && lookup_title.is_none() && !express {
         return put(&args.iter().map(String::as_str).collect::<Vec<_>>(), body);
     }
     let mut id_text = None;
-    let rc = door_create_writes(&mut id_text, args, body, incident, blockers, title, lookup_title, express, submitted_tip, repo, drafted_by);
+    let rc = door_create_writes(&mut id_text, args, body, incident, blockers, title, lookup_title, express, submitted, repo, drafted_by);
     if let Some(text) = id_text {
         let _ = write!(out, "{text}");
         let _ = out.flush();
@@ -202,7 +235,8 @@ fn door_create(out: &mut dyn std::io::Write, args: &[String], body: Option<&str>
 
 /// Every write of the filing; the id text goes to `id_text` for the caller to print once they are all sent.
 #[allow(clippy::too_many_arguments)]
-fn door_create_writes(id_text: &mut Option<String>, args: &[String], body: Option<&str>, incident: Option<(&str, &[String])>, blockers: &[String], title: Option<&str>, lookup_title: Option<&str>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>, drafted_by: Option<&str>) -> i32 {
+fn door_create_writes(id_text: &mut Option<String>, args: &[String], body: Option<&str>, incident: Option<(&str, &[String])>, blockers: &[String], title: Option<&str>, lookup_title: Option<&str>, express: bool, submitted: Option<(&str, &str)>, repo: Option<&str>, drafted_by: Option<&str>) -> i32 {
+    let submitted_tip = submitted.map(|(tip, _)| tip);
     let argv_owned = args.to_vec();
     let argv: Vec<&str> = argv_owned.iter().map(String::as_str).collect();
     let window = match spira_config::process::cfg_parse::<u64>(FILE_WINDOW_KEY) {
@@ -266,10 +300,14 @@ fn door_create_writes(id_text: &mut Option<String>, args: &[String], body: Optio
     };
     let mut rc = 0;
     if title.is_some() {
-        match submitted_tip {
-            Some(tip) => {
+        match submitted {
+            Some((tip, root)) => {
                 if let Err(e) = create_row_retrying(&new_id, Some(tip), repo) {
                     eprintln!("bead: file: {new_id} filed but its lifecycle row was not created SUBMITTED: {e}; no id is printed. Once the lifecycle store answers: spira-lc create-bead {new_id} --submitted-tip {tip}");
+                    return 1;
+                }
+                if let Err(e) = bead::filing::SubmittedBranch::new(&mut git).create(root, &new_id, tip) {
+                    complain(&format!("bead: file: {new_id} filed SUBMITTED at {tip} but refs/heads/spira/{new_id} was not created: {e}; no id is printed. Create it: git -C {root} update-ref refs/heads/spira/{new_id} {tip} \"\""));
                     return 1;
                 }
                 *id_text = Some(stdout.clone());
@@ -467,6 +505,10 @@ fn schema_sh(home: &str) -> String {
 /// `schema.sh type-of <kind>` — `Ok(bd_type)` or `Err(())` (stderr discarded: `bead.sh`
 /// prints its own "unknown kind" message, never schema.sh's).
 fn schema_type_of(home: &str, kind: &str) -> Result<String, ()> {
+    // schema.sh sources an installed release's conf.sh, which a unit test has none of.
+    if cfg!(test) && kind == DEFAULT_KIND {
+        return Ok("task".to_string());
+    }
     let out = spira_config::bounded::bounded(schema_sh(home))
         .arg("type-of")
         .arg(kind)
@@ -504,20 +546,6 @@ fn schema_name(home: &str, key: &str) -> String {
 // =========================================================================================
 // Repository map / env helpers
 // =========================================================================================
-
-/// A short or symbolic tip resolves to the one full commit it names in the repo; unknown and
-/// ambiguous ones are refused, because the lifecycle compares tips byte for byte.
-fn resolve_full_tip(repo_path: &str, raw: &str) -> Result<String, String> {
-    let out = spira_config::bounded::bounded("git")
-        .args(["-C", repo_path, "rev-parse", "--verify", "--quiet", "--end-of-options", &format!("{raw}^{{commit}}")])
-        .output()
-        .map_err(|e| format!("cannot run git: {e}"))?;
-    let full = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if !out.status.success() || full.len() != 40 || !full.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(format!("not an unambiguous commit in {repo_path}"));
-    }
-    Ok(full)
-}
 
 /// `SPIRA_REPO_MAP` through `cfg` (per Ryan 2026-10-05: one source of config) — the config
 /// file `cfg` reads is the same whatever `--home` says; `--home` only ever selects
@@ -864,16 +892,28 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
                 return 2;
             }
         };
+        let mut checkout = None;
         if submitted {
             let Some(raw) = tip.take() else { return 2 };
-            let path = repos.get(&repo).map(|r| r.path.as_str()).unwrap_or_default();
-            match resolve_full_tip(path, &raw) {
+            let registry = spira_config::repos::Registry::from_env_checkout(env::vars().collect(), Path::new(home));
+            let Some(root) = registry.root(&repo) else {
+                complain(&format!("bead: --submitted --tip {raw}: repo {repo} maps to no checkout; nothing filed"));
+                return 2;
+            };
+            let mut run = git;
+            let mut branch = bead::filing::SubmittedBranch::new(&mut run);
+            if let Err(e) = branch.check(&root, &raw) {
+                complain(&format!("bead: --submitted --tip {raw}: {e} (repo {repo}); nothing filed"));
+                return 2;
+            }
+            match branch.resolve(&root, &raw) {
                 Ok(full) => tip = Some(full),
                 Err(e) => {
-                    eprintln!("bead: --tip {raw}: {e}");
+                    complain(&format!("bead: --tip {raw}: {e}"));
                     return 2;
                 }
             }
+            checkout = Some(root);
         }
         let fpath = format!("{}/{}.rune", runes_dir(home), for_rune);
         if !Path::new(&fpath).is_file() {
@@ -965,7 +1005,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        let rc = door_create(&mut std::io::stdout(), &bd_args, create_body.as_deref(), incident_parent, &bead::filing::blockers(stack_after.as_deref(), &depends_on), Some(&title_for_row), Some(&title_for_row), express, tip.as_deref(), Some(repo.as_str()), request_id.as_deref());
+        let rc = door_create(&mut std::io::stdout(), &bd_args, create_body.as_deref(), incident_parent, &bead::filing::blockers(stack_after.as_deref(), &depends_on), Some(&title_for_row), Some(&title_for_row), express, tip.as_deref().zip(checkout.as_deref()), Some(repo.as_str()), request_id.as_deref());
         if rc == 0 {
             spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", &for_rune), ("repo", &repo), ("kind", "work")]);
         }
@@ -2447,6 +2487,100 @@ mod tests {
     fn a_refusal_the_door_gives_is_the_exit_code_and_stderr_the_caller_sees() {
         install(vec![("content label add", 1, "bead: refusing\n")]);
         assert_eq!(put(&["label", "add", "sp-a", "x"], None), 1);
+    }
+
+    const TIP: &str = "1111111111111111111111111111111111111111";
+
+    fn script_git(answers: Vec<(&'static str, i32, &'static str)>) {
+        TEST_GIT.with(|g| *g.borrow_mut() = (Vec::new(), answers));
+        TEST_SAID.with(|s| s.borrow_mut().clear());
+    }
+
+    fn git_calls() -> Vec<Vec<String>> {
+        TEST_GIT.with(|g| g.borrow().0.clone())
+    }
+
+    fn said() -> String {
+        TEST_SAID.with(|s| s.borrow().join("\n"))
+    }
+
+    fn file_submitted(answers: Vec<(&'static str, i32, &'static str)>) -> (i32, Arc<Door>, String) {
+        let d = install(answers);
+        let args = argv(&["create", "T", "--silent"]);
+        let mut out = Vec::new();
+        let rc = door_create(&mut out, &args, None, None, &[], Some("T"), Some("T"), false, Some((TIP, "co")), Some("r"), None);
+        (rc, d, String::from_utf8(out).unwrap())
+    }
+
+    #[test_id(tiilc6g)]
+    #[test]
+    fn a_submitted_filing_creates_its_branch_at_the_tip_after_the_row_and_then_prints_the_id() {
+        let dir = testkit::TempDir::new("bead-door-branch");
+        let _env = configured(dir.path());
+        script_git(vec![]);
+        let (rc, d, out) = file_submitted(vec![("content create", 0, "sp-new\n")]);
+        assert_eq!((rc, out.as_str()), (0, "sp-new\n"));
+        assert!(sent(&d).iter().any(|a| a[..2] == argv(&["create-bead", "sp-new"])[..]));
+        assert_eq!(git_calls(), [argv(&["-C", "co", "update-ref", "refs/heads/spira/sp-new", TIP, ""])]);
+    }
+
+    #[test_id(tqcevst)]
+    #[test]
+    fn a_submitted_filing_whose_branch_cannot_be_created_prints_no_id_and_the_repair() {
+        let dir = testkit::TempDir::new("bead-door-branch-fail");
+        let _env = configured(dir.path());
+        script_git(vec![("update-ref", 128, "fatal: locked"), ("rev-parse", 1, "")]);
+        let (rc, _, out) = file_submitted(vec![("content create", 0, "sp-new\n")]);
+        assert_eq!((rc, out.as_str()), (1, ""));
+        let said = said();
+        assert!(said.contains("fatal: locked") && said.contains("no id is printed") && said.ends_with(&format!("Create it: git -C co update-ref refs/heads/spira/sp-new {TIP} \"\"")), "{said}");
+    }
+
+    #[test_id(tq3udzm)]
+    #[test]
+    fn a_submitted_filing_whose_row_is_not_created_makes_no_git_call() {
+        let dir = testkit::TempDir::new("bead-door-branch-norow");
+        let _env = configured(dir.path());
+        script_git(vec![]);
+        let (rc, _, out) = file_submitted(vec![("content create", 0, "sp-new\n"), ("create-bead", 1, "refused")]);
+        assert_eq!((rc, out.as_str()), (1, ""));
+        assert!(git_calls().is_empty(), "{:?}", git_calls());
+    }
+
+    fn file_through_the_command(dir: &std::path::Path, extra: &[&str]) -> i32 {
+        let map = dir.join("fixture.repos");
+        std::fs::write(&map, format!("home|{}|push\n", dir.join("home").display())).unwrap();
+        let toml = spira_config::process::fixture_toml(dir, &[("SPIRA_REPO_MAP", &map.to_string_lossy()), ("SPIRA_HOME_REPO", "home")]);
+        let spira_home = testkit::manifest_dir().join("../spira").to_string_lossy().into_owned();
+        let _env = testkit::env(&[("SPIRA_TOML", Some(&toml.to_string_lossy())), ("SPIRA_HOME", Some(&spira_home)), ("SPIRA_RELEASE", None), ("SPIRA_REPO_MAP", None), ("SPIRA_HOME_REPO", None), ("SPIRA_REPO", None), ("SPIRA_REPO_DERIVED", None), ("SPIRA_CONCIERGE", None), ("SPIRA_RUNES_DIR", Some(&format!("{spira_home}/runes")))]);
+        let body = dir.join("body.md");
+        std::fs::write(&body, "## Build\nthe thing").unwrap();
+        let mut args = argv(&["T", "--for", "builder", "--repo", "home", "--body-file", &body.to_string_lossy()]);
+        args.extend(argv(extra));
+        spira_config::process::with_fresh(|| cmd_file(&spira_home, &args)).expect("the fixture resolves")
+    }
+
+    #[test_id(t8xk4h4)]
+    #[test]
+    fn a_submitted_filing_whose_tip_is_no_commit_in_the_checkout_files_nothing() {
+        let dir = testkit::TempDir::new("bead-file-bad-tip");
+        let d = install(vec![("content create", 0, "sp-new\n")]);
+        script_git(vec![("cat-file", 128, "fatal")]);
+        assert_eq!(file_through_the_command(dir.path(), &["--submitted", "--tip", TIP]), 2);
+        assert!(sent(&d).is_empty(), "{:?}", sent(&d));
+        let root = dir.path().join("home").display().to_string();
+        assert_eq!(said(), format!("bead: --submitted --tip {TIP}: {TIP} is not a commit in {root} (repo home); nothing filed"));
+    }
+
+    #[test_id(tl5q2gf)]
+    #[test]
+    fn an_unsubmitted_filing_makes_no_git_call() {
+        let dir = testkit::TempDir::new("bead-file-unsubmitted");
+        let d = install(vec![("content create", 0, "sp-new\n")]);
+        script_git(vec![]);
+        assert_eq!(file_through_the_command(dir.path(), &[]), 0);
+        assert!(sent(&d).iter().any(|a| a[1] == "create"), "{:?}", sent(&d));
+        assert!(git_calls().is_empty(), "{:?}", git_calls());
     }
 
     #[test_id(t7bwbll)]
