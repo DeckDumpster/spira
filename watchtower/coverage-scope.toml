@@ -6,7 +6,7 @@ functions = ["free_share", "sample", "targets_of", "distance", "level", "conditi
 
 [[scope]]
 path = "watchtower/src/probes.rs"
-functions = ["psi_full_avg300"]
+functions = ["psi_full_avg300", "psi_some_avg300"]
 
 # The heimdall lane the actors here honour.
 
