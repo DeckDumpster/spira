@@ -28,6 +28,11 @@ path = "tests/image_bytes.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "image_readings"
+path = "tests/image_readings.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "preflight_guest_harness"
 path = "tests/preflight_guest_harness.rs"
 required-features = ["integration"]

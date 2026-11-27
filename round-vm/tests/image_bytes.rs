@@ -7,6 +7,7 @@ const TEMPLATE: &str = include_str!("../src/template.sh");
 const AMI_SETUP: &str = include_str!("../ami-setup.sh");
 const GUEST: &str = include_str!("../../spira/round-image-preflight-guest.sh");
 const SSM: &str = include_str!("../ssm-commands.jq");
+const WORKFLOW: &str = include_str!("../../.github/workflows/round-ami-build.yml");
 
 fn code(script: &str) -> Vec<&str> {
     script.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).collect()
@@ -39,8 +40,7 @@ fn the_image_setup_ends_by_reporting_its_bytes_then_trimming_the_root() {
     let trim = line_with(&s, "fstrim -v /");
     assert!(used < consumers && consumers < du && du < trim, "the report is taken before the trim");
     assert_eq!(s[trim - 1], "sync");
-    assert_eq!(trim + 2, s.len(), "only the trim's report follows it: {:?}", &s[trim..]);
-    assert_eq!(s[trim + 1], r#"echo "image-bytes $trimmed""#);
+    assert_eq!(s.last(), Some(&r#"echo "image-bytes $trimmed""#), "the trim's report ends the script");
 }
 
 #[test_id(tc9ibzs)]
@@ -61,4 +61,13 @@ fn the_preflight_guest_replaces_the_trim_and_the_nested_prune() {
 fn a_successful_setup_prints_its_byte_report_to_the_ssm_output() {
     let program = code(SSM).join("\n");
     assert!(program.contains(r#"else grep '^image-bytes ' \"$L\"; fi; exit $rc"#), "no success branch prints the image-bytes lines:\n{program}");
+}
+
+#[test_id(ts4p8rc)]
+#[test]
+fn the_workflow_prints_the_report_when_the_setup_succeeds() {
+    let w = code(WORKFLOW);
+    let success = line_with(&w, "Success)");
+    let end = success + w[success..].iter().position(|l| l.ends_with(";;")).expect("the Success arm ends");
+    line_with(&w[success..=end], "--query StandardOutputContent --output text");
 }

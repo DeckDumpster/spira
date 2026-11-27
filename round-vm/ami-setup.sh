@@ -55,6 +55,11 @@ for d in /nix /var/lib/containers "$cache_home" /root/.rustup /tmp; do
     [ ! -e "$d" ] || du -sxB1 "$d" | sed 's/^/image-bytes /'
 done
 sync
-# A Proxmox disk without discard refuses the trim; that costs time, never a broken image.
-trimmed="$(fstrim -v / 2>&1)" || trimmed="fstrim failed: $trimmed"
+if ! trimmed="$(fstrim -v / 2>&1)"; then
+    # A template disk without discard costs time, not a broken image; any other failure stops the setup.
+    case "$trimmed" in
+        *"discard operation is not supported"*) ;;
+        *) echo "$trimmed" >&2; exit 1 ;;
+    esac
+fi
 echo "image-bytes $trimmed"
