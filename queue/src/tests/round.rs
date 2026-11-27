@@ -7720,6 +7720,71 @@ fn a_ci_entry_that_wrote_no_verdict_is_a_faulted_pass_naming_the_round_fault_not
     assert_eq!(round_phase(&t), "ATTRIBUTING");
     assert!(t.err().contains("podman pull /work failed"), "{}", t.err());
     assert!(!t.out().contains("red=testenv"), "{}", t.out());
+    assert!(
+        t.out().lines().any(|l| l.starts_with("fault=FAULT phase") || l.starts_with("fault=FAULT with no phase marker")),
+        "{}",
+        t.out()
+    );
+}
+
+/// A one-member own-testenv round whose every pass is cut: the first is re-certified once, the
+/// second is a capacity fault, and the member is charged with neither.
+fn cut_ci_entry_round(rc: i32, files: &[(&str, &str)]) -> T {
+    let mut t = round_world();
+    t.lib.s.round_wall_secs = 700;
+    let now = t.clock.now.clone();
+    *t.scripts.during_vm.borrow_mut() = Some(Box::new(move || now.set(now.get() + 1406)));
+    *t.scripts.repo_testenv.borrow_mut() = RunOut {
+        rc,
+        out: String::new(),
+        err: "round-vm run: signal 15: releasing this run's VM\n".into(),
+    };
+    t.scripts.repo_no_ci_result.set(true);
+    *t.scripts.repo_files.borrow_mut() = files.iter().map(|(n, b)| (n.to_string(), b.to_string())).collect();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    declare_own_testenv(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
+    let passes = t.scripts.calls.borrow().iter().filter(|c| c.starts_with("repo-round-vm")).count();
+    assert_eq!(passes, 2, "a cut pass is certified once more");
+    assert!(t.out().contains("fault=over-cap unreached=0"), "{}", t.out());
+    assert!(t.out().contains("fault=capacity unreached=0,0"), "{}", t.out());
+    assert!(!t.lib.has("bead_reopen sp-a"), "{:?}", t.lib.calls.borrow());
+    t
+}
+
+#[test_id(tqrrjjo)]
+#[test]
+fn a_ci_entry_cut_by_the_hang_guard_names_its_phase_and_recertifies_once_then_is_a_capacity_fault() {
+    let t = cut_ci_entry_round(124, &[("round-phases", "clone 100 - -\npull 110 - -\nentry 120 - -\n")]);
+    let why = "FAULT over-cap guard=hang-guard phase=entry elapsed=1406s guard=1400s cap=700s";
+    assert!(t.out().lines().any(|l| l == format!("fault={why}")), "{}", t.out());
+    let mails = t.lib.mails.borrow();
+    let page = &mails.iter().find(|(subject, _)| subject.contains("over-cap twice")).expect("the second cut pages").1;
+    assert!(page.contains(why) && !page.contains("suite_cap_s"), "the page names a foreign round's cut, not suites it has none of: {page}");
+}
+
+#[test_id(txlettw)]
+#[test]
+fn a_ci_entry_the_hang_guard_cut_before_any_stamp_names_the_lease() {
+    let t = cut_ci_entry_round(137, &[]);
+    assert!(t.out().contains("fault=FAULT over-cap guard=hang-guard phase=lease elapsed="), "{}", t.out());
+}
+
+#[test_id(tg056dx)]
+#[test]
+fn a_ci_entry_cut_at_its_own_cap_takes_the_over_cap_path_whatever_the_run_exit() {
+    let t = cut_ci_entry_round(1, &[("round-fault-kind", "over-cap guard=ci-entry-cap phase=entry elapsed=901s cap=900s — the CI entry ran past the cap\n")]);
+    assert!(
+        t.out().contains("fault=FAULT over-cap guard=ci-entry-cap phase=entry elapsed=901s cap=900s"),
+        "{}",
+        t.out()
+    );
 }
 
 /// A one-member own-testenv round whose CI entry never ran, certified twice. The landing ref
@@ -7788,14 +7853,6 @@ fn a_one_member_round_whose_changed_declaration_stops_the_entry_twice_ejects_the
         calls.iter().any(|c| c.contains("podman pull /work failed")),
         "{calls:?}"
     );
-}
-
-#[test_id(tyfjvom)]
-#[test]
-fn a_ci_entry_that_hung_twice_under_the_landed_declaration_is_still_a_faulted_pass() {
-    let t = two_passes_whose_ci_entry_never_ran(|t| t.scripts.repo_testenv.borrow_mut().rc = 124);
-    assert!(t.lib.has("bead_reopen sp-a eject-red"), "{:?}", t.lib.calls.borrow());
-    assert!(!t.out().contains("fault=infra-fault"), "{}", t.out());
 }
 
 #[test_id(tp6xdds)]
@@ -7905,6 +7962,7 @@ fn an_own_testenv_repo_with_no_ci_entry_is_not_judged_and_runs_nothing() {
     fs::write(wt.join(".spira").join("testenv.toml"), "").unwrap();
     assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
     assert!(t.err().contains("declares no ci_entry"), "{}", t.err());
+    assert!(t.out().lines().any(|l| l.starts_with("fault=FAULT ") && l.contains("declares no ci_entry")), "{}", t.out());
     let calls = t.scripts.calls.borrow().clone();
     assert!(!calls.iter().any(|c| c.contains("round-vm")), "{calls:?}");
 }
@@ -7920,6 +7978,7 @@ fn an_own_testenv_repo_with_a_ci_entry_and_no_image_is_not_judged_and_runs_nothi
     fs::write(wt.join(".spira").join("testenv.toml"), "ci_entry = \"deploy/ci.sh all\"\n").unwrap();
     assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
     assert!(t.err().contains("declares a ci_entry but no image"), "{}", t.err());
+    assert!(t.out().lines().any(|l| l.starts_with("fault=FAULT ") && l.contains("declares a ci_entry but no image")), "{}", t.out());
     let calls = t.scripts.calls.borrow().clone();
     assert!(!calls.iter().any(|c| c.contains("round-vm")), "{calls:?}");
 }
@@ -9288,6 +9347,23 @@ fn a_round_vm_lost_mid_pass_exits_75_incomplete_and_never_counts_against_a_membe
         t.lib.calls.borrow()
     );
     assert!(!t.out().contains("red-output="), "never named a red");
+}
+
+#[test_id(tkt7yz5)]
+#[test]
+fn a_ci_entry_whose_vm_was_lost_says_so_on_stdout() {
+    let t = round_world();
+    *t.scripts.repo_testenv.borrow_mut() = RunOut {
+        rc: 75,
+        out: String::new(),
+        err: "round-vm run: INCOMPLETE reason=vm-lost\n".into(),
+    };
+    t.scripts.repo_no_ci_result.set(true);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    declare_own_testenv(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 75, "{}", t.err());
+    assert!(t.out().lines().any(|l| l.starts_with("fault=FAULT vm-lost")), "{}", t.out());
 }
 
 fn no_output_next_pass(t: &T) {

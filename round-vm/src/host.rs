@@ -179,8 +179,7 @@ impl LocalRemote {
         let mut words = text.split_whitespace();
         let pgid = words.next().and_then(|p| p.parse::<i32>().ok()).filter(|p| *p > 1);
         let started = words.next().map(str::to_string);
-        let by = words.next().and_then(|p| p.parse::<u32>().ok());
-        if owner.is_some() && by != owner {
+        if owner.is_some() && self.pass_owner() != owner {
             return;
         }
         let _ = fs::remove_file(self.group_file());
@@ -188,6 +187,25 @@ impl LocalRemote {
             Self::kill_pass(pgid, started);
         }
         self.remove_entry_container();
+    }
+
+    /// Ends the pass a signalled round-vm has running here, keeping what a signalled VM run
+    /// keeps. A home running another's pass, or none, holds some other round's results.
+    pub fn end_signalled_pass(&self, owner: u32, results_dir: &Path, scratch: &Path, within: Duration) {
+        let ours = self.pass_owner() == Some(owner);
+        // Stopped before the copy: a slow copy must not outlast the caller's kill-after with the
+        // pass and its container still running. The files stay on disk.
+        self.stop_pass_of(Some(owner));
+        if ours {
+            match crate::run::salvage_results(self, "", results_dir, scratch, within) {
+                Some(n) => eprintln!("round-vm run: salvaged {n} suite result(s) from the host pass before stopping it"),
+                None => eprintln!("round-vm run: the host pass's results could not be copied; they stay under {}", self.home.display()),
+            }
+        }
+    }
+
+    fn pass_owner(&self) -> Option<u32> {
+        fs::read_to_string(self.group_file()).ok()?.split_whitespace().nth(2)?.parse().ok()
     }
 
     fn kill_pass(pgid: i32, started: Option<String>) {
@@ -606,6 +624,30 @@ mod tests {
         remote.stop_pass_of(Some(7));
         assert!(!cid.exists());
         assert_eq!(entry_removal("abc"), "timeout 30 podman rm --force --ignore --time 0 'abc'");
+    }
+
+    // Spawns `cp`: copying the results folder is the host's real pull.
+    #[test_id(tjvqrkz)]
+    #[test]
+    fn a_signalled_host_pass_leaves_its_log_and_phase_stamps_in_the_results_and_only_its_owner_takes_them() {
+        let d = dir("signalled-host");
+        let home = d.path().join("home");
+        let stamps = home.join(crate::run::REMOTE_RESULTS);
+        fs::create_dir_all(&stamps).unwrap();
+        fs::write(stamps.join(crate::run::PHASE_TIMES), "entry 2 - -\n").unwrap();
+        fs::write(home.join("round-batch.out"), "the entry's output\n").unwrap();
+        fs::write(home.join("round-batch.err"), "round-vm: PHASE entry\n").unwrap();
+        fs::write(home.join(PASS_GROUP_FILE), "999999999 1 7\n").unwrap();
+        let remote = LocalRemote { home: home.clone() };
+        let (dest, scratch) = (d.path().join("results"), d.path().join("scratch"));
+        remote.end_signalled_pass(8, &dest, &scratch, Duration::from_secs(5));
+        assert!(!dest.exists() && home.join(PASS_GROUP_FILE).exists(), "another round-vm's pass is neither read nor stopped");
+        remote.end_signalled_pass(7, &dest, &scratch, Duration::from_secs(5));
+        let read = |f: &str| fs::read_to_string(dest.join(f)).unwrap_or_else(|e| panic!("{f}: {e}"));
+        assert_eq!(read(crate::run::PHASE_TIMES), "entry 2 - -\n");
+        assert_eq!(read(crate::vm_fault::LAUNCHER_OUT_FILE), "the entry's output\n");
+        assert_eq!(read(crate::vm_fault::LAUNCHER_ERR_FILE), "round-vm: PHASE entry\n");
+        assert!(!home.join(PASS_GROUP_FILE).exists(), "the pass is stopped");
     }
 
     #[test_id(tpj36ml)]

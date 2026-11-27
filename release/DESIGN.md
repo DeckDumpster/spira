@@ -795,7 +795,9 @@ program must be a bare name in the release's `bin/`) and also `release round-rec
    the landing's own. A held queue lock, an unanswered deadline or an unreachable lifecycle is
    waited out, not a verdict. It reports landed only when land exits `0` (or `3`, landed with its
    release not activated) and the round has left `queue round status`; a red or incomplete
-   certify leaves the round open and the unit exits `1`.
+   certify leaves the round open and the unit exits `1`. The `is not green:` line names certify's
+   red steps, else its `fault=` line (`FAULT …` before `over-cap …`/`capacity …`); with neither,
+   it carries certify's last `queue.sh …:` line.
 
 It does not clear the rounds loop's pause after a landing; that stays the loop's own. The certify lock is the guard against a second certify of the same batch, whoever started it.
 

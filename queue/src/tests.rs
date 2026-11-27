@@ -545,6 +545,8 @@ struct FScripts {
     repo_no_ci_result: Cell<bool>,
     /// The `round-fault.out` left beside the results.
     repo_round_fault: RefCell<Option<String>>,
+    /// Files every `repo_round_vm` pass leaves in its results.
+    repo_files: RefCell<Vec<(String, String)>>,
     round_vm_results: RefCell<Vec<(String, String)>>,
     /// The `runner.meta` it leaves beside them (empty = none).
     round_vm_meta: RefCell<String>,
@@ -801,10 +803,16 @@ impl Scripts for FScripts {
             round.1
         ));
         fs::write(handle, "777").unwrap();
+        if let Some(f) = self.during_vm.borrow().as_ref() {
+            f();
+        }
         fs::create_dir_all(results).unwrap();
         let out = self.repo_testenv.borrow().clone();
         if let Some(fault) = self.repo_round_fault.borrow().as_ref() {
             fs::write(results.join("round-fault.out"), fault).unwrap();
+        }
+        for (name, body) in self.repo_files.borrow().iter() {
+            fs::write(results.join(name), body).unwrap();
         }
         let status = self.repo_ci_status.borrow().clone().or_else(|| match out.rc {
             0 => Some("ok".into()),
@@ -1863,7 +1871,7 @@ impl ConfigStore for FConfig {
 type MergeHook = Box<dyn Fn(&str)>;
 
 struct FClock {
-    now: Cell<u64>,
+    now: std::rc::Rc<Cell<u64>>,
     /// Milliseconds the world has moved beyond `now`'s whole seconds.
     extra_ms: std::rc::Rc<Cell<u64>>,
     /// Runs on every sleep: the world moving while a verb waits.
@@ -2053,7 +2061,7 @@ impl T {
             lc,
             config: FConfig::default(),
             clock: FClock {
-                now: Cell::new(1_000),
+                now: std::rc::Rc::new(Cell::new(1_000)),
                 extra_ms: Default::default(),
                 on_sleep: RefCell::default(),
             },

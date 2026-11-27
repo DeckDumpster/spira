@@ -282,19 +282,46 @@ pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// Appends `<phase> <epoch s> <cpu usec> <written bytes>` to the results' [`PHASE_TIMES`]; both VM scripts splice it.
+macro_rules! phase_stamp_fn {
+    () => {
+        r#"phase_stamp() {
+    local cg="" line word cpu=- wbytes=- sum=0 seen=""
+    { while read -r line; do case $line in 0::*) cg=/sys/fs/cgroup${line#0::};; esac; done < /proc/self/cgroup; } 2>/dev/null || true
+    if [ -n "$cg" ] && [ -r "$cg/cpu.stat" ]; then
+        { while read -r line word; do [ "$line" != usage_usec ] || cpu=$word; done < "$cg/cpu.stat"; } 2>/dev/null || true
+    fi
+    if [ -n "$cg" ] && [ -r "$cg/io.stat" ]; then
+        { while read -r line; do for word in $line; do case $word in wbytes=*) (( sum += ${word#wbytes=} )) || true; seen=1;; esac; done; done < "$cg/io.stat"; } 2>/dev/null || true
+        [ -z "$seen" ] || wbytes=$sum
+    fi
+    printf '%s %s %s %s\n' "$1" "$EPOCHSECONDS" "$cpu" "$wbytes" >> "$HOME/round-work/.runtime/spira/batch-results/round-phases" 2>/dev/null || true
+}
+"#
+    };
+}
+
 /// The VM side of a round for a registered repository that is not the harness: clone the round's
 /// tree and run the repository's own CI entry point (`${14}`) in its declared image (`${21}`). Its exit status is the one verdict,
-/// written as `ci.result`, so the round covers what CI covers by construction. A non-empty `$6`
+/// written as `ci.result`, so the round covers what CI covers by construction. An entry that runs past the
+/// cap (`$9`) is cut and recorded as a fault kind instead: it has no verdict. A non-empty `$6`
 /// is the repository's warm cache on this host ([`spira_config::foreign_cache`]).
 pub const FOREIGN_SCRIPT: &str = concat!(r#"set -euo pipefail
 host_addr="$1" port="$2" cache_home="$6" round_ref="${12}" round_sha="${13}" entry="${14}" image="${21}" workdir="${22:-/work}"
 export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
-rm -rf ~/round-bins ~/round-work ~/round-setup.log ~/round-shims ~/"#, crate::entry_cid_file!(), r#"
+rm -rf ~/round-bins ~/round-work ~/round-clone ~/round-setup.log ~/round-shims ~/"#, crate::entry_cid_file!(), r#"
 exec 2> >(tee ~/round-setup.log >&2)
 exec 1>&2
 res="$HOME/round-work/.runtime/spira/batch-results"
-trap 'rc=$?; if [ "$rc" -ne 0 ] && [ ! -s "$res/ci.out" ]; then sleep 1; mkdir -p "$res"; { cat ~/round-setup.log; echo "round-vm: round script exited $rc before ci_entry left output"; } > "$res/ci.out"; fi' EXIT
-git clone --quiet --no-checkout "git://${host_addr}:${port}/mirror.git" ~/round-work
+mkdir -p "$res"
+"#, phase_stamp_fn!(), r#"round_phase=start
+phase() { round_phase="$1"; echo "round-vm: PHASE $1" >&2; printf 'phase=%s rc=-\n' "$1" > "$res/round-phase"; phase_stamp "$1"; }
+trap 'rc=$?; mkdir -p "$res"; printf "phase=%s rc=%s\n" "$round_phase" "$rc" > "$res/round-phase"; if [ "$rc" -ne 0 ] && [ ! -s "$res/ci.out" ]; then sleep 1; { cat ~/round-setup.log; echo "round-vm: round script exited $rc before ci_entry left output"; } > "$res/ci.out"; fi' EXIT
+phase clone
+# Cloned aside: ~/round-work already holds the phase stamps, and git clones only into an empty directory.
+git clone --quiet --no-checkout "git://${host_addr}:${port}/mirror.git" ~/round-clone
+mv ~/round-clone/.git ~/round-work/.git
+rmdir ~/round-clone
 git -C ~/round-work fetch --quiet origin "$round_ref"
 git -C ~/round-work checkout --quiet --force --detach FETCH_HEAD
 got="$(git -C ~/round-work rev-parse HEAD)"
@@ -303,20 +330,30 @@ if [ "$got" != "$round_sha" ]; then
     exit 2
 fi
 cd ~/round-work
+phase pull
 if ! podman pull --quiet "$image" >&2; then
     echo "round-vm: podman pull $image failed" >&2
     exit 3
 fi
-mkdir -p "$res"
 printf 'tree=%s\n' "$(git rev-parse 'HEAD^{tree}')" > "$res/batch.meta"
 cache=()
 if [ -n "$cache_home" ]; then
-    cache=(--cidfile "$HOME/"#, crate::entry_cid_file!(), r#"" -v "$cache_home/target:"#, system_paths::foreign_cache_target!(), r#"" -v "$cache_home/cargo:"#, system_paths::foreign_cache_cargo!(), r#""
+    cache=(-v "$cache_home/target:"#, system_paths::foreign_cache_target!(), r#"" -v "$cache_home/cargo:"#, system_paths::foreign_cache_cargo!(), r#""
         -e CARGO_TARGET_DIR="#, system_paths::foreign_cache_target!(), r#" -e CARGO_HOME="#, system_paths::foreign_cache_cargo!(), r#" -e CARGO_INCREMENTAL=0)
 fi
+phase entry
 t0=$(date +%s)
 rc=0
-podman run --rm -v "$HOME/round-work:$workdir:Z" -w "$workdir" "${cache[@]}" "$image" bash -c "$entry" 2>&1 | tee "$res/ci.out" || rc=${PIPESTATUS[0]}
+timeout -k 5 "$9" podman run --cidfile "$HOME/"#, crate::entry_cid_file!(), r#"" --rm -v "$HOME/round-work:$workdir:Z" -w "$workdir" "${cache[@]}" "$image" bash -c "$entry" 2>&1 | tee "$res/ci.out" || rc=${PIPESTATUS[0]}
+spent=$(( $(date +%s) - t0 ))
+# The elapsed time tells the cap's cut from an entry killed early with the same status.
+if { [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; } && [ "$spent" -ge "$9" ]; then
+    # A killed podman client leaves its container running, which on the host outlives the round.
+    timeout 30 podman rm --force --ignore --time 0 --cidfile "$HOME/"#, crate::entry_cid_file!(), r#"" >/dev/null 2>&1 || true
+    echo "round-vm: OVER-CAP: guard=ci-entry-cap phase=entry elapsed=${spent}s cap=${9}s — the CI entry ran past the cap" >&2
+    echo "over-cap guard=ci-entry-cap phase=entry elapsed=${spent}s cap=${9}s — the CI entry ran past the cap" > "$res/round-fault-kind"
+    exit 124
+fi
 if [ "$rc" -eq 125 ]; then
     echo "round-vm: podman run $image failed before the entry ran" >&2
     exit 3
@@ -388,19 +425,7 @@ round_err() {
     round_marker "$err_rc"
 }
 trap 'round_err $? $LINENO "$BASH_COMMAND"' ERR
-phase_stamp() {
-    local cg="" line word cpu=- wbytes=- sum=0 seen=""
-    { while read -r line; do case $line in 0::*) cg=/sys/fs/cgroup${line#0::};; esac; done < /proc/self/cgroup; } 2>/dev/null || true
-    if [ -n "$cg" ] && [ -r "$cg/cpu.stat" ]; then
-        { while read -r line word; do [ "$line" != usage_usec ] || cpu=$word; done < "$cg/cpu.stat"; } 2>/dev/null || true
-    fi
-    if [ -n "$cg" ] && [ -r "$cg/io.stat" ]; then
-        { while read -r line; do for word in $line; do case $word in wbytes=*) (( sum += ${word#wbytes=} )) || true; seen=1;; esac; done; done < "$cg/io.stat"; } 2>/dev/null || true
-        [ -z "$seen" ] || wbytes=$sum
-    fi
-    printf '%s %s %s %s\n' "$1" "$EPOCHSECONDS" "$cpu" "$wbytes" >> "$HOME/round-work/.runtime/spira/batch-results/round-phases" 2>/dev/null || true
-}
-phase() { round_phase="$1"; echo "round-vm: PHASE $1" >&2; phase_stamp "$1"; }
+"#, phase_stamp_fn!(), r#"phase() { round_phase="$1"; echo "round-vm: PHASE $1" >&2; phase_stamp "$1"; }
 phase_failed() {
     [ -n "$fault_phase" ] || { fault_phase="$1"; fault_rc="$2"; }
     echo "round-vm: PHASE-FAILED phase=$1 rc=$2" >&2
@@ -3541,22 +3566,45 @@ fn results_present(dir: &Path) -> usize {
     fs::read_dir(dir).map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "result")).count()).unwrap_or(0)
 }
 
-/// A run cut by a signal still holds the verdicts its VM produced: pulls them into
-/// `results_dir` (results already there are kept) before the VM is released. Bounded by
-/// `within`, because the caller's kill-after is seconds away. Returns how many were new, or `None` when the pull itself failed or timed out.
+/// A run cut by a signal still holds the verdicts and the log its VM produced: pulls them into
+/// `results_dir` (results already there are kept) before the VM is released. `within` is how long
+/// the results pull may take to count, because the caller's kill-after is seconds away. Returns how many results were new, or `None` when the results pull itself failed or timed out.
 pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scratch: &Path, within: Duration) -> Option<usize> {
-    let pulled = std::thread::scope(|sc| {
+    let _ = fs::remove_dir_all(scratch);
+    let corpus = scratch.join("results");
+    let stamps = [crate::vm_fault::PHASE_FILE, PHASE_TIMES].map(|f| (format!("{REMOTE_RESULTS}{f}"), f));
+    let logs = LAUNCHER_FILES.map(|(remote_name, kept)| (remote_name.to_string(), kept));
+    let n = std::thread::scope(|sc| {
+        // Each lands as its own pull returns: the kill may arrive while the corpus is still coming.
+        for (remote_path, kept) in logs.into_iter().chain(stamps) {
+            let to = scratch.join(kept);
+            sc.spawn(move || salvage_file(remote, addr, &remote_path, &to, &results_dir.join(kept)));
+        }
         let (tx, rx) = std::sync::mpsc::channel();
+        let corpus = &corpus;
         sc.spawn(move || {
-            let _ = fs::remove_dir_all(scratch);
-            let ok = remote.pull(addr, REMOTE_RESULTS, scratch).is_ok();
-            let _ = tx.send(ok);
+            let _ = tx.send(remote.pull(addr, REMOTE_RESULTS, corpus).is_ok());
         });
-        rx.recv_timeout(within).unwrap_or(false)
+        // Copied before the scope joins: a stalled log pull must not hold back verdicts already here.
+        rx.recv_timeout(within).unwrap_or(false).then(|| {
+            // A cut round may have no result at all, so its top files are carried by name.
+            keep_top_files(corpus, results_dir);
+            stream_into(corpus, results_dir).unwrap_or(0)
+        })
     });
-    let n = pulled.then(|| stream_into(scratch, results_dir).unwrap_or(0));
     let _ = fs::remove_dir_all(scratch);
     n
+}
+
+/// Pulls the one file `remote_path` through `scratch` to `kept`; a pull that brings nothing leaves `kept` as it was.
+fn salvage_file(remote: &dyn Remote, addr: &str, remote_path: &str, scratch: &Path, kept: &Path) {
+    if let Err(e) = remote.pull(addr, remote_path, scratch) {
+        eprintln!("round-vm run: the VM's {remote_path} could not be pulled: {e:?}");
+        return;
+    }
+    if let Err(e) = keep_pulled(scratch, remote_path, kept) {
+        eprintln!("round-vm run: {}: {e}", kept.display());
+    }
 }
 
 /// Where the VM's runner writes its time-series rows.
@@ -3597,8 +3645,7 @@ pub const LAUNCHER_FILES: [(&str, &str); 2] = [("round-batch.out", crate::vm_fau
 fn keep_launcher_output(remote: &dyn Remote, cfg: &Config, addr: &str, scratch: &Path, results_dir: &Path) {
     for (remote_name, kept) in LAUNCHER_FILES {
         let _ = fs::remove_dir_all(scratch);
-        let copied = pull_retry(remote, cfg, addr, remote_name, scratch)
-            .then(|| fs::create_dir_all(results_dir).and_then(|_| fs::copy(scratch.join(remote_name), results_dir.join(kept))));
+        let copied = pull_retry(remote, cfg, addr, remote_name, scratch).then(|| keep_pulled(scratch, remote_name, &results_dir.join(kept)));
         match copied {
             Some(Ok(_)) => {}
             Some(Err(e)) => eprintln!("round-vm run: {kept}: {e}"),
@@ -3608,10 +3655,17 @@ fn keep_launcher_output(remote: &dyn Remote, cfg: &Config, addr: &str, scratch: 
     let _ = fs::remove_dir_all(scratch);
 }
 
+/// Copies the one file a pull of `remote_path` left in `scratch` to `kept`.
+fn keep_pulled(scratch: &Path, remote_path: &str, kept: &Path) -> std::io::Result<()> {
+    let name = Path::new(remote_path).file_name().ok_or_else(|| std::io::Error::other("the path names no file"))?;
+    fs::create_dir_all(kept.parent().unwrap_or(Path::new(".")))?;
+    fs::copy(scratch.join(name), kept).map(|_| ())
+}
+
 fn keep_runner_output(remote: &dyn Remote, cfg: &Config, addr: &str, scratch: &Path, results_dir: &Path) {
     let _ = fs::remove_dir_all(scratch);
     if pull_retry(remote, cfg, addr, REMOTE_RUNNER_OUT, scratch) {
-        let kept = fs::create_dir_all(results_dir).and_then(|_| fs::copy(scratch.join(REMOTE_RUNNER_OUT), results_dir.join(RUNNER_OUT_FILE)));
+        let kept = keep_pulled(scratch, REMOTE_RUNNER_OUT, &results_dir.join(RUNNER_OUT_FILE));
         if let Err(e) = kept {
             eprintln!("round-vm run: {RUNNER_OUT_FILE}: {e}");
         }
@@ -5160,7 +5214,6 @@ mod tests {
         let (_, rest) = FOREIGN_SCRIPT.split_once(r#"if [ -n "$cache_home" ]; then"#).expect("conditional on $6");
         let (mounts, _) = rest.split_once("\nfi\n").expect("closed");
         for want in [
-            format!(r#"--cidfile "$HOME/{}""#, crate::host::ENTRY_CID_FILE),
             format!(r#"-v "$cache_home/target:{}""#, spira_config::foreign_cache::CACHE_TARGET),
             format!(r#"-v "$cache_home/cargo:{}""#, spira_config::foreign_cache::CACHE_CARGO),
             format!("-e CARGO_TARGET_DIR={}", spira_config::foreign_cache::CACHE_TARGET),
@@ -5185,9 +5238,26 @@ mod tests {
     #[test_id(t536igw)]
     #[test]
     fn the_foreign_script_runs_the_entry_only_inside_the_declared_image() {
-        assert!(FOREIGN_SCRIPT.contains(r#"podman run --rm -v "$HOME/round-work:$workdir:Z" -w "$workdir" "${cache[@]}" "$image" bash -c "$entry" 2>&1"#));
+        assert!(FOREIGN_SCRIPT.contains(concat!(r#"podman run --cidfile "$HOME/"#, crate::entry_cid_file!(), r#"" --rm -v "$HOME/round-work:$workdir:Z" -w "$workdir" "${cache[@]}" "$image" bash -c "$entry" 2>&1"#)));
         assert!(!FOREIGN_SCRIPT.lines().any(|l| l.starts_with(r#"bash -c "$entry" 2>&1"#)));
         assert!(FOREIGN_SCRIPT.contains("round-vm: podman pull $image failed"));
+    }
+
+    #[test_id(t38qtx9)]
+    #[test]
+    fn the_foreign_script_stamps_each_phase_and_cuts_the_entry_at_the_declared_cap() {
+        for phase in ["clone", "pull", "entry"] {
+            assert!(FOREIGN_SCRIPT.contains(&format!("\nphase {phase}\n")), "phase {phase} is stamped");
+        }
+        assert!(FOREIGN_SCRIPT.contains(">> \"$HOME/round-work/.runtime/spira/batch-results/round-phases\""));
+        assert!(FOREIGN_SCRIPT.contains("> \"$res/round-phase\""));
+        let entry = FOREIGN_SCRIPT.find("\nphase entry\n").unwrap();
+        let run = FOREIGN_SCRIPT.find("timeout -k 5 \"$9\" podman run ").expect("the entry runs under the cap");
+        assert!(entry < run && !FOREIGN_SCRIPT[..entry].contains("timeout "), "the cap covers the entry alone");
+        let cut = &FOREIGN_SCRIPT[run..FOREIGN_SCRIPT.find("> \"$res/ci.result\"").unwrap()];
+        assert!(cut.contains("[ \"$rc\" -eq 124 ] || [ \"$rc\" -eq 137 ]"), "{cut}");
+        assert!(cut.contains("echo \"over-cap guard=ci-entry-cap phase=entry elapsed=${spent}s cap=${9}s"), "{cut}");
+        assert!(cut.contains("> \"$res/round-fault-kind\"") && cut.contains("exit 124"), "a cut writes no ci.result: {cut}");
     }
 
     #[test_id(t0p6ycb)]
@@ -6247,6 +6317,58 @@ mod tests {
         let mut none = FakeRemote::green();
         none.files.clear();
         assert_eq!(salvage_results(&none, "addr", &dest, &scratch, Duration::from_secs(5)), None, "an unreachable VM salvages nothing and says the pull failed");
+    }
+
+    #[test_id(tno3dii)]
+    #[test]
+    fn a_signalled_run_keeps_the_vms_own_log_and_phase_stamps_though_no_suite_reported() {
+        let fx = fixture();
+        let mut remote = FakeRemote::green();
+        remote.files.insert(REMOTE_RESULTS, vec![(PHASE_TIMES, "clone 1 - -\nentry 2 - -\n"), (crate::vm_fault::PHASE_FILE, "phase=entry rc=-\n")]);
+        remote.files.insert("round-batch.out", vec![("round-batch.out", "the entry's output\n")]);
+        remote.files.insert("round-batch.err", vec![("round-batch.err", "round-vm: PHASE entry\n")]);
+        let dest = fx.cfg.run_dir.join("cut");
+        let scratch = fx.cfg.state_dir.join(".salvage-cut-test");
+        assert_eq!(salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5)), Some(0));
+        let read = |f: &str| fs::read_to_string(dest.join(f)).unwrap_or_else(|e| panic!("{f}: {e}"));
+        assert_eq!(read(crate::vm_fault::LAUNCHER_OUT_FILE), "the entry's output\n");
+        assert_eq!(read(crate::vm_fault::LAUNCHER_ERR_FILE), "round-vm: PHASE entry\n");
+        assert!(read(PHASE_TIMES).ends_with("entry 2 - -\n"));
+        assert_eq!(read(crate::vm_fault::PHASE_FILE), "phase=entry rc=-\n");
+        assert!(!scratch.exists(), "scratch is removed");
+    }
+
+    /// Holds the corpus pull until the log and the phase stamps are already in the results dir, as
+    /// they must be when the caller's kill-after lands on a pull that never returns.
+    struct CorpusWaits(FakeRemote, PathBuf);
+    impl Remote for CorpusWaits {
+        fn round_started(&self, a: &str) -> bool { self.0.round_started(a) }
+        fn boot_log_tail(&self, a: &str) -> Result<String, String> { self.0.boot_log_tail(a) }
+        fn reachable(&self, a: &str) -> bool { self.0.reachable(a) }
+        fn run_batch(&self, a: &str, j: &BatchJob) -> Result<i32, String> { self.0.run_batch(a, j) }
+        fn push(&self, a: &str, l: &Path, r: &str) -> Result<(), String> { self.0.push(a, l, r) }
+        fn await_exit(&self, a: &str, w: Duration, s: &Path) -> Result<Option<i32>, String> { self.0.await_exit(a, w, s) }
+        fn run_attr(&self, a: &str, j: &crate::spool::AttrJob) -> Result<i32, String> { self.0.run_attr(a, j) }
+        fn clear_results(&self, a: &str) -> Result<(), String> { self.0.clear_results(a) }
+        fn pull(&self, a: &str, r: &str, l: &Path) -> Result<(), PullError> {
+            if r == REMOTE_RESULTS {
+                wait_until(|| [crate::vm_fault::LAUNCHER_OUT_FILE, crate::vm_fault::LAUNCHER_ERR_FILE, PHASE_TIMES].iter().all(|f| self.1.join(f).is_file()));
+            }
+            self.0.pull(a, r, l)
+        }
+    }
+
+    #[test_id(tjb0qe5)]
+    #[test]
+    fn a_signalled_run_has_the_log_and_phase_stamps_in_the_results_while_the_corpus_pull_is_still_running() {
+        let fx = fixture();
+        let mut remote = FakeRemote::green();
+        remote.files.insert("round-work/.runtime/spira/batch-results/round-phases", vec![(PHASE_TIMES, "entry 2 - -\n")]);
+        remote.files.insert("round-batch.out", vec![("round-batch.out", "out\n")]);
+        remote.files.insert("round-batch.err", vec![("round-batch.err", "err\n")]);
+        let dest = fx.cfg.run_dir.join("slow");
+        let waits = CorpusWaits(remote, dest.clone());
+        assert_eq!(salvage_results(&waits, "addr", &dest, &fx.cfg.state_dir.join(".salvage-slow-test"), Duration::from_secs(90)), Some(2));
     }
 
     #[test_id(t2pn393)]
