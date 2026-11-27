@@ -112,6 +112,7 @@ toml = "0.8"
 toml_edit = "0.22"
 serde_json = "1"
 serde_path_to_error = "0.1"
+sha2 = "0.10"
 schemars = "0.8"
 libc = "0.2"
 tsd = { path = "../tsd" }

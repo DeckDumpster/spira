@@ -615,6 +615,7 @@ pub const CONFIG_KEYS: &[&str] = &[
     "SPIRA_PUBLISH_RED_ESCALATE_AFTER",
     "SPIRA_PUBLISH_SETTLE_DEFER_MAX",
     "SPIRA_DWARF_BUILD_BASE",
+    "SPIRA_DWARF_BUILD_FOLDERS_PER_REPO",
 ];
 
 /// The settings lib.sh's CONTEXT seam answered, from the config's declared values (`value`):
@@ -1240,7 +1241,10 @@ impl Scripts for RealScripts {
         if bases.is_empty() {
             return Err(format!("{} is not set — set dwarf_build_base in the config document", bd::BASE_ENV));
         }
-        let lease = bd::lease_for(&bases, who, Some(repo)).map_err(|e| format!("cannot lease a build directory under {base}: {e}"))?;
+        let ceiling = spira_config::process::cfg_parse(bd::CEILING_ENV)?;
+        let mut lease = bd::lease_for(&bases, who, repo, ceiling).map_err(|e| format!("cannot lease a build directory under {base}: {e}"))?;
+        eprintln!("build directory {} — {}", lease.dir().display(), lease.start());
+        lease.note_root(wt);
         let held = HeldBuild(Some(lease));
         let dir = held.0.as_ref().map(|l| l.dir().to_path_buf()).unwrap_or_default();
         let script = spira_config::resolve::locate_home_for_process()?.join(bd::CLEAN_SCRIPT);
@@ -2876,9 +2880,9 @@ mod tests {
         let (old, tip) = (d.path().join("old"), d.path().join("tip"));
         crate_tree(&old, "pub fn f() {}\n");
         crate_tree(&tip, "pub fn f() { let _ = 1; }\n");
-        let slot = base.join("dir.1");
-        fs::create_dir_all(&slot).unwrap();
-        fs::write(base.join("dir.1.lock"), "").unwrap();
+        let first = spira_config::build_dir::lease_for(std::slice::from_ref(&base), "hand-0", "spira", 1).unwrap();
+        let slot = first.dir().to_path_buf();
+        first.release();
         let path = std::env::var("PATH").unwrap();
         spira_config::build_dir::clean(&home.join("target-clean.sh"), &old, &slot, &path, true, "hand-0", None).unwrap();
         let wt = d.path().join("wt");

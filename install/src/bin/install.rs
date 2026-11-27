@@ -1147,7 +1147,7 @@ fn run_declared(opts: Opts) -> ExitCode {
             let _ = std::fs::create_dir_all(Path::new(&run).join("watchd"));
         }
         for base in spira_config::build_dir::configured_bases().iter().map(|b| b.display().to_string()) {
-            // Each owned build directories' base: leases make dir.<n> under it.
+            // Each owned build directories' base: leases make <repo>/<n> under it.
             match std::fs::create_dir_all(&base) {
                 Ok(()) => info(&format!("dwarf build base ready at {base}")),
                 Err(e) => {
@@ -1155,6 +1155,9 @@ fn run_declared(opts: Opts) -> ExitCode {
                     return ExitCode::from(2);
                 }
             }
+        }
+        for (from, to) in spira_config::build_dir::migrate_flat(&spira_config::build_dir::configured_bases()) {
+            info(&spira_config::build_dir::describe_move(&from, to.as_deref()));
         }
         match install::kit_bump::install(Path::new(&host.run), Path::new(&host.home), &|k| spira_config::process::cfg(k)) {
             Ok(Some(p)) => println!("installed {}", p.display()),

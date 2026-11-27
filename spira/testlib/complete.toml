@@ -418,6 +418,7 @@ dwarf_warm_base = "/fixture/userhome/warm"
 dwarf_warm_cap_mib = 6144
 dwarf_build_base = "/fixture/userhome/dwarf-build"
 dwarf_build_budget_gib = 60
+dwarf_build_folders_per_repo = 5
 dolt_durable = ""
 dolt_persist_interval_secs = 5
 dolt_persist_max_lag_secs = 120
