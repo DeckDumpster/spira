@@ -25,8 +25,9 @@ file = "sp-qa01"
 at = 0
 file = "sp-qa02"
 
+# After the files: steps sharing an `at` run in a seed-shuffled order.
 [[step]]
-at = 0
+at = 1
 command = 'bead.sh label add sp-qa02 qa-proposed'
 
 [[step]]
