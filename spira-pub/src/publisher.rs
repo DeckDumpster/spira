@@ -58,11 +58,20 @@ struct Message {
 
 fn message(topic: &str, class: Option<Class>, payload: &Value) -> Result<Message, PubError> {
     let family = topics::check(topic, class)?;
-    let payload = payload.to_string().into_bytes();
+    sized(topic, family.class, payload.to_string().into_bytes())
+}
+
+fn sized(topic: &str, class: Class, payload: Vec<u8>) -> Result<Message, PubError> {
     if payload.len() > MAX_PAYLOAD {
         return Err(PubError::TooLarge { topic: topic.to_string(), bytes: payload.len() });
     }
-    Ok(Message { topic: topic.to_string(), class: family.class, payload })
+    Ok(Message { topic: topic.to_string(), class, payload })
+}
+
+/// The zero-byte message that makes the broker forget a state topic's retained value.
+fn clearing(topic: &str) -> Result<Message, PubError> {
+    let family = topics::check(topic, Some(Class::State))?;
+    sized(topic, family.class, Vec::new())
 }
 
 /// What an `on_connect` hook publishes: sent right after `publisher/<name>` = up, ahead of
@@ -222,17 +231,24 @@ impl Publisher {
     /// Queues `payload` for `topic`, retained when its family is state. `Err` means it will
     /// not arrive; it is already logged.
     pub fn publish(&self, topic: &str, payload: &Value) -> Result<(), PubError> {
-        self.send(topic, None, payload)
+        self.send(topic, message(topic, None, payload))
+    }
+
+    /// Queues the removal of state `topic`'s retained value: a later subscriber is handed
+    /// nothing for it. Refused for chatter, which retains nothing. Fails and is logged as
+    /// [`publish`](Publisher::publish) does.
+    pub fn clear(&self, topic: &str) -> Result<(), PubError> {
+        self.send(topic, clearing(topic))
     }
 
     /// [`publish`](Publisher::publish) for a caller that states the class it means: refused
     /// unless the topic's family declares it.
     pub fn publish_as_class(&self, class: Class, topic: &str, payload: &Value) -> Result<(), PubError> {
-        self.send(topic, Some(class), payload)
+        self.send(topic, message(topic, Some(class), payload))
     }
 
-    fn send(&self, topic: &str, class: Option<Class>, payload: &Value) -> Result<(), PubError> {
-        let sent = message(topic, class, payload).and_then(|m| {
+    fn send(&self, topic: &str, built: Result<Message, PubError>) -> Result<(), PubError> {
+        let sent = built.and_then(|m| {
             let mut shared = self.connected()?;
             if shared.pending >= self.inner.queue {
                 return Err(PubError::QueueFull { topic: m.topic });
