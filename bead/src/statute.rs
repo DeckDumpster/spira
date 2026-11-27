@@ -84,8 +84,31 @@ pub fn plan_check(registry: &str, plan: &str) -> Result<Vec<Hit>, String> {
     Ok(hits)
 }
 
+const REPORT_HEAD: &str = "bead: statute check matched:";
+
+/// `text` without the match lines of any [`shown`] report it quotes: what a guard reports it
+/// matched is not a second decision. Only the unbroken run of such lines under the report's head
+/// goes.
+pub fn without_reports(text: &str) -> String {
+    let quoted = |l: &str| {
+        l.strip_prefix("  ").and_then(|l| l.split_once(' ')).is_some_and(|(slug, rest)| {
+            slug.starts_with("law-") && (rest.starts_with("(contradicts: \"") || rest.starts_with("(touches: \"")) && rest.ends_with("\")")
+        })
+    };
+    let mut in_report = false;
+    let mut kept = Vec::new();
+    for line in text.lines() {
+        if in_report && quoted(line) {
+            continue;
+        }
+        in_report = line.ends_with(REPORT_HEAD);
+        kept.push(line);
+    }
+    kept.join("\n")
+}
+
 pub fn shown(hits: &[Hit]) -> String {
-    let mut m = String::from("bead: statute check matched:\n");
+    let mut m = format!("{REPORT_HEAD}\n");
     for h in hits {
         let kind = if h.refuses { "contradicts" } else { "touches" };
         m.push_str(&format!("  {} ({kind}: {:?})\n", h.slug, h.matched));

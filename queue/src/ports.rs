@@ -270,7 +270,8 @@ pub trait Lib {
     fn gh_issue_closeout(&self, id: &str, sha: &str, repo: &Path);
     fn comment(&self, id: &str, text: &str);
     /// `mailbox`: `Settings::mailbox` (`SPIRA_MAIL_SESSION_MAILBOX`'s declared value).
-    fn notify(&self, mailbox: &str, repo: &str, subject: &str, body: &str);
+    /// False when nothing was delivered.
+    fn notify(&self, mailbox: &str, repo: &str, subject: &str, body: &str) -> bool;
     fn event(&self, kind: &str, title: &str, detail: &str);
     /// R11: is forge an ancestor of local (alarms once per foreign tip if not). `mailbox`:
     /// `Settings::mailbox`.

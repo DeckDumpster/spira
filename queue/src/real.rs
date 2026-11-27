@@ -911,10 +911,10 @@ impl Lib for RealLib {
             (self.warn)(&format!("queue: comment on {id} not recorded: {why}"));
         }
     }
-    fn notify(&self, mailbox: &str, repo: &str, subject: &str, body: &str) {
+    fn notify(&self, mailbox: &str, repo: &str, subject: &str, body: &str) -> bool {
         // In-process (sp-hwjsq, "wave 4.32"): queue owns this family now, so its own seam
         // call onto queue_notify_concierge is gone — lib.sh's copy is retired outright.
-        crate::ops::helpers::notify(mailbox, repo, subject, body);
+        crate::ops::helpers::notify(mailbox, repo, subject, body)
     }
     fn event(&self, kind: &str, title: &str, detail: &str) {
         self.call(Op::Event, &[kind, title, detail], false);

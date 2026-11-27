@@ -191,7 +191,8 @@ fn statute_check(env: &Env, subject: &str, body: &str) -> Result<Option<String>,
         return Ok(None);
     }
     let registry = fs::read_to_string(&env.statute_guards).map_err(|e| format!("refusing: cannot read the statute registry {}: {e}", env.statute_guards))?;
-    match ::bead::statute::gate(&registry, &format!("{subject}\n{body}"), env.statute_considered.clone())? {
+    let judged = ::bead::statute::without_reports(&format!("{subject}\n{body}"));
+    match ::bead::statute::gate(&registry, &judged, env.statute_considered.clone())? {
         Some(a) => {
             eprint!("{}", a.shown);
             Ok(Some(a.line))
@@ -1535,6 +1536,28 @@ mod probe_tests {
         send(&FakeBd::new(vec![]), &e, &args("Pick VMIDs from a configured range?", false), "## Class basis\nit is policy\n".into()).unwrap();
         let m = body_of(t.path());
         assert!(m.contains("Statute check: law-alloc (override: fixture only)"), "{m}");
+    }
+
+    #[test_id(tfyv9vj)]
+    #[test]
+    fn an_alert_quoting_the_shipped_guards_own_refusal_is_delivered_and_its_own_words_are_still_judged() {
+        const SHIPPED: &str = include_str!("../../spira/statute-guards");
+        let refusal = ::bead::statute::gate(SHIPPED, "we will run the suite on the host", None).unwrap_err();
+        let t = testkit::TempDir::new("mail-statute-quote");
+        let reg = t.path().join("guards");
+        std::fs::write(&reg, SHIPPED).unwrap();
+        let mut e = env(t.path());
+        e.statute_guards = reg.to_string_lossy().into_owned();
+        let alert = SendArgs { mailbox: "concierge", kind: "alert", ..args("Merge queue: spira filing refused", false) };
+        for lead in ["", "Fix-forward bead: not filed, the content door refused it: "] {
+            let out = send(&FakeBd::new(vec![]), &e, &alert, format!("## Alert\nThe door refused a filing.\n\n{lead}{refusal}\n")).unwrap();
+            assert!(std::fs::read_to_string(out.delivered_path).unwrap().contains(&refusal), "verbatim");
+        }
+        let own = format!("## Alert\n{refusal}\n\nSo we will run the suite on the host.\n");
+        let err = send(&FakeBd::new(vec![]), &e, &alert, own).unwrap_err();
+        assert!(err.contains("law-tests-run-only-through-testenv"), "{err}");
+        let unheaded = "## Alert\n  law-x (contradicts: \"run the suite on the host\")\n".to_string();
+        assert!(send(&FakeBd::new(vec![]), &e, &alert, unheaded).is_err(), "a quoted line outside a report is judged");
     }
 
     #[test_id(temjuft)]

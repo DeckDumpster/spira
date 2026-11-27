@@ -671,6 +671,19 @@ fn a_refused_fix_forward_note_mails_the_doors_text_and_still_files_a_new_bead() 
     assert!(t.lib.has("create_bug"));
 }
 
+#[test_id(td0c88q)]
+#[test]
+fn a_refusal_whose_mail_was_not_delivered_is_mailed_again() {
+    let t = T::new(LandMode::QueueLocal);
+    *t.lib.bug_not_filed.borrow_mut() = Some(NotFiled::Refused(CONTRACT_REFUSAL.into()));
+    t.lib.mail_down.set(true);
+    red_publish_pass(&t);
+    t.lib.mail_down.set(false);
+    red_publish_pass(&t);
+    red_publish_pass(&t);
+    assert_eq!(refusal_mails(&t).len(), 2, "one attempt lost, one delivered, then quiet");
+}
+
 #[test_id(t73dqf8)]
 #[test]
 fn publish_settle_skips_its_turn_when_the_queue_lock_is_held() {

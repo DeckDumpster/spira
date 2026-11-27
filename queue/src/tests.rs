@@ -297,6 +297,8 @@ impl Bd for FBd {
 struct FLib {
     /// Every `notify`, as (subject, body), in order sent.
     mails: RefCell<Vec<(String, String)>>,
+    /// `notify` delivers nothing.
+    mail_down: Cell<bool>,
     s: Settings,
     r: RefCell<RepoCtx>,
     calls: RefCell<Vec<String>>,
@@ -396,9 +398,10 @@ impl Lib for FLib {
     fn comment(&self, id: &str, text: &str) {
         self.log(format!("comment {id} {text}"));
     }
-    fn notify(&self, _mailbox: &str, repo: &str, subject: &str, body: &str) {
+    fn notify(&self, _mailbox: &str, repo: &str, subject: &str, body: &str) -> bool {
         self.log(format!("notify {repo} {subject}"));
         self.mails.borrow_mut().push((subject.to_string(), body.to_string()));
+        !self.mail_down.get()
     }
     fn event(&self, kind: &str, title: &str, detail: &str) {
         self.log(format!("event {kind} {title} {detail}"));
@@ -2035,6 +2038,7 @@ impl T {
         git.fetch_ok.set(true);
         let lib = FLib {
             mails: RefCell::default(),
+            mail_down: Cell::new(false),
             s,
             r: RefCell::new(r),
             calls: RefCell::default(),
