@@ -1,13 +1,12 @@
 //! spira-build-dir — lease an owned build directory for a hand build, from the pool dwarves use.
 //!
-//!   spira-build-dir lease --who <label> --pid <pid> [--root <tree>] [--repo <name>]
+//!   spira-build-dir lease --who <label> --pid <pid> [--root <tree>] --repo <name>
 //!
 //! Prints the directory for `CARGO_TARGET_DIR`; progress goes to stderr. The lease is held by a
 //! detached holder until `--pid` exits (pass the builder shell's `$$`), then the tree at `--root`
 //! (default: the current directory) is recorded as the one the directory holds and the directory
 //! goes idle. The selective clean runs before the path is printed. `--repo` names the repository
-//! the tree belongs to: an idle directory that last built it is preferred, and the directory
-//! records it; without it any warm directory is taken and its record is cleared.
+//! the tree belongs to: the directory is one of that repository's own.
 
 use spira_config::build_dir as bd;
 use std::io::{BufRead, BufReader, Write};
@@ -17,7 +16,7 @@ use std::process::{Command, ExitCode, Stdio};
 use std::time::Duration;
 
 const POLL: Duration = Duration::from_millis(500);
-const USAGE: &str = "usage: spira-build-dir lease --who <label> --pid <pid> [--root <tree>] [--repo <name>]";
+const USAGE: &str = "usage: spira-build-dir lease --who <label> --pid <pid> [--root <tree>] --repo <name>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -45,6 +44,7 @@ fn flag(args: &[String], name: &str) -> Option<String> {
 fn lease(args: &[String]) -> Result<(), String> {
     let who = flag(args, "--who").filter(|w| !w.is_empty()).ok_or(USAGE)?;
     let pid = flag(args, "--pid").ok_or(USAGE)?;
+    let repo = flag(args, "--repo").filter(|r| !r.is_empty()).ok_or(USAGE)?;
     pid.parse::<i32>()
         .map_err(|_| format!("--pid {pid:?} is not a process id"))?;
     let root = match flag(args, "--root") {
@@ -56,7 +56,7 @@ fn lease(args: &[String]) -> Result<(), String> {
     let mut child = Command::new(exe) // batch-job: the holder outlives this call by design, until the build ends
         .args(["__hold", &who, &pid])
         .arg(&root)
-        .arg(flag(args, "--repo").unwrap_or_default())
+        .arg(repo)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -89,10 +89,10 @@ fn hold(args: &[String]) -> Result<(), String> {
         args[1].parse::<i32>().map_err(|e| e.to_string())?,
         Path::new(&args[2]),
     );
-    let repo = args.get(3).map(String::as_str).filter(|r| !r.is_empty());
+    let repo = args.get(3).map(String::as_str).ok_or(USAGE)?;
     let mut out = std::io::stdout();
     let held = take(who, root, repo, &mut out);
-    let lease = match held {
+    let mut lease = match held {
         Ok(l) => l,
         Err(e) => {
             let _ = writeln!(out, "error\t{e}");
@@ -110,8 +110,9 @@ fn hold(args: &[String]) -> Result<(), String> {
             &std::env::var("PATH").unwrap_or_default(),
             true, // release
             who,
-            repo,
+            Some(repo),
         );
+        lease.note_root(root);
     }
     let dir = lease.dir().to_path_buf();
     let trimmed = lease.release();
@@ -127,7 +128,7 @@ fn script() -> Result<PathBuf, String> {
     Ok(spira_config::resolve::locate_home_for_process()?.join(bd::CLEAN_SCRIPT))
 }
 
-fn take(who: &str, root: &Path, repo: Option<&str>, out: &mut impl Write) -> Result<bd::Lease, String> {
+fn take(who: &str, root: &Path, repo: &str, out: &mut impl Write) -> Result<bd::Lease, String> {
     let bases = bd::parse_bases(&spira_config::process::cfg(bd::BASE_ENV)?);
     if bases.is_empty() {
         return Err(format!(
@@ -135,9 +136,13 @@ fn take(who: &str, root: &Path, repo: Option<&str>, out: &mut impl Write) -> Res
             bd::BASE_ENV
         ));
     }
-    let lease = bd::lease_for(&bases, who, repo).map_err(|e| format!("cannot lease a build directory under {bases:?}: {e}"))?;
+    let ceiling = spira_config::process::cfg_parse(bd::CEILING_ENV)?;
+    let lease = bd::lease_for(&bases, who, repo, ceiling).map_err(|e| format!("cannot lease a build directory under {bases:?}: {e}"))?;
+    for note in &lease.notes {
+        let _ = writeln!(out, "# {note}");
+    }
     let path = std::env::var("PATH").unwrap_or_default();
-    match bd::clean(&script()?, root, lease.dir(), &path, false, who, repo) {
+    match bd::clean(&script()?, root, lease.dir(), &path, false, who, Some(repo)) {
         Ok(text) => {
             for l in text.lines().filter(|l| !l.trim().is_empty()) {
                 let _ = writeln!(out, "# {l}");
@@ -159,8 +164,7 @@ fn take(who: &str, root: &Path, repo: Option<&str>, out: &mut impl Write) -> Res
     }
     bd::meter_evictions(&evicted);
     bd::meter(&bases, lease.dir(), budget);
-    let state = if lease.reused { "warm" } else { "new" };
-    let _ = writeln!(out, "{state}\t{}", lease.dir().display());
+    let _ = writeln!(out, "{}\t{}", lease.start(), lease.dir().display());
     let _ = out.flush();
     Ok(lease)
 }

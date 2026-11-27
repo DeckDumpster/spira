@@ -33,10 +33,10 @@ pub fn is_warm(dest: &Path) -> bool {
     dest.parent().and_then(Path::parent).and_then(Path::file_name).is_some_and(|n| n == WARM_DIR)
 }
 
-/// True when `dest` is `<base>/dir.<n>/<dir>`: a build directory of the builders' pool, which a
-/// gate leases and never removes or donates.
+/// True when `dest` is `<folder>/<dir>` for a folder of the builders' pool, which a gate leases
+/// and never removes or donates.
 pub fn is_pooled(dest: &Path) -> bool {
-    dest.parent().and_then(Path::file_name).and_then(|n| n.to_str()).and_then(|n| n.strip_prefix("dir.")).is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    dest.parent().is_some_and(spira_config::build_dir::is_slot)
 }
 
 /// Marker inside a kept `release` dir: the binaries are promised to a hand landing, so no
@@ -854,9 +854,10 @@ mod tests {
     fn a_tree_linked_into_a_builders_pool_directory_is_unlinked_never_cleared() {
         let s = Scratch::new("pooled");
         let tree = s.1.join("worktree/.gate.harness.p");
-        let pooled = s.1.join("pool/dir.7/debug");
+        let pooled = s.1.join("pool/r/7/debug");
         fs::create_dir_all(tree.join("target")).unwrap();
         write_mib(&pooled.join("deps/libz.rlib"), 1);
+        fs::write(s.1.join("pool/r/7.lock"), "").unwrap();
         std::os::unix::fs::symlink(&pooled, tree.join("target/debug")).unwrap();
         assert!(is_pooled(&pooled));
         assert!(!is_pooled(&s.1.join("root/.gate.harness.p/debug")));
