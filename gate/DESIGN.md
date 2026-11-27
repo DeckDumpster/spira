@@ -488,7 +488,10 @@ and its absence is not a red. With none left the base runs its fences only.
 
 A unit trial whose only red is the test phase (`red_units == ["phase:test"]`, failing tests
 named, no red fence) runs those tests once more, on the tree the first run ran on, **before the
-base is checked out**. The rerun is phase `test-rerun`: nextest reds run again through
+base is checked out**. A red fence is a `<fence>: REFUSED` line, a red `gate-step` (which
+`red_units` reports as a unit), or the `gate: fences exited <n>` line the trial adds when fences
+that print no `gate-step` (a gate string that is not an `&&` chain) exit non-zero. A
+`<rule>: ...` note a passing fence prints does not count, here or for the cross-bead detector. The rerun is phase `test-rerun`: nextest reds run again through
 `unit_words` over the same `target/gate-unit-nextest.toml` (so the same per-test limit; no limit is
 raised and none added), libtest reds run again as `cargo test <cargo-named target> -- --exact
 <names>`. It is charged to `SPIRA_GATE_DEADLINE`; a rerun cut by the deadline or

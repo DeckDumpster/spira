@@ -191,7 +191,7 @@ const MAX_GATE_FLIPS: usize = 3;
 fn rerun_red_tests<W: World>(w: &W, at: RerunScope, name: &str, cmd: &str) -> Result<RerunNote, Verdict> {
     let Composition::Unit { crates, targets, .. } = at.comp else { return Ok(RerunNote::default()) };
     let failed = parse::failed_tests(at.out);
-    if parse::red_units(at.out, at.tiers) != ["phase:test"] || failed.is_empty() || parse::fence_refusal(at.out).is_some() {
+    if parse::red_units(at.out, at.tiers) != ["phase:test"] || failed.is_empty() || parse::red_fence(at.out) {
         return Ok(RerunNote::default());
     }
     let rerunnable = |t: &&String| t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':');
@@ -1972,7 +1972,7 @@ impl<'w, W: World> Trial<'w, W> {
     /// also failed on other beads with disjoint diffs; `None` on any doubt, leaving the red the branch's.
     fn shared_unit_red(&self, out: &str, tiers: &[Tier]) -> Option<Vec<(String, Vec<String>)>> {
         let tip = self.s.branch_tip.as_str();
-        if self.s.bead.is_empty() || tip.is_empty() || tip == "-" || parse::red_units(out, tiers) != ["phase:test"] || parse::failed_tests(out).is_empty() || parse::fence_refusal(out).is_some() {
+        if self.s.bead.is_empty() || tip.is_empty() || tip == "-" || parse::red_units(out, tiers) != ["phase:test"] || parse::failed_tests(out).is_empty() || parse::red_fence(out) {
             return None;
         }
         let digest = ejection::digest(tip, &self.changed_paths(), out);
@@ -3140,6 +3140,11 @@ pub fn run_composed<W: World>(
                         compose::reproduce_line(step_env, &rerun)
                     ));
                 }
+            }
+            // A gate string that is not an `&&` chain prints no `gate-step` line, and this
+            // return drops `fences_rc`.
+            if fences_rc != 0 {
+                out.push_str(&format!("\n{} {fences_rc}", parse::FENCES_EXITED));
             }
             return (r, out, phases);
         }
