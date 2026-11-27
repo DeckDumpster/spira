@@ -3417,7 +3417,6 @@ dependencies = [
  "mail",
  "regex",
  "runtime",
- "serde_json",
  "sop",
  "spira-config",
  "spira-store",

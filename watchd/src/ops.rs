@@ -5,9 +5,8 @@
 
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-use inbox_rules::Sink;
 use runtime::units::{UnitHandle, Units};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -88,9 +87,6 @@ pub trait Ops {
 
     /// `mail send concierge --kind <kind>`.
     fn mail_concierge(&self, kind: &str, subject: &str, body: &str) -> Result<(), String>;
-
-    /// One event line in the Concierge inbox, with its urgent push.
-    fn inbox_append(&self, text: &str) -> Result<(), String>;
 }
 
 /// What an application is recorded against: the incident's bead if it names one, else a
@@ -111,21 +107,11 @@ pub struct Real {
     pub systemctl: String,
     pub units: Arc<dyn Units>,
     pub systemd_run: String,
-    /// The Concierge inbox: read from the configuration at the first line written.
-    pub sink: OnceLock<Sink>,
 }
 
 impl Real {
     pub fn new(systemctl: String, systemctl_override: Option<&str>) -> Real {
-        Real { systemctl, units: runtime::units::host(systemctl_override), systemd_run: std::env::var("SPIRA_SYSTEMD_RUN").unwrap_or_else(|_| "systemd-run".to_string()), sink: OnceLock::new() }
-    }
-
-    fn sink(&self) -> Result<&Sink, String> {
-        if let Some(sink) = self.sink.get() {
-            return Ok(sink);
-        }
-        let sink = Sink::configured("watchd")?;
-        Ok(self.sink.get_or_init(|| sink))
+        Real { systemctl, units: runtime::units::host(systemctl_override), systemd_run: std::env::var("SPIRA_SYSTEMD_RUN").unwrap_or_else(|_| "systemd-run".to_string()) }
     }
 }
 
@@ -301,11 +287,6 @@ impl Ops for Real {
     fn mail_concierge(&self, kind: &str, subject: &str, body: &str) -> Result<(), String> {
         crate::send::send_configured(&crate::send::Letter { mailbox: "concierge", subject, kind, default: "", body })
     }
-
-    fn inbox_append(&self, text: &str) -> Result<(), String> {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-        self.sink()?.record(&inbox_line(now, text)).map(|_| ())
-    }
 }
 
 /// Runs `cmd` with `stdin_body` on stdin; returns its exit code and stdout+stderr together.
@@ -338,11 +319,6 @@ pub fn pids_with_arg(proc_root: &std::path::Path, prog: &str, except: i32) -> Ve
         .collect();
     pids.sort_unstable();
     pids
-}
-
-/// watchd's inbox line: `<UTC %FT%TZ> <text>`.
-pub fn inbox_line(epoch: i64, text: &str) -> String {
-    inbox_rules::line(&spira_world::clock::utc_iso(epoch), text)
 }
 
 fn cmdline_has_arg(proc_root: &std::path::Path, pid: i32, target: &str) -> bool {
@@ -387,7 +363,6 @@ pub mod fake {
         pub tool_calls: RefCell<Vec<(String, Vec<String>, u64)>>,
         pub applied: RefCell<Vec<(String, String, String)>>,
         pub concierge_mail: RefCell<Vec<(String, String, String)>>,
-        pub inbox: RefCell<Vec<String>>,
     }
 
     #[derive(Clone)]
@@ -467,10 +442,6 @@ pub mod fake {
             self.concierge_mail.borrow_mut().push((kind.into(), subject.into(), body.into()));
             Ok(())
         }
-        fn inbox_append(&self, text: &str) -> Result<(), String> {
-            self.inbox.borrow_mut().push(text.into());
-            Ok(())
-        }
     }
 
     #[test_id(tlo7jgx)]
@@ -498,12 +469,6 @@ mod real_tests {
         assert_eq!(pids_with_arg(&root, "usr/bin/foo", 13), vec![10, 11]);
     }
 
-    #[test_id(tb07wa5)]
-    #[test]
-    fn inbox_line_is_the_scripts_utc_stamp_then_the_text() {
-        assert_eq!(inbox_line(0, "hello there"), "1970-01-01T00:00:00Z hello there");
-    }
-
     #[test_id(thv5sf8)]
     #[test]
     fn match_output_reads_the_run_column_and_treats_a_legacy_line_as_runnable() {
@@ -513,7 +478,7 @@ mod real_tests {
     }
 
     fn real_over(u: runtime::units::ScriptedUnits) -> Real {
-        Real { systemctl: "nonexistent/systemctl".into(), units: Arc::new(u), systemd_run: "systemd-run".into(), sink: OnceLock::new() }
+        Real { systemctl: "nonexistent/systemctl".into(), units: Arc::new(u), systemd_run: "systemd-run".into() }
     }
 
     fn scripted() -> runtime::units::ScriptedUnits {
@@ -555,7 +520,7 @@ mod real_tests {
     #[test_id(txfqpy3)]
     #[test]
     fn an_unreachable_manager_reads_as_unknown_not_inactive() {
-        let r = Real { systemctl: "x".into(), units: runtime::units::unreachable("down"), systemd_run: "x".into(), sink: OnceLock::new() };
+        let r = Real { systemctl: "x".into(), units: runtime::units::unreachable("down"), systemd_run: "x".into() };
         assert_eq!(r.is_active(&["a.service".into()]), ["?"]);
         assert!(r.show(&["a.service".into()]).is_empty());
         assert!(r.list_watch_units("prod").is_empty());

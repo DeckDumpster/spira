@@ -4,13 +4,13 @@
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
-use watchd::{commands, context, filter, manifest, next, notify, ops, tail};
+use watchd::{commands, context, filter, manifest, notify, ops, tail};
 
 use manifest::Row;
 use ops::Real;
 
 fn usage() -> &'static str {
-    "usage: watchd manifest|units|keys|exec <name>|status|drain [name] [--all]|peek [name] [--all] [--limit N]|tail <name> [--all] [--takeover] [--from-start]|next <name> [--timeout SECS]|undeliver <name> [--session PID]|tailers|restart [name]|notify|page <row> <text> [key=value ...]|prune|health-ids <file>"
+    "usage: watchd manifest|units|keys|exec <name>|status|drain [name] [--all]|peek [name] [--all] [--limit N]|tail <name> [--all] [--takeover] [--from-start]|tailers|restart [name]|notify|prune|health-ids <file>"
 }
 
 fn load_context() -> context::Context {
@@ -39,7 +39,16 @@ fn main() {
     let sub = args.get(1).map(|s| s.as_str()).unwrap_or("status");
     let rest = &args[args.len().min(2)..];
 
-    let code = match sub {
+    let code = dispatch(sub, rest).unwrap_or_else(|| {
+        eprintln!("{}", usage());
+        2
+    });
+    std::process::exit(code);
+}
+
+/// `None` is an unknown verb.
+fn dispatch(sub: &str, rest: &[String]) -> Option<i32> {
+    Some(match sub {
         "manifest" => {
             let ctx = load_context();
             let rows = need_rows(&ctx);
@@ -150,44 +159,6 @@ fn main() {
                 &tail::TailArgs { name: &name, all: args.all, takeover: args.takeover, from_start: args.from_start },
             )
         }
-        "next" => {
-            let (name, timeout) = match rest {
-                [n] => (n, None),
-                [n, f, secs] if f == "--timeout" && secs.parse::<u64>().is_ok() => (n, Some(std::time::Duration::from_secs(secs.parse().unwrap()))),
-                _ => {
-                    eprintln!("usage: watchd next <name> [--timeout SECS]");
-                    std::process::exit(2);
-                }
-            };
-            let ctx = load_context();
-            let rows = need_rows(&ctx);
-            let dedup_window = match spira_config::process::cfg_parse::<u64>("SPIRA_CONCIERGE_INBOX_DEDUP") {
-                Ok(w) => w,
-                Err(e) => {
-                    eprintln!("watchd: {e}");
-                    std::process::exit(1);
-                }
-            };
-            match next::cmd_next(&rows, &ctx, &next::NextArgs { name, dedup_window, timeout, poll: std::time::Duration::from_millis(500), ancestors: spira_config::admission::ancestors(std::process::id(), &spira_config::admission::RealProcs) }) {
-                Ok(out) => {
-                    print!("{out}");
-                    0
-                }
-                Err(code) => code,
-            }
-        }
-        "undeliver" => {
-            let (name, session) = match rest {
-                [n] => (n, None),
-                [n, f, pid] if f == "--session" && pid.parse::<u32>().is_ok() => (n, pid.parse().ok()),
-                _ => {
-                    eprintln!("usage: watchd undeliver <name> [--session PID]");
-                    std::process::exit(2);
-                }
-            };
-            let ctx = load_context();
-            next::cmd_undeliver(&ctx.run, name, session)
-        }
         "tailers" => {
             let ctx = load_context();
             let rows = need_rows(&ctx);
@@ -225,22 +196,6 @@ fn main() {
                 }
             }
         }
-        "page" => {
-            let [row, text, fields @ ..] = rest else {
-                eprintln!("usage: watchd page <row> <text> [key=value ...]");
-                std::process::exit(2);
-            };
-            let ctx = load_context();
-            let real = Real::new(ctx.systemctl.clone(), ctx.systemctl_override.as_deref());
-            let rows = need_rows(&ctx);
-            match notify::cmd_page(&rows, &real, &ctx, row, text, fields) {
-                Ok(()) => 0,
-                Err(e) => {
-                    eprintln!("{e}");
-                    3
-                }
-            }
-        }
         "prune" => {
             let ctx = load_context();
             let real = Real::new(ctx.systemctl.clone(), ctx.systemctl_override.as_deref());
@@ -257,12 +212,8 @@ fn main() {
             let ctx = load_context();
             commands::cmd_health_ids(&ctx, file)
         }
-        _ => {
-            eprintln!("{}", usage());
-            2
-        }
-    };
-    std::process::exit(code);
+        _ => return None,
+    })
 }
 
 struct ReaderArgs {
@@ -372,6 +323,15 @@ mod tests {
     #[test]
     fn from_start_with_peek_is_refused() {
         assert!(parse_reader_args(&a(&["--from-start"]), true).is_err());
+    }
+
+    #[test_id(tke4dzx)]
+    #[test]
+    fn the_retired_verbs_are_refused_as_unknown() {
+        assert_eq!(dispatch("keys", &[]), Some(0), "control: a known verb is dispatched");
+        for verb in ["next", "undeliver", "page"] {
+            assert_eq!(dispatch(verb, &[]), None, "{verb}");
+        }
     }
 
     #[test_id(t9f73hp)]

@@ -185,7 +185,7 @@ fn build_tip<'a>(w: &'a World<'a>, c: &Ctx, path: &'a Path, a: &Args) -> Result<
         return Err(format!("cannot create a worktree at {} for the build", a.tip));
     }
     let started = w.clock.now();
-    match w.scripts.build_release(&wt, a.bead) {
+    match w.scripts.build_release(&wt, a.bead, &c.r.name) {
         Ok(lease) => {
             if let Err(e) = std::fs::write(c.s.run.join(BUILD_SECS_FILE), format!("{}\n", w.clock.now().saturating_sub(started))) {
                 w.err(format!("queue.sh hand-land: could not record the build duration: {e}"));

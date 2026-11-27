@@ -108,7 +108,7 @@ name = "build-dir"
 what = "A leased build directory."
 writes_only = true
 door = "spira-build-dir"
-usage = "usage: spira-build-dir lease --who <label> --pid <pid> [--root <tree>]"
+usage = "usage: spira-build-dir lease --who <label> --pid <pid> [--root <tree>] [--repo <name>]"
 usage_in = "spira-config/src/build_dir_main.rs"
 why = "A build directory removed while leased pulls the tree from under a running build."
 [resource.touched_by]

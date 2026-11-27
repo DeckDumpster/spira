@@ -2754,8 +2754,17 @@ pub fn suite_statuses(dir: &Path, found: &mut Vec<(String, String)>, depth: u32)
 /// Whether the entry itself wrote an `ok` verdict to `ci.result`: it finished green, so a fault in
 /// the run around it is the machinery's, not the candidate's.
 fn ci_result_ok(results: &Path) -> bool {
+    ci_result_says(results, "ok")
+}
+
+/// Whether the entry itself wrote a `red` verdict: without one, a failing run never judged the candidate.
+fn ci_result_red(results: &Path) -> bool {
+    ci_result_says(results, "red")
+}
+
+fn ci_result_says(results: &Path, status: &str) -> bool {
     fs::read_to_string(results.join("ci.result"))
-        .is_ok_and(|t| t.split_whitespace().next() == Some("ok"))
+        .is_ok_and(|t| t.split_whitespace().next() == Some(status))
 }
 
 /// Names the suites whose verdict cannot be read: a word that is neither a non-blocking status
@@ -4185,7 +4194,7 @@ fn certify_pass(
         if ci_result_ok(&results) && out.rc == 2 {
             out.rc = 0;
         }
-        if out.rc == 1 {
+        if out.rc == 1 && ci_result_red(&results) {
             let _ = fs::write(
                 results.join(format!("{REPO_TESTENV_RED}.out")),
                 format!("{}{}", out.out, out.err),
@@ -4200,7 +4209,10 @@ fn certify_pass(
                     c.s.round_wall_secs
                 )
             } else {
-                format!("the repository's CI entry exited {}", out.rc)
+                round_fault(&results).map_or_else(
+                    || format!("the repository's CI entry exited {}", out.rc),
+                    |f| f.cause,
+                )
             };
             warn_unrecorded(
                 w,
