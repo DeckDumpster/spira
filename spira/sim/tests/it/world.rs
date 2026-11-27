@@ -68,6 +68,12 @@ impl Steps for Fake {
         self.calls.lock().unwrap().push(format!("lc_stop {pid}"));
         Ok(())
     }
+    fn broker_up(&self, _: &Path) -> Result<(), String> {
+        Ok(())
+    }
+    fn broker_stop(&self, _: &Path, _: u32) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 fn clean(_: &str) -> Option<String> {

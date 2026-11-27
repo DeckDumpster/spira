@@ -26,7 +26,7 @@ path = "tests/it/main.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["lifecycle/integration", "queue/integration", "runtime/integration", "sim/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "spira-runtime/integration", "testkit/integration", "batcher-cut/integration", "cockpit-collect/integration", "cockpit-ops/integration", "test-registry/integration", "system-paths/integration", "dwarf/integration", "spira-test-id/integration", "spira-lint/integration"]
+integration = ["lifecycle/integration", "queue/integration", "runtime/integration", "sim/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "spira-runtime/integration", "testkit/integration", "batcher-cut/integration", "cockpit-collect/integration", "cockpit-ops/integration", "test-registry/integration", "system-paths/integration", "dwarf/integration", "spira-test-id/integration", "spira-lint/integration", "release/integration"]
 [dependencies]
 spira-otel = { path = "../../spira-otel" }
 serde_json = "1"
@@ -44,6 +44,7 @@ spira-lint = { path = "../../spira-lint" }
 test-registry = { path = "../../test-registry" }
 cockpit-collect = { path = "../../cockpit-collect" }
 cockpit-ops = { path = "../../cockpit/ops" }
+release = { path = "../../release" }
 
 [dev-dependencies]
 spira-test-id = { path = "../../spira-test-id" }

@@ -4,7 +4,16 @@
 
 use spira_sim::pilgrim;
 use spira_sim::world::{self, lc_socket, PILGRIM_STEPS};
+use std::io::{BufRead, BufReader};
+use std::os::unix::net::UnixStream;
 use std::path::Path;
+use std::process::{Command, Stdio};
+use std::sync::mpsc::{channel, Receiver};
+use std::time::Duration;
+use testkit::{broker, ChildGuard};
+
+/// Bounds each wait on the subscriber, so a lost delivery fails the test instead of hanging it.
+const FAILSAFE: Duration = Duration::from_secs(30);
 
 struct Up<'a>(&'a Path);
 impl Drop for Up<'_> {
@@ -124,7 +133,10 @@ fn a_pilgrim_files_links_and_closes_in_a_world_of_its_own_and_both_views_follow(
     let floor = pilgrim::loom_counts(&loom.factory().unwrap()).expect("Loom's READY belt");
     assert_eq!(floor, (base_claimable as u64 + 1, 1), "Loom sees A blocked");
 
+    let sub = Watching::start(&dir);
+
     pilgrim::close(&dir, &b, "walked").unwrap();
+    sub.follow.delivers(&format!("bead/{b}/state state=DROPPED from=READY"));
     let freed = pilgrim::lc_view_once(&dir).unwrap();
     assert_eq!(
         pilgrim::view_counts(&freed),
@@ -155,6 +167,77 @@ fn a_pilgrim_files_links_and_closes_in_a_world_of_its_own_and_both_views_follow(
         spira_store::lc_call::REFUSED,
         "an unmarked world refuses the pilgrim: {out}"
     );
+
+    let broker: u32 = std::fs::read_to_string(world::broker_pid_file(&dir)).unwrap().trim().parse().unwrap();
+    let socket = world::broker_socket(&dir);
+    assert!(UnixStream::connect(&socket).is_ok(), "positive control: the world's broker accepts");
+    drop(sub);
+    world::down(&dir, &PILGRIM_STEPS).unwrap();
+    assert!(!Path::new(&format!("{}/{broker}", system_paths::PROC)).exists(), "broker pid {broker} outlived the world");
+    assert!(UnixStream::connect(&socket).is_err(), "{} still accepts", socket.display());
+}
+
+/// The world's own `spira-sub run --as t`, watching every bead's state with a `follow` attached.
+struct Watching {
+    follow: Follow,
+    _run: ChildGuard,
+}
+
+struct Follow {
+    lines: Receiver<String>,
+    _child: ChildGuard,
+}
+
+impl Follow {
+    fn delivers(&self, what: &str) {
+        let mut seen = Vec::new();
+        while !seen.last().is_some_and(|l: &String| l.contains(what)) {
+            seen.push(self.lines.recv_timeout(FAILSAFE).unwrap_or_else(|e| panic!("follow never delivered {what:?} ({e}): {seen:#?}")));
+        }
+    }
+}
+
+fn lines(from: impl std::io::Read + Send + 'static) -> Receiver<String> {
+    let (tx, rx) = channel();
+    std::thread::spawn(move || BufReader::new(from).lines().map_while(Result::ok).try_for_each(|l| tx.send(l).ok()));
+    rx
+}
+
+impl Watching {
+    fn start(world: &Path) -> Watching {
+        let command = |args: &[&str]| {
+            let mut cmd = Command::new(world.join("release/bin/spira-sub"));
+            cmd.args(args)
+                .args(["--as", "t"])
+                .env_clear()
+                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+                .env("SPIRA_TOML", world.join("config/sim.toml"))
+                .env("SPIRA_RELEASE", world.join("release"))
+                .env("HOME", world.join("home"))
+                .stdin(Stdio::null());
+            cmd
+        };
+        let ok = |args: &[&str]| {
+            let out = command(args).output().unwrap();
+            assert!(out.status.success(), "spira-sub {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        };
+        // `run` publishes this once it holds the broker, by which time its control socket answers.
+        let mut up = broker::Subscriber::to(&world::broker_socket(world), &["subscriber/t"]);
+        let run = ChildGuard::spawn(&mut command(&["run"]));
+        while !String::from_utf8_lossy(&up.recv().payload).contains("\"up\"") {}
+        let listed = ok(&["list"]);
+        assert!(listed.starts_with("t: broker up"), "{listed}");
+        ok(&["add", "bead/+/state"]);
+        let mut cmd = command(&["follow"]);
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = ChildGuard::spawn(&mut cmd);
+        let (stdout, stderr) = child.pipes();
+        let notes = lines(stderr.unwrap());
+        let follow = Follow { lines: lines(stdout.unwrap()), _child: child };
+        while !notes.recv_timeout(FAILSAFE).expect("follow never attached").contains("following") {}
+        Watching { follow, _run: run }
+    }
 }
 
 #[test_id(t3o6si4)]
