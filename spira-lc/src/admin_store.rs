@@ -2,7 +2,7 @@
 //! through. It runs in the caller's process, never over the socket, and answers every subcommand
 //! on the beads server.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
@@ -33,7 +33,12 @@ pub(crate) fn ask_of(args: &[String], stdin: &mut dyn FnMut() -> Result<String, 
         ["check"] => Ok(Ask::Check),
         ["ping"] => Ok(Ask::Ping),
         ["config", "get", key] if CONFIG_KEYS.contains(key) => Ok(Ask::ConfigGet(key.to_string())),
-        ["config", "set", key, value] if CONFIG_KEYS.contains(key) => Ok(Ask::ConfigSet(key.to_string(), value.to_string())),
+        ["config", "set", key, value] if CONFIG_KEYS.contains(key) => {
+            if *key == "status.custom" {
+                statuses(value)?;
+            }
+            Ok(Ask::ConfigSet(key.to_string(), value.to_string()))
+        }
         ["sql"] | ["sql", "--json"] => {
             let statement = stdin()?;
             let statement = statement.trim();
@@ -44,6 +49,22 @@ pub(crate) fn ask_of(args: &[String], stdin: &mut dyn FnMut() -> Result<String, 
         }
         _ => Err(format!("admin-store: not a subcommand of the closed list: {SUBCOMMANDS}")),
     }
+}
+
+/// A `status.custom` list as name to category; an entry is `name` or `name:category`.
+fn statuses(value: &str) -> Result<BTreeMap<&str, &str>, String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .map(|entry| {
+            let (name, category) = entry.split_once(':').map_or((entry, "unspecified"), |(n, c)| (n.trim(), c.trim()));
+            if name.is_empty() || category.is_empty() {
+                return Err(format!("admin-store: status.custom entry '{entry}' has an empty name or category"));
+            }
+            Ok((name, category))
+        })
+        .collect()
 }
 
 /// `--json`: an array of row objects. Plain: a header, a rule, a line per row, or nothing.
@@ -70,20 +91,24 @@ fn config_get(admin: &Conn, db: &str, key: &str) -> Result<String, String> {
     })
 }
 
-/// A create reads `types.custom` from the `custom_types` table too where the store has one, so
-/// the two are written in one transaction.
+/// The store reads `types.custom` from the `custom_types` table and `status.custom` from
+/// `custom_statuses` where it has them, so each is written in one transaction with its `config` row.
 fn config_set(admin: &Conn, db: &str, key: &str, value: &str) -> Result<String, String> {
     let mut script = vec!["START TRANSACTION".to_string(), format!("REPLACE INTO {db}.config (`key`, value) VALUES ('{}', '{}')", escape(key), escape(value))];
-    if key == "types.custom" {
-        let schema = db.trim_matches('`');
-        let table = admin.rows(&format!("SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = 'custom_types'"))?;
-        if !table.is_empty() {
-            script.push(format!("DELETE FROM {db}.custom_types"));
+    let (table, columns, rows): (&str, &str, Vec<String>) = match key {
+        "types.custom" => {
             let names: BTreeSet<&str> = value.split(',').map(str::trim).filter(|n| !n.is_empty()).collect();
-            if !names.is_empty() {
-                let rows = names.iter().map(|n| format!("('{}')", escape(n))).collect::<Vec<_>>().join(", ");
-                script.push(format!("INSERT INTO {db}.custom_types (name) VALUES {rows}"));
-            }
+            ("custom_types", "name", names.iter().map(|n| format!("('{}')", escape(n))).collect())
+        }
+        "status.custom" => ("custom_statuses", "name, category", statuses(value)?.iter().map(|(n, c)| format!("('{}', '{}')", escape(n), escape(c))).collect()),
+        _ => return Err(format!("admin-store: no table for config key {key}")),
+    };
+    let schema = db.trim_matches('`');
+    let present = admin.rows(&format!("SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{table}'"))?;
+    if !present.is_empty() {
+        script.push(format!("DELETE FROM {db}.{table}"));
+        if !rows.is_empty() {
+            script.push(format!("INSERT INTO {db}.{table} ({columns}) VALUES {}", rows.join(", ")));
         }
     }
     script.push("COMMIT".to_string());
@@ -208,6 +233,17 @@ mod tests {
         assert_eq!(run(&words(&["delete"])), 2);
         assert_eq!(run(&words(&["config", "get", "issue_prefix"])), 2);
         assert_eq!(run(&words(&["config", "set", "types.custom"])), 2);
+    }
+
+    #[test_id(trzutft)]
+    #[test]
+    fn a_status_with_an_empty_name_or_category_is_refused_before_the_server() {
+        for entry in ["retired:", ":active"] {
+            let args = words(&["config", "set", "status.custom", entry]);
+            let refused = ask_of(&args, &mut || Err("no stdin".to_string()));
+            assert!(refused.as_ref().is_err_and(|e| e.contains(entry)), "{entry}: {refused:?}");
+            assert_eq!(run(&args), 2, "{entry}");
+        }
     }
 
     #[test_id(t6ieiyq)]
