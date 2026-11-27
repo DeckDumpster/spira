@@ -1,0 +1,4 @@
+source_sha256=c05432c2a3cc0052ed706e4ac8054d0e0887b17677e59759f09211f78f4770c7
+object_sha256=b1096631b0409d1d36d84a8b2b5b58d5986471e9e35caac9a50a384741b9b240
+clang=clang version 21.1.8
+flags=-target bpf -O2 -g -fdebug-prefix-map="$(pwd)"=.

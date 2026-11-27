@@ -2,6 +2,10 @@
 //! program and starter, drained every [`run::INTERVAL`] and pushed as cumulative series.
 //! Holds CAP_BPF and CAP_PERFMON only while it loads and attaches.
 //!
+//! The kernel side is the committed `bpf/proc_starts.bpf.o`, built from `bpf/proc_starts.bpf.c`.
+//! After any edit to the source, run `proc-starts/bpf/regen.sh` with the flake's clang and commit
+//! the object and `bpf/proc_starts.bpf.manifest` together.
+//!
 //! What each count is ([`totals`] names the series):
 //! - `spira_proc_starts_total`: forked processes, counted at first exec (or at exit if none) and
 //!   labelled by the exec'd program.
@@ -34,10 +38,20 @@ mod object_tests {
     #[test_id(ttxdm1t)]
     #[test]
     fn committed_bpf_object_matches_its_source() {
-        let source = include_bytes!("../bpf/proc_starts.bpf.c");
-        let recorded = include_str!("../bpf/proc_starts.bpf.c.sha256").trim();
-        let actual: String = Sha256::digest(source).iter().map(|b| format!("{b:02x}")).collect();
-        assert_eq!(actual, recorded, "bpf/proc_starts.bpf.c changed without its object: run proc-starts/bpf/regen.sh and commit both");
+        let manifest = include_str!("../bpf/proc_starts.bpf.manifest");
+        let mut fields = std::collections::BTreeMap::new();
+        for line in manifest.lines() {
+            let (key, value) = line.split_once('=').unwrap_or_else(|| panic!("bpf/proc_starts.bpf.manifest: line without '=': {line}"));
+            assert!(["source_sha256", "object_sha256", "clang", "flags"].contains(&key), "bpf/proc_starts.bpf.manifest: unknown key {key}");
+            assert!(fields.insert(key, value).is_none(), "bpf/proc_starts.bpf.manifest: duplicate key {key}");
+        }
+        let recorded = |key: &str| *fields.get(key).unwrap_or_else(|| panic!("{key} missing from bpf/proc_starts.bpf.manifest: run proc-starts/bpf/regen.sh"));
+        for key in ["clang", "flags"] {
+            assert!(!recorded(key).is_empty(), "{key} empty in bpf/proc_starts.bpf.manifest: run proc-starts/bpf/regen.sh");
+        }
+        let sha256 = |bytes: &[u8]| Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect::<String>();
+        assert_eq!(sha256(include_bytes!("../bpf/proc_starts.bpf.c")), recorded("source_sha256"), "bpf/proc_starts.bpf.c changed without its object: run proc-starts/bpf/regen.sh and commit both");
+        assert_eq!(sha256(include_bytes!("../bpf/proc_starts.bpf.o")), recorded("object_sha256"), "bpf/proc_starts.bpf.o was changed outside proc-starts/bpf/regen.sh: run proc-starts/bpf/regen.sh and commit the object with its manifest");
     }
 
     #[test_id(ttw13gi)]
