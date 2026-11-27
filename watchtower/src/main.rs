@@ -182,7 +182,7 @@ fn main() {
             let stall_mins = reg_i64("SPIRA_QUEUE_THROTTLE_STALL_MINS");
             let tc_repo = getenv("SPIRA_TC_REPO").or_else(|| getenv("SPIRA_REPO"));
             let land_ref = getenv("SPIRA_TC_LAND_REF")
-                .or_else(|| tc_repo.as_deref().and_then(|r| git::spira_landref(r)));
+                .or_else(|| tc_repo.as_deref().and_then(git::spira_landref));
             let Some(depth) = throttle::compute_depth(tc_repo.as_deref(), land_ref.as_deref()) else {
                 log::log("watchtower: lock-holders-check skipped — spira-lc is unreachable, depth unknown");
                 return;
