@@ -805,16 +805,18 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
                 }
             },
             None => {
-                let found = work::trusted::resolve(prog, &dirs);
-                if let Some(p) = &found {
-                    println!("resolved: {}", p.display());
-                } else if let Some(s) = shell {
-                    println!("-- {}: FAIL ({prog} is not supplied by the flake dev shell of {} ({}))", row.name, root.join("flake.nix").display(), s.key);
-                    failed.push(row.name.clone());
-                    log.row(row, None, started.elapsed().as_secs(), &record_file);
-                    continue;
+                match work::row_program(root, prog, shell, &dirs) {
+                    Ok(p) => {
+                        println!("resolved: {}", p.display());
+                        p
+                    }
+                    Err(why) => {
+                        println!("-- {}: FAIL ({why})", row.name);
+                        failed.push(row.name.clone());
+                        log.row(row, None, started.elapsed().as_secs(), &record_file);
+                        continue;
+                    }
                 }
-                found.unwrap_or_else(|| std::path::PathBuf::from(prog))
             }
         };
         let ran_from = std::time::Instant::now();
@@ -1080,10 +1082,10 @@ fn unresolved_programs() -> Vec<String> {
         };
         for row in work::declared_rows(root).unwrap_or_default().into_iter().filter(|r| r.build.is_none()) {
             let argv = work::done_argv(&row.run);
-            if shell.is_err() {
+            let Ok(entered) = &shell else {
                 break;
-            }
-            if let Some(prog) = argv.first().filter(|p| work::trusted::resolve(p, &row_dirs).is_none()) {
+            };
+            if let Some(prog) = argv.first().filter(|p| work::row_program(root, p, entered.as_ref(), &row_dirs).is_err()) {
                 let within = if matches!(shell, Ok(Some(_))) { " in the repository's flake dev shell" } else { "" };
                 out.push(format!("check {:?} runs {prog:?}, which resolves nowhere{within}; `work checks` will fail it", row.name));
             }
