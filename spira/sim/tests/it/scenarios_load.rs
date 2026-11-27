@@ -9,7 +9,7 @@
 //! yet done, and says why.
 
 use spira_sim::call::{dwarf_command, rune_of};
-use spira_sim::drive::{parse_scenario, Scenario, SCENARIOS_DIR};
+use spira_sim::drive::{parse_scenario, seed_steps, Scenario, StepDef, SCENARIOS_DIR, STORE_LIST};
 use spira_sim::loopworld;
 use std::path::PathBuf;
 
@@ -144,4 +144,32 @@ fn no_shipped_scenario_runs_a_migrated_unit_as_an_inline_actor() {
         .flat_map(|(n, sc)| sc.actors.into_iter().filter(|a| MIGRATED_COMMANDS.iter().any(|m| a.command.contains(m))).map(move |a| (n.clone(), a.command)))
         .collect();
     assert!(found.is_empty(), "these inline actors run a unit that is a task of spira-runtime serve: {found:?}");
+}
+
+/// Whether a shell command runs `bd` as a program: a `bd ` token that opens a command.
+fn runs_bd(command: &str) -> bool {
+    command.match_indices("bd ").any(|(i, _)| {
+        let before = command[..i].trim_end_matches([' ', '\t']);
+        before.is_empty() || ["&&", ";", "|", "$(", "\n"].iter().any(|sep| before.ends_with(sep))
+    })
+}
+
+#[test_id(tzzb39r)]
+#[test]
+fn no_command_a_shipped_scenario_runs_is_bd() {
+    let planted: StepDef = toml::from_str("at = 0\ncommand = 'bd -C x list'").unwrap();
+    assert!(runs_bd(&planted.shell().unwrap()), "positive control: a planted bd step is caught");
+    assert!(runs_bd("true && bd list") && runs_bd("x=$(bd show a)") && !runs_bd("spira-lc content list && echo sbd x"));
+
+    let mut commands = vec![("probe".to_string(), STORE_LIST.to_string())];
+    for (name, sc) in shipped() {
+        for (i, step) in sc.steps.iter().enumerate() {
+            commands.push((format!("{name} step {}", i + 1), step.shell().unwrap_or_else(|e| panic!("{name}: {e}"))));
+        }
+        for (at, c) in seed_steps(&sc.seeds).unwrap_or_else(|e| panic!("{name}: {e}")) {
+            commands.push((format!("{name} seeds at {at}"), c));
+        }
+    }
+    let found: Vec<&(String, String)> = commands.iter().filter(|(_, c)| runs_bd(c)).collect();
+    assert!(found.is_empty(), "these commands run bd: {found:#?}");
 }

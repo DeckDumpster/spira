@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use spira_sim::probe::{merge_bd, names, parse_branches, rows, GitFacts, Lineage};
+use spira_sim::probe::{merge_store, names, parse_branches, rows, GitFacts, Lineage};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -45,10 +45,25 @@ fn rows_refuse_unparseable_lifecycle_output() {
 
 #[test_id(tgcz2me)]
 #[test]
-fn bd_rows_refuse_what_is_not_a_bead_list() {
+fn store_rows_refuse_what_is_not_a_bead_list() {
     for bad in ["", "{}", "[{\"title\":\"no id\"}]"] {
-        assert!(merge_bd(&mut Vec::new(), bad).is_err(), "{bad}");
+        assert!(merge_store(&mut Vec::new(), bad).is_err(), "{bad}");
     }
+}
+
+#[test_id(tbbzcm3)]
+#[test]
+fn a_content_list_row_fills_the_stores_columns() {
+    let list = json!([{
+        "id": "sp-a", "title": "sim sp-a", "status": "closed", "priority": 1, "close_reason": "landed",
+        "description": "## Build\nsim sp-a", "labels": ["spira", "plan"], "parent": null,
+        "dependencies": [{ "issue_id": "sp-a", "depends_on_id": "sp-b", "type": "blocks" }],
+    }])
+    .to_string();
+    let mut beads = Vec::new();
+    merge_store(&mut beads, &list).unwrap();
+    let got: Vec<&Value> = ["bd_status", "title", "priority", "labels", "deps", "close_reason", "body"].iter().map(|k| &beads[0][*k]).collect();
+    assert_eq!(got, [&json!("closed"), &json!("sim sp-a"), &json!(1), &json!("plan,spira"), &json!("sp-b"), &json!("landed"), &json!("## Build\nsim sp-a")]);
 }
 
 #[test_id(t1dgvfh)]

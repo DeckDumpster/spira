@@ -43,9 +43,9 @@ pub struct StepDef {
     pub claim: Option<String>,
     #[serde(default)]
     pub script: Vec<String>,
-    /// With `file`: the bead's priority (bd's `-p`); 2 when absent.
+    /// With `file`: the bead's priority (`create -p`); 2 when absent.
     pub priority: Option<u8>,
-    /// With `file`: the bead's description (bd's `-d`), e.g. the `## Build` section a builder needs.
+    /// With `file`: the bead's description (`create -d`), e.g. the `## Build` section a builder needs.
     pub body: Option<String>,
     /// With `file` or `claim`: the world repository the bead belongs to; the world's own when absent.
     pub repo: Option<String>,
@@ -218,7 +218,9 @@ impl StepDef {
             (None, Some(b), None) if self.script.is_empty() => {
                 let b = bead_id(b)?;
                 let named = self.repo.as_ref().map(|r| format!(" --repo {r}")).unwrap_or_default();
-                Ok(format!("bd -C \"$SIM_BEADS_DB\" create {} --id {b} -t task -p {} -l spira -l plan -l repo:{repo}{} --silent >/dev/null && spira-lc create-bead {b}{named} --ready && spira-lc backfill-repo --apply {b} && spira-lc sync-claim-inputs {b}", shell_quote(&format!("sim {b}")), self.priority.unwrap_or(2), self.body.as_ref().map(|d| format!(" -d {}", shell_quote(d))).unwrap_or_default()))
+                // The door refuses a builder's bead without a `## Build` section.
+                let body = self.body.clone().unwrap_or_else(|| format!("## Build\nsim {b}"));
+                Ok(format!("spira-lc content create {} --id {b} -t task -p {} -l spira -l plan -l repo:{repo} -d {} --silent >/dev/null && spira-lc create-bead {b}{named} --ready && spira-lc backfill-repo --apply {b} && spira-lc sync-claim-inputs {b}", shell_quote(&format!("sim {b}")), self.priority.unwrap_or(2), shell_quote(&body)))
             }
             (None, None, Some(b)) if !self.script.is_empty() => {
                 let b = bead_id(b)?;
@@ -264,7 +266,7 @@ pub struct Scenario {
     /// brief the agent receives is the `briefs` table.
     #[serde(default)]
     pub real_dwarf: bool,
-    /// Read the bead store's rows (`bd`) into `bead_state` too; always so when there are seeds.
+    /// Read the bead store's rows into `bead_state` too; always so when there are seeds.
     #[serde(default)]
     pub bead_rows: bool,
     /// The tree under test `real_actors` resolve against: the world's `work` checkout.
@@ -580,7 +582,7 @@ pub struct ProcessProbe {
     /// Set when the world's `SIM_PROBE` is this binary's own `sim probe`: read in-process, with
     /// the world's locators, instead of through a shell and a second `sim`.
     observer: Option<crate::probe::Observer>,
-    /// Ask the bead store (`bd list`) for every bead's row on each snapshot.
+    /// Ask the bead store (`content list`) for every bead's row on each snapshot.
     bead_rows: bool,
 }
 
@@ -610,14 +612,14 @@ impl Probe for ProcessProbe {
     }
 }
 
-const BD_LIST: &str = "bd -C \"$SIM_BEADS_DB\" list --all --limit 0 --json";
+pub const STORE_LIST: &str = "spira-lc content list --all --limit 0 --json";
 
 impl ProcessProbe {
     fn take(&mut self) -> Result<Snapshot, String> {
         let mut snap = self.observe()?;
         if self.bead_rows {
-            let out = run(&mut self.exec.command_with(BD_LIST, 0, false)?, COMMAND_DEADLINE).map_err(|e| format!("bd list: {e}"))?;
-            crate::probe::merge_bd(&mut snap.beads, &out)?;
+            let out = run(&mut self.exec.command_with(STORE_LIST, 0, false)?, COMMAND_DEADLINE).map_err(|e| format!("content list: {e}"))?;
+            crate::probe::merge_store(&mut snap.beads, &out)?;
         }
         Ok(snap)
     }

@@ -1,5 +1,5 @@
 use spira_sim::gh;
-use spira_sim::world::{self, RUN_STEPS};
+use spira_sim::world::{self, ProcessSteps};
 use std::path::PathBuf;
 
 const USAGE: &str = "usage: sim world up <dir> [--tree <rev>] [--pilgrim] [--repo <name>:<mode>[:<trunk>]]...\n       sim world fixture <tree root> <dir>\n       sim world exec <dir> <shell command>   (under the world's own environment)\n       sim world seed [--tree <rev>]\n       sim world land <dir> <bead>   (lands branch spira/<bead> of the world's work repo as a one-member round)\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario|name> [--seed N] [--world <dir>] [--keep] [--repo <name>:<mode>[:<trunk>]]...\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
@@ -107,9 +107,8 @@ fn run(args: &[String]) -> Result<(), String> {
                 repos.push(world::RepoSpec::parse(spira_sim::pilgrim::FIXTURE_REPO)?);
             }
             let tree = set.get("--tree").map_or("HEAD", String::as_str);
-            let steps = world::up_steps(set.contains_key("--pilgrim"));
             if !set.contains_key("--pilgrim") {
-                return world::up_repos(&cwd, &PathBuf::from(dir), tree, &env, steps, &repos, &|_| Ok(()));
+                return world::up_repos(&cwd, &PathBuf::from(dir), tree, &env, &ProcessSteps, &repos, &|_| Ok(()));
             }
             if set.contains_key("--tree") {
                 return Err(format!("usage: --tree cannot be combined with --pilgrim: a pilgrim world's tree is the active release's\n{USAGE}"));
@@ -128,10 +127,10 @@ fn run(args: &[String]) -> Result<(), String> {
             let tmp = std::env::temp_dir().join(format!("sim-pilgrim-repo-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&tmp);
             let built = world::release_repo(&release, &tmp)
-                .and_then(|()| world::up_repos(&tmp, &PathBuf::from(dir), "HEAD", &env, steps, &repos, &|_| Ok(())));
+                .and_then(|()| world::up_repos(&tmp, &PathBuf::from(dir), "HEAD", &env, &ProcessSteps, &repos, &|_| Ok(())));
             let _ = std::fs::remove_dir_all(&tmp);
             built?;
-            spira_sim::pilgrim::up(&PathBuf::from(dir).canonicalize().map_err(|e| e.to_string())?, spira_sim::pilgrim::FIXTURE, steps)?;
+            spira_sim::pilgrim::up(&PathBuf::from(dir).canonicalize().map_err(|e| e.to_string())?, spira_sim::pilgrim::FIXTURE, &ProcessSteps)?;
             grafana_up(&PathBuf::from(dir).canonicalize().map_err(|e| e.to_string())?)
 
         }
@@ -148,7 +147,7 @@ fn run(args: &[String]) -> Result<(), String> {
             if let Some((base, admin)) = grafana_install()? {
                 spira_sim::grafana::revoke(&spira_sim::grafana::Curl, &PathBuf::from(dir), &base, &admin)?;
             }
-            world::down(&PathBuf::from(dir), &RUN_STEPS)
+            world::down(&PathBuf::from(dir), &ProcessSteps)
         }
         _ => Err(USAGE.to_string()),
     }
@@ -344,7 +343,7 @@ fn run_main(cwd: &std::path::Path, args: &[String], env: &dyn Fn(&str) -> Option
         None => {
             let d = std::env::temp_dir().join(format!("sim-run-{}-{seed}", std::process::id()));
             let t = std::time::Instant::now();
-            world::up_repos(cwd, &d, "HEAD", env, &RUN_STEPS, &repos, &|w| spira_sim::drive::resolve_conf(w, sc.epoch))?;
+            world::up_repos(cwd, &d, "HEAD", env, &ProcessSteps, &repos, &|w| spira_sim::drive::resolve_conf(w, sc.epoch))?;
             world::mark(&d, "up", t);
             (d, true)
         }
@@ -366,7 +365,7 @@ fn run_main(cwd: &std::path::Path, args: &[String], env: &dyn Fn(&str) -> Option
     if owned && outcome.is_ok() && !set.contains_key("--keep") {
         let profile = spira_sim::drive::profile_line(&dir);
         let t = std::time::Instant::now();
-        world::down(&dir, &RUN_STEPS)?;
+        world::down(&dir, &ProcessSteps)?;
         eprintln!("sim: profile {profile} down={}ms", t.elapsed().as_millis());
     } else {
         if outcome.is_ok() {
@@ -421,7 +420,7 @@ fn loop_main(text: &str, set: &std::collections::BTreeMap<String, String>, cli_r
     std::fs::write(dir.join(spira_sim::drive::EXEC_LOG), log).map_err(|e| e.to_string())?;
     let missed = run.missed(&script);
     if missed.is_none() && !set.contains_key("--keep") {
-        world::down(&dir, &RUN_STEPS)?;
+        world::down(&dir, &ProcessSteps)?;
     } else {
         eprintln!("sim: world kept at {}", dir.display());
     }

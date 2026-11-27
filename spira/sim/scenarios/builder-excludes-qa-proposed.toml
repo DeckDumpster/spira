@@ -27,7 +27,7 @@ file = "sp-qa02"
 
 [[step]]
 at = 0
-command = 'bd -C "$SIM_BEADS_DB" label add sp-qa02 qa-proposed'
+command = 'bead.sh label add sp-qa02 qa-proposed'
 
 [[step]]
 at = 0

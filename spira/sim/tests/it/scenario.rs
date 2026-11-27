@@ -12,13 +12,22 @@ fn shell(step: &str) -> Result<String, String> {
     s.steps[0].shell()
 }
 
-#[test_id(t0bmttu)]
+#[test_id(t9qm1gg)]
 #[test]
 fn a_file_step_creates_the_bead_in_both_stores_under_the_given_id() {
     let cmd = shell("file = \"sp-hp01\"").unwrap();
-    assert!(cmd.contains("create 'sim sp-hp01' --id sp-hp01"), "{cmd}");
-    assert!(cmd.contains("-l repo:sim") && cmd.contains("$SIM_BEADS_DB"), "{cmd}");
+    assert!(cmd.contains("spira-lc content create 'sim sp-hp01' --id sp-hp01"), "{cmd}");
+    assert!(cmd.contains("-l repo:sim") && !cmd.contains("bd -C"), "{cmd}");
     assert!(cmd.contains("&& spira-lc create-bead sp-hp01 --ready") && cmd.ends_with("sync-claim-inputs sp-hp01"), "{cmd}");
+}
+
+#[test_id(ttbkw2o)]
+#[test]
+fn a_file_step_always_carries_a_description_so_the_door_admits_a_builders_bead() {
+    let bare = shell("file = \"sp-hp01\"").unwrap();
+    assert!(bare.contains("-d '## Build\nsim sp-hp01' --silent"), "{bare}");
+    let own = shell("file = \"sp-hp01\"\nbody = \"## Build\\n\\nAdd out/x.\"").unwrap();
+    assert!(own.contains("-d '## Build\n\nAdd out/x.' --silent") && !own.contains("sim sp-hp01\n"), "{own}");
 }
 
 #[test_id(t780bze)]
