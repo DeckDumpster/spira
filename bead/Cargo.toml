@@ -12,7 +12,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "bead"
 path = "src/main.rs"
-test = false
 
 [[bin]]
 name = "bdsim"

@@ -4,6 +4,9 @@
 #
 #   bead.sh file "<title>" --for <persona> --repo <name> [--priority N] [--body-file F] [--submitted --tip <sha>] [--json] [--parent <id>] [--target "<metric> <op> <value>"]
 #   bead.sh file "<title>" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--submitted --tip <sha>] [--json] [--parent <id>] [--target "<metric> <op> <value>"]
+#                                     --submitted --tip <sha> files the item SUBMITTED at <sha> and
+#                                     creates refs/heads/spira/<id> there in the repo's checkout;
+#                                     a tip that is no commit there files nothing
 #   bead.sh file ... --stack-after <id>
 #                                     stack the new bead on <id> (same repo, live work): a blocks
 #                                     edge, so the claim cuts its branch from <id>'s tip and a

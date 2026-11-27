@@ -57,6 +57,52 @@ pub fn edges_then_promote(new_id: &str, blockers: &[String], dep_add: &mut dyn F
     rc
 }
 
+/// The branch a `--submitted` filing owes the round, which finds members only by
+/// `refs/heads/spira/<id>`. `git` takes the arguments after `git` and answers the exit code with
+/// stdout on success, stderr otherwise.
+pub struct SubmittedBranch<'a> {
+    git: &'a mut dyn FnMut(&[&str]) -> (i32, String),
+}
+
+impl<'a> SubmittedBranch<'a> {
+    pub fn new(git: &'a mut dyn FnMut(&[&str]) -> (i32, String)) -> Self {
+        SubmittedBranch { git }
+    }
+
+    pub fn check(&mut self, root: &str, tip: &str) -> Result<(), String> {
+        match (self.git)(&["-C", root, "cat-file", "-e", &format!("{tip}^{{commit}}")]).0 {
+            0 => Ok(()),
+            _ => Err(format!("{tip} is not a commit in {root}")),
+        }
+    }
+
+    /// The full sha `raw` names: the lifecycle compares tips byte for byte.
+    pub fn resolve(&mut self, root: &str, raw: &str) -> Result<String, String> {
+        let (code, out) = (self.git)(&["-C", root, "rev-parse", "--verify", "--quiet", "--end-of-options", &format!("{raw}^{{commit}}")]);
+        let full = out.trim();
+        if code != 0 || full.len() != 40 || !full.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(format!("not an unambiguous commit in {root}"));
+        }
+        Ok(full.to_string())
+    }
+
+    /// Creates `refs/heads/spira/<id>` at `tip`. The empty old value makes git refuse a ref that
+    /// exists, so an existing branch is never moved; one already at `tip` is success.
+    pub fn create(&mut self, root: &str, id: &str, tip: &str) -> Result<(), String> {
+        let name = format!("refs/heads/spira/{id}");
+        let (code, refusal) = (self.git)(&["-C", root, "update-ref", &name, tip, ""]);
+        if code == 0 {
+            return Ok(());
+        }
+        let (found, held) = (self.git)(&["-C", root, "rev-parse", "--verify", "--quiet", &name]);
+        match held.trim() {
+            held if found == 0 && held == tip => Ok(()),
+            held if found == 0 => Err(format!("{name} already points at {held}, not {tip}")),
+            _ => Err(refusal.trim().to_string()),
+        }
+    }
+}
+
 /// The request id a content create is sent under: the same actor, argv and body give the same id,
 /// so a resend or a second filing of the same bead is answered with the first one's result.
 pub fn create_request_id(actor: &str, argv: &[String], body: Option<&str>) -> String {
@@ -533,6 +579,72 @@ mod tests {
     }
 
     use super::*;
+
+    /// A git that records each call and answers from a script of (subcommand, exit, output).
+    fn fake_git<'a>(calls: &'a mut Vec<String>, script: &'a [(&'a str, i32, &'a str)]) -> impl FnMut(&[&str]) -> (i32, String) + 'a {
+        move |args| {
+            calls.push(args.join("\u{1f}"));
+            script.iter().find(|(verb, _, _)| args.get(2) == Some(verb)).map_or((0, String::new()), |(_, code, out)| (*code, out.to_string()))
+        }
+    }
+
+    const TIP: &str = "1111111111111111111111111111111111111111";
+    const OTHER: &str = "2222222222222222222222222222222222222222";
+
+    #[test_id(tb2uhaq)]
+    #[test]
+    fn the_tip_check_passes_a_commit_and_refuses_anything_else_naming_the_tip() {
+        let mut calls = Vec::new();
+        assert_eq!(SubmittedBranch::new(&mut fake_git(&mut calls, &[])).check("co", TIP), Ok(()));
+        assert_eq!(calls, [["-C", "co", "cat-file", "-e", &format!("{TIP}^{{commit}}")].join("\u{1f}")]);
+        let mut calls = Vec::new();
+        let e = SubmittedBranch::new(&mut fake_git(&mut calls, &[("cat-file", 128, "fatal")])).check("co", TIP).unwrap_err();
+        assert!(e.contains(TIP) && e.contains(" co"), "{e}");
+    }
+
+    #[test_id(tbw8ywc)]
+    #[test]
+    fn the_branch_is_created_only_where_no_ref_exists() {
+        let mut calls = Vec::new();
+        assert_eq!(SubmittedBranch::new(&mut fake_git(&mut calls, &[])).create("co", "sp-x", TIP), Ok(()));
+        assert_eq!(calls, [["-C", "co", "update-ref", "refs/heads/spira/sp-x", TIP, ""].join("\u{1f}")]);
+    }
+
+    #[test_id(tnep02i)]
+    #[test]
+    fn a_tip_resolves_to_the_one_full_sha_it_names_or_is_refused() {
+        let full = format!("{TIP}\n");
+        let mut calls = Vec::new();
+        assert_eq!(SubmittedBranch::new(&mut fake_git(&mut calls, &[("rev-parse", 0, full.as_str())])).resolve("co", "1111111"), Ok(TIP.into()));
+        assert_eq!(calls, [["-C", "co", "rev-parse", "--verify", "--quiet", "--end-of-options", "1111111^{commit}"].join("\u{1f}")]);
+        for (code, out) in [(1, TIP), (0, "1111111"), (0, "")] {
+            let mut calls = Vec::new();
+            assert!(SubmittedBranch::new(&mut fake_git(&mut calls, &[("rev-parse", code, out)])).resolve("co", "x").is_err(), "{code} {out:?}");
+        }
+    }
+
+    #[test_id(tr6ld2y)]
+    #[test]
+    fn an_existing_branch_at_the_tip_is_success_and_one_elsewhere_is_never_moved() {
+        let at = format!("{TIP}\n");
+        let mut calls = Vec::new();
+        let script = [("update-ref", 128, "exists"), ("rev-parse", 0, at.as_str())];
+        assert_eq!(SubmittedBranch::new(&mut fake_git(&mut calls, &script)).create("co", "sp-x", TIP), Ok(()));
+
+        let mut calls = Vec::new();
+        let script = [("update-ref", 128, "exists"), ("rev-parse", 0, OTHER)];
+        let e = SubmittedBranch::new(&mut fake_git(&mut calls, &script)).create("co", "sp-x", TIP).unwrap_err();
+        assert!(e.contains(TIP) && e.contains(OTHER), "{e}");
+        assert_eq!(calls.iter().filter(|c| c.contains("update-ref")).count(), 1, "{calls:?}");
+    }
+
+    #[test_id(tbgsby6)]
+    #[test]
+    fn a_refused_branch_that_does_not_exist_reports_what_git_said() {
+        let mut calls = Vec::new();
+        let script = [("update-ref", 128, "fatal: cannot lock\n"), ("rev-parse", 1, "")];
+        assert_eq!(SubmittedBranch::new(&mut fake_git(&mut calls, &script)).create("co", "sp-x", TIP), Err("fatal: cannot lock".into()));
+    }
 
     fn persona(name: &str, labels: &[&str], spec: bool) -> Persona {
         Persona { name: name.into(), labels: labels.iter().map(|s| s.to_string()).collect(), requires_build_spec: spec, unresolved: None }
