@@ -1686,6 +1686,32 @@ fn a_second_filing_of_a_waiting_outcome_is_folded_into_the_first_and_leaves_no_n
     let waiting = waiting_now();
     assert!(waiting.contains(&f1) && !waiting.contains(&f2), "{waiting:?}");
 
+    let blockers = |id: &str| -> Vec<String> {
+        let (rc, out) = lc.run(&["show", id], None);
+        assert_eq!(rc, 0, "{out}");
+        let row: serde_json::Value = serde_json::from_str(&out).unwrap();
+        row["bead"]["claim"]["blocks"].as_array().unwrap_or_else(|| panic!("no edges: {row}")).iter().filter_map(|v| v.as_str().map(str::to_string)).collect()
+    };
+    // A pilgrim waits on its defect: folding the follow-up moves that wait to the survivor.
+    let walk = builder();
+    let out = ok(&["work", &walk, "file-followup", "Fix x seen on a walk", "--for", "pilgrim", "--repo", "spira", "--body-file", "-", "--stdin", "## Build\nthe artifact, in spira-lc\n", "--actor", "pilgrim"], None);
+    let defect = first_line(&out);
+    let walked = out.lines().nth(1).and_then(|l| l.split_whitespace().next()).unwrap_or_else(|| panic!("no review filed: {out}")).to_string();
+    assert_eq!(blockers(&walk), [defect.clone()]);
+    let (rc, out) = review(&walked, &format!("### Amend {f1}: Fix x seen on a walk\n\nseen on a walk\n"));
+    assert_eq!(rc, 0, "{out}");
+    assert_eq!(blockers(&walk), [f1.clone()], "{defect} was folded, and the walk still waits for the defect");
+
+    // An --after-landing follow-up has an order of its own, which the survivor would not keep.
+    let b2 = builder();
+    let out = ok(&["work", &b2, "file-followup", "Fix x after mine", "--for", "builder", "--repo", "spira", "--after-landing", "--body-file", "-", "--stdin", "## Build\nthe artifact, in spira-lc\n", "--actor", "builder"], None);
+    let later = first_line(&out);
+    let ordered = out.lines().nth(1).and_then(|l| l.split_whitespace().next()).unwrap_or_else(|| panic!("no review filed: {out}")).to_string();
+    let (rc, out) = review(&ordered, &format!("### Amend {f1}: Fix x after mine\n\nafter mine\n"));
+    assert_ne!(rc, 0, "{out}");
+    assert!(out.contains(&format!("{later} waits on {b2}")), "{out}");
+    assert!(!field(&f1, "notes").contains("after mine"), "a refusal changes nothing");
+
     // A half-applied fold: the row retired, the content write lost; and a whole one whose filer
     // was never told. The survivor has since been claimed.
     let half = [builder(), builder()].map(|bound| {

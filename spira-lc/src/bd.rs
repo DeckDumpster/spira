@@ -411,6 +411,16 @@ pub fn blocked_dependents(id: &str) -> Result<Vec<Dependent>, String> {
     ids.into_iter().map(|d| Ok(Dependent { title: title(&d)?.unwrap_or_default(), open: open.contains(&d), id: d })).collect()
 }
 
+/// The beads `id` has a `blocks` edge onto that are still open.
+pub fn open_blockers(id: &str) -> Result<Vec<String>, String> {
+    let edges = bead(id)?.map(|b| b.dependencies).unwrap_or_default();
+    let ids: Vec<String> = edges.into_iter().filter(|e| e.kind == "blocks").map(|e| e.depends_on_id).collect();
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    <LiveBd as crate::callers::Bd>::open_among(&mut LiveBd, &ids)
+}
+
 /// Pushes a count of `name`, labelled by `op`; a failed push is dropped.
 pub fn record_event(name: &'static str, op: &str) {
     use spira_otel::metrics::{MetricsSink, Point};

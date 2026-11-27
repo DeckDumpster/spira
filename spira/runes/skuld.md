@@ -117,8 +117,9 @@ item does not hold yet).
 `<title>` is the follow-up's title verbatim when you review one, else the request's own title. The
 survivor is READY or REWORK in the same repository. A title with both a draft and an amendment
 takes whichever note is last. On `work done` the evidence is noted on the survivor; a reviewed
-follow-up is retired SUPERSEDED by it and the filer's bead is told. The Concierge files nothing
-for an amendment.
+follow-up is retired SUPERSEDED by it, whatever waited on it now waits on the survivor, and the
+filer's bead is told. The Concierge files nothing for an amendment. `work done` refuses to fold a
+follow-up that has an open wait besides its review (one filed `--after-landing`): draft it.
 
 ## Exiting
 

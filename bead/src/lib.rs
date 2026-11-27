@@ -163,7 +163,8 @@ fn heading(line: &str) -> Option<Heading> {
         return Some(Heading { survivor: None, title: title.trim().to_string() });
     }
     let (id, title) = line.strip_prefix(AMEND_HEADING)?.split_once(':')?;
-    Some(Heading { survivor: Some(id.to_string()), title: title.trim().to_string() })
+    // A draft may carry its own `### Amend …:` subsection, so only an id makes a heading.
+    is_bead_token(id).then(|| Heading { survivor: Some(id.to_string()), title: title.trim().to_string() })
 }
 
 /// The last (heading, body) of each trimmed title in `notes`, drafts and amendments together, in
@@ -500,14 +501,15 @@ pub fn amend_notes(notes: &str) -> Vec<Amend> {
         .into_iter()
         .filter_map(|(h, _)| {
             let (survivor, note) = last_note(notes, &h.title)?;
-            let survivor = survivor.filter(|id| is_bead_token(id))?;
+            let survivor = survivor?;
             Some(Amend { survivor, title: h.title, evidence: note.body })
         })
         .collect()
 }
 
-/// One line per `### Amend` note that would move no evidence: the last note of its title with a
-/// malformed id, no blank line or no text; or a line with no `:` that no amendment follows.
+/// One line per `### Amend` note that would move no evidence: the last note of its title with no
+/// blank line or no text; or a line meant as an amendment heading that is not one, with no
+/// amendment after it.
 pub fn amend_refusals(notes: &str) -> Vec<String> {
     let usable = amend_notes(notes);
     let mut found: Vec<String> = last_headed(notes)
@@ -515,12 +517,21 @@ pub fn amend_refusals(notes: &str) -> Vec<String> {
         .filter(|(h, _)| h.survivor.is_some() && !usable.iter().any(|a| a.title == h.title))
         .map(|(h, _)| format!("amendment \"{}\": want `### Amend <survivor-id>: <title>`, a blank line, then the evidence", h.title))
         .collect();
+    let drafted = last_headed(notes).into_iter().filter(|(h, _)| h.survivor.is_none()).map(|(h, _)| h.title).collect::<Vec<_>>();
     let lines: Vec<&str> = notes.lines().collect();
-    let unread = lines.iter().rposition(|l| l.starts_with(AMEND_HEADING) && heading(l).is_none());
+    let unread = lines.iter().rposition(|l| heading(l).is_none() && l.strip_prefix(AMEND_HEADING).is_some_and(|rest| meant_as_amendment(rest, &drafted)));
     if let Some(at) = unread.filter(|at| amend_notes(&lines[*at + 1..].join("\n")).is_empty()) {
         found.push(format!("`{}` names no `<survivor-id>: <title>`", lines[at]));
     }
     found
+}
+
+/// Whether an unread `### Amend <rest>` line is an attempt rather than a draft's own subsection:
+/// it opens with an id or the template's placeholder, repeats a draft's title, or sits in notes
+/// that hold no draft.
+fn meant_as_amendment(rest: &str, drafted: &[String]) -> bool {
+    let first = rest.split([' ', ':']).next().unwrap_or("");
+    drafted.is_empty() || first.starts_with('<') || is_bead_token(first) || rest.split_once(':').is_some_and(|(_, t)| drafted.iter().any(|d| d == t.trim()))
 }
 
 /// One piece of a request's notes: a draft or amendment under its heading (`title` set), or
@@ -1418,6 +1429,21 @@ mod tests {
             let notes = format!("{earlier}\n### Amend sp-a: T\nno blank line\n");
             assert_eq!((amend_notes(&notes), draft_body(&notes, "T")), (vec![], None), "{earlier}");
         }
+    }
+
+    #[test_id(tldhwok)]
+    #[test]
+    fn a_draft_subsection_starting_with_amend_stays_part_of_the_draft() {
+        for sub in ["### Amend the store: columns", "### Amend the replace path", "### Amend sp-a's table: columns"] {
+            let body = format!("## Build\nfirst\n\n{sub}\n\nsecond");
+            let notes = format!("### Draft: T\n\n{body}\n");
+            assert_eq!(draft_body(&notes, "T").map(|d| d.body), Some(body.clone()), "{sub}");
+            assert_eq!((amend_notes(&notes), amend_refusals(&notes)), (vec![], Vec::<String>::new()), "{sub}");
+            let labels = ["skuld".to_string()];
+            assert_eq!(skuld_drafted("T", &body, "skuld", "sp-r", &labels, &notes), Ok(()), "{sub}");
+            assert!(skuld_drafted("T", "## Build\nfirst", "skuld", "sp-r", &labels, &notes).is_err(), "a body cut short is not verbatim: {sub}");
+        }
+        assert_eq!(amend_refusals("### Draft: T\n\nd\n### Amend nonsense: T\n\ne\n").len(), 1, "a line naming a draft's title is an attempt");
     }
 
     #[test_id(thkmwu6)]

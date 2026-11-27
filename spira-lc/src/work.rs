@@ -984,6 +984,8 @@ struct Item {
     superseded_by: Option<String>,
     repo: Option<String>,
     title: String,
+    /// The open items it has a `blocks` edge onto.
+    waits_on: Vec<String>,
 }
 
 fn filed_item(id: &str) -> Result<Item, String> {
@@ -991,12 +993,19 @@ fn filed_item(id: &str) -> Result<Item, String> {
     let state = row.as_ref().map(|r| r.state);
     let superseded_by = row.filter(|r| r.state == bead::BeadState::Superseded).and_then(|r| r.reason);
     let repo = crate::plane::repo(id).map_err(|e| format!("{e:?}"))?;
-    Ok(Item { state, superseded_by, repo, title: crate::bd::title(id)?.unwrap_or_default() })
+    Ok(Item { state, superseded_by, repo, title: crate::bd::title(id)?.unwrap_or_default(), waits_on: crate::bd::open_blockers(id)? })
 }
 
 /// Retires `dep` as SUPERSEDED by `survivor`, on its row and then in the content store. A row
 /// already retired that way is left alone, so a repeat finishes the content half.
 fn supersede_into(dep: &str, survivor: &str) -> Result<(), String> {
+    // First, so that nothing waiting on `dep` is released by its closing.
+    for waiter in crate::bd::blocked_dependents(dep)?.into_iter().filter(|w| w.open) {
+        if waiter.id != survivor {
+            crate::bd::write(&["dep", "add", &waiter.id, survivor, "--type", "blocks"])?;
+        }
+        crate::bd::write(&["dep", "remove", &waiter.id, dep])?;
+    }
     let row = crate::plane::bead(dep).map_err(|e| format!("{e:?}"))?;
     if !row.is_some_and(|r| r.state == bead::BeadState::Superseded && r.reason.as_deref() == Some(survivor)) {
         let (code, out) = crate::plane::apply(dep, SKULD_PERSONA, BeadEventKind::Supersede { by: survivor.to_string() });
@@ -1057,6 +1066,10 @@ fn apply_reviews(
                 waiting_survivor(&item, &a.survivor, followup.repo.as_deref(), &format!("draft {dep} instead or "))
             };
             let retire = folded || !followup.state.is_some_and(|s| s.is_terminal());
+            let ordered: Vec<&str> = followup.waits_on.iter().map(String::as_str).filter(|w| *w != request && *w != a.survivor).collect();
+            if retire && !folded && !ordered.is_empty() {
+                return Some((REFUSED, format!("refused: work done: {dep} waits on {}, an order {} would not keep; draft {dep} instead", ordered.join(" "), a.survivor)));
+            }
             match survivor {
                 Ok(s) => Verdict::Amend { evidence: a.evidence.clone(), survivor: a.survivor.clone(), survivor_title: s.title, retire },
                 Err(refusal) => return Some(refusal),
@@ -2871,7 +2884,7 @@ mod tests {
     fn plane(state: bead::BeadState, repo: &'static str) -> impl Fn(&str) -> Result<super::Item, String> {
         move |id| {
             let (state, repo) = if id == "sp-x" { (state, repo) } else { (bead::BeadState::Ready, "spira") };
-            Ok(super::Item { state: Some(state), superseded_by: None, repo: Some(repo.to_string()), title: format!("title of {id}") })
+            Ok(super::Item { state: Some(state), superseded_by: None, repo: Some(repo.to_string()), title: format!("title of {id}"), waits_on: Vec::new() })
         }
     }
 
@@ -2969,6 +2982,23 @@ mod tests {
         }
         let (out, effects) = amend_review(ended(bead::BeadState::Dropped, None, bead::BeadState::Landed), Ok(()));
         assert_eq!(out.unwrap().0, super::REFUSED);
+        assert!(effects.is_empty(), "{effects:?}");
+    }
+
+    #[test_id(tncpebf)]
+    #[test]
+    fn an_amendment_of_a_followup_with_an_order_of_its_own_is_refused() {
+        let ordered = |id: &str| {
+            let mut item = plane(bead::BeadState::Ready, "spira")(id)?;
+            if id == "sp-f1" {
+                item.waits_on = vec!["sp-r1".into(), "sp-x".into(), "sp-b0".into()];
+            }
+            Ok(item)
+        };
+        let (out, effects) = amend_review(ordered, Ok(()));
+        let (code, out) = out.unwrap();
+        assert_eq!(code, super::REFUSED);
+        assert!(out.contains("sp-f1 waits on sp-b0,") && out.contains("draft sp-f1 instead"), "{out}");
         assert!(effects.is_empty(), "{effects:?}");
     }
 
