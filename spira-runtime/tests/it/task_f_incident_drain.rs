@@ -83,14 +83,14 @@ fn the_probe_counts_the_spool_and_ages_its_oldest_entry() {
 #[test_id(tzgj8k6)]
 #[test]
 fn an_entry_left_for_more_than_two_cadences_is_noted_with_the_count_and_the_reason() {
-    let stuck: Vec<(PathBuf, String)> = vec![("/s/20260101T000100Z-b-1".into(), "later reason".into()), ("/s/20260101T000000Z-a-1".into(), "dedup could not read".into())];
+    let stuck: Vec<(PathBuf, String)> = vec![("spool/20260101T000100Z-b-1".into(), "later reason".into()), ("spool/20260101T000000Z-a-1".into(), "dedup could not read".into())];
     assert_eq!(stuck_title(&stuck, SPOOLED + 121, 60).as_deref(), Some("2 incident event(s) stuck in the spool, oldest 2m: dedup could not read"));
 }
 
 #[test_id(t54efw7)]
 #[test]
 fn a_younger_entry_and_an_empty_stuck_list_note_nothing() {
-    let stuck: Vec<(PathBuf, String)> = vec![("/s/20260101T000000Z-a-1".into(), "why".into())];
+    let stuck: Vec<(PathBuf, String)> = vec![("spool/20260101T000000Z-a-1".into(), "why".into())];
     assert_eq!(stuck_title(&stuck, SPOOLED + 120, 60), None);
     assert_eq!(stuck_title(&[], SPOOLED + 9_999, 60), None);
 }
