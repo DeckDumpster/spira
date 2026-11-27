@@ -1234,20 +1234,11 @@ fn live_reason(old: &str, new: &str, roots: &Roots, exe: Option<&Path>, started_
         return Some(format!("its environment pins the previous release ({o}; now {n})"));
     }
     let exe = exe?;
-    let line = units::exec_lines(new).into_iter().find(|l| l.starts_with("ExecStart="))?;
-    let prog = line["ExecStart=".len()..].trim_start_matches(['-', '@', '+', '!', ':']).split_whitespace().next()?.to_string();
+    let prog = units::exec_start_program(new)?;
     if !prog.starts_with(&format!("{}/", roots.releases.display())) {
         return None;
     }
-    let path = roots.resolve(&prog, Some(roots.new))?;
-    let (have, want) = match (std::fs::read(exe), std::fs::read(&path)) {
-        (Ok(h), Ok(w)) => (h, w),
-        _ => return Some(format!("cannot compare its running executable with {}; restarted", path.display())),
-    };
-    if want.starts_with(b"#!") {
-        return None;
-    }
-    (have != want).then(|| format!("its running process's executable is not {}", path.display()))
+    units::outlived(exe, &roots.resolve(&prog, Some(roots.new))?)
 }
 
 /// The text with every `<releases>/<name>` prefix collapsed, whatever `<name>` is: an installed

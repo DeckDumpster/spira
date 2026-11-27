@@ -95,20 +95,12 @@ pub fn execstart_target_ok(text: &str) -> Result<(), String> {
 /// `None`. spira-env is repointed under an unchanged unit text, and activation judges only
 /// programs under the releases root.
 pub fn program_outlived(text: &str, env_bin: &Path, exe: Option<&Path>) -> Option<String> {
-    let line = release::units::exec_lines(text).into_iter().find(|l| l.starts_with("ExecStart="))?;
-    let prog = Path::new(line["ExecStart=".len()..].trim_start_matches(['-', '@', '+', '!', ':']).split_whitespace().next()?);
+    let prog = release::units::exec_start_program(text)?;
+    let prog = Path::new(&prog);
     if !prog.starts_with(env_bin) {
         return None;
     }
-    let (have, want) = match (fs::read(exe?), fs::read(prog)) {
-        (Ok(have), Ok(want)) => (have, want),
-        _ => return Some(format!("cannot compare its running executable with {}", prog.display())),
-    };
-    // A script's process runs its interpreter, so its bytes never match the script's.
-    if want.starts_with(b"#!") {
-        return None;
-    }
-    (have != want).then(|| format!("its running process's executable is not {}", prog.display()))
+    release::units::outlived(exe?, prog)
 }
 
 /// The manifest rows rendered from [`watchdog_files`] rather than from a template file.

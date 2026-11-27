@@ -315,6 +315,26 @@ pub fn exec_lines(text: &str) -> Vec<String> {
     text.lines().filter(|l| l.starts_with("Exec") && l.contains('=')).map(str::to_string).collect()
 }
 
+/// The program the first `ExecStart=` line runs, without systemd's prefixes.
+pub fn exec_start_program(text: &str) -> Option<String> {
+    let line = exec_lines(text).into_iter().find(|l| l.starts_with("ExecStart="))?;
+    line["ExecStart=".len()..].trim_start_matches(['-', '@', '+', '!', ':']).split_whitespace().next().map(str::to_string)
+}
+
+/// Why the process running `exe` has outlived `prog`, or `None`. A file that cannot be read
+/// is not shown to match.
+pub fn outlived(exe: &Path, prog: &Path) -> Option<String> {
+    let (have, want) = match (fs::read(exe), fs::read(prog)) {
+        (Ok(have), Ok(want)) => (have, want),
+        _ => return Some(format!("cannot compare its running executable with {}", prog.display())),
+    };
+    // A script's process runs its interpreter, so its bytes never match the script's.
+    if want.starts_with(b"#!") {
+        return None;
+    }
+    (have != want).then(|| format!("its running process's executable is not {}", prog.display()))
+}
+
 /// A unit that opts out of the activation drain: it touches no state an activation swaps, so
 /// waiting for it to exit buys nothing.
 pub fn undrained(text: &str) -> bool {
@@ -519,5 +539,65 @@ mod own_log_tests {
         assert_eq!(own_log("[Service]\nStandardError=journal\nStandardOutput=journal\n"), None);
         assert_eq!(own_log("[Unit]\nStandardError=append:r/a.log\n"), None);
         assert_eq!(own_log("[Service]\nExecStart=/bin/true\n"), None);
+    }
+}
+
+#[cfg(test)]
+mod outlived_tests {
+    use super::{exec_start_program, outlived};
+    use std::fs;
+
+    #[test_id(tpybzi5)]
+    #[test]
+    fn exec_start_program_strips_systemds_prefixes_and_drops_the_arguments() {
+        assert_eq!(exec_start_program("[Service]\nExecStart=-/x/prog a\n").as_deref(), Some("/x/prog"));
+        assert_eq!(exec_start_program("ExecStart=-@+!:/x/prog\n").as_deref(), Some("/x/prog"));
+    }
+
+    #[test_id(teqwpo9)]
+    #[test]
+    fn exec_start_program_skips_exec_start_pre_and_is_none_without_exec_start() {
+        assert_eq!(exec_start_program("ExecStartPre=/x/pre\nExecStart=/x/prog\n").as_deref(), Some("/x/prog"));
+        assert_eq!(exec_start_program("ExecStartPre=/x/pre\n"), None);
+    }
+
+    #[test_id(twta34p)]
+    #[test]
+    fn a_process_running_the_programs_bytes_has_not_outlived_it() {
+        let t = testkit::TempDir::new("release-outlived-same");
+        let (exe, prog) = (t.path().join("exe"), t.path().join("prog"));
+        fs::write(&exe, "V1").unwrap();
+        fs::write(&prog, "V1").unwrap();
+        assert_eq!(outlived(&exe, &prog), None);
+    }
+
+    #[test_id(tjjrqba)]
+    #[test]
+    fn a_process_running_other_bytes_has_outlived_the_program() {
+        let t = testkit::TempDir::new("release-outlived-differs");
+        let (exe, prog) = (t.path().join("exe"), t.path().join("prog"));
+        fs::write(&exe, "V1").unwrap();
+        fs::write(&prog, "V2").unwrap();
+        assert_eq!(outlived(&exe, &prog), Some(format!("its running process's executable is not {}", prog.display())));
+    }
+
+    #[test_id(tko2r03)]
+    #[test]
+    fn an_unreadable_executable_or_program_counts_as_changed() {
+        let t = testkit::TempDir::new("release-outlived-unreadable");
+        let (there, gone) = (t.path().join("there"), t.path().join("gone"));
+        fs::write(&there, "V1").unwrap();
+        assert_eq!(outlived(&gone, &there), Some(format!("cannot compare its running executable with {}", there.display())));
+        assert_eq!(outlived(&there, &gone), Some(format!("cannot compare its running executable with {}", gone.display())));
+    }
+
+    #[test_id(tteh5db)]
+    #[test]
+    fn a_script_is_not_compared_with_its_interpreter() {
+        let t = testkit::TempDir::new("release-outlived-script");
+        let (exe, prog) = (t.path().join("exe"), t.path().join("prog"));
+        fs::write(&exe, "INTERPRETER").unwrap();
+        fs::write(&prog, "#!/bin/sh\n").unwrap();
+        assert_eq!(outlived(&exe, &prog), None);
     }
 }
