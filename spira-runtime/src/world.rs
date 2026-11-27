@@ -360,12 +360,6 @@ impl World {
         }
     }
 
-    /// The home repo's checkout, from the repo map.
-    pub fn home_path(&self) -> Result<PathBuf, String> {
-        let text = fs::read_to_string(&self.repo_map).map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
-        map_rows(&text).into_iter().find(|r| r.name == self.home_repo).map(|r| PathBuf::from(r.path)).ok_or_else(|| format!("repo map has no row for {}", self.home_repo))
-    }
-
     /// Unheld beads of one repo in `state`; `Err` is the store's own refusal when it did not answer.
     fn unheld(&self, repo: &str, state: &str) -> Result<u64, String> {
         if let Some(views) = store_view::shared() {

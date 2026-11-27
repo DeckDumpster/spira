@@ -1393,7 +1393,7 @@ impl<'a> Run<'a> {
     /// `render_memories "${RUNE_MEMORY_PREFIXES:-law-}" "" "${RUNE_STATUTE_CORE:-}"`, with
     /// this installation's own `SPIRA_STATUTE_CORE_LOCAL` slugs appended to whatever core the
     /// persona resolves (`brief::with_local_core`). Err when a declared core slug — local or
-    /// not — names no memory: the brief would be silently thinned.
+    /// not — names no memory (the brief would be silently thinned) or `SPIRA_RELEASE` is undeclared.
     pub fn statutes(&self) -> Result<String, String> {
         let cache = self.conf.s("SPIRA_MEMORIES_CACHE");
         let age = self.conf.i("SPIRA_MEMORIES_CACHE_AGE");
@@ -1421,12 +1421,12 @@ impl<'a> Run<'a> {
         }
         let core = if self.rune.statute_core.is_empty() { self.conf.s("SPIRA_STATUTE_CORE") } else { self.rune.statute_core.clone() };
         let core = brief::with_local_core(&core, &self.conf.s("SPIRA_STATUTE_CORE_LOCAL"));
-        let harness = self.conf.or("SPIRA_REPO", "<harness>");
+        let release = spira_config::release_env::release_root(self.d.env.seam_var(spira_config::RELEASE_ENV).as_deref())?;
         let missing = brief::missing_core(&json, &self.rune.memory_prefixes, &core);
         if !missing.is_empty() {
             return Err(format!("{}: core statute(s) declared but not found: {} — refusing to start with a thinned brief", self.f(), missing.join(", ")));
         }
-        Ok(brief::render_memories(&json, &self.rune.memory_prefixes, 120_000, &core, &harness))
+        Ok(brief::render_memories(&json, &self.rune.memory_prefixes, 120_000, &core, &release.display().to_string()))
     }
 
     /// `dwarf_claude_argv <flag> <file>`.

@@ -5,7 +5,7 @@ use std::fs::OpenOptions;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::alarm::MailAlarm;
 use crate::config::{Config, PveEnv};
@@ -20,6 +20,10 @@ use crate::run::{parse_run_args, run, salvage_results, GitHost, RunEnv, SshRemot
 use crate::schema::ProcId;
 
 pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir> [--no-corpus]] [--on-red <command>]|status [--json]|warm|teardown|template [--adopt <vmid>]|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha [--tree <dir>]|ami-for <recipe-sha>|template-check|ami-check|ami-prune|reap|ec2-probe [--dry-run]|image-check --tree <dir> --rev <sha>|section";
+
+/// The signal handler's whole salvage. It must stay under `queue/src/real.rs`'s `timeout -k 5`,
+/// leaving the rest of those 5 s for `alive`, `hold` and `release_owned_by`.
+pub(crate) const SALVAGE_WITHIN: Duration = Duration::from_secs(3);
 
 fn secs_env(key: &str, default: u64) -> Duration {
     Duration::from_secs(std::env::var(key).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(default))
@@ -618,15 +622,17 @@ pub fn main_with(args: Vec<String>) -> i32 {
         "run" => {
             let me = ProcId::current();
             let sig_pool = pool_for(&cfg);
-            let sig_remote = SshRemote { user: cfg.ssh_user.clone(), port: cfg.ssh_port, key: cfg.host_key.clone() };
+            let sig_remote = std::sync::Arc::new(SshRemote { user: cfg.ssh_user.clone(), port: cfg.ssh_port, key: cfg.host_key.clone() });
             let sig_results = run_args.as_ref().and_then(|a| a.results_dir.clone()).unwrap_or_else(|| cfg.run_dir.join("batch-results"));
             let sig_run_dir = cfg.run_dir.clone();
             let sig_scratch = cfg.state_dir.join(format!(".salvage.{}", me.pid));
             let sig_hosts = [crate::host::round_home(&cfg.run_dir), crate::host::foreign_home(&cfg.run_dir)].map(|home| crate::host::LocalRemote { home });
             block_termination_signals(move |sig| {
-                sig_hosts.iter().for_each(|h| h.end_signalled_pass(me.pid, &sig_results, &sig_scratch, Duration::from_secs(6)));
+                let deadline = Instant::now() + SALVAGE_WITHIN;
+                sig_hosts.iter().for_each(|h| h.end_signalled_pass(me.pid, &sig_results, &sig_scratch, deadline));
                 for vm in sig_pool.leased_to(me) {
-                    match salvage_results(&sig_remote, &vm.addr, &sig_results, &sig_scratch, Duration::from_secs(6)) {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    match salvage_results(sig_remote.clone(), &vm.addr, &sig_results, &sig_scratch, left) {
                         Some(n) => eprintln!("round-vm run: signal {sig}: salvaged {n} suite result(s) from {} before release", vm.handle),
                         None if real_attempt().ok().is_some_and(|a| matches!(a.provider.alive(&vm.handle), Ok(false))) => {
                             eprintln!("round-vm run: signal {sig}: {} is not running; nothing to re-pull, releasing it", vm.handle);

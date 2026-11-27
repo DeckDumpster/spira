@@ -5,13 +5,13 @@ use crate::Class;
 pub const HELP: &str = "\
 spira-pub — publish one fact to the harness's MQTT broker.
 
-usage: spira-pub --as <name> --topic <topic> [--class <state|chatter>] < payload.json
+usage: spira-pub --as <name> --topic <topic> --class <state|chatter> < payload.json
 
   --as <name>       the publisher's name: one topic segment. publisher/<name> reads up while
                     this command runs and gone once it exits.
-  --topic <topic>   a topic of a family declared in spira/topics.toml
-  --class <class>   optional: the class you mean, state or chatter; refused unless the topic's
-                    family declares it. The family's class decides whether it is retained.
+  --topic <topic>   any topic: non-empty, with no +, # or NUL
+  --class <class>   state (retained: the broker keeps the last value) or chatter (not
+                    retained)
   -h, --help        this text
 
 The payload is one JSON value on stdin. The broker is the one SPIRA_BROKER_SOCKET names.
@@ -19,14 +19,14 @@ The payload is one JSON value on stdin. The broker is the one SPIRA_BROKER_SOCKE
 exit codes:
   0  the broker took the message
   1  not delivered: the broker is down, slow or dropped the connection
-  2  refused, nothing sent: usage, payload, configuration, undeclared family or wrong class
+  2  refused, nothing sent: usage, payload, configuration or topic
 ";
 
 #[derive(Debug, PartialEq)]
 pub struct Args {
     pub name: String,
     pub topic: String,
-    pub class: Option<Class>,
+    pub class: Class,
 }
 
 #[derive(Debug, PartialEq)]
@@ -63,7 +63,7 @@ pub fn parse(argv: &[String]) -> Result<Parsed, String> {
     Ok(Parsed::Publish(Args {
         name: name.ok_or("--as <name> is required")?,
         topic: topic.ok_or("--topic <topic> is required")?,
-        class: class.map(|c| c.parse()).transpose()?,
+        class: class.ok_or("--class <state|chatter> is required")?.parse()?,
     }))
 }
 
@@ -91,10 +91,11 @@ mod tests {
     fn the_required_arguments_are_named_when_missing_and_parsed_when_given() {
         assert!(of(&["--topic", "t"]).unwrap_err().contains("--as"));
         assert!(of(&["--as", "q"]).unwrap_err().contains("--topic"));
+        assert!(of(&["--as", "q", "--topic", "release/active"]).unwrap_err().contains("--class"));
         assert!(of(&["--as"]).unwrap_err().contains("--as needs a value"));
         assert!(of(&["--as", "a", "--as", "b"]).unwrap_err().contains("twice"));
         let got = of(&["--as", "q", "--topic", "release/active", "--class", "state"]).unwrap();
-        assert_eq!(got, Parsed::Publish(Args { name: "q".into(), topic: "release/active".into(), class: Some(Class::State) }));
+        assert_eq!(got, Parsed::Publish(Args { name: "q".into(), topic: "release/active".into(), class: Class::State }));
         assert_eq!(of(&["-h"]).unwrap(), Parsed::Help);
         assert!(HELP.contains("--as") && HELP.contains("--topic") && HELP.contains("--class") && HELP.contains("exit codes"));
     }

@@ -120,6 +120,15 @@ pub fn command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
     cmd
 }
 
+/// [`command`]; with `within`, under `timeout`, which takes seconds rounded up and never 0 (no limit).
+pub fn command_within(program: &str, within: Option<std::time::Duration>) -> Command {
+    let Some(within) = within else { return command(program) };
+    let secs = within.as_secs() + u64::from(within.subsec_nanos() > 0);
+    let mut cmd = command("timeout");
+    cmd.args(["-k", "1", &secs.max(1).to_string(), program]);
+    cmd
+}
+
 /// Blocks SIGTERM/SIGINT/SIGHUP in the calling thread (and every thread it spawns
 /// afterwards) and starts a thread that waits for one of them and hands it to `on_signal`.
 /// Call before spawning any other thread.

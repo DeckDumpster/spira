@@ -32,7 +32,6 @@ pub struct BriefCfg {
     pub memories_cache_age: i64,
     pub statute_core: String,
     pub statute_core_local: String,
-    pub harness_repo: String,
     pub prod: String,
     /// The path `SPIRA_TOML` names: where `persona.<name>.model` is declared.
     pub toml: String,
@@ -51,7 +50,7 @@ pub fn rune(home: &Path, name: &str, lookup: &dyn Fn(&str) -> Option<String>) ->
 
 /// The statutes in force for `rune`: the memories cache when fresh, else `memories` (the JSON
 /// `bd memories --json` prints), with the core refused when a slug names no memory.
-pub fn statutes(rune: &Rune, cfg: &BriefCfg, now: i64, memories: &dyn Fn() -> Result<String, String>) -> Result<String, String> {
+pub fn statutes(rune: &Rune, cfg: &BriefCfg, release: &Path, now: i64, memories: &dyn Fn() -> Result<String, String>) -> Result<String, String> {
     let cache = Path::new(&cfg.memories_cache);
     let mut json = String::new();
     if !cfg.memories_cache.is_empty() && cache.is_file() && now - crate::session::mtime(cache) < cfg.memories_cache_age {
@@ -68,12 +67,11 @@ pub fn statutes(rune: &Rune, cfg: &BriefCfg, now: i64, memories: &dyn Fn() -> Re
     }
     let core = if rune.statute_core.is_empty() { cfg.statute_core.clone() } else { rune.statute_core.clone() };
     let core = brief::with_local_core(&core, &cfg.statute_core_local);
-    let harness = if cfg.harness_repo.is_empty() { "<harness>" } else { &cfg.harness_repo };
     let missing = brief::missing_core(&json, &rune.memory_prefixes, &core);
     if !missing.is_empty() {
         return Err(format!("{}: {STATUTE_MISSING}: {} — refusing to start with a thinned brief", rune.name, missing.join(", ")));
     }
-    Ok(brief::render_memories(&json, &rune.memory_prefixes, 120_000, &core, harness))
+    Ok(brief::render_memories(&json, &rune.memory_prefixes, 120_000, &core, &release.display().to_string()))
 }
 
 /// `Run::claude_argv` for a sweep: the agent's flags, without the program.
@@ -100,7 +98,8 @@ pub fn claude_args(home: &Path, run: &Path, prod: &str, rune: &Rune, sys_file: &
 /// session's environment is exactly the model's, never the manager's.
 #[allow(clippy::too_many_arguments)]
 pub fn brief(home: &Path, run: &Path, rune: &Rune, prompt: &str, id: &str, cfg: &BriefCfg, now: i64, base: &BTreeMap<String, String>, is_exe: &dyn Fn(&Path) -> bool, memories: &dyn Fn() -> Result<String, String>) -> Result<SweepBrief, String> {
-    let statutes = statutes(rune, cfg, now, memories)?;
+    let release = spira_config::release_env::release_root(base.get(spira_config::RELEASE_ENV).map(String::as_str))?;
+    let statutes = statutes(rune, cfg, &release, now, memories)?;
     let path = base.get("PATH").cloned().unwrap_or_default();
     let model_bin = crate::restrict::model_bin_dir(base, &path, is_exe).map_err(|e| format!("work-env: {e}"))?;
     let f = &rune.name;
@@ -253,6 +252,26 @@ mod tests {
         let (_root, home, run, rel) = setup("nowork", false);
         let e = brief(&home, &run, &rune_for_test(), "task", "r1", &cfg(&home), 0, &base(&home, &rel), &crate::escape::is_executable, &|| Ok("[]".into())).unwrap_err();
         assert!(e.contains("model-bin"), "{e}");
+    }
+
+    #[test_id(tif1fcq)]
+    #[test]
+    fn the_sweeps_statute_index_names_rule_sh_through_the_declared_release() {
+        let (_root, home, run, rel) = setup("statute-release", true);
+        let b = brief(&home, &run, &rune_for_test(), "task", "r1", &cfg(&home), 0, &base(&home, &rel), &exe(&rel), &|| Ok(r#"{"law-b":"B text"}"#.into())).unwrap();
+        let sys = std::fs::read_to_string(b.sys_file).unwrap();
+        assert!(sys.contains(&format!("{}/rule.sh show <slug-without-law-prefix>", rel.display())), "{sys}");
+        assert!(!sys.contains("<harness>"), "{sys}");
+    }
+
+    #[test_id(tsiylmh)]
+    #[test]
+    fn a_sweep_with_no_declared_release_refuses_to_render_its_statutes() {
+        let (_root, home, run, rel) = setup("statute-norelease", true);
+        let mut env = base(&home, &rel);
+        env.remove("SPIRA_RELEASE");
+        let e = brief(&home, &run, &rune_for_test(), "task", "r1", &cfg(&home), 0, &env, &exe(&rel), &|| Ok(r#"{"law-b":"B text"}"#.into())).unwrap_err();
+        assert!(e.contains("SPIRA_RELEASE is not set — it names the release"), "{e}");
     }
 
     const NOW: u64 = 2_000_000_000;

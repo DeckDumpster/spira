@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use spira_pub::Publisher;
+use spira_pub::{Class, Publisher};
 
 pub const TOPIC: &str = "host/pressure";
 pub const CPU_LINE_KEY: &str = "SPIRA_PRESSURE_CPU_AVG300";
@@ -74,7 +74,7 @@ impl Pressure {
         publisher.on_connect(move |again| {
             if let Some(band) = recorded(&held) {
                 // A refusal is the publisher's to log; nothing here can mend it.
-                let _ = again.publish(TOPIC, &serde_json::json!(band));
+                let _ = again.publish(Class::State, TOPIC, &serde_json::json!(band));
             }
         });
         Pressure { publisher, record: path }
@@ -108,7 +108,7 @@ impl Pressure {
         let Some(band) = crossing(recorded(&self.record).as_ref(), cpu, io, lines, at) else {
             return Ok(format!("no crossing (cpu {cpu}, io {io})"));
         };
-        self.publisher.publish(TOPIC, &serde_json::json!(band)).and_then(|()| self.publisher.flush(FLUSH)).map_err(|e| format!("{TOPIC} not published: {e}"))?;
+        self.publisher.publish(Class::State, TOPIC, &serde_json::json!(band)).and_then(|()| self.publisher.flush(FLUSH)).map_err(|e| format!("{TOPIC} not published: {e}"))?;
         record(&self.record, &band)?;
         Ok(format!("published {TOPIC} (cpu {cpu} over={}, io {io} over={})", band.cpu_over, band.io_over))
     }

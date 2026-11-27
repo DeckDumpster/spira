@@ -58,8 +58,8 @@ fn a_published_state_is_retained_for_a_later_subscriber_and_chatter_is_not() {
     let broker = Broker::up();
     let p = publisher("t", broker.socket());
 
-    p.publish("progress/sp-a", &json!({"note": "n"})).unwrap();
-    p.publish("release/active", &json!({"release": "r1"})).unwrap();
+    p.publish(Class::Chatter, "progress/sp-a", &json!({"note": "n"})).unwrap();
+    p.publish(Class::State, "release/active", &json!({"release": "r1"})).unwrap();
     p.flush(FAILSAFE).unwrap();
 
     assert_eq!(retained(broker.socket(), "release/active"), json!({"release": "r1"}));
@@ -68,24 +68,60 @@ fn a_published_state_is_retained_for_a_later_subscriber_and_chatter_is_not() {
     assert_eq!(topic, "release/active", "chatter was retained");
 }
 
-#[test_id(t36nrc0)]
+#[test_id(t0atpa9)]
 #[test]
-fn a_cleared_state_topic_is_handed_to_no_later_subscriber_and_only_state_can_be_cleared() {
+fn a_state_on_a_topic_no_table_lists_is_retained() {
     let broker = Broker::up();
     let p = publisher("t", broker.socket());
 
-    p.publish("release/active", &json!({"release": "r1"})).unwrap();
-    p.clear("release/active").unwrap();
-    p.publish("host/pressure", &json!({"cpu": 1})).unwrap();
-    let chatter = p.clear("progress/sp-a");
-    let undeclared = p.clear("nosuch/topic");
+    p.publish(Class::State, "nosuch/topic", &json!({"a": 1})).unwrap();
     p.flush(FAILSAFE).unwrap();
 
-    // Retained messages arrive in subscription order, so a retained release would be first.
-    let (topic, ..) = value(Subscriber::to(broker.socket(), &["release/active", "host/pressure"]).recv());
+    assert_eq!(retained(broker.socket(), "nosuch/topic"), json!({"a": 1}));
+}
+
+#[test_id(tm0kre1)]
+#[test]
+fn chatter_on_a_topic_no_table_lists_reaches_who_is_listening_and_is_not_retained() {
+    let broker = Broker::up();
+    assert_delivered_once(&broker, "nosuch/topic");
+}
+
+#[test_id(tnmy7bs)]
+#[test]
+fn the_stated_class_decides_retention_on_a_topic_usually_published_as_state() {
+    let broker = Broker::up();
+    assert_delivered_once(&broker, "release/active");
+}
+
+/// Chatter on `topic` reaches a connected subscriber unretained, and no later one.
+fn assert_delivered_once(broker: &Broker, topic: &str) {
+    let mut watching = Subscriber::to(broker.socket(), &[topic]);
+    let p = publisher("t", broker.socket());
+
+    p.publish(Class::Chatter, topic, &json!({"a": 1})).unwrap();
+
+    // Received first: the broker has then handled the chatter, so a later subscriber cannot get it live.
+    assert_eq!(value(watching.recv()), (topic.to_string(), json!({"a": 1}), false));
+    assert!(broker.retained(topic).is_empty(), "chatter was retained");
+}
+
+#[test_id(tv83o7h)]
+#[test]
+fn a_cleared_topic_is_handed_to_no_later_subscriber_and_a_filter_cannot_be_cleared() {
+    let broker = Broker::up();
+    let p = publisher("t", broker.socket());
+
+    p.publish(Class::State, "nosuch/topic", &json!({"a": 1})).unwrap();
+    p.clear("nosuch/topic").unwrap();
+    p.publish(Class::State, "host/pressure", &json!({"cpu": 1})).unwrap();
+    let filter = p.clear("nosuch/+");
+    p.flush(FAILSAFE).unwrap();
+
+    // Retained messages arrive in subscription order, so a retained nosuch/topic would be first.
+    let (topic, ..) = value(Subscriber::to(broker.socket(), &["nosuch/topic", "host/pressure"]).recv());
     assert_eq!(topic, "host/pressure", "the cleared topic was still retained");
-    assert!(matches!(chatter, Err(PubError::WrongClass { .. })), "{chatter:?}");
-    assert!(matches!(undeclared, Err(PubError::UndeclaredFamily { .. })), "{undeclared:?}");
+    assert!(matches!(filter, Err(PubError::BadTopic(..))), "{filter:?}");
 }
 
 #[test_id(tjetwgp)]
@@ -93,8 +129,8 @@ fn a_cleared_state_topic_is_handed_to_no_later_subscriber_and_only_state_can_be_
 fn a_subscriber_to_two_retained_topics_receives_both_in_subscription_order() {
     let broker = Broker::up();
     let p = publisher("t", broker.socket());
-    p.publish("release/active", &json!({"release": "r1"})).unwrap();
-    p.publish("host/pressure", &json!({"cpu": 1})).unwrap();
+    p.publish(Class::State, "release/active", &json!({"release": "r1"})).unwrap();
+    p.publish(Class::State, "host/pressure", &json!({"cpu": 1})).unwrap();
     p.flush(FAILSAFE).unwrap();
 
     let mut watching = Subscriber::to(broker.socket(), &["release/active", "host/pressure"]);
@@ -114,7 +150,7 @@ fn a_publisher_is_up_while_it_lives_and_gone_once_dropped_having_delivered_what_
     p.flush(FAILSAFE).unwrap();
     assert_eq!(retained(broker.socket(), "publisher/t"), json!({"state": "up", "since_ms": NOW_MS}));
 
-    p.publish("release/active", &json!({"release": "last words"})).unwrap();
+    p.publish(Class::State, "release/active", &json!({"release": "last words"})).unwrap();
     drop(p);
 
     assert_eq!(retained(broker.socket(), "publisher/t"), json!({"state": "gone"}));
@@ -176,7 +212,7 @@ fn child_test_name() -> String {
 fn after_a_broker_restart_on_connect_republishes_and_an_idle_publisher_needs_no_publish() {
     let mut broker = Broker::up();
     let p = publisher("t", broker.socket());
-    p.on_connect(|again| again.publish("release/active", &json!({"release": "r1"})).unwrap());
+    p.on_connect(|again| again.publish(Class::State, "release/active", &json!({"release": "r1"})).unwrap());
     p.connect().unwrap();
     p.flush(FAILSAFE).unwrap();
     let before = retained(broker.socket(), "release/active");
@@ -196,12 +232,12 @@ fn with_the_broker_stopped_publish_fails_is_logged_and_the_caller_carries_on() {
     let mut broker = Broker::up();
     let log = Logged::default();
     let p = Publisher::with("t", options(broker.socket(), &log)).unwrap();
-    p.publish("release/active", &json!({"release": "r1"})).unwrap();
+    p.publish(Class::State, "release/active", &json!({"release": "r1"})).unwrap();
     p.flush(FAILSAFE).unwrap();
 
     broker.stop();
     assert!(p.wait_disconnected(FAILSAFE), "the client never saw the broker go");
-    let sent = p.publish("release/active", &json!({"release": "r2"}));
+    let sent = p.publish(Class::State, "release/active", &json!({"release": "r2"}));
     let carried_on = true;
 
     // Unreachable, not Timeout: the refused connect failed it, not the deadline.
@@ -217,7 +253,7 @@ fn a_broker_that_never_answers_the_connect_fails_the_publish() {
     let socket = dir.join("s");
     let _mute = UnixListener::bind(&socket).unwrap();
 
-    let sent = publisher("t", &socket).publish("release/active", &json!({}));
+    let sent = publisher("t", &socket).publish(Class::State, "release/active", &json!({}));
 
     assert!(matches!(sent, Err(PubError::Timeout | PubError::Unreachable { .. })), "{sent:?}");
 }
@@ -231,14 +267,14 @@ fn a_full_queue_and_a_refused_topic_fail_at_once_and_are_logged() {
     o.queue = 0;
     let p = Publisher::with("t", o).unwrap();
 
-    let full = p.publish("release/active", &json!({}));
-    let undeclared = p.publish("nosuch/topic", &json!({}));
-    let wrong = p.publish_as_class(Class::Chatter, "release/active", &json!({}));
+    let full = p.publish(Class::State, "release/active", &json!({}));
+    let wildcards = ["nosuch/+", "nosuch/#", "nosuch/\0", ""].map(|t| (t, p.publish(Class::State, t, &json!({}))));
 
     assert!(matches!(full, Err(PubError::QueueFull { .. })), "{full:?}");
-    assert!(matches!(undeclared, Err(PubError::UndeclaredFamily { .. })), "{undeclared:?}");
-    assert!(matches!(wrong, Err(PubError::WrongClass { .. })), "{wrong:?}");
-    assert!(log.text().contains("nosuch/topic"), "{}", log.text());
+    for (topic, refused) in wildcards {
+        assert!(matches!(&refused, Err(PubError::BadTopic(t)) if t == topic), "{topic:?}: {refused:?}");
+        assert!(log.text().contains(&format!("publish failed ({topic})")), "{}", log.text());
+    }
 }
 
 #[test_id(tegnae3)]
@@ -250,11 +286,11 @@ fn publishes_failures_and_queue_depth_reach_the_metrics_store() {
     o.metrics = Some(spira_otel::metrics::MetricsSink::for_component(Some(&sink.addr), "spira-pub"));
     let p = Publisher::with("t", o).unwrap();
 
-    p.publish("release/active", &json!({})).unwrap();
-    p.publish("nosuch/topic", &json!({})).unwrap_err();
+    p.publish(Class::State, "release/active", &json!({})).unwrap();
+    p.publish(Class::State, "nosuch/+", &json!({})).unwrap_err();
     drop(p);
 
-    sink.expect(&["spira_pub_publishes", "spira_pub_failures", "spira_pub_queue_depth", "undeclared_family"], FAILSAFE);
+    sink.expect(&["spira_pub_publishes", "spira_pub_failures", "spira_pub_queue_depth", "bad_topic"], FAILSAFE);
 }
 
 /// The built CLI, configured only by a fixture declaring `socket` as the broker's.
@@ -284,23 +320,38 @@ fn cli_pushing_to(endpoint: &str, dir: &Path, socket: &Path, args: &[&str], stdi
 fn the_cli_publishes_stdin_to_the_configured_broker_and_exits_by_what_happened() {
     let mut broker = Broker::up();
     let dir = testkit::TempDir::new("cli");
-    let send = |topic: &str, stdin: &str| cli(&dir, broker.socket(), &["--as", "queue", "--topic", topic], stdin);
+    let send = |topic: &str, stdin: &str| cli(&dir, broker.socket(), &["--as", "queue", "--topic", topic, "--class", "state"], stdin);
 
     let (code, err) = send("release/active", r#"{"release":"r9"}"#);
     assert_eq!(code, Some(0), "{err}");
     assert_eq!(retained(broker.socket(), "release/active"), json!({"release": "r9"}));
     assert_eq!(retained(broker.socket(), "publisher/queue"), json!({"state": "gone"}));
 
-    let (code, err) = send("nosuch/topic", "{}");
-    assert!(code == Some(2) && err.contains("nosuch/topic"), "{code:?} {err}");
-    let (code, err) = cli(&dir, broker.socket(), &["--as", "q", "--topic", "release/active", "--class", "chatter"], "{}");
-    assert!(code == Some(2) && err.contains("declared state"), "{code:?} {err}");
+    let (code, err) = cli(&dir, broker.socket(), &["--as", "q", "--topic", "release/active"], "{}");
+    assert!(code == Some(2) && err.contains("--class"), "{code:?} {err}");
     let (code, err) = send("release/active", "not json");
     assert!(code == Some(2) && err.contains("not JSON"), "{code:?} {err}");
 
     broker.stop();
-    let (code, err) = cli(&dir, broker.socket(), &["--as", "queue", "--topic", "release/active"], "{}");
+    let (code, err) = cli(&dir, broker.socket(), &["--as", "queue", "--topic", "release/active", "--class", "state"], "{}");
     assert!(code == Some(1) && err.contains("unreachable"), "{code:?} {err}");
+    // Judged before the broker is looked for.
+    let (code, err) = cli(&dir, broker.socket(), &["--as", "queue", "--topic", "nosuch/#", "--class", "state"], "{}");
+    assert!(code == Some(2) && err.contains("nosuch/#"), "{code:?} {err}");
+}
+
+#[test_id(tg3a81j)]
+#[test]
+fn the_cli_publishes_chatter_to_a_topic_no_table_lists() {
+    let broker = Broker::up();
+    let dir = testkit::TempDir::new("cli-any");
+    let mut watching = Subscriber::to(broker.socket(), &["nosuch/topic"]);
+
+    let (code, err) = cli(&dir, broker.socket(), &["--as", "t", "--topic", "nosuch/topic", "--class", "chatter"], r#"{"a":1}"#);
+
+    assert_eq!(code, Some(0), "{err}");
+    assert_eq!(value(watching.recv()), ("nosuch/topic".to_string(), json!({"a": 1}), false));
+    assert!(broker.retained("nosuch/topic").is_empty(), "chatter was retained");
 }
 
 #[test_id(tvdsteq)]
@@ -310,7 +361,7 @@ fn the_configured_endpoint_receives_the_clis_run_and_the_librarys_series() {
     let dir = testkit::TempDir::new("cli-otel");
     let sink = testkit::otlp::Sink::start();
 
-    let (code, err) = cli_pushing_to(&sink.addr, &dir, broker.socket(), &["--as", "queue", "--topic", "release/active"], "{}");
+    let (code, err) = cli_pushing_to(&sink.addr, &dir, broker.socket(), &["--as", "queue", "--topic", "release/active", "--class", "state"], "{}");
 
     assert_eq!(code, Some(0), "{err}");
     sink.expect(&["spira_pub_publishes", "spira_pub_queue_depth", "spira_component_runs"], FAILSAFE);

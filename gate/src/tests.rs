@@ -3835,6 +3835,20 @@ fn a_test_red_once_and_green_on_a_rerun_of_the_same_tree_is_disabled_and_the_ite
     assert!(body.contains("law-a-flipping-test-is-disabled-by-a-registry-row") && body.contains("FAIL [") && body.contains("PASS ["), "{body}");
 }
 
+/// What fences that passed print into the same output as the unit tests.
+const PASSING_FENCE_NOTES: &str = "bdq-read: considered x.rs:1: why\nlifecycle-guard: not yet refused at the gate: credential=1\n";
+
+#[test_id(tvvh6lf)]
+#[test]
+fn a_passing_fences_note_does_not_stop_the_rerun_of_a_red_test() {
+    let f = rerun_fake(&format!("{PASSING_FENCE_NOTES}{RERUN_RED}"), Some(RERUN_GREEN));
+    let status = f.run();
+    assert_eq!(status, PASS, "reruns: {:?}\n{}", rerun_cmds(&f), f.stderr());
+    assert_eq!(f.fix_beads.borrow().len(), 1);
+    assert_eq!(f.registry_rows.borrow().len(), 1);
+    assert!(meter(&f).contains(" reruns=t::t0aaaaa:red/green"), "{}", meter(&f));
+}
+
 #[test_id(txoga17)]
 #[test]
 fn a_libtest_integration_red_is_rerun_on_its_own_target_exactly() {
@@ -3891,6 +3905,16 @@ fn a_red_beside_a_failed_build_or_a_red_fence_is_not_rerun() {
     let g = rerun_fake(&format!("lifecycle-guard: REFUSED\n{RERUN_RED}"), Some(RERUN_GREEN));
     assert_eq!(g.run(), FAIL);
     assert!(rerun_cmds(&g).is_empty());
+}
+
+#[test_id(ttvuxtx)]
+#[test]
+fn a_red_fence_that_printed_no_gate_step_line_still_stops_the_rerun() {
+    let f = rerun_fake(RERUN_RED, Some(RERUN_GREEN));
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "the fence found an offender".into()));
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert!(rerun_cmds(&f).is_empty(), "{:?}", rerun_cmds(&f));
+    assert!(f.registry_rows.borrow().is_empty());
 }
 
 #[test_id(tk4s30s)]
@@ -4066,6 +4090,15 @@ fn a_nextest_unit_red_that_two_other_beads_showed_on_disjoint_diffs_certifies_no
     let f = flip_fake_with(FLIP_OUT_NEXTEST, Ok(vec![other_nextest_red("sp-x", "t1", "a.rs"), other_nextest_red("sp-y", "t2", "b.rs")]));
     assert_eq!(f.run(), PASS);
     assert_eq!((certified(&f, "pass"), certified(&f, "red")), (1, 0));
+    assert!(f.stderr().contains("not judged — t::flip"), "{}", f.stderr());
+}
+
+#[test_id(t0wh90d)]
+#[test]
+fn a_passing_fences_note_does_not_stop_the_shared_unit_red_detector() {
+    let out = format!("{PASSING_FENCE_NOTES}{FLIP_OUT_NEXTEST}");
+    let f = flip_fake_with(&out, Ok(vec![other_nextest_red("sp-x", "t1", "a.rs"), other_nextest_red("sp-y", "t2", "b.rs")]));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert!(f.stderr().contains("not judged — t::flip"), "{}", f.stderr());
 }
 
@@ -4892,6 +4925,24 @@ fn a_suites_trial_cut_at_its_setup_share_is_a_budget_no_verdict_naming_the_phase
     );
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=harness-fault"));
+}
+
+#[test_id(towmqo7)]
+#[test]
+fn a_foreign_trial_that_waited_out_the_warm_cache_is_a_cache_wait_no_verdict() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(
+        MERGE_SHA.into(),
+        (75, "  the warm cache stayed held for the 300s cap by round-vm x\nVERDICT FAULT rc=2 ran=0 reason=cache-wait".into()),
+    );
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=cache-wait"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("waited for the repository's warm cache"), "{}", f.stderr());
+    assert!(!f.stderr().contains("container or install failed"), "{}", f.stderr());
+    assert_eq!(f.ran.borrow().len(), 1, "no base trial for a cache wait");
+    let y = f.yields.borrow().iter().find(|y| y.get(1).map(String::as_str) == Some("record")).cloned().expect("a record");
+    assert!(y.last().unwrap().contains("by round-vm x"), "the record names the holder: {y:?}");
+    assert!(!crate::publish::is_cap_reason("cache-wait"));
 }
 
 #[test_id(t7omhqx)]
