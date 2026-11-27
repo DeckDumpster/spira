@@ -23,7 +23,15 @@ cd "$ROOT" || exit 2
 # The target is shared by every tree built in it and cargo trusts mtimes across them: the one
 # selective clean (spira/target-clean.sh, sp-ke0uk8; sp-h6m43s, sp-ipwlic) cleans only the
 # workspace crates whose bytes differ from the tree it was last built from, and records this one.
-bash "$HERE/target-clean.sh" "$ROOT" || exit 2
+# testenv reads this copy of the clean's report. The container's user cannot remove testenv's
+# file, so there an old copy is emptied instead.
+COPY="$ROOT/target/unit-tests.clean.json"
+rm -f "$COPY" 2>/dev/null || : > "$COPY"
+bash "$HERE/target-clean.sh" "$ROOT"
+cleaned=$?
+REPORT="${CARGO_TARGET_DIR:-$ROOT/target}/.target-clean-report.json"
+[ ! -f "$REPORT" ] || cat "$REPORT" > "$COPY"
+[ "$cleaned" -eq 0 ] || exit 2
 BINS="$ROOT/target/unit-tests.bins"
 [ -f "$BINS" ] || { echo "unit-tests: $BINS missing — run through testenv --suites unit-tests" >&2; exit 2; }
 bins=()

@@ -617,7 +617,7 @@ const CLEAN_REPORT: &str = ".target-clean-report.json";
 
 /// GB the cleans removed per day, by the script's branch and its cause.
 pub const PANEL_CLEAN_GB_BY_CAUSE: &str = "sum by (branch, cause) (sum_over_time(build_dir_clean_bytes[1d])) / 1e9";
-/// GB the cleans removed per day, at lease and at release.
+/// GB the cleans removed per day, by mode: lease, release and testenv's unit run.
 pub const PANEL_CLEAN_GB_BY_MODE: &str = "sum by (mode) (sum_over_time(build_dir_clean_bytes[1d])) / 1e9";
 
 /// One run of the clean script: `at` is its own clock at exit.
@@ -653,7 +653,12 @@ fn utc_stamp<'de, D: serde::Deserializer<'de>>(d: D) -> Result<SystemTime, D::Er
 
 /// The report of the last clean of `dir`; None when there is none or it does not parse.
 pub fn clean_report(dir: &Path) -> Option<CleanReport> {
-    serde_json::from_slice(&std::fs::read(dir.join(CLEAN_REPORT)).ok()?).ok()
+    clean_report_at(&dir.join(CLEAN_REPORT))
+}
+
+/// [`clean_report`] for a copy of the report kept elsewhere.
+pub fn clean_report_at(path: &Path) -> Option<CleanReport> {
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
 }
 
 /// The series one clean reports, one set per act, stamped with the report's time. A clean that

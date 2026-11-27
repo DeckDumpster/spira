@@ -1046,7 +1046,12 @@ written first. Each unit-tests batch mounts its branch's own volume (sp-fnb2wa),
 alternating branches in the unit slot never clean each other's builds, and a branch's
 dependencies stay warm across its commits. Inside a volume, `spira/unit-tests.sh` still cleans
 the workspace crates when the tree differs from the last one built there (sp-h6m43s); the sweep
-is what bounds the volumes. Both find what to remove in podman's own listings and remove it by id; neither
+is what bounds the volumes. Neither runner reaches the
+metrics endpoint and the host cannot read a volume, so `unit-tests.sh` copies its clean's report to
+`target/unit-tests.clean.json`; testenv leaves that file empty and mode 0666 before the run (the
+container's user can only rewrite it), then, on both runners, pushes it as the `build_dir_clean_*`
+series with `mode="unit-tests"` (`dir` is the sandbox target path or the volume name) and removes
+it. A missing report or a failed push changes no verdict. Both find what to remove in podman's own listings and remove it by id; neither
 removes anything a container in any state uses, nor anything at all when podman cannot list
 its containers; each removal is logged with its size. A build removes only the dangling
 images created since it started, never another build's in flight; `prune` by hand removes every
