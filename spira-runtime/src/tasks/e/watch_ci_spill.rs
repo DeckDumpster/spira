@@ -1,12 +1,12 @@
 //! # watch.ci_spill — contract
 //!
-//! watchd row `ci-spill-guard` (`spira/watchers:159`), target `@SPIRA_HOME@/ci-spill-guard.sh watch --interval 900`; pattern P1 (§3 of [[scheduler-consolidation-2026-11-03]]).
+//! Replaced the watchd row `ci-spill-guard`, target `@SPIRA_HOME@/ci-spill-guard.sh watch --interval 900`; pattern P1 (§3 of [[scheduler-consolidation-2026-11-03]]).
 //!
-//! Catalogue differs: the children are `lib.sh`, `git rev-parse`, `git archive | tar -x` and `awk` (`spira/ci-spill-guard.sh:89`, `:93`, `:19`), not `gh`. The guard reads each repo's landing ref from git, never the forge.
+//! Catalogue differs: the children of the deleted `cmd_pass`/`_csg_once` of `spira/ci-spill-guard.sh` were `lib.sh`, `git rev-parse`, `git archive | tar -x` and `awk`, not `gh`. The guard read each repo's landing ref from git, never the forge.
 //!
 //! ## Tick
 //!
-//! - Cadence 900 s (`spira/watchers:159`; loop `:120-137`). A landing on any registered repo is the natural extra wake (the landing ref moved) (unverified: no such event on the bus yet). Single-flight.
+//! - Cadence 900 s, the interval of the deleted loop. A landing on any registered repo is the natural extra wake (the landing ref moved) (unverified: no such event on the bus yet). Single-flight.
 //!
 //! ## Observe
 //!
@@ -17,14 +17,14 @@
 //! Repo { name, ref_: Option<String>, sha: Option<String>, workflows: Option<Vec<(path, text)>> }  // workflows only when sha != seen
 //! ```
 //!
-//! - Repo set and roots from the repo map: `repo_names` / `repo_root` (`spira/lib.sh:1728`, `:1737`) — in-process from `Settings` (S10).
-//! - `ref_` from `spira_landref` (`spira/lib.sh:1930`), the landing component's own answer; `None` → the "no resolvable landing ref" finding (`ci-spill-guard.sh:88`).
-//! - `sha` = `git rev-parse <ref>` (`:89`); `workflows` = the `.github/workflows/*.y{a,}ml` blobs at that ref — today `git archive <ref> .github/workflows | tar -x` into a tmpdir (`:92-93`); in-process a `git show`/tree read, no tmpdir.
+//! - Repo set and roots from the repo map, as `repo_names` / `repo_root` gave them — in-process from `Settings` (S10).
+//! - `ref_` is the landing component's own answer, as `spira_landref` gave it; `None` → the "no resolvable landing ref" finding.
+//! - `sha` = `git rev-parse <ref>`; `workflows` = the `.github/workflows/*.y{a,}ml` blobs at that ref — the deleted loop ran `git archive <ref> .github/workflows | tar -x` into a tmpdir; in-process a `git show`/tree read, no tmpdir.
 //!
 //! ## Decide
 //!
-//! - Pure scan: the awk in `_csg_file` (`:18-38`) becomes a Rust function `violations(path, text) -> Vec<String>` — a `uses: …/provision@…` step whose `spill:` is absent or not `ec2-only`. The same function serves `ci-spill-guard.sh --gate` (gate fence, `gate.steps`) once the gate moves; until then both exist (parity test pins them equal).
-//! - Carry `watch.ci_spill.state` = `{ said: BTreeSet<String>, seen: BTreeMap<repo, sha> }` — today `run/watchd/ci-spill-guard.said` (append-only, `:75-80`, never cleared) and `run/watchd/ci-spill-guard.refs/<repo>` (`:90`, `:98`).
+//! - Pure scan: the awk in `_csg_file` becomes a Rust function `violations(path, text) -> Vec<String>` — a `uses: …/provision@…` step whose `spill:` is absent or not `ec2-only`. The same function serves `ci-spill-guard.sh --gate` (gate fence, `gate.steps`) once the gate moves; until then both exist.
+//! - Carry `watch.ci_spill.state` = `{ said: BTreeSet<String>, seen: BTreeMap<repo, sha> }` — the deleted loop kept `run/watchd/ci-spill-guard.said` (append-only, never cleared) and `run/watchd/ci-spill-guard.refs/<repo>`.
 //! - For each repo with a new sha: every violation line not in `said` → one inbox line; then `seen[repo] = sha`. A repo with no ref → key `noref-<repo>` once.
 //! - Note (from code): `said` is never pruned today, so a violation fixed and later reintroduced is not said again. Kept for parity; flagged for Ryan.
 //! - Fixtures: none in the release (unverified: no `test-ci-spill-guard*.sh`). New: compliant workflow; missing `spill:`; `spill: ec2` (wrong); quoted value; nested step indentation; repo with no ref; unchanged sha skipped.
@@ -33,19 +33,19 @@
 //!
 //! | Effect | Class | Deadline | Idempotency key | Refuses |
 //! |---|---|---|---|---|
-//! | `watch.ci_spill.observe` | git | 30 s | (probe) | a repo whose root does not exist → omitted, as `repo_root … || continue` (`:87`) |
+//! | `watch.ci_spill.observe` | git | 30 s | (probe) | a repo whose root does not exist → omitted, as the deleted loop's `repo_root … || continue` |
 //! | `inbox.append` (shared) | host | 10 s | `ci_spill/<said-key>` | — |
 //!
-//! Inbox line, exactly as today (`spira/ci-spill-guard.sh:79`, text `:96` / `:88`):
+//! Inbox line, exactly as the deleted `_csg_once` wrote it:
 //!
 //! ```text
 //! <YYYY-MM-DDTHH:MM:SSZ> [watch:ci-spill-guard] CI SPILL: law-buy-capacity-rather-than-wait: <repo>:<file>:<line>: provision has no spill: input; override: spill: ec2-only (at <ref>)
 //! <YYYY-MM-DDTHH:MM:SSZ> [watch:ci-spill-guard] CI SPILL: <repo> has no resolvable landing ref; its workflows are unchecked
 //! ```
 //!
-//! Today each line also goes to stdout → `run/watchd/ci-spill-guard.log` (`:77`). Readers of that log: none by name in the release or `run/concierge-notes`; watchd's generic walkers only; no cursor file exists. The log copy is dropped.
+//! The deleted loop also sent each line to stdout → `run/watchd/ci-spill-guard.log`. Readers of that log: none by name in the release or `run/concierge-notes`; watchd's generic walkers only; no cursor file exists. The log copy is dropped.
 //!
-//! Health (`ci-spill-guard.sh health`, `:109-118`) → S13 `scheduler status`.
+//! The deleted loop's health mode → S13 `scheduler status`.
 //!
 //! ## Silence
 //!
@@ -53,14 +53,14 @@
 //!
 //! ## Replaces
 //!
-//! - `spira-watch-ci-spill-guard-prod.service`; row `spira/watchers:159`.
-//! - Children: `bash lib.sh` (`:70`), `git rev-parse` (`:89`), `git archive` + `tar` (`:93`), `mktemp`/`rm -rf` (`:92`, `:100`), `awk` (`:19`).
+//! - `spira-watch-ci-spill-guard-prod.service` and its watchd row.
+//! - Children: `bash lib.sh`, `git rev-parse`, `git archive` + `tar`, `mktemp`/`rm -rf`, `awk`.
 //! - Files retired: `run/watchd/ci-spill-guard.{said,health,log,restarts}`, `run/watchd/ci-spill-guard.refs/`.
 //! - Config pinned: the repo map behind `repo_names`/`repo_root`/`spira_landref`; `SPIRA_CONCIERGE_INBOX`.
 //!
 //! ## Reverse
 //!
-//! Release rollback restores unit and row; `Observe` mode shadows `inbox.append`. The `scan`/`--gate` subcommands stay in the script until the gate fence moves, so nothing else regresses.
+//! A release rollback restores the old script and unit, and the row; `Observe` mode shadows `inbox.append`. The script now holds only `scan`/`--gate`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -82,7 +82,7 @@ pub const STATE: EventKindTag = "watch.ci_spill.state";
 pub const OBSERVE: &str = "watch.ci_spill.observe";
 pub const EFFECTS: &[&str] = &[OBSERVE, INBOX_APPEND];
 pub const KEYS: &[&str] = &["SPIRA_REPO_MAP", "SPIRA_CONCIERGE_INBOX"];
-/// The row's tag in every line it wrote (`spira/ci-spill-guard.sh:79`).
+/// The row's tag in every line the deleted `_csg_once` wrote.
 pub const INBOX_TAG: &str = "ci-spill-guard";
 /// `--interval 900`.
 pub const CADENCE_MS: u64 = 900_000;

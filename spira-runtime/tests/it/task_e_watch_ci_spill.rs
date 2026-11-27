@@ -89,7 +89,7 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
-/// The awk's finding and the two lines `spira/ci-spill-guard.sh:79,88,96` wrote.
+/// The awk's finding and the two lines the deleted `_csg_once` wrote.
 #[test_id(tnzlh5q)]
 #[test]
 fn t5_the_lines_are_the_ones_ci_spill_guard_wrote() {
@@ -99,6 +99,22 @@ fn t5_the_lines_are_the_ones_ci_spill_guard_wrote() {
     assert_eq!(said(&r), ["1970-01-01T00:00:00Z [watch:ci-spill-guard] CI SPILL: law-buy-capacity-rather-than-wait: spira:.github/workflows/ci.yml:4: provision has no spill: input; override: spill: ec2-only (at local/main)"]);
     let r = rig(1, world(vec![Repo { name: "deck".into(), ref_: None, sha: None, workflows: None }]));
     assert_eq!(said(&r), ["1970-01-01T00:00:00Z [watch:ci-spill-guard] CI SPILL: deck has no resolvable landing ref; its workflows are unchecked"]);
+}
+
+#[test_id(tro0cix)]
+#[test]
+fn t7_the_shell_loop_it_replaced_is_gone() {
+    let root = spira_config::resolve::checkout_root_for_process().unwrap();
+    let script = std::fs::read_to_string(root.join("spira/ci-spill-guard.sh")).unwrap();
+    let arm = |name: &str| script.lines().any(|l| l.trim_start().starts_with(name));
+    for kept in ["scan)", "--gate)"] {
+        assert!(arm(kept), "the {kept} arm is gone");
+    }
+    assert!(!script.contains("SPIRA_CONCIERGE_INBOX"), "the script writes the inbox; only `inbox.append` may");
+    for gone in ["watch)", "pass)", "health)"] {
+        assert!(!arm(gone), "the {gone} arm is still dispatched");
+    }
+    assert!(script.contains(r#"*) echo "usage: ci-spill-guard.sh scan <tree> | --gate <tree>" >&2; exit 2 ;;"#), "any other mode must get the usage line and exit 2");
 }
 
 fn registration() -> runtime::event::Registration {

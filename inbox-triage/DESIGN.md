@@ -87,9 +87,7 @@ Replaces the body of `spira/inbox-append.sh`, which becomes `exec inbox-triage a
   keys, and calls `Sink::record`, which is `record` with the release's `inbox-triage` as the
   flusher. It fails only when the line did not reach the inbox: a push that cannot start is said
   on stderr. A Rust writer of `SPIRA_CONCIERGE_INBOX` never writes the file itself — a direct
-  write is never announced on `concierge/inbox` and never pushes. The shell `watch`/`pass` loop
-  of `spira/ci-spill-guard.sh` still appends directly; `watch.ci_spill` is its scheduled
-  replacement.
+  write is never announced on `concierge/inbox` and never pushes.
 
 ## Test strategy
 
