@@ -114,11 +114,8 @@ SPIRA_COCKPIT_STALE_S spira/ready.sh
 SPIRA_COCKPIT_WINDOW_HOURS cockpit-collect/src/probes/mod.rs
 SPIRA_CONCIERGE bead/src/main.rs
 SPIRA_CONCIERGE spira/hooks/concierge-raw-pr-fence.sh
-SPIRA_CONCIERGE spira/hooks/concierge-waiter-stop.sh
 SPIRA_CONCIERGE spira/hooks/concierge-turn-failed.sh
 SPIRA_CONCIERGE spira/hooks/session.sh
-SPIRA_CONCIERGE_ALLOW_IDLE spira/hooks/concierge-waiter-stop.sh
-SPIRA_CONCIERGE_SESSION_PID spira/hooks/concierge-waiter-stop.sh
 SPIRA_CONCIERGE_SESSION_PID spira/hooks/concierge-turn-failed.sh
 SPIRA_CONF cockpit/ops/src/layout.rs
 SPIRA_CONF spira-lint/src/rules/config_literal_fallback.rs
@@ -478,7 +475,6 @@ SPIRA_POISON_AT spira-claim/src/cli.rs
 SPIRA_POISON_AT spira/capacity.sh
 SPIRA_PREFLIGHT_BASE_IMAGE spira/round-image-preflight.sh
 SPIRA_PREFLIGHT_TIMEOUT spira/round-image-preflight.sh
-SPIRA_PROC_ROOT spira/hooks/concierge-waiter-stop.sh
 SPIRA_PROC_ROOT spira/hooks/concierge-turn-failed.sh
 SPIRA_PROC_ROOT spira/script-running-guard.sh
 SPIRA_PROD_COCK install/src/values.rs
@@ -549,7 +545,6 @@ SPIRA_REPO spira/build.sh
 SPIRA_REPO spira/conf.sh
 SPIRA_REPO spira/deploy.sh
 SPIRA_REPO spira/first-run.sh
-SPIRA_REPO spira/inbox-keeper.sh
 SPIRA_REPO spira/lib.sh
 SPIRA_REPO spira/overrides.sh
 SPIRA_REPO spira/pre-activate.sh

@@ -1,9 +1,7 @@
 //! `concierge.sh wake` is one try: it delivers into an empty, still input line and otherwise refuses at once, never holding.
 
-use std::path::PathBuf;
-use std::time::Duration;
-
-use spira_runtime::wake::concierge_wake;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 struct Fixture {
     dir: testkit::TempDir,
@@ -51,6 +49,16 @@ impl Fixture {
     }
 }
 
+/// One `concierge.sh wake`: what it said, or the refusal it wrote.
+fn concierge_wake(script: &Path, line: &str) -> Result<(), String> {
+    // The bound turns a wake that holds into a failure rather than a hung suite.
+    let out = Command::new("timeout").arg("20").arg(script).arg("wake").arg(line).stdin(Stdio::null()).output().unwrap();
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(String::from_utf8_lossy(&out.stderr).into_owned())
+}
+
 fn repo_root() -> PathBuf {
     spira_config::resolve::checkout_root_for_process().unwrap()
 }
@@ -59,7 +67,7 @@ fn repo_root() -> PathBuf {
 #[test]
 fn a_busy_input_line_is_refused_at_once_with_nothing_typed() {
     let f = Fixture::new("x\n❯ half a sentence\nfoot\n", &["3.4", "3.4", "3.4", "3.4"]);
-    let err = concierge_wake(&f.script(), "line", Duration::from_secs(20)).unwrap_err();
+    let err = concierge_wake(&f.script(), "line").unwrap_err();
     assert!(err.contains("wake not delivered"), "{err}");
     let calls = f.calls();
     assert!(!calls.iter().any(|c| c.contains("send-keys")), "{calls:?}");
@@ -71,7 +79,7 @@ fn a_busy_input_line_is_refused_at_once_with_nothing_typed() {
 #[test]
 fn an_empty_input_line_and_a_still_cursor_deliver_once() {
     let f = Fixture::new("x\n❯ \nfoot\n", &["3.4", "3.4", "3.4", "3.4"]);
-    assert_eq!(concierge_wake(&f.script(), "line", Duration::from_secs(20)), Ok("woke".to_string()));
+    assert_eq!(concierge_wake(&f.script(), "line"), Ok(()));
     let calls = f.calls();
     assert_eq!(calls.iter().filter(|c| c.contains("send-keys") && c.contains(" -l ")).count(), 1, "{calls:?}");
     assert_eq!(calls.iter().filter(|c| c.contains("send-keys") && c.ends_with("Enter")).count(), 1, "{calls:?}");
@@ -81,7 +89,7 @@ fn an_empty_input_line_and_a_still_cursor_deliver_once() {
 #[test]
 fn a_cursor_that_moved_between_the_looks_is_refused() {
     let f = Fixture::new("x\n❯ \nfoot\n", &["3.4", "4.4", "4.4"]);
-    let err = concierge_wake(&f.script(), "line", Duration::from_secs(20)).unwrap_err();
+    let err = concierge_wake(&f.script(), "line").unwrap_err();
     assert!(err.contains("wake not delivered"), "{err}");
     assert!(!f.calls().iter().any(|c| c.contains("send-keys")));
 }
@@ -91,7 +99,7 @@ fn a_cursor_that_moved_between_the_looks_is_refused() {
 fn a_look_that_returns_no_cursor_is_refused_not_typed_into() {
     let f = Fixture::new("x\n❯ \nfoot\n", &[]);
     std::fs::write(f.dir.join("pane"), "").unwrap();
-    let err = concierge_wake(&f.script(), "line", Duration::from_secs(20)).unwrap_err();
+    let err = concierge_wake(&f.script(), "line").unwrap_err();
     assert!(err.contains("wake not delivered"), "{err}");
     assert!(!f.calls().iter().any(|c| c.contains("send-keys")));
 }

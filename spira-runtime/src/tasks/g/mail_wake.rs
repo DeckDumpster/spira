@@ -61,7 +61,7 @@ pub const KEYS: &[&str] = &["SPIRA_MAIL_READERS", "SPIRA_MAIL", "SPIRA_MAIL_SETT
 
 const OBSERVE_DEADLINE_MS: u64 = 5_000;
 /// A reader's wake is one try (`concierge.sh wake`): it delivers or refuses at once.
-pub const WAKE_DEADLINE_MS: u64 = crate::watchers::inbox_keeper::WAKE_DEADLINE_MS;
+pub const WAKE_DEADLINE_MS: u64 = 30_000;
 
 /// The body of [`DUE`]: which mailbox, and which attempt this is (0 is the first).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

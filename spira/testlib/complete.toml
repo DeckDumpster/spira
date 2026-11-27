@@ -189,7 +189,6 @@ heartbeat=act
 hel.reap_stale=act
 hel.reap_terminal=act
 hel.sweep=act
-inbox-keeper=act
 inbox.notify=act
 incident.alarms=act
 incident.probe=act

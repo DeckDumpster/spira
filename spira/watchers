@@ -82,7 +82,7 @@
 # install that drops a row retires its `spira-watch-<name>` unit. The rows below name logs
 # that some other component writes. Hosted, with no row:
 #
-#   pr-notify, view, inbox-keeper, publish-backlog, round-duty, asks, supersede-duty,
+#   pr-notify, view, publish-backlog, round-duty, asks, supersede-duty,
 #   brain-dirty, design-asks, claim-count,
 #   writer-grants  spira-runtime handlers (spira-runtime/src/watchers)
 #   lc-backup                          task watch.backup_age (lc-backup.timer still runs the backup)
@@ -113,9 +113,8 @@ dolt-collect|log|@SPIRA_RUN@/dolt-collect.log
 # connection, a refused store), so any line is news.
 unit-run-dbus|log|@SPIRA_RUN@/unit-run-dbus.log
 
-# CONCIERGE-INBOX is the durable inbox the Concierge reads. `watchd next concierge-inbox` is how
-# it waits: it blocks until a line survives the drop and dedup rules, prints it and exits, with
-# the unread count and cursor kept here like any other row.
+# CONCIERGE-INBOX is the durable inbox the Concierge reads. The session is told it has news by
+# the `concierge/inbox` topic; `watchd drain concierge-inbox --all` reads the unread lines and moves the cursor.
 concierge-inbox|log|@SPIRA_CONCIERGE_INBOX@
 
 # LC-LATENCY is the alarm for a spira-lc verb and caller with a call over SPIRA_LC_ANSWER_MS:
@@ -143,12 +142,6 @@ runtime-watch|log|@SPIRA_RUN@/runtime-watch.log
 # files and any stale index.lock) and again every 180 passes while it persists. A quiet log means
 # refreshes are landing.
 skew-refresh|log|@SPIRA_RUN@/skew-refresh.log
-
-# ROUNDS-LOOP is where the round supervisor's pages are recorded. Nothing writes the Concierge inbox
-# for it directly: it calls `watchd page rounds-loop <text> batch=.. repo=.. members=.. phase=..
-# verdict=.. red=..`, which offers the incident to a matching SOP's tool first and puts the page in the
-# inbox only when none handled it.
-rounds-loop|log|@SPIRA_RUN@/rounds-loop.log
 
 # LAW-BOOK is appended by `rule enact`, `rule retire` and `rule code --land` when committing the statute book to the wiki fails: one
 # line naming the verb, the key and the error. A quiet log means every statute written is in the book.

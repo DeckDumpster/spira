@@ -11,7 +11,6 @@ use runtime::socket::lc_call;
 use spira_config::nonwork::{status_args, Kind, Which};
 use serde_json::Value;
 
-use crate::watchers::inbox_keeper;
 use crate::forge::{slug, Forge};
 use crate::watchers::cr_cadence;
 use crate::watchers::pr_notify::{self, RepoObs};
@@ -386,29 +385,6 @@ impl World {
             ..Snapshot::default()
         };
         serde_json::to_string(&snap).map_err(|e| e.to_string())
-    }
-
-    /// Whether watchd's reader lock on the Concierge inbox is held, and how many inbox lines lie past
-    /// its cursor; `Err` naming the path that could not be read. `input` is the keeper's carry.
-    pub fn keeper_snapshot(&self, input: &str) -> Result<String, String> {
-        let carry: inbox_keeper::Carry = serde_json::from_str(input).unwrap_or_default();
-        let run = self.run_dir.to_string_lossy();
-        let lock = watchd::paths::tail_lockfile(&run, INBOX_WATCHER);
-        let cursor = watchd::paths::cursorfile(&run, INBOX_WATCHER);
-        let dir = lock.parent().unwrap_or(&self.run_dir);
-        fs::metadata(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        let waiter_alive = watchd::lock::try_lock(&lock).map_err(|e| format!("{}: {e}", lock.display()))?.is_err();
-        let log = fs::read(&self.inbox).map_err(|e| format!("{}: {e}", self.inbox.display()))?;
-        let total = inbox_rules::count_lines(&log);
-        let (pos, cursor_mtime) = match fs::read_to_string(&cursor) {
-            Ok(text) => {
-                let mtime = fs::metadata(&cursor).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
-                (watchd::cursor::clamp_pos(watchd::cursor::parse_cursor(&text), total), mtime)
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (0, 0),
-            Err(e) => return Err(format!("{}: {e}", cursor.display())),
-        };
-        inbox_keeper::observed(&carry, inbox_keeper::Snapshot { waiter_alive, unread: total - pos, cursor_mtime })
     }
 
     /// Every review and the epoch the next scheduled one is due. An unset or malformed zone or hour is an
