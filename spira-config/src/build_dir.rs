@@ -48,26 +48,29 @@ pub const CLEAN_SCRIPT: &str = "target-clean.sh";
 /// The selective clean's deadline, in seconds as `timeout` takes them.
 pub const CLEAN_DEADLINE_SECS: &str = "900";
 
+/// A held slot lock: the lock file, released by `LOCK_UN` when dropped.
+struct SlotLock(std::fs::File);
+
+impl Drop for SlotLock {
+    fn drop(&mut self) {
+        // SAFETY: unlocking our own fd; closing alone would leave a forked child holding it.
+        unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
+
 /// A live lease on one owned build directory. Dropping it releases the directory without
-/// stamping it; [`Lease::release`] is the teardown path. Either way the lock goes by `LOCK_UN`,
-/// not by the close: a forked child shares the open file description until it execs.
+/// stamping it; [`Lease::release`] is the teardown path. Either way its [`SlotLock`] releases
+/// the lock by `LOCK_UN`.
 pub struct Lease {
     dir: PathBuf,
     base: PathBuf,
     n: u64,
-    lock: std::fs::File,
+    lock: SlotLock,
     /// True when the directory held a previous session's build (a warm start).
     pub reused: bool,
     /// The repository the slot recorded before this lease took it; None when it recorded none.
     pub last_repo: Option<String>,
     started: SystemTime,
-}
-
-impl Drop for Lease {
-    fn drop(&mut self) {
-        // SAFETY: unlocking our own fd; closing alone would leave a forked child holding it.
-        unsafe { libc::flock(self.lock.as_raw_fd(), libc::LOCK_UN) };
-    }
 }
 
 impl std::fmt::Debug for Lease {
@@ -112,8 +115,8 @@ impl Lease {
 
     fn release_stamped(self) -> Trimmed {
         let trimmed = trim(&self.dir, self.started, SystemTime::now());
-        let _ = self.lock.set_len(0);
-        let _ = self.lock.set_modified(SystemTime::now());
+        let _ = self.lock.0.set_len(0);
+        let _ = self.lock.0.set_modified(SystemTime::now());
         trimmed
     }
 }
@@ -158,11 +161,11 @@ fn slots(base: &Path) -> Vec<u64> {
     v
 }
 
-/// Try the slot's lock without waiting: Some(file holding it) when it was idle.
-fn try_lock(base: &Path, n: u64) -> Option<std::fs::File> {
+/// Try the slot's lock without waiting: Some(guard holding it) when it was idle.
+fn try_lock(base: &Path, n: u64) -> Option<SlotLock> {
     let f = std::fs::OpenOptions::new().write(true).open(lock_path(base, n)).ok()?;
-    // SAFETY: flock on a descriptor we own; the lock lives as long as `f`.
-    (unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0).then_some(f)
+    // SAFETY: flock on a descriptor we own; the lock lives as long as the guard.
+    (unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0).then(|| SlotLock(f))
 }
 
 /// When the slot last went idle: its lock file's mtime.
@@ -300,7 +303,7 @@ pub fn lease_dir(bases: &[PathBuf], dir: &Path, who: &str, owner: &str, wait: st
     take(base, n, lock, true, who).map(Ok)
 }
 
-fn new_slot(base: &Path) -> std::io::Result<(u64, std::fs::File)> {
+fn new_slot(base: &Path) -> std::io::Result<(u64, SlotLock)> {
     let mut n = slots(base).last().copied().unwrap_or(0) + 1;
     loop {
         match std::fs::OpenOptions::new().write(true).create_new(true).open(lock_path(base, n)) {
@@ -316,15 +319,15 @@ fn new_slot(base: &Path) -> std::io::Result<(u64, std::fs::File)> {
     }
 }
 
-fn take(base: &Path, n: u64, mut lock: std::fs::File, reused: bool, who: &str) -> std::io::Result<Lease> {
+fn take(base: &Path, n: u64, mut lock: SlotLock, reused: bool, who: &str) -> std::io::Result<Lease> {
     use std::io::Write;
     let dir = dir_path(base, n);
     std::fs::create_dir_all(&dir)?;
     // The holder's name, for whoever reads the base; writing it stamps the lock file, so a
     // holder that dies without releasing reads as idle since it leased.
     let _ = std::fs::remove_file(gate_path(base, n));
-    let _ = lock.set_len(0);
-    let _ = lock.write_all(who.as_bytes());
+    let _ = lock.0.set_len(0);
+    let _ = lock.0.write_all(who.as_bytes());
     let last_repo = std::fs::read_to_string(repo_path(base, n)).ok().map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
     Ok(Lease { dir, base: base.to_path_buf(), n, lock, reused, last_repo, started: SystemTime::now() })
 }
@@ -903,13 +906,8 @@ mod tests {
         assert!(lease_dir(&bases, &dir, "gate", "builder", std::time::Duration::ZERO).unwrap().is_ok());
     }
 
-    /// Whether a slot given up by `give_up` is leasable while a forked child, not yet exec'd,
-    /// still shares the lock's open file description.
-    fn lockable_beside_a_forked_child(tag: &str, give_up: fn(Lease)) -> Result<(), Refused> {
-        let d = testkit::TempDir::new(tag);
-        let bases = vec![d.path().join("base")];
-        let l = lease(&bases, "builder").unwrap();
-        let dir = l.dir().to_path_buf();
+    /// Run `f` while a forked child, not yet exec'd, shares every open file description.
+    fn beside_a_forked_child<T>(f: impl FnOnce() -> T) -> T {
         // SAFETY: the child calls only the async-signal-safe sleep and _exit.
         let child = unsafe { libc::fork() };
         if child == 0 {
@@ -921,14 +919,25 @@ mod tests {
             }
         }
         assert!(child > 0, "fork failed");
-        give_up(l);
-        let got = lease_dir(&bases, &dir, "probe", "", std::time::Duration::ZERO).unwrap().map(drop);
+        let got = f();
         // SAFETY: `child` is our own unreaped child.
         unsafe {
             libc::kill(child, libc::SIGKILL);
             libc::waitpid(child, std::ptr::null_mut(), 0);
         }
         got
+    }
+
+    /// Whether a slot given up by `give_up` is leasable beside a forked child.
+    fn lockable_beside_a_forked_child(tag: &str, give_up: fn(Lease)) -> Result<(), Refused> {
+        let d = testkit::TempDir::new(tag);
+        let bases = vec![d.path().join("base")];
+        let l = lease(&bases, "builder").unwrap();
+        let dir = l.dir().to_path_buf();
+        beside_a_forked_child(|| {
+            give_up(l);
+            lease_dir(&bases, &dir, "probe", "", std::time::Duration::ZERO).unwrap().map(drop)
+        })
     }
 
     #[test_id(tam523y)]
@@ -944,6 +953,22 @@ mod tests {
     #[test]
     fn a_dropped_lease_is_lockable_while_a_forked_child_still_shares_its_lock() {
         assert_eq!(lockable_beside_a_forked_child("bdir-fork-drop", drop), Ok(()));
+    }
+
+    #[test_id(t97w6tc)]
+    #[test]
+    fn a_dropped_slot_lock_is_lockable_while_a_forked_child_still_shares_it() {
+        let d = testkit::TempDir::new("bdir-fork-slot-lock");
+        let bases = vec![d.path().join("base")];
+        let l = lease(&bases, "builder").unwrap();
+        let n = l.n;
+        l.release();
+        let g = try_lock(&bases[0], n).unwrap();
+        let relocked = beside_a_forked_child(|| {
+            drop(g);
+            try_lock(&bases[0], n).is_some()
+        });
+        assert!(relocked, "a dropped slot lock is still held by the forked child");
     }
 
     #[test_id(t0ujgqv)]
