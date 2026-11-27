@@ -243,8 +243,11 @@ pub fn record_lines(
     pushed
 }
 
+/// How [`record`] begins the error for a line that never reached the inbox.
+const APPEND_REFUSED: &str = "cannot append to";
+
 fn append_and_push(inbox: &Path, line: &str, wake: &str, pattern: &str, flusher: &impl Fn() -> Result<PathBuf, String>) -> Result<bool, String> {
-    append_line(inbox, line).map_err(|e| format!("cannot append to {}: {e}", inbox.display()))?;
+    append_line(inbox, line).map_err(|e| format!("{APPEND_REFUSED} {}: {e}", inbox.display()))?;
     match pushes(line, wake, pattern) {
         Ok(true) => {}
         Ok(false) => return Ok(false),
@@ -286,9 +289,16 @@ impl Sink {
         })
     }
 
-    /// [`record`] of one finished line.
+    /// [`record`] of one finished line, an `Err` only when the line is not in the inbox: a
+    /// writer remembers what it has said, so a failed push must not make it say it again.
     pub fn record(&self, line: &str) -> Result<bool, String> {
-        self.record_lines(&[line])
+        self.record_lines(&[line]).or_else(|e| {
+            if e.starts_with(APPEND_REFUSED) {
+                return Err(e);
+            }
+            eprintln!("{}: the line is in the inbox but was not pushed: {e}", self.name);
+            Ok(false)
+        })
     }
 
     /// [`record_lines`] of finished lines.

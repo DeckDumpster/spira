@@ -43,15 +43,16 @@ impl Acts for Live<'_> {
         io::rebase_stale(self.env, &self.repo.name, id)
     }
     fn tell(&mut self, msg: &str) {
-        println!("batcher: {msg}");
-        let line = format!(
-            "{} [watch:sift] {msg}",
-            io::utc_stamp(spira_config::vtime::now_epoch())
-        );
-        let wrote = inbox_rules::Sink::configured("batcher").and_then(|sink| sink.record(&line));
-        if let Err(e) = wrote {
-            eprintln!("batcher: sift: concierge not told ({e}): {msg}");
-        }
+        tell_concierge(inbox_rules::Sink::configured("batcher"), msg, spira_config::vtime::now_epoch());
+    }
+}
+
+/// What the screen did, said on stdout and in the Concierge inbox.
+pub fn tell_concierge(sink: Result<inbox_rules::Sink, String>, msg: &str, now: u64) {
+    println!("batcher: {msg}");
+    let line = format!("{} [watch:sift] {msg}", io::utc_stamp(now));
+    if let Err(e) = sink.and_then(|sink| sink.record(&line)) {
+        eprintln!("batcher: sift: concierge not told ({e}): {msg}");
     }
 }
 

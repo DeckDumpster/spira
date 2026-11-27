@@ -81,14 +81,13 @@ Replaces the body of `spira/inbox-append.sh`, which becomes `exec inbox-triage a
 * **One write leg for every writer (sp-nasmjd).** Appending the line, the push decision
   (`inbox_rules::pushes`) and the spool-and-start-the-flusher step are `inbox_rules::record`, a
   library function with no store and no scheduler behind it. `append` calls it with its own
-  executable as the flusher; spira-runtime's `World::inbox_append` calls it with `inbox-triage`
-  (its unit's `PATH` names the release `bin/`), and `watchd`'s in-process gate is
-  `inbox_rules::pushes`. Any other writer of `SPIRA_CONCIERGE_INBOX` calls `record` and never
-  writes the file itself — a direct write is a P0 that never pushes. The scheduler watchdog's
-  page (`InboxPager::page` in `watchdog/src/main.rs`, branch `spira/sp-xb12ib-hand`) is the
-  one writer still to move: it must call `inbox_rules::record(&inbox, &line, &wake, &pattern,
-  Path::new("inbox-triage"))` with `SPIRA_CONCIERGE_PUSH_WAKE`/`_PATTERN` read beside
-  `SPIRA_CONCIERGE_INBOX`, in place of its own `OpenOptions` append.
+  executable as the flusher; spira-runtime's `World::inbox_append` and heimdall's page call it
+  with the release's `inbox-triage`. Every other writer holds an `inbox_rules::Sink`, built by
+  `Sink::configured(<publisher name>)` from `SPIRA_CONCIERGE_INBOX`, `SPIRA_RUN` and the two push
+  keys, and calls `Sink::record`, which is `record` with the release's `inbox-triage` as the
+  flusher. It fails only when the line did not reach the inbox: a push that cannot start is said
+  on stderr. No writer of `SPIRA_CONCIERGE_INBOX` writes the file itself — a direct write is
+  never announced on `concierge/inbox` and never pushes.
 
 ## Test strategy
 

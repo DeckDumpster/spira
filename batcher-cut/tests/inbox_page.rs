@@ -2,34 +2,13 @@
 //! The batcher's round pages, a real writer of the inbox, against a real broker.
 #[macro_use]
 extern crate spira_test_id;
+#[path = "../../inbox-rules/tests/support/announced.rs"]
+mod support;
 
+use support::{announced, sink};
 use batcher_cut::pace::{self, Files, Seams};
-use inbox_rules::{Bus, Sink};
+use batcher_cut::screen::tell_concierge;
 use testkit::broker::Broker;
-
-fn sink(d: &testkit::TempDir, broker: &Broker, name: &str) -> Sink {
-    Sink {
-        inbox: d.join("inbox.log"),
-        cursor: d.join("inbox.cursor"),
-        bus: Bus::At(broker.socket().to_path_buf()),
-        wake: String::new(),
-        pattern: String::new(),
-        name: name.into(),
-    }
-}
-
-/// The one line the inbox holds, which `concierge/inbox` must carry under `name`.
-fn announced(broker: &Broker, sink: &Sink) -> String {
-    let held = broker.retained("concierge/inbox");
-    let [(_, value)] = held.as_slice() else { panic!("one retained value: {held:?}") };
-    let value: serde_json::Value = serde_json::from_str(value).unwrap();
-    let inbox = std::fs::read_to_string(&sink.inbox).unwrap();
-    let line = inbox.strip_suffix('\n').expect("a finished line");
-    assert_eq!(value["unread"], 1, "{value}");
-    assert_eq!(value["oldest"], serde_json::json!(line));
-    assert_eq!(broker.retained(&format!("publisher/{}", sink.name)).len(), 1, "named for the writer");
-    line.to_string()
-}
 
 #[test_id(tkasbxp)]
 #[test]
@@ -85,4 +64,15 @@ fn a_repeated_refusal_page_is_announced_as_the_batcher() {
 
     let line = announced(&broker, &inbox);
     assert!(line.starts_with("T1 [watch:rounds] ROUNDS STOPPED a: 2 consecutive rounds refused"), "{line}");
+}
+
+#[test_id(t1cj4pw)]
+#[test]
+fn a_sift_line_is_announced_as_the_batcher() {
+    let (broker, d) = (Broker::up(), testkit::TempDir::new("batcher-sift"));
+    let inbox = sink(&d, &broker, "batcher");
+
+    tell_concierge(Ok(inbox.clone()), "sp-a sent back", 0);
+
+    assert_eq!(announced(&broker, &inbox), "19700101T000000Z [watch:sift] sp-a sent back");
 }

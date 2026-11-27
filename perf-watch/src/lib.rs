@@ -290,6 +290,17 @@ pub fn append_inbox(sink: &Sink, line: &str) {
     }
 }
 
+/// The sink for a run: the configured inbox, unless `--inbox` names another file. That one is
+/// not the Concierge inbox, so nothing is announced or pushed for it.
+pub fn inbox_sink(mut configured: Sink, named: Option<std::path::PathBuf>) -> Sink {
+    if let Some(path) = named.filter(|p| *p != configured.inbox) {
+        configured.inbox = path;
+        configured.bus = inbox_rules::Bus::Off;
+        configured.wake = String::new();
+    }
+    configured
+}
+
 /// A plain append of a finished line to a log that is not the inbox.
 pub fn append_line(path: &str, line: &str) {
     if path.is_empty() {
@@ -473,6 +484,18 @@ mod tests {
         assert_eq!(rows(), 1, "a standing alarm is one row, not one per pass");
         pass_at(1_001_900, &mut health);
         assert_eq!(rows(), 2, "still over the limit 30 minutes on, it is raised again");
+    }
+
+    #[test_id(tduekw2)]
+    #[test]
+    fn only_the_configured_inbox_is_announced_and_pushed() {
+        let configured = Sink { inbox: "concierge".into(), cursor: "cursor".into(), bus: inbox_rules::Bus::Configured, wake: "wake".into(), pattern: "P0".into(), name: "perf-watch".into() };
+        for named in [None, Some("concierge".into())] {
+            let same = inbox_sink(configured.clone(), named);
+            assert_eq!((same.inbox.to_str(), &same.bus, same.wake.as_str()), (Some("concierge"), &inbox_rules::Bus::Configured, "wake"));
+        }
+        let other = inbox_sink(configured, Some("scratch".into()));
+        assert_eq!((other.inbox.to_str(), &other.bus, other.wake.as_str()), (Some("scratch"), &inbox_rules::Bus::Off, ""));
     }
 
     #[test_id(tw6opme)]

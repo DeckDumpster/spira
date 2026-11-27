@@ -11,6 +11,11 @@ name = "publish"
 path = "tests/publish.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "sink"
+path = "tests/sink.rs"
+required-features = ["integration"]
+
 [features]
 integration = ["ports/integration", "spira-config/integration", "spira-pub/integration", "testkit/integration", "spira-test-id/integration"]
 [dependencies]
@@ -21,5 +26,6 @@ ports = { path = "../ports" }
 spira-config = { path = "../spira-config" }
 
 [dev-dependencies]
+libc = "0.2"
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }

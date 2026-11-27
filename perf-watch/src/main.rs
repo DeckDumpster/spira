@@ -145,13 +145,7 @@ fn run() -> Result<(), String> {
     let prior = health.as_deref().and_then(|f| std::fs::read_to_string(f).ok()).map(|t| Health::parse(&t)).unwrap_or_default();
     let stats_argv: Vec<String> = stats.split_whitespace().map(String::from).collect();
     let Some(out) = run_pass(&cfg, &probes, &stats_argv, &prior, &Wall(Instant::now()), &mut Spawn::new()) else { return Ok(()) };
-    let mut sink = inbox_rules::Sink::configured("perf-watch")?;
-    if let Some(path) = inbox.map(std::path::PathBuf::from).filter(|p| *p != sink.inbox) {
-        // Another file is not the Concierge inbox: nothing is announced or pushed for it.
-        sink.inbox = path;
-        sink.bus = inbox_rules::Bus::Off;
-        sink.wake = String::new();
-    }
+    let sink = perf_watch::inbox_sink(inbox_rules::Sink::configured("perf-watch")?, inbox.map(std::path::PathBuf::from));
     let now = Wall(Instant::now()).epoch_secs();
     for l in &out.lines {
         println!("{l}");
