@@ -114,7 +114,7 @@ dolt-collect|log|@SPIRA_RUN@/dolt-collect.log
 unit-run-dbus|log|@SPIRA_RUN@/unit-run-dbus.log
 
 # CONCIERGE-INBOX is the durable inbox the Concierge reads. The session is told it has news by
-# the `concierge/inbox` topic; the row keeps the unread count and cursor like any other.
+# the `concierge/inbox` topic; `watchd drain concierge-inbox --all` reads the unread lines and moves the cursor.
 concierge-inbox|log|@SPIRA_CONCIERGE_INBOX@
 
 # LC-LATENCY is the alarm for a spira-lc verb and caller with a call over SPIRA_LC_ANSWER_MS:

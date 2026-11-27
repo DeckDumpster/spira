@@ -90,8 +90,8 @@ if [ -n "${SPIRA_CONCIERGE:-}" ]; then
     _cunread="$(wc -l < "$_cinbox" 2>/dev/null || echo 0)"
     case "$_cunread" in *[!0-9]*|'') _cunread=0 ;; esac
     _sub="$(command -v spira-sub || printf spira-sub)"
-    printf 'MANDATORY FIRST ACTION: start your event stream, once, before anything else — one long-running background reader, command=SPIRA_TOML=%s %s follow --as concierge. It prints one line per delivery, [sub:<id>] <topic> <fields> — <note>, and keeps running; do not restart it per line. Change what it watches with spira-sub add|drop|list (same SPIRA_TOML; `%s add -h`), never by starting or stopping a reader. If the list has no concierge/inbox subscription, add one: it says when %s (%s lines) has news. Then read recent inbox lines: tail -20 %s\n' \
-        "${SPIRA_TOML:-}" "$_sub" "$_sub" "$_cinbox" "$_cunread" "$_cinbox"
+    printf 'MANDATORY FIRST ACTION: start your event stream, once, before anything else — one long-running background reader, command=SPIRA_TOML=%s %s follow --as concierge. It prints one line per delivery, [sub:<id>] <topic> <fields> — <note>, and keeps running; do not restart it per line. Change what it watches with spira-sub add|drop|list (same SPIRA_TOML; `%s add -h`), never by starting or stopping a reader. If the list has no concierge/inbox subscription, add one: it says when %s (%s lines) has news. Read that news now, and after each such delivery, with watchd drain concierge-inbox --all: it prints the unread lines and marks them read.\n' \
+        "${SPIRA_TOML:-}" "$_sub" "$_sub" "$_cinbox" "$_cunread"
 fi
 
 WATCHD=watchd

@@ -51,7 +51,8 @@ impl Fixture {
 
 /// One `concierge.sh wake`: what it said, or the refusal it wrote.
 fn concierge_wake(script: &Path, line: &str) -> Result<(), String> {
-    let out = Command::new(script).arg("wake").arg(line).stdin(Stdio::null()).output().unwrap();
+    // The bound turns a wake that holds into a failure rather than a hung suite.
+    let out = Command::new("timeout").arg("20").arg(script).arg("wake").arg(line).stdin(Stdio::null()).output().unwrap();
     if out.status.success() {
         return Ok(());
     }

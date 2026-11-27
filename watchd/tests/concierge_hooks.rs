@@ -163,7 +163,7 @@ fn session_start(env: &[(&str, &str)]) -> String {
 #[test]
 fn the_concierges_session_start_names_the_event_stream_and_no_one_shot_waiter() {
     let out = session_start(&[("SPIRA_CONCIERGE", "1")]);
-    for want in ["spira-sub follow --as concierge", "spira-sub add|drop|list"] {
+    for want in ["spira-sub follow --as concierge", "spira-sub add|drop|list", "concierge/inbox", "watchd drain concierge-inbox --all"] {
         assert!(out.contains(want), "{want}: {out}");
     }
     assert!(!out.contains("watchd next"), "{out}");
