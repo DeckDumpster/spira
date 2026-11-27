@@ -46,9 +46,16 @@ jobs:
   build:
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/spira-round-candidate/')
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # ceil((2 * (600 stock instance-status waiter + SETUP_MAX) + WAIT_MAX) / 60) + 5
+    timeout-minutes: 97
     env:
       AWS_REGION: ${{ vars.ROUND_AMI_REGION }}
+      # Longest successful whole run of this workflow, 480s (2026-11-25), x 3. A phase cannot
+      # outlast its run, so this bounds the setup command from above.
+      ROUND_AMI_SETUP_MAX: 1440
+      ROUND_AMI_SETUP_INTERVAL: 30
+      # The same measurement (480s whole run, 2026-11-25, x 3), bounding the image wait.
+      ROUND_AMI_WAIT_MAX: 1440
     steps:
       - uses: actions/checkout@v4
 
@@ -92,34 +99,70 @@ jobs:
         run: |
           set -euo pipefail
           base="$(aws ssm get-parameter --name "${{ vars.ROUND_AMI_BASE_PARAM }}" --query Parameter.Value --output text)"
-          id="$(aws ec2 run-instances --image-id "$base" \
-            --instance-type "${{ vars.ROUND_AMI_INSTANCE_TYPE }}" \
-            --subnet-id "${{ vars.ROUND_AMI_SUBNET }}" \
-            --security-group-ids "${{ vars.ROUND_AMI_SECURITY_GROUP }}" \
-            --iam-instance-profile "Name=${{ vars.ROUND_AMI_INSTANCE_PROFILE }}" \
-            --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=100,VolumeType=gp3}' \
-            --instance-initiated-shutdown-behavior terminate \
-            --tag-specifications "ResourceType=instance,Tags=[{Key=spill:owner,Value=round},{Key=Name,Value=spira-round-build}]" \
-            --query 'Instances[0].InstanceId' --output text)"
-          trap 'aws ec2 terminate-instances --instance-ids "$id" >/dev/null || true' EXIT
-          aws ec2 wait instance-status-ok --instance-ids "$id"
-
           toolchain="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)"
-          url="$(aws s3 presign "s3://${{ vars.ROUND_AMI_STAGING_BUCKET }}/round-ami/${{ github.run_id }}.tgz" --expires-in 14400)"
-          cmds="$(jq -nc --arg u "$url" --arg t "$toolchain" \
-            -f round-vm/ssm-commands.jq)"
-          cid="$(aws ssm send-command --instance-ids "$id" --document-name AWS-RunShellScript \
-            --timeout-seconds 3600 --parameters "$cmds" --query Command.CommandId --output text)"
-          for _ in $(seq 1 240); do
-            st="$(aws ssm get-command-invocation --command-id "$cid" --instance-id "$id" --query Status --output text 2>/dev/null || echo Pending)"
-            case "$st" in
-              Success) break ;;
-              Pending|InProgress|Delayed) sleep 30 ;;
-              *) aws ssm get-command-invocation --command-id "$cid" --instance-id "$id" --query '[StandardOutputContent,StandardErrorContent]' --output text | tail -n 100 >&2
-                 echo "round image setup ended $st" >&2; exit 1 ;;
-            esac
-          done
-          [ "$st" = Success ] || { echo "round image setup did not finish" >&2; exit 1; }
+          status_file="$RUNNER_TEMP/setup-status"
+          ids=()
+          trap '[ "${#ids[@]}" = 0 ] || aws ec2 terminate-instances --instance-ids "${ids[@]}" >/dev/null || true' EXIT
+
+          # Returns 0 set up, 3 hung (phase, hung_after and last say where), 1 failed.
+          # errexit is off inside a function whose status is tested, so every step returns itself.
+          attempt() {
+            local url cmds cid started rc
+            id="$(aws ec2 run-instances --image-id "$base" \
+              --instance-type "${{ vars.ROUND_AMI_INSTANCE_TYPE }}" \
+              --subnet-id "${{ vars.ROUND_AMI_SUBNET }}" \
+              --security-group-ids "${{ vars.ROUND_AMI_SECURITY_GROUP }}" \
+              --iam-instance-profile "Name=${{ vars.ROUND_AMI_INSTANCE_PROFILE }}" \
+              --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=100,VolumeType=gp3}' \
+              --instance-initiated-shutdown-behavior terminate \
+              --tag-specifications "ResourceType=instance,Tags=[{Key=spill:owner,Value=round},{Key=Name,Value=spira-round-build}]" \
+              --query 'Instances[0].InstanceId' --output text)" || return 1
+            ids+=("$id")
+            echo "launched $id"
+
+            phase=instance-status
+            started=$SECONDS
+            if ! aws ec2 wait instance-status-ok --instance-ids "$id"; then
+              hung_after=$((SECONDS - started))
+              last="$(aws ec2 describe-instance-status --instance-ids "$id" --include-all-instances \
+                --query 'InstanceStatuses[0].[InstanceState.Name,InstanceStatus.Status,SystemStatus.Status]' --output text | tr '\t' '/')"
+              last="${last:-unknown}"
+              echo "$id did not reach instance-status-ok; last reported $last"
+              echo "--- console output of $id (tail)"
+              aws ec2 get-console-output --instance-id "$id" --latest --output text | tail -n 60
+              return 3
+            fi
+
+            phase=setup
+            url="$(aws s3 presign "s3://${{ vars.ROUND_AMI_STAGING_BUCKET }}/round-ami/${{ github.run_id }}.tgz" --expires-in 14400)" || return 1
+            cmds="$(jq -nc --arg u "$url" --arg t "$toolchain" \
+              -f round-vm/ssm-commands.jq)" || return 1
+            cid="$(aws ssm send-command --instance-ids "$id" --document-name AWS-RunShellScript \
+              --timeout-seconds "$ROUND_AMI_SETUP_MAX" --parameters "$cmds" --query Command.CommandId --output text)" || return 1
+            started=$SECONDS
+            rm -f "$status_file"
+            rc=0
+            ROUND_AMI_SETUP_STATUS_FILE="$status_file" bash round-vm/wait-setup.sh "$cid" "$id" || rc=$?
+            hung_after=$((SECONDS - started))
+            last="$(cat "$status_file" 2>/dev/null || echo unknown)"
+            return "$rc"
+          }
+
+          rc=0
+          attempt || rc=$?
+          if [ "$rc" = 3 ]; then
+            first="$id"
+            echo "::warning title=round image setup hung::attempt 1 on $first hung in $phase after ${hung_after}s (last status $last); retrying on a new instance"
+            aws ec2 terminate-instances --instance-ids "$first" >/dev/null || echo "could not terminate $first; retried at exit" >&2
+            rc=0
+            attempt || rc=$?
+            if [ "$rc" = 3 ]; then
+              echo "attempt 2 on $id hung in $phase after ${hung_after}s (last status $last)" >&2
+              echo "round image setup hung twice ($first, $id)" >&2
+              exit 1
+            fi
+          fi
+          [ "$rc" = 0 ] || { echo "round image setup failed on $id in $phase" >&2; exit 1; }
 
           ami="$(aws ec2 create-image --instance-id "$id" --name "spira-round-$SHA-$(date -u +%Y%m%d%H%M%S)" \
             --tag-specifications \
