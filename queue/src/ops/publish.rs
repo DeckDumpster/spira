@@ -221,31 +221,10 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         }
     }
 
-    if push_mode {
-        if !w.lib.push(
-            &path,
-            &remote,
-            &format!("{head_sha}:refs/heads/{forge_branch}"),
-        ) {
-            w.err(format!(
-                "queue.sh publish: could not push {head_sha} to {remote}/{forge_branch}"
-            ));
-            return FAIL;
-        }
-        landing_log(
-            &c.s.run,
-            &format!(
-                "QUEUE PUBLISH_PUSH {} repo={name} remote={remote} branch={forge_branch} from={forge_sha} to={head_sha}",
-                w.clock.now()
-            ),
-        );
-        w.out(format!(
-            "queue.sh publish: pushed {name} {base} ({head_sha}) to {remote}/{forge_branch}, was {forge_sha}"
-        ));
-        return OK;
-    }
-
-    if let Some((pr, branch)) = open_publish_at(w, &c, &path, &remote, &head_sha) {
+    let open = (!push_mode)
+        .then(|| open_publish_at(w, &c, &path, &remote, &head_sha))
+        .flatten();
+    if let Some((pr, branch)) = open {
         let rec = publish_record(
             &pr,
             &head_sha,
@@ -269,6 +248,35 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         );
         w.out(format!(
             "queue.sh publish: PR {pr} ({branch}) is already open at {head_sha} — adopted, no second PR opened"
+        ));
+        return OK;
+    }
+
+    if let Err(e) = super::batch::write_deny_list_variable(w, &c, &path, &head_sha) {
+        w.err(format!("queue.sh publish: {e} — nothing pushed"));
+        return FAIL;
+    }
+
+    if push_mode {
+        if !w.lib.push(
+            &path,
+            &remote,
+            &format!("{head_sha}:refs/heads/{forge_branch}"),
+        ) {
+            w.err(format!(
+                "queue.sh publish: could not push {head_sha} to {remote}/{forge_branch}"
+            ));
+            return FAIL;
+        }
+        landing_log(
+            &c.s.run,
+            &format!(
+                "QUEUE PUBLISH_PUSH {} repo={name} remote={remote} branch={forge_branch} from={forge_sha} to={head_sha}",
+                w.clock.now()
+            ),
+        );
+        w.out(format!(
+            "queue.sh publish: pushed {name} {base} ({head_sha}) to {remote}/{forge_branch}, was {forge_sha}"
         ));
         return OK;
     }

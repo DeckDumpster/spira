@@ -4552,6 +4552,94 @@ fn publishable(t: &T) {
     ];
 }
 
+fn deny_list_publish_world() -> T {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    reads_the_list_at(&t, "m3", "      run: echo \"${{ vars.SPIRA_TEST_DENY_LIST }}\" > deny\n");
+    *t.scripts.deny_list.borrow_mut() = Some(Ok(DENY_SNAPSHOT.into()));
+    t
+}
+
+fn assert_publish_wrote_the_list_once(t: &T) {
+    assert_eq!(variable_writes(t), [format!("variable-set SPIRA_TEST_DENY_LIST\n{DENY_SNAPSHOT}")]);
+    assert!(t.scripts.calls.borrow().contains(&format!("deny-list --at {}", t.clock.now())), "{:?}", t.scripts.calls.borrow());
+}
+
+/// A push that fails ends the publish there, so a write seen beside it came first.
+fn assert_publish_writes_before_pushing(mode: spira_config::PublishMode, refspec: &str) {
+    let t = deny_list_publish_world();
+    t.lib.r.borrow_mut().publish_mode = mode;
+    assert_eq!(t.run(&["publish"]), 0, "{}\n{}", t.out(), t.err());
+    assert_publish_wrote_the_list_once(&t);
+    assert!(t.lib.has(refspec), "{:?}", t.lib.calls.borrow());
+
+    let t = deny_list_publish_world();
+    t.lib.r.borrow_mut().publish_mode = mode;
+    t.lib.push_ok.set(false);
+    assert_eq!(t.run(&["publish"]), 1, "{}", t.out());
+    assert_publish_wrote_the_list_once(&t);
+    assert!(t.lib.has(refspec), "{:?}", t.lib.calls.borrow());
+}
+
+#[test_id(tew4tpn)]
+#[test]
+fn publish_writes_the_deny_list_variable_before_pushing_the_publish_branch() {
+    assert_publish_writes_before_pushing(spira_config::PublishMode::Pr, "push origin m3:refs/heads/spira/publish/");
+}
+
+#[test_id(t2mast9)]
+#[test]
+fn a_push_mode_publish_writes_the_deny_list_variable_before_moving_the_forge_branch() {
+    assert_publish_writes_before_pushing(spira_config::PublishMode::Push, "push origin m3:refs/heads/main");
+}
+
+fn assert_publish_pushed_nothing(t: &T, cause: &str) {
+    assert_eq!(t.run(&["publish"]), 1, "{}", t.out());
+    let err = t.err();
+    assert!(err.contains("SPIRA_TEST_DENY_LIST") && err.contains(cause) && err.contains("nothing pushed"), "{err}");
+    assert!(!t.lib.has("push "), "{:?}", t.lib.calls.borrow());
+    assert!(!t.qfile("publish").exists());
+    assert!(!t.landing_log().contains("QUEUE PUBLISH"), "{}", t.landing_log());
+}
+
+#[test_id(tdv0ys7)]
+#[test]
+fn publish_pushes_nothing_when_the_deny_list_variable_cannot_be_written() {
+    for mode in [spira_config::PublishMode::Pr, spira_config::PublishMode::Push] {
+        let t = deny_list_publish_world();
+        t.lib.r.borrow_mut().publish_mode = mode;
+        *t.forge.variable_err.borrow_mut() = Some("rc=1: HTTP 403".into());
+        assert_publish_pushed_nothing(&t, "HTTP 403");
+    }
+}
+
+#[test_id(tp9d75v)]
+#[test]
+fn publish_pushes_nothing_when_the_deny_list_cannot_be_read() {
+    for mode in [spira_config::PublishMode::Pr, spira_config::PublishMode::Push] {
+        let t = deny_list_publish_world();
+        t.lib.r.borrow_mut().publish_mode = mode;
+        *t.scripts.deny_list.borrow_mut() = Some(Err("registry busy".into()));
+        assert_publish_pushed_nothing(&t, "registry busy");
+        assert!(variable_writes(&t).is_empty());
+    }
+}
+
+#[test_id(tj5ct6n)]
+#[test]
+fn publish_leaves_the_variable_alone_unless_a_workflow_reads_it() {
+    let comment_only = deny_list_publish_world();
+    reads_the_list_at(&comment_only, "m3", "  # vars.SPIRA_TEST_DENY_LIST is read elsewhere\n");
+    let no_reader = deny_list_publish_world();
+    no_reader.git.greps.borrow_mut().clear();
+    for t in [comment_only, no_reader] {
+        assert_eq!(t.run(&["publish"]), 0, "{}\n{}", t.out(), t.err());
+        assert!(variable_writes(&t).is_empty());
+        assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("deny-list")));
+        assert!(t.lib.has("push origin m3:refs/heads/spira/publish/"), "{:?}", t.lib.calls.borrow());
+    }
+}
+
 #[test_id(tjkuvh6)]
 #[test]
 fn publish_prefers_the_lifecycle_row_tip_when_it_is_in_range() {
