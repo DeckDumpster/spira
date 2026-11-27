@@ -32,8 +32,13 @@ pub fn prepare(dir: &Path) -> std::io::Result<()> {
     for sub in ["target", "runs", "cargo"] {
         std::fs::create_dir_all(dir.join(sub))?;
     }
-    let _ = File::open(dir.join("target")).and_then(|f| f.set_modified(SystemTime::now()));
+    touch(&dir.join("target"));
     Ok(())
+}
+
+/// Marks `path` used now, for a reaper that judges idleness by mtime.
+pub fn touch(path: &Path) {
+    let _ = File::open(path).and_then(|f| f.set_modified(SystemTime::now()));
 }
 
 /// One non-blocking try at the cache's lock; `op` is `LOCK_SH` or `LOCK_EX`. Dropping the

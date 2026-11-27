@@ -15,6 +15,14 @@ use crate::spill::{HostLoad, HostRule};
 pub const HOST_HANDLE: &str = "host";
 pub const SLOT_FILE: &str = "host-round.lock";
 pub const PASS_GROUP_FILE: &str = "round-pass.group";
+/// Where [`FOREIGN_SCRIPT`] on this host has podman write its entry's container id, under its home.
+#[macro_export]
+macro_rules! entry_cid_file {
+    () => {
+        "round-entry.cid"
+    };
+}
+pub const ENTRY_CID_FILE: &str = entry_cid_file!();
 
 /// The home a host round runs under: one per `run_dir`, shared by every pass on this host.
 pub fn round_home(run_dir: &Path) -> PathBuf {
@@ -158,7 +166,8 @@ impl LocalRemote {
     }
 
     /// Kills the pass script this home last started, with everything it started. A pass left
-    /// running here shares the checkout, the build target and the results of the pass after it.
+    /// running here shares the checkout, the build target and the results of the pass after it,
+    /// and writes a warm cache its dead round no longer locks.
     pub fn stop_pass(&self) {
         self.stop_pass_of(None);
     }
@@ -175,7 +184,13 @@ impl LocalRemote {
             return;
         }
         let _ = fs::remove_file(self.group_file());
-        let Some(pgid) = pgid else { return };
+        if let Some(pgid) = pgid {
+            Self::kill_pass(pgid, started);
+        }
+        self.remove_entry_container();
+    }
+
+    fn kill_pass(pgid: i32, started: Option<String>) {
         let ours = match (proc_start(pgid), started) {
             (Some(now), Some(then)) => now == then,
             (None, _) => true,
@@ -184,15 +199,34 @@ impl LocalRemote {
         if !ours || !group_live(pgid) {
             return;
         }
-        // SAFETY: SIGKILL to the process group this home's pass script leads.
-        unsafe { libc::kill(-pgid, libc::SIGKILL) };
-        // clock-safe: a cap on the wait for the killed group to be reaped
+        // The launcher detaches its runner into a session of its own: found by descent, while
+        // the launcher still lives to be the parent.
+        let groups = groups_under(pgid);
+        for g in &groups {
+            // SAFETY: SIGKILL to a process group this home's pass script leads or started.
+            unsafe { libc::kill(-g, libc::SIGKILL) };
+        }
+        // clock-safe: a cap on the wait for the killed groups to be reaped
         for _ in 0..500 {
-            if !group_live(pgid) {
+            if !groups.iter().any(|g| group_live(*g)) {
                 return;
             }
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    /// A container outlives the podman client that started it, so killing the pass is not enough.
+    fn remove_entry_container(&self) {
+        let file = self.home.join(ENTRY_CID_FILE);
+        let Ok(cid) = fs::read_to_string(&file) else { return };
+        if !cid.trim().is_empty() {
+            match self.shell(&entry_removal(cid.trim())).stdin(Stdio::null()).output() {
+                Ok(o) if o.status.success() => {}
+                Ok(o) => eprintln!("round-vm: could not remove the entry's container {}: {}", cid.trim(), String::from_utf8_lossy(&o.stderr).trim()),
+                Err(e) => eprintln!("round-vm: could not remove the entry's container {}: {e}", cid.trim()),
+            }
+        }
+        let _ = fs::remove_file(&file);
     }
 
     fn start_pass(&self, mut cmd: std::process::Command) -> std::io::Result<std::process::Child> {
@@ -296,6 +330,43 @@ impl Remote for LocalRemote {
         feed_script(&mut child, crate::spool::REMOTE_ATTR_SCRIPT.as_bytes()).map_err(|e| format!("stdin: {e}"))?;
         Ok(child.wait().map_err(|e| format!("bash: {e}"))?.code().unwrap_or(255))
     }
+}
+
+fn entry_removal(cid: &str) -> String {
+    format!("timeout 30 podman rm --force --ignore --time 0 {}", crate::run::shell_quote(cid))
+}
+
+/// `(parent, process group)` of a live process.
+fn parent_and_group(stat: &str) -> Option<(i32, i32)> {
+    let mut f = stat.rsplit_once(')')?.1.split_whitespace().skip(1);
+    Some((f.next()?.parse().ok()?, f.next()?.parse().ok()?))
+}
+
+/// `pgid` and the group of every descendant of the process leading it.
+fn groups_under(pgid: i32) -> std::collections::BTreeSet<i32> {
+    let rows: Vec<(i32, i32, i32)> = fs::read_dir(system_paths::PROC)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let pid = e.file_name().to_str()?.parse().ok()?;
+            let (parent, group) = parent_and_group(&fs::read_to_string(e.path().join("stat")).ok()?)?;
+            Some((pid, parent, group))
+        })
+        .collect();
+    let mut groups = std::collections::BTreeSet::from([pgid]);
+    let mut tree = vec![pgid];
+    while let Some(at) = tree.pop() {
+        for (pid, _, group) in rows.iter().filter(|r| r.1 == at) {
+            if *group > 1 {
+                groups.insert(*group);
+            }
+            tree.push(*pid);
+        }
+    }
+    // SAFETY: getpgrp has no preconditions.
+    groups.remove(&unsafe { libc::getpgrp() });
+    groups
 }
 
 /// Whether any process still running (a zombie is not) belongs to process group `pgid`.
@@ -499,6 +570,42 @@ mod tests {
         let _ = child.wait();
         let _ = second.wait();
         assert!(gone, "the earlier pass's job outlived the start of the next pass");
+    }
+
+    #[test_id(thfciw3)]
+    #[test]
+    fn stopping_a_pass_kills_the_runner_the_launcher_detached_into_its_own_session() {
+        let home = dir("stop-detached");
+        let remote = LocalRemote { home: home.path().to_path_buf() };
+        let mut sh = remote.shell(&format!("bash -c {} launcher", crate::run::shell_quote(crate::run::REMOTE_LAUNCHER)));
+        sh.stdin(Stdio::piped());
+        let mut child = remote.start_pass(sh).unwrap();
+        feed_script(&mut child, b"sleep 300 & echo $! > \"$HOME/straggler.tmp\"; mv \"$HOME/straggler.tmp\" \"$HOME/straggler\"; wait\n").unwrap();
+        let straggler = (0..500).find_map(|_| fs::read_to_string(home.path().join("straggler")).ok().or_else(|| { std::thread::sleep(Duration::from_millis(10)); None })).expect("the script started its job"); // clock-safe: a cap on the wait for the shell to start its job
+        let straggler: i32 = straggler.trim().parse().unwrap();
+        remote.stop_pass();
+        let _ = child.wait();
+        let gone = !alive(straggler);
+        if !gone {
+            // SAFETY: SIGKILL to the one process this test started and found still running.
+            unsafe { libc::kill(straggler, libc::SIGKILL) };
+        }
+        assert!(gone, "the detached runner's job outlived the stop of its pass");
+    }
+
+    #[test_id(t0g7pei)]
+    #[test]
+    fn a_stopped_pass_forgets_its_entry_container_and_another_round_vms_end_leaves_it() {
+        let home = dir("entry-cid");
+        let remote = LocalRemote { home: home.path().to_path_buf() };
+        let cid = home.path().join(ENTRY_CID_FILE);
+        fs::write(home.path().join(PASS_GROUP_FILE), "999999999 1 7\n").unwrap();
+        fs::write(&cid, "").unwrap();
+        remote.stop_pass_of(Some(8));
+        assert!(cid.exists());
+        remote.stop_pass_of(Some(7));
+        assert!(!cid.exists());
+        assert_eq!(entry_removal("abc"), "timeout 30 podman rm --force --ignore --time 0 'abc'");
     }
 
     #[test_id(tpj36ml)]

@@ -212,10 +212,12 @@ const PUBLISH_ATTEMPTS: u32 = 20;
 pub const DEFAULT_CAP: u64 = 900;
 
 /// A repository's warm build state on the host, kept between runs: cargo's target dir and
-/// registry. A run never builds in the warm target and never copies it: the target is mounted
-/// as an overlay lower layer and the run writes to its own upper layer, which is merged into
-/// the warm target only when the run passes. The lock is shared for the life of a run and
-/// exclusive to merge, so runs overlap and only a merge waits for them to finish.
+/// registry. A testenv run never builds in the warm target and never copies it: the target is
+/// mounted as an overlay lower layer and the run writes to its own upper layer, which is merged
+/// into the warm target only when the run passes. The lock is shared for the life of a run and
+/// exclusive to write the target, so runs overlap and only a writer waits for them to finish.
+/// The other writer is a round-vm host round, which builds in the target directly under the
+/// exclusive lock, so the target also holds what a red or stopped round compiled.
 pub struct Cache {
     dir: PathBuf,
     bound: Bound,

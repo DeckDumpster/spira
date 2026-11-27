@@ -331,10 +331,7 @@ pub fn prune_targets(root: &Path, current: &Path, keep: usize) -> Vec<PathBuf> {
     removed
 }
 
-/// Marks `target` as just used, so pruning keeps it.
-pub fn touch(target: &Path) {
-    let _ = fs::File::open(target).and_then(|f| f.set_modified(std::time::SystemTime::now()));
-}
+pub use spira_config::foreign_cache::touch;
 
 /// How one sandboxed run ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
