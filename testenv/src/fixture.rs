@@ -1263,6 +1263,8 @@ pub mod fake {
         pub once_rc: Mutex<std::collections::HashMap<String, i32>>,
         /// Tiers that run until the run is cancelled, then answer the cancelled rc.
         pub once_hang: Mutex<std::collections::HashSet<String>>,
+        /// What a cap tripping inside each `run_once` and `purge` would have reported.
+        pub cut_here: Mutex<Vec<(String, Vec<String>)>>,
         /// `(from, to)` of every rename; a rename fails while `rename_fails` is set.
         pub renames: Mutex<Vec<(String, String)>>,
         pub rename_fails: Mutex<bool>,
@@ -1386,9 +1388,18 @@ pub mod fake {
         }
     }
 
+    impl FakeRuntime {
+        fn note_cut(&self) {
+            let what = crate::cap::describe();
+            let report = crate::cap::trip_report(&what, 1, "test");
+            self.cut_here.lock().unwrap().push((what, report));
+        }
+    }
+
     impl ContainerRuntime for FakeRuntime {
         fn run_once(&self, req: &crate::runtime::RunRequest) -> ExecOutcome {
             self.once_calls.lock().unwrap().push(req.clone());
+            self.note_cut();
             let tier = req.name.rsplit('-').next().unwrap_or("").to_string();
             if self.once_hang.lock().unwrap().contains(&tier) {
                 let end = Instant::now() + Duration::from_secs(20);
@@ -1436,6 +1447,7 @@ pub mod fake {
                 .collect()
         }
         fn purge(&self, name: &str) {
+            self.note_cut();
             self.purged.lock().unwrap().push(name.into());
             self.containers.lock().unwrap().retain(|c| c != name);
         }

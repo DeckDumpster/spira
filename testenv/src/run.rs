@@ -516,7 +516,7 @@ fn run_foreign(
     }
     for (t, (o, secs)) in tiers.iter().zip(outcomes) {
         (deps.out)(&foreign::tier_line(t, o, secs));
-        (deps.out)(&format!("  log ({t}): {}", results.join(format!("{t}.log")).display()));
+        (deps.out)(&cap::log_line(t, &results.join(format!("{t}.log"))));
         if o == foreign::Outcome::Red {
             (deps.out)(&format!("  command ({t}): {}", decl.tier[t].argv.join(" ")));
             let log = fs::read_to_string(results.join(format!("{t}.log"))).unwrap_or_default();
@@ -1010,8 +1010,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let mut fin = run_recorded(args, deps, &results, &rec);
     let queued = armed.waited().as_secs();
     if let Some(trip) = armed.finish() {
-        deps.log(&cap::over_cap_line(&trip.what, trip.secs, cap.source));
-        for line in &trip.logs {
+        for line in &trip.report {
             deps.log(line);
         }
         fin = Finish::fault(2, "over-cap", fin.ran);

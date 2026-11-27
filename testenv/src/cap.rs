@@ -32,7 +32,7 @@ static CONTAINERS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 #[cfg(test)]
 thread_local! {
-    static ONLY_MY_UNITS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub static ONLY_MY_UNITS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]
@@ -156,18 +156,23 @@ impl Drop for Running {
     }
 }
 
-fn log_line(unit: &str, path: &Path) -> String {
+pub(crate) fn log_line(unit: &str, path: &Path) -> String {
     format!("  log ({unit}): {}", path.display())
-}
-
-fn log_lines() -> Vec<String> {
-    units().iter().filter_map(|u| u.log.as_deref().map(|p| log_line(&u.name, p))).collect()
 }
 
 /// A cut run's whole explanation: nothing the run buffers or prints later survives `_exit`.
 pub fn trip_report(what: &str, secs: u64, source: &str) -> Vec<String> {
+    with_verdict(explain(&units(), what, secs, source))
+}
+
+fn with_verdict(mut lines: Vec<String>) -> Vec<String> {
+    lines.push("VERDICT FAULT rc=2 ran=0 reason=over-cap".to_string());
+    lines
+}
+
+fn explain(cut: &[Unit], what: &str, secs: u64, source: &str) -> Vec<String> {
     let mut out = vec![over_cap_line(what, secs, source)];
-    for u in units() {
+    for u in cut {
         let Some(path) = &u.log else { continue };
         out.push(log_line(&u.name, path));
         match std::fs::read(path) {
@@ -179,7 +184,6 @@ pub fn trip_report(what: &str, secs: u64, source: &str) -> Vec<String> {
             Err(e) => out.push(format!("  log ({}) unreadable: {e}", u.name)),
         }
     }
-    out.push("VERDICT FAULT rc=2 ran=0 reason=over-cap".to_string());
     out
 }
 
@@ -208,12 +212,17 @@ fn remove_held(remove: &dyn Fn(&str)) {
     }
 }
 
-fn describe() -> String {
-    let units: Vec<String> = units()
-        .into_iter()
-        .map(|u| match u.step {
+#[cfg(test)]
+pub(crate) fn describe() -> String {
+    describe_units(&units())
+}
+
+fn describe_units(cut: &[Unit]) -> String {
+    let units: Vec<String> = cut
+        .iter()
+        .map(|u| match &u.step {
             Some(step) => format!("{} (in {step})", u.name),
-            None => u.name,
+            None => u.name.clone(),
         })
         .collect();
     if !units.is_empty() {
@@ -229,11 +238,9 @@ pub fn over_cap_line(what: &str, secs: u64, source: &str) -> String {
     format!("over-cap: {what} was still running at the {secs}s cap ({source})")
 }
 
-/// What the cap found as it fired; the guards are gone by the time an unwound run reports it.
+/// Read as the cap fired: an unwound run has dropped its guards by the time it reports.
 pub struct Tripped {
-    pub what: String,
-    pub secs: u64,
-    pub logs: Vec<String>,
+    pub report: Vec<String>,
 }
 
 type Trip = Arc<Mutex<Option<Tripped>>>;
@@ -442,14 +449,15 @@ pub fn arm(cap: Cap, ledger: Option<PathBuf>) -> Armed {
         if !wait(&|| clock.lock().unwrap().counted() < limit) {
             return;
         }
-        let what = describe();
-        *slot.lock().unwrap() = Some(Tripped { what: what.clone(), secs: limit.as_secs(), logs: log_lines() });
+        let cut = units();
+        let what = describe_units(&cut);
+        *slot.lock().unwrap() = Some(Tripped { report: explain(&cut, &what, limit.as_secs(), source) });
         TRIPPED.store(true, Ordering::SeqCst);
         // The unwind is timed on the wall clock: a hold taken after the trip must not delay it.
         let tripped = Instant::now();
         if wait(&|| tripped.elapsed() < UNWIND) {
-            // Read before the kill: a tier it unblocks drops its guard and would leave the report.
-            let report = trip_report(&what, limit.as_secs(), source);
+            // The units as cut, with their logs as they are now: a tier may since have dropped its guard.
+            let report = with_verdict(explain(&cut, &what, limit.as_secs(), source));
             kill_descendants(std::process::id());
             remove_held(&|n| {
                 use crate::runtime::ContainerRuntime;
@@ -658,7 +666,7 @@ mod tests {
         }
         drop(unit);
         let trip = armed.finish().expect("tripped");
-        assert!(trip.logs.contains(&log_line("cap-unwound", log)), "{:?}", trip.logs);
+        assert!(trip.report.contains(&log_line("cap-unwound", log)), "{:?}", trip.report);
     }
 
     #[test_id(tyzcyxi)]
