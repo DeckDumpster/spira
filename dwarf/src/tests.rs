@@ -731,6 +731,89 @@ pub(crate) mod verdict_run {
         assert_eq!(*exec.1.lock().unwrap(), ["started", "ended"]);
     }
 
+    /// One ordered record of what a pilgrim launch ran: the world and sign-in calls, and the session.
+    #[derive(Default)]
+    struct Walk(Mutex<Vec<String>>);
+    impl Exec for Walk {
+        fn exec(&self, prog: &str, args: &[String], stdin: Option<Vec<u8>>, cwd: Option<&Path>) -> Out {
+            let line = args.join(" ");
+            if line.starts_with("world ") {
+                self.0.lock().unwrap().push(args[..2].join(" "));
+            } else if line.starts_with("mcp ") {
+                self.0.lock().unwrap().push(format!("{prog} {}", args[..2].join(" ")));
+            } else if prog == "env" {
+                self.0.lock().unwrap().push("sign-in".into());
+            }
+            WorldUp("SPIRA_LC_SOCKET=w/lc.sock\nSPIRA_TOML=w/config/sim.toml\n").exec(prog, args, stdin, cwd)
+        }
+    }
+    impl Launcher for Walk {
+        fn run(&self, spec: &SessionSpec, _: &Stop) -> i32 {
+            let tools = spec.args.iter().position(|a| a == "--allowedTools").map(|i| spec.args[i + 1].clone()).unwrap_or_default();
+            self.0.lock().unwrap().push(format!("launch {tools}"));
+            0
+        }
+    }
+
+    fn walk_of_a_site(account: &str) -> (Result<(), String>, Vec<String>) {
+        let _otel = OTEL.lock().unwrap_or_else(|e| e.into_inner());
+        let work = testkit::TempDir::new("dwarf-pilgrim-signin");
+        let w = work.path().to_path_buf();
+        let release = w.join("release");
+        std::fs::create_dir_all(release.join("bin")).unwrap();
+        testkit::write_exe(release.join("bin/sim"), "#!/bin/sh\n");
+        testkit::write_exe(release.join("bin/pilgrim-login"), "#!/bin/sh\n");
+        let _env = testkit::env(&[(spira_config::RELEASE_ENV, Some(release.to_str().unwrap()))]);
+        let walk = Walk::default();
+        let mut vars = super::complete_vars();
+        for (k, v) in [
+            ("SPIRA_REPO", "shared"),
+            ("SPIRA_AGENT", "agent-x"),
+            ("SPIRA_PILGRIM_MCP_SERVERS", "shop=https://shop.test/mcp"),
+            ("SPIRA_PILGRIM_ACCOUNT", account),
+            ("SPIRA_IDENTITY_LOGIN_HOST", "h.test"),
+            ("SPIRA_IDENTITY_LOGIN_CMD", "mint"),
+            ("SPIRA_IDENTITY_LOGIN_URL", "https://id.test/lc/"),
+        ] {
+            vars.insert(k.into(), v.into());
+        }
+        let cwd = std::env::current_dir().unwrap();
+        let res = with_run_launching(vars, &NoBd, Dirty(vec![]), &walk, &|| 0, &Seams(Default::default()), &Mute::default(), &walk, "", |r| {
+            r.rune = Rune::from_vars("pilgrim", &Default::default());
+            r.conf.run = w.join("run");
+            r.s.repo_name = "shop".into();
+            r.s.logf = Some(w.join("log"));
+            let bin = w.join("model-bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            testkit::write_exe(bin.join("work"), "#!/bin/sh\n");
+            r.d.env.set(spira_config::release_env::MODEL_BIN_OVERRIDE_ENV, &bin.display().to_string());
+            r.session(&w).map_err(|a| format!("{a:?}"))
+        });
+        std::env::set_current_dir(cwd).unwrap();
+        let calls = walk.0.lock().unwrap().clone();
+        (res, calls)
+    }
+
+    #[test_id(tooepee)]
+    #[test]
+    fn a_pilgrim_walking_a_site_launches_signed_in_with_its_tools_and_is_released() {
+        let (res, calls) = walk_of_a_site("walker@test");
+        res.unwrap();
+        let launch = calls.iter().find(|c| c.starts_with("launch ")).expect("launched");
+        assert!(launch.ends_with(",mcp__shop"), "{launch}");
+        let order: Vec<&str> = calls.iter().map(|c| if c.starts_with("launch ") { "launch" } else { c }).collect();
+        assert_eq!(order, ["world up", "agent-x mcp add", "sign-in", "launch", "agent-x mcp remove", "world down"]);
+    }
+
+    #[test_id(ta75kgd)]
+    #[test]
+    fn a_pilgrim_with_unset_sign_in_config_is_a_harness_red_and_launches_nothing() {
+        let (res, calls) = walk_of_a_site("");
+        let e = res.unwrap_err();
+        assert!(e.starts_with("Harness(") && e.contains("spira.pilgrim_account"), "{e}");
+        assert!(calls.is_empty(), "{calls:?}");
+    }
+
     #[test_id(tpl1fti)]
     #[test]
     fn the_env_the_session_port_receives_carries_the_forge_fences_and_no_token() {
