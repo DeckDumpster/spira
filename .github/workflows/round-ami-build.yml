@@ -83,7 +83,7 @@ jobs:
           if [ "$fresh" != 0 ] && [ "${{ github.event_name }}" = schedule ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
           if [ "$any" != 0 ] && [ "${{ github.event_name }}" = push ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
           if [ "$any" != 0 ] && [ "${{ github.event_name }}" = workflow_dispatch ] && [ "${{ inputs.force }}" != true ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
-          if [ "$any" != 0 ] && [ "$GITHUB_REF" != refs/heads/main ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
+          if [ "$any" != 0 ] && [ "$GITHUB_REF" != refs/heads/main ] && [ "${{ inputs.force }}" != true ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
 
       - name: Stage the tree
         if: steps.have.outputs.fresh != '1'
@@ -108,6 +108,7 @@ jobs:
           # errexit is off inside a function whose status is tested, so every step returns itself.
           attempt() {
             local url cmds cid started rc
+            phase=launch
             id="$(aws ec2 run-instances --image-id "$base" \
               --instance-type "${{ vars.ROUND_AMI_INSTANCE_TYPE }}" \
               --subnet-id "${{ vars.ROUND_AMI_SUBNET }}" \
