@@ -458,7 +458,8 @@ pub struct DrainReport {
     pub filed: usize,
     /// The other entries those filings settled.
     pub duplicates: usize,
-    /// Entries a filing was tried for and that stay, oldest reference first, each with why.
+    /// Entries the pass could not settle, tried or skipped for a lane-refused repo, oldest
+    /// reference first, each with why.
     pub stuck: Vec<(std::path::PathBuf, String)>,
     /// References found after the pass's batch was used up, left for the next one.
     pub held_back: usize,
@@ -1066,7 +1067,11 @@ mod tests {
     }
 
     fn walled_entry(reference: &str) -> String {
-        let e = SpoolEntry { reference: reference.into(), title: "t".into(), unit: "u".into(), incident_path: "p".into(), cause: "c".into(), repo: Some("walled".into()), body: b"payload".to_vec() };
+        entry_of(reference, Some("walled"))
+    }
+
+    fn entry_of(reference: &str, repo: Option<&str>) -> String {
+        let e = SpoolEntry { reference: reference.into(), title: "t".into(), unit: "u".into(), incident_path: "p".into(), cause: "c".into(), repo: repo.map(str::to_string), body: b"payload".to_vec() };
         String::from_utf8(format_entry(&e)).unwrap()
     }
 
@@ -1112,6 +1117,46 @@ mod tests {
         assert!(report.stuck[0].1.contains("bead: repo:walled does not admit lane incident"), "{report:?}");
         assert!(report.stuck.iter().all(|s| s.1 == report.stuck[0].1), "{report:?}");
         assert!(paths.iter().all(|p| p.exists()));
+    }
+
+    #[test_id(tnig9gb)]
+    #[test]
+    fn a_refused_call_uses_no_batch_slot() {
+        let dir = testkit::TempDir::new("incident-drain-refused-slot");
+        let env = Env { known_repos: vec!["spira".into(), "walled".into(), "fenced".into()], ..env_in(&dir) };
+        spool(&env, "20260101T000000Z-a", &entry_of("incident:walled", Some("walled")));
+        spool(&env, "20260101T000001Z-b", &entry_of("incident:fenced", Some("fenced")));
+        spool(&env, "20260101T000002Z-c", &entry("incident:admitted-a"));
+        spool(&env, "20260101T000003Z-d", &entry("incident:admitted-b"));
+        let bd = FakeBd { walled_repos: vec!["walled".into(), "fenced".into()], ..FakeBd::new() };
+        let report = drain_spool(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), 2);
+        assert_eq!((report.filed, report.stuck.len(), report.held_back), (2, 2, 0), "{report:?}");
+    }
+
+    #[test_id(trs5zf1)]
+    #[test]
+    fn a_skipped_reference_uses_no_batch_slot() {
+        let dir = testkit::TempDir::new("incident-drain-skip-slot");
+        let env = walled_env(&dir);
+        spool(&env, "20260101T000000Z-a", &walled_entry("incident:walled-a"));
+        spool(&env, "20260101T000001Z-b", &walled_entry("incident:walled-b"));
+        spool(&env, "20260101T000002Z-c", &entry("incident:admitted-a"));
+        spool(&env, "20260101T000003Z-d", &entry("incident:admitted-b"));
+        let report = drain_spool(&env, &walled_bd(), &FakeMailer::default(), &FixedClock(1_000_000), 2);
+        assert_eq!((report.filed, report.stuck.len(), report.held_back), (2, 2, 0), "{report:?}");
+    }
+
+    #[test_id(t8ofksq)]
+    #[test]
+    fn an_entry_naming_no_repo_shares_the_default_repos_refusal() {
+        let dir = testkit::TempDir::new("incident-drain-default-repo");
+        let env = Env { repo: Some("walled".into()), ..walled_env(&dir) };
+        spool(&env, "20260101T000000Z-a", &entry("incident:unnamed-a"));
+        spool(&env, "20260101T000001Z-b", &walled_entry("incident:named"));
+        spool(&env, "20260101T000002Z-c", &entry("incident:unnamed-b"));
+        let bd = walled_bd();
+        let report = drain_spool(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), BATCH);
+        assert_eq!((*bd.creates.borrow(), report.stuck.len()), (1, 3), "{report:?}");
     }
 
     #[test_id(th9bkzm)]
