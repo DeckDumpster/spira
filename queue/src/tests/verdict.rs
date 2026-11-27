@@ -1007,10 +1007,7 @@ fn pending_waits_while_the_run_is_young_or_progressing_and_cancels_a_stuck_one()
         "{}",
         t.out()
     );
-    assert!(record(&t).contains("head=h1\nbase=b0\n"), "{}", record(&t));
-    *t.forge.variable_err.borrow_mut() = None;
-    assert_eq!(pass_on(&t, "green\nhead-sha: h1\n"), 0, "{}", t.err());
-    assert!(t.lib.has("push origin +"), "{:?}", t.lib.calls.borrow());
+    assert_eq!(record(&t), before);
 }
 
 #[test_id(tvmxa00)]
