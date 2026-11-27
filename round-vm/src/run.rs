@@ -192,6 +192,8 @@ pub struct BatchJob {
     pub cap_secs: u64,
     /// `key = value` lines for the VM's `round-config.toml`: the operator's testenv limits.
     pub testenv_limits: String,
+    /// The task limit the foreign entry's container runs under: host testenv's `SPIRA_TESTENV_PIDS_LIMIT`.
+    pub pids_limit: u64,
     /// Seconds the VM waits for the unit-test job once the cap clock has stopped.
     pub post_guard_secs: u64,
     /// Mirror ref `base` holds the landing ref; set: the round lints before its suites.
@@ -305,9 +307,11 @@ macro_rules! phase_stamp_fn {
 /// tree and run the repository's own CI entry point (`${14}`) in its declared image (`${21}`). Its exit status is the one verdict,
 /// written as `ci.result`, so the round covers what CI covers by construction. An entry that runs past the
 /// cap (`$9`) is cut and recorded as a fault kind instead: it has no verdict. A non-empty `$6`
-/// is the repository's warm cache on this host ([`spira_config::foreign_cache`]).
+/// is the repository's warm cache on this host ([`spira_config::foreign_cache`]). `ci.out` opens with
+/// the container's own `pids.max`, as observed, not as asked for.
 pub const FOREIGN_SCRIPT: &str = concat!(r#"set -euo pipefail
-host_addr="$1" port="$2" cache_home="$6" round_ref="${12}" round_sha="${13}" entry="${14}" image="${21}" workdir="${22:-/work}"
+host_addr="$1" port="$2" cache_home="$6" round_ref="${12}" round_sha="${13}" entry="${14}" image="${21}" workdir="${22:-/work}" pids_limit="${24:-}"
+[ -n "$pids_limit" ] || { echo "round-vm: the host sent no pids limit" >&2; exit 2; }
 export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 rm -rf ~/round-bins ~/round-work ~/round-clone ~/round-setup.log ~/round-shims ~/"#, crate::entry_cid_file!(), r#"
 exec 2> >(tee ~/round-setup.log >&2)
@@ -344,7 +348,7 @@ fi
 phase entry
 t0=$(date +%s)
 rc=0
-timeout -k 5 "$9" podman run --cidfile "$HOME/"#, crate::entry_cid_file!(), r#"" --rm -v "$HOME/round-work:$workdir:Z" -w "$workdir" "${cache[@]}" "$image" bash -c "$entry" 2>&1 | tee "$res/ci.out" || rc=${PIPESTATUS[0]}
+timeout -k 5 "$9" podman run --cidfile "$HOME/"#, crate::entry_cid_file!(), r#"" --rm -v "$HOME/round-work:$workdir:Z" -w "$workdir" --pids-limit "$pids_limit" "${cache[@]}" "$image" bash -c 'printf "round-vm: container pids.max %s\n" "$(cat /sys/fs/cgroup/pids.max 2>&1)"; exec bash -c "$1"' round-vm "$entry" 2>&1 | tee "$res/ci.out" || rc=${PIPESTATUS[0]}
 spent=$(( $(date +%s) - t0 ))
 # The elapsed time tells the cap's cut from an entry killed early with the same status.
 if { [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; } && [ "$spent" -ge "$9" ]; then
@@ -1439,6 +1443,7 @@ pub(crate) fn remote_args(job: &BatchJob) -> Vec<String> {
     args.push(job.ci_image.clone().unwrap_or_default());
     args.push(job.ci_workdir.clone().unwrap_or_default());
     args.push(job.only.clone());
+    args.push(job.pids_limit.to_string());
     args
 }
 
@@ -3137,6 +3142,7 @@ fn on_vm_run(
         setup_alarm_secs: cfg.setup_alarm_secs,
         cap_secs: cfg.cap_secs,
         testenv_limits: cfg.testenv_limits.clone(),
+        pids_limit: cfg.pids_limit,
         post_guard_secs: cfg.post_guard_secs,
         lint: lints(args),
         image_tag: env.host.image_tag(&args.tree_dir, commit_sha).map_err(|e| eprintln!("round-vm run: no image tag for the preflight ({e}) — the round checks the image only after its builds")).ok(),
@@ -5113,7 +5119,7 @@ mod tests {
             ci_entry: Some("deploy/ci.sh all".into()),
             ci_image: Some("registry.example/rust:1".into()),
             ci_workdir: Some("work".into()),
-            fences: String::new(), deny_list: String::new(), only: String::new(),
+            fences: String::new(), deny_list: String::new(), only: String::new(), pids_limit: 32768,
             cancel: Default::default(),
         }
     }
@@ -5122,7 +5128,7 @@ mod tests {
     #[test]
     fn remote_command_keeps_empty_arguments_in_place() {
         let cmd = remote_command(&sample_job());
-        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' 'opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' 'registry.example/rust:1' 'work' ''", shell_quote(REMOTE_LAUNCHER)));
+        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' 'opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' 'registry.example/rust:1' 'work' '' '32768'", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -5166,6 +5172,7 @@ mod tests {
             ("cache_home", "opt/spira/cargo".into()),
             ("image", "registry.example/rust:1".into()),
             ("workdir", "work".into()),
+            ("pids_limit", "32768".into()),
             ("entry", "entry-sentinel".into()),
             ("round_ref", job.round_ref.clone()),
             ("round_sha", job.round_sha.clone()),
@@ -5243,9 +5250,11 @@ mod tests {
     #[test_id(t536igw)]
     #[test]
     fn the_foreign_script_runs_the_entry_only_inside_the_declared_image() {
-        assert!(FOREIGN_SCRIPT.contains(concat!(r#"podman run --cidfile "$HOME/"#, crate::entry_cid_file!(), r#"" --rm -v "$HOME/round-work:$workdir:Z" -w "$workdir" "${cache[@]}" "$image" bash -c "$entry" 2>&1"#)));
+        assert!(FOREIGN_SCRIPT.contains(concat!(r#"podman run --cidfile "$HOME/"#, crate::entry_cid_file!(), r#"" --rm -v "$HOME/round-work:$workdir:Z" -w "$workdir" --pids-limit "$pids_limit" "${cache[@]}" "$image" bash -c 'printf "round-vm: container pids.max %s\n" "$(cat /sys/fs/cgroup/pids.max 2>&1)"; exec bash -c "$1"' round-vm "$entry" 2>&1"#)));
         assert!(!FOREIGN_SCRIPT.lines().any(|l| l.starts_with(r#"bash -c "$entry" 2>&1"#)));
         assert!(FOREIGN_SCRIPT.contains("round-vm: podman pull $image failed"));
+        let refusal = FOREIGN_SCRIPT.find(r#"[ -n "$pids_limit" ] || { echo "round-vm: the host sent no pids limit" >&2; exit 2; }"#).expect("an empty limit is refused");
+        assert!(refusal < FOREIGN_SCRIPT.find("git clone").unwrap(), "refused before the clone");
     }
 
     #[test_id(t38qtx9)]
@@ -5287,10 +5296,10 @@ mod tests {
         let deny = spira_config::unit_tier::DenyList::parse(text).unwrap();
         let mut job = BatchJob { deny_list: text.into(), ..sample_job() };
         let cmd = remote_command(&job);
-        let tail = format!("'{}' '{}' 'registry.example/rust:1' 'work' ''", text, deny.config_filter_line());
+        let tail = format!("'{}' '{}' 'registry.example/rust:1' 'work' '' '32768'", text, deny.config_filter_line());
         assert!(cmd.ends_with(&tail), "{cmd}");
         job.deny_list = String::new();
-        assert!(remote_command(&job).ends_with(" '' '' 'registry.example/rust:1' 'work' ''"));
+        assert!(remote_command(&job).ends_with(" '' '' 'registry.example/rust:1' 'work' '' '32768'"));
     }
 
     #[test_id(thuax12)]
@@ -5303,7 +5312,7 @@ mod tests {
             assert!(parse_run_args(&args(bad)).unwrap_err().contains("--only"), "{bad:?}");
         }
         let job = BatchJob { only: "integration-tests".into(), ..sample_job() };
-        assert!(remote_command(&job).ends_with(" 'work' 'integration-tests'"));
+        assert!(remote_command(&job).ends_with(" 'work' 'integration-tests' '32768'"));
         let only = REMOTE_SCRIPT.find("if [ -n \"$only\" ]; then").unwrap();
         let exit = only + REMOTE_SCRIPT[only..].find("exit \"$rc\"\nfi\n").unwrap();
         assert!(REMOTE_SCRIPT[exit..].starts_with("exit \"$rc\"\nfi\nphase unit-tests\n"), "the only step ends the script before the unit tier");
@@ -5545,9 +5554,9 @@ mod tests {
             host_addr: "h".into(), mirror_port: 1, suites: None, maxpar: 1, toolchain: None, cache_home: None,
             testenv_registry: None, resume_url: Some("s3://bkt/pre".into()), setup_alarm_secs: 1, cap_secs: 1,
             testenv_limits: "x".into(), post_guard_secs: 1, lint: false, image_tag: None,
-            ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, ci_image: None, ci_workdir: None, fences: String::new(), deny_list: String::new(), only: String::new(), cancel: Default::default(),
+            ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, ci_image: None, ci_workdir: None, fences: String::new(), deny_list: String::new(), only: String::new(), pids_limit: 1, cancel: Default::default(),
         };
-        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '' '' '' '' '' '' ''"));
+        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '' '' '' '' '' '' '' '1'"));
         assert!(!REMOTE_SCRIPT.contains("AWS_SECRET_ACCESS_KEY"), "the script never carries a key");
         let remote = FakeRemote::green();
         push_resume_credentials(&remote, "10.0.0.2", Path::new("creds"));
@@ -5966,6 +5975,7 @@ mod tests {
             attr_linger_secs: 3600,
             cap_secs: 1234,
             testenv_limits: "testenv_suite_cap = 600\n".into(),
+            pids_limit: 12345,
             post_guard_secs: 77,
             vm_budget_secs: 300,
             build_budget_secs: 600,
@@ -6781,6 +6791,16 @@ mod tests {
 
     fn foreign_args(fx: &Fixture) -> RunArgs {
         RunArgs { ci_entry: Some("deploy/ci.sh".into()), ci_image: Some("registry.example/rust:1".into()), ..round_args(fx) }
+    }
+
+    #[test_id(txrd1my)]
+    #[test]
+    fn a_runs_batch_carries_the_configured_task_limit() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        go(&fx, &remote, &foreign_args(&fx));
+        let jobs = remote.jobs.lock().unwrap();
+        assert!(jobs.iter().any(|j| j.starts_with("bash -c ") && j.ends_with(" '12345'")), "{jobs:?}");
     }
 
     /// Records, while the batch runs, whether a gate could take the cache's shared lock.
