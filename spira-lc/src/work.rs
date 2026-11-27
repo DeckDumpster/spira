@@ -1139,6 +1139,14 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str) -> (i32, String) {
     let Some(title) = args.first() else {
         return (CANNOT_TELL, format!("work {verb}: missing <title>"));
     };
+    let after_landing = args.iter().any(|a| a == "--after-landing");
+    let prerequisite = args.iter().any(|a| a == "--prerequisite");
+    if prerequisite && verb != "split" {
+        return (REFUSED, format!("refused: work {verb}: --prerequisite is a split's flag; use `work split --prerequisite` for a piece your bead must wait on"));
+    }
+    if prerequisite && after_landing {
+        return (REFUSED, format!("refused: work {verb}: --prerequisite and --after-landing contradict each other: --after-landing makes the new bead wait, --prerequisite makes your bead wait; pass one"));
+    }
     let Some(filer) = flag(args, "--for") else {
         return (CANNOT_TELL, format!("work {verb}: --for <persona> is required"));
     };
@@ -1150,11 +1158,10 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str) -> (i32, String) {
         Ok(r) => r,
         Err(e) => return (CANNOT_TELL, format!("refused: work {verb}: {e}")),
     };
-    let after_landing = args.iter().any(|a| a == "--after-landing");
     let actor = flag(args, "--actor").unwrap_or_default();
     let body = split_reserved(args).stdin;
     let register = |new_id: &str| crate::plane::call(&[s("create-bead"), new_id.to_string(), s("--ready"), s("--repo"), repo.clone()]);
-    let filing = Filing { verb, actor: &actor, title, persona: &persona, repo: &repo, bound: bead_id, after_landing, body: body.as_deref() };
+    let filing = Filing { verb, actor: &actor, title, persona: &persona, repo: &repo, bound: bead_id, after_landing, prerequisite, body: body.as_deref() };
     let filed = file_and_bind(&filing, register);
     if verb != "file-followup" || filed.0 != 0 || !lane_requires_skuld(&persona) {
         return filed;
@@ -1204,6 +1211,7 @@ struct Filing<'a> {
     repo: &'a str,
     bound: &'a str,
     after_landing: bool,
+    prerequisite: bool,
     body: Option<&'a str>,
 }
 
@@ -1211,41 +1219,71 @@ struct Filing<'a> {
 /// contract is exactly what must be queued, so the broker states the reason the guard asks for.
 const PILGRIM_CONTRACT_REASON: &str = "filed from a pilgrimage: the defect is the finding, whatever state the repo is in";
 
+/// One side of a filing's blocks edge: the new bead has no id until it is filed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum End {
+    Bound,
+    New,
+}
+
+/// How a filing is tied to the bound bead. `edge` is `(blocked, blocker)`.
+#[derive(Debug, PartialEq, Eq)]
+struct Binding<'a> {
+    parent: Option<&'a str>,
+    split_label: bool,
+    edge: Option<(End, End)>,
+}
+
 /// The store refuses a bead blocked by its own descendant, so a filing with a blocks edge to or
 /// from the bound bead is filed unparented.
+fn binding<'a>(f: &Filing<'a>) -> Binding<'a> {
+    let edge = if f.after_landing {
+        Some((End::New, End::Bound))
+    } else if f.prerequisite {
+        Some((End::Bound, End::New))
+    } else {
+        blocking_edge(f.verb, f.actor, End::Bound, End::New)
+    };
+    let parent = edge.is_none().then_some(f.bound);
+    Binding { parent, split_label: parent.is_some() && f.verb == "split", edge }
+}
+
 fn file_and_bind(f: &Filing, register: impl FnOnce(&str) -> (i32, String)) -> (i32, String) {
-    let (verb, bead_id) = (f.verb, f.bound);
-    let waits = blocking_edge(verb, f.actor, bead_id, bead_id).is_some();
-    let parent = if f.after_landing || waits { None } else { Some(bead_id) };
-    match crate::bd::file_child(f.title, f.persona, f.repo, parent, f.body, waits.then_some(PILGRIM_CONTRACT_REASON)) {
-        Ok(new_id) => match register(&new_id) {
-            (0, _) if f.after_landing => match crate::bd::add_blocker(&new_id, bead_id) {
-                Ok(()) => (0, new_id),
-                Err(e) => (CANNOT_TELL, format!("{new_id} was filed but could not be made to wait on {bead_id} (do not file it again; add the dependency): {e}")),
-            },
-            (0, _) if verb == "split" => match crate::bd::label_add(&new_id, spira_config::nonwork::SPLIT_LABEL) {
-                Ok(()) => (0, new_id),
-                Err(e) => (CANNOT_TELL, format!("{new_id} was filed but could not be marked a split child, so it would be claimable before {bead_id} lands (do not file it again; add the label {}): {e}", spira_config::nonwork::SPLIT_LABEL)),
-            },
-            (0, _) => match blocking_edge(verb, f.actor, bead_id, &new_id) {
-                Some((blocked, blocker)) => match crate::bd::add_blocker(blocked, blocker) {
-                    Ok(()) => (0, new_id),
-                    Err(e) => (CANNOT_TELL, format!("{new_id} was filed but {bead_id} could not be made to wait on it (do not file it again; add the dependency): {e}")),
-                },
-                None => (0, new_id),
-            },
-            (_, e) => (
-                CANNOT_TELL,
-                format!("LIFECYCLE: {new_id} was filed but has NO lifecycle row and cannot be claimed (do not file it again): {e}"),
-            ),
-        },
-        Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
+    let bead_id = f.bound;
+    let tie = binding(f);
+    let pilgrim = blocking_edge(f.verb, f.actor, End::Bound, End::New).is_some();
+    let new_id = match crate::bd::file_child(f.title, f.persona, f.repo, tie.parent, f.body, pilgrim.then_some(PILGRIM_CONTRACT_REASON)) {
+        Ok(id) => id,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+    };
+    let (code, e) = register(&new_id);
+    if code != 0 {
+        return (CANNOT_TELL, format!("LIFECYCLE: {new_id} was filed but has NO lifecycle row and cannot be claimed (do not file it again): {e}"));
     }
+    if tie.split_label {
+        if let Err(e) = crate::bd::label_add(&new_id, spira_config::nonwork::SPLIT_LABEL) {
+            return (CANNOT_TELL, format!("{new_id} was filed but could not be marked a split child, so it would be claimable before {bead_id} lands (do not file it again; add the label {}): {e}", spira_config::nonwork::SPLIT_LABEL));
+        }
+    }
+    if let Some((blocked, blocker)) = tie.edge {
+        let id = |end| match end {
+            End::Bound => bead_id,
+            End::New => new_id.as_str(),
+        };
+        if let Err(e) = crate::bd::add_blocker(id(blocked), id(blocker)) {
+            let failed = match blocked {
+                End::New => format!("could not be made to wait on {bead_id}"),
+                End::Bound => format!("{bead_id} could not be made to wait on it"),
+            };
+            return (CANNOT_TELL, format!("{new_id} was filed but {failed} (do not file it again; add the dependency): {e}"));
+        }
+    }
+    (0, new_id)
 }
 
 /// A pilgrimage is called again only when its defects land, so a pilgrim's filing blocks the bound
 /// bead on the new one: `(blocked, blocker)`.
-fn blocking_edge<'a>(verb: &str, actor: &str, bound: &'a str, new_id: &'a str) -> Option<(&'a str, &'a str)> {
+fn blocking_edge<T>(verb: &str, actor: &str, bound: T, new_id: T) -> Option<(T, T)> {
     (verb == "file-followup" && actor == "pilgrim").then_some((bound, new_id))
 }
 
@@ -2489,7 +2527,7 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String]) -> (i32, String) {
 mod tests {
 
     fn filing<'a>() -> super::Filing<'a> {
-        super::Filing { verb: "file-followup", actor: "builder", title: "Fix x", persona: "builder", repo: "spira", bound: "sp-b0", after_landing: false, body: Some("## Build\nthe thing\n") }
+        super::Filing { verb: "file-followup", actor: "builder", title: "Fix x", persona: "builder", repo: "spira", bound: "sp-b0", after_landing: false, prerequisite: false, body: Some("## Build\nthe thing\n") }
     }
 
     #[test_id(t8eduz9)]
@@ -2771,6 +2809,49 @@ mod tests {
         assert_eq!(at("builder"), "builder");
         assert_eq!(at("archivist"), "archivist");
         assert_eq!(super::filed_as("split", "pilgrim").unwrap(), "pilgrim");
+    }
+
+    #[test_id(t7mz1cy)]
+    #[test]
+    fn a_prerequisite_split_is_filed_unparented_and_the_bound_bead_waits_on_it() {
+        let tie = super::binding(&super::Filing { verb: "split", prerequisite: true, ..filing() });
+        assert_eq!(tie, super::Binding { parent: None, split_label: false, edge: Some((super::End::Bound, super::End::New)) });
+    }
+
+    #[test_id(t7mbnih)]
+    #[test]
+    fn a_plain_split_is_a_parented_split_child_with_no_edge() {
+        let tie = super::binding(&super::Filing { verb: "split", ..filing() });
+        assert_eq!(tie, super::Binding { parent: Some("sp-b0"), split_label: true, edge: None });
+    }
+
+    #[test_id(tdun5mw)]
+    #[test]
+    fn a_pilgrims_follow_up_is_bound_unparented_with_the_bound_bead_waiting() {
+        let tie = super::binding(&super::Filing { actor: "pilgrim", ..filing() });
+        assert_eq!(tie, super::Binding { parent: None, split_label: false, edge: Some((super::End::Bound, super::End::New)) });
+    }
+
+    #[test_id(ta6ed0r)]
+    #[test]
+    fn an_after_landing_filing_is_unparented_and_waits_on_the_bound_bead() {
+        for verb in ["split", "file-followup"] {
+            let tie = super::binding(&super::Filing { verb, after_landing: true, ..filing() });
+            assert_eq!(tie, super::Binding { parent: None, split_label: false, edge: Some((super::End::New, super::End::Bound)) }, "{verb}");
+        }
+    }
+
+    // No --for: a call that slips past the flag refusals stops here and files nothing.
+    #[test_id(tn62wt6)]
+    #[test]
+    fn contradictory_or_misplaced_prerequisite_flags_are_refused_before_anything_is_filed() {
+        let v = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let (code, out) = super::cmd_file("sp-b0", &v(&["t", "--prerequisite", "--after-landing"]), "split");
+        assert_eq!(code, super::REFUSED, "{out}");
+        assert!(out.contains("--prerequisite") && out.contains("--after-landing"), "{out}");
+        let (code, out) = super::cmd_file("sp-b0", &v(&["t", "--prerequisite"]), "file-followup");
+        assert_eq!(code, super::REFUSED, "{out}");
+        assert!(out.contains("work split --prerequisite"), "{out}");
     }
 
     #[test_id(t6kzjhm)]

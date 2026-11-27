@@ -91,13 +91,14 @@ Refusals:
 
 ### work split
 Files a bead for a piece of your own bead's scope, parented to it.
-Use when: Part of this bead's scope is better landed on its own.
+Use when: Part of this bead's scope is better landed on its own. Use `--prerequisite` when the piece must land before your bead can.
 Arguments:
   "<title>"
   --repo <name>   (required)
   --body-file -
+  --prerequisite   (this piece lands first; your bead waits on it)
 Checks:
-  - the parent is your bead
+  - the parent is your bead, except with `--prerequisite`, which files beside it and makes your bead wait
   - the child never carries your `branch:` label
 
 ## 4. The law
