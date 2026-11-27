@@ -75,7 +75,7 @@ process's actual streams, so the split is visible at every call site in `lib.rs`
 |---|---|---|---|
 | `check` | `[--escalate]` | findings or "in effect" | 0/1/3 |
 | `units` | — | a diff, or "installed units match" | 0/1/3 |
-| `refresh` | `[repo]` | what it did (or declined) | 0/1 |
+| `refresh` | `[repo] [--no-fetch]` (the caller has just fetched the base's remote; an unknown flag is refused) | what it did (or declined) | 0/1 |
 | `gap` | `[repo]` | how many commits behind | 0/1/3 |
 | `copies` | — | `<repo> <path> <dir> self\|second` per harness copy found | 0/1 |
 | `foreign` | `<repo> <base> <ref>` | offending paths, then a REFUSED explanation on stderr | 0/1 |
@@ -89,6 +89,7 @@ trait World {
     fn repo_root(&self, name: &str) -> Option<PathBuf>;
     fn repo_field(&self, name: &str, field: &str) -> Option<String>;
     fn same_repo(&self, a: &Path, b: &Path) -> bool;
+    fn repo_store(&self, path: &Path) -> Option<PathBuf>;
     fn home_repo(&self) -> String;
     fn landref(&self, repo: &Path) -> Option<String>;
     fn repo_land(&self, name: &str) -> String;

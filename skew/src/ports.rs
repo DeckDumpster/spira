@@ -15,6 +15,8 @@ pub trait World {
     fn repo_root(&self, name: &str) -> Option<PathBuf>;
     fn repo_field(&self, name: &str, field: &str) -> Option<String>;
     fn same_repo(&self, a: &Path, b: &Path) -> bool;
+    /// What `same_repo` compares, for matching one path against many.
+    fn repo_store(&self, path: &Path) -> Option<PathBuf>;
     fn home_repo(&self) -> String;
     /// `spira_landref <repo-path>` — the ref that repository lands on, or None if unresolvable.
     fn landref(&self, repo: &Path) -> Option<String>;

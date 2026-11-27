@@ -28,6 +28,10 @@ impl LandMode {
             o => LandMode::Other(o.to_string()),
         }
     }
+    /// Whether the pass runs `skew refresh` on this repository's checkout.
+    pub fn refreshed(&self) -> bool {
+        matches!(self, LandMode::Push | LandMode::Queue)
+    }
     /// `repo_land_queued`.
     pub fn queued(&self) -> bool {
         matches!(self, LandMode::Queue | LandMode::QueueLocal)

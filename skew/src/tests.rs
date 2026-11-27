@@ -29,6 +29,7 @@ pub struct Fake {
     pub restore_err: RefCell<Option<String>>,
     pub restored: RefCell<Vec<PathBuf>>,
     pub fetch_ok: RefCell<bool>,
+    pub fetches: RefCell<Vec<(PathBuf, String)>>,
     pub diff_statuses: RefCell<BTreeMap<String, Vec<StatusRow>>>,
     pub show_files: RefCell<BTreeMap<String, Vec<u8>>>, // key "<repo>|<rev>|<path>"
     pub file_modes: RefCell<BTreeMap<String, String>>,
@@ -88,6 +89,9 @@ impl World for Fake {
     }
     fn same_repo(&self, a: &Path, b: &Path) -> bool {
         a == b
+    }
+    fn repo_store(&self, path: &Path) -> Option<PathBuf> {
+        Some(path.to_path_buf())
     }
     fn home_repo(&self) -> String {
         self.home_repo.borrow().clone()
@@ -156,7 +160,8 @@ impl World for Fake {
         self.dirty.borrow_mut().remove(&repo.to_string_lossy().into_owned());
         Ok(())
     }
-    fn fetch(&self, _repo: &Path, _remote: &str) -> bool {
+    fn fetch(&self, repo: &Path, remote: &str) -> bool {
+        self.fetches.borrow_mut().push((repo.to_path_buf(), remote.to_string()));
         *self.fetch_ok.borrow()
     }
     fn diff_status(&self, repo: &Path, range: &str) -> Vec<StatusRow> {
@@ -690,7 +695,7 @@ fn refresh_queue_local_match_is_clean() {
     f.rev_parse.borrow_mut().insert("repo|local/main".into(), "tip".into());
     f.rev_parse.borrow_mut().insert("repo|HEAD".into(), "tip".into());
 
-    assert_eq!(refresh(&f, None), 0);
+    assert_eq!(refresh(&f, None, false), 0);
     assert!(f.stdout_joined().contains("nothing to deploy"));
 }
 
@@ -717,7 +722,7 @@ fn refresh_queue_local_resolves_landref_by_name_never_by_path() {
     f.rev_parse.borrow_mut().insert("repo|origin/decoy".into(), "wrong-tip".into());
     f.rev_parse.borrow_mut().insert("repo|HEAD".into(), "tip".into());
 
-    assert_eq!(refresh(&f, None), 0);
+    assert_eq!(refresh(&f, None, false), 0);
     assert!(f.stdout_joined().contains("nothing to deploy"));
     assert!(f.mail_calls.borrow().is_empty());
 }
@@ -735,7 +740,7 @@ fn refresh_queue_local_mismatch_escalates_local_skew() {
     f.rev_parse.borrow_mut().insert("repo|local/main".into(), "tip".into());
     f.rev_parse.borrow_mut().insert("repo|HEAD".into(), "stale".into());
 
-    let rc = refresh(&f, None);
+    let rc = refresh(&f, None, false);
     assert_eq!(rc, 1);
     assert!(f.stdout_joined().contains("LOCAL-SKEW"));
     assert_eq!(f.mail_calls.borrow().len(), 1);
@@ -755,7 +760,7 @@ fn refresh_queue_local_mismatch_during_a_land_local_does_not_escalate() {
     f.rev_parse.borrow_mut().insert("repo|HEAD".into(), "stale".into());
     *f.queue_locked.borrow_mut() = true;
 
-    assert_eq!(refresh(&f, None), 0);
+    assert_eq!(refresh(&f, None, false), 0);
     assert!(f.stdout_joined().contains("land-local in flight"));
     assert!(f.mail_calls.borrow().is_empty());
 }
@@ -774,7 +779,7 @@ fn refresh_queue_local_hotfix_never_resets() {
     f.rev_parse.borrow_mut().insert("repo|HEAD".into(), "stale".into());
     *f.release_status.borrow_mut() = "RUNNING UNLANDED stale: deliberate\n".into();
 
-    assert_eq!(refresh(&f, None), 0);
+    assert_eq!(refresh(&f, None, false), 0);
     assert!(f.stdout_joined().contains("standing hotfix"));
     assert!(f.mail_calls.borrow().is_empty());
 }
@@ -790,7 +795,7 @@ fn refresh_release_mode_already_at_base() {
     f.landrefs.borrow_mut().insert("repo".into(), "origin/main".into());
     f.rev_list_counts.borrow_mut().insert("repo|HEAD..origin/main".into(), 0);
 
-    assert_eq!(refresh(&f, Some("repo")), 0);
+    assert_eq!(refresh(&f, Some("repo"), false), 0);
     assert!(f.stdout_joined().contains("already at"));
 }
 
@@ -807,7 +812,7 @@ fn refresh_release_mode_builds_and_activates() {
     f.rev_parse.borrow_mut().insert("repo|HEAD".into(), "newsha".into());
     *f.release_bva_ok.borrow_mut() = true;
 
-    assert_eq!(refresh(&f, Some("repo")), 0);
+    assert_eq!(refresh(&f, Some("repo"), false), 0);
     assert!(f.stdout_joined().contains("refreshed — new release installed (2 commit(s))"));
     assert_eq!(f.overrides_applied.borrow().len(), 1);
 }
@@ -824,7 +829,7 @@ fn refresh_release_failure_logs_releases_first_error_line() {
     f.rev_list_counts.borrow_mut().insert("repo|HEAD..origin/main".into(), 2);
     f.rev_parse.borrow_mut().insert("repo|HEAD".into(), "newsha".into());
 
-    assert_eq!(refresh(&f, Some("repo")), 1);
+    assert_eq!(refresh(&f, Some("repo"), false), 1);
     assert!(f.stdout_joined().contains("of newsha failed: build failed"));
 }
 
@@ -843,11 +848,33 @@ fn refresh_product_repo_never_calls_release() {
     f.current_branches.borrow_mut().insert("prod".into(), "some-feature".into());
     *f.release_bva_ok.borrow_mut() = false;
 
-    let rc = refresh(&f, Some("prod"));
+    let rc = refresh(&f, Some("prod"), false);
     assert_eq!(rc, 1);
     let out = f.stdout_joined();
     assert!(out.contains("declined"), "{out}");
     assert!(!out.contains("release build"), "{out}");
+}
+
+#[test_id(tkhtidt)]
+#[test]
+fn refresh_with_no_fetch_leaves_the_remote_alone() {
+    let fetched = |no_fetch, behind| {
+        let f = Fake::default();
+        *f.home_repo.borrow_mut() = "home".into();
+        f.repo_roots.borrow_mut().insert("prod".into(), PathBuf::from("prod"));
+        f.git_repos.borrow_mut().push(PathBuf::from("prod"));
+        f.landrefs.borrow_mut().insert("prod".into(), "origin/main".into());
+        f.ref_remotes.borrow_mut().insert("origin/main".into(), "origin".into());
+        f.rev_list_counts.borrow_mut().insert("prod|HEAD..origin/main".into(), behind);
+        f.current_branches.borrow_mut().insert("prod".into(), "main".into());
+        assert_eq!(refresh(&f, Some("prod"), no_fetch), 0);
+        assert_eq!(f.stdout_joined().contains("refreshed to origin/main (2 commit(s))"), behind == 2);
+        f.fetches.take()
+    };
+    for behind in [0, 2] {
+        assert_eq!(fetched(true, behind), [], "behind={behind}");
+        assert_eq!(fetched(false, behind), [(PathBuf::from("prod"), "origin".to_string())], "behind={behind}");
+    }
 }
 
 #[test_id(tk2ncu6)]
@@ -860,7 +887,7 @@ fn refresh_checkout_mode_declines_off_base_branch() {
     f.rev_list_counts.borrow_mut().insert("repo|HEAD..origin/main".into(), 1);
     f.current_branches.borrow_mut().insert("repo".into(), "some-feature".into());
 
-    let rc = refresh(&f, Some("repo"));
+    let rc = refresh(&f, Some("repo"), false);
     assert_eq!(rc, 1);
     assert!(f.stdout_joined().contains("declined"));
 }
@@ -883,7 +910,7 @@ fn refresh_checkout_mode_stages_and_swaps() {
     f.show_files.borrow_mut().insert("repo|origin/main|spira/new.sh".into(), b"#!/bin/bash\n".to_vec());
     f.file_modes.borrow_mut().insert("repo|origin/main|spira/new.sh".into(), "100755".into());
 
-    let rc = refresh(&f, Some("repo"));
+    let rc = refresh(&f, Some("repo"), false);
     assert_eq!(rc, 0);
     assert!(f.written.borrow().contains_key(&PathBuf::from("repo/spira/conf.sh")));
     let (content, executable) = f.written.borrow().get(&PathBuf::from("repo/spira/new.sh")).cloned().unwrap();
@@ -981,7 +1008,7 @@ fn dirty_checkout(dirty: &str) -> Fake {
 fn refresh_checkout_with_every_tracked_file_deleted_is_restored_not_stashed() {
     let f = dirty_checkout(" D a.sh\n D b/c.sh\n");
     *f.stash_err.borrow_mut() = Some("stash must not be tried".into());
-    assert_eq!(refresh(&f, Some("repo")), 0);
+    assert_eq!(refresh(&f, Some("repo"), false), 0);
     assert_eq!(f.restored.borrow().len(), 1);
     let out = f.stdout_joined();
     assert!(out.contains("restored 2 deleted tracked file(s)"), "{out}");
@@ -993,7 +1020,7 @@ fn refresh_checkout_with_every_tracked_file_deleted_is_restored_not_stashed() {
 fn refresh_declines_naming_the_restore_failure() {
     let f = dirty_checkout(" D a.sh\n");
     *f.restore_err.borrow_mut() = Some("fatal: Unable to create index.lock".into());
-    assert_eq!(refresh(&f, Some("repo")), 1);
+    assert_eq!(refresh(&f, Some("repo"), false), 1);
     assert!(f.stdout_joined().contains("restoring them failed: fatal: Unable to create index.lock"));
 }
 
@@ -1002,7 +1029,7 @@ fn refresh_declines_naming_the_restore_failure() {
 fn refresh_declines_naming_the_stash_failure_for_a_mixed_dirty_tree() {
     let f = dirty_checkout(" D a.sh\n M b.sh\n");
     *f.stash_err.borrow_mut() = Some("error: could not write index".into());
-    assert_eq!(refresh(&f, Some("repo")), 1);
+    assert_eq!(refresh(&f, Some("repo"), false), 1);
     assert!(f.restored.borrow().is_empty());
     assert!(f.stdout_joined().contains("stash failed: error: could not write index"));
 }
@@ -1027,7 +1054,7 @@ fn refresh_decline_names_dirty_files_and_a_stale_lock_and_raises_a_row_on_the_th
     *f.lock_age.borrow_mut() = Some(86_400);
     *f.lock_remove_err.borrow_mut() = Some("Permission denied".into());
     for pass in 1..=3 {
-        assert_eq!(refresh(&f, Some("prod")), 1);
+        assert_eq!(refresh(&f, Some("prod"), false), 1);
         let rows = f.run_log.borrow().iter().filter(|r| r.1.contains("consecutive")).count();
         assert_eq!(rows, if pass < 3 { 0 } else { 1 }, "pass {pass}");
     }
@@ -1046,7 +1073,7 @@ fn refresh_decline_names_dirty_files_and_a_stale_lock_and_raises_a_row_on_the_th
 fn refresh_clears_a_stale_lock_with_no_live_git_before_stashing() {
     let f = declining_checkout();
     *f.lock_age.borrow_mut() = Some(1_188_963);
-    refresh(&f, Some("prod"));
+    refresh(&f, Some("prod"), false);
     assert_eq!(f.locks_removed.get(), 1);
     assert!(f.stdout_joined().contains("removed stale index.lock"), "{}", f.stdout_joined());
 }
@@ -1058,7 +1085,7 @@ fn refresh_leaves_a_fresh_or_owned_lock_alone() {
         let f = declining_checkout();
         *f.lock_age.borrow_mut() = Some(age);
         *f.git_live.borrow_mut() = live;
-        refresh(&f, Some("prod"));
+        refresh(&f, Some("prod"), false);
         assert_eq!(f.locks_removed.get(), 0, "age {age} live {live}");
     }
 }
@@ -1070,7 +1097,7 @@ fn refresh_escalates_a_lock_it_cannot_clear_once_not_every_pass() {
     *f.lock_age.borrow_mut() = Some(86_400);
     *f.lock_remove_err.borrow_mut() = Some("Permission denied".into());
     for _ in 0..5 {
-        assert_eq!(refresh(&f, Some("prod")), 1);
+        assert_eq!(refresh(&f, Some("prod"), false), 1);
     }
     let rows: Vec<_> = f.run_log.borrow().iter().filter(|r| r.1.contains("cannot remove stale index.lock")).cloned().collect();
     assert_eq!(rows.len(), 1, "{rows:?}");
@@ -1082,11 +1109,11 @@ fn refresh_escalates_a_lock_it_cannot_clear_once_not_every_pass() {
 fn refresh_decline_does_not_call_a_fresh_or_owned_lock_stale() {
     let f = declining_checkout();
     *f.lock_age.borrow_mut() = Some(30);
-    refresh(&f, Some("prod"));
+    refresh(&f, Some("prod"), false);
     assert!(!f.stdout_joined().contains("STALE-INDEX-LOCK"));
     *f.lock_age.borrow_mut() = Some(86_400);
     *f.git_live.borrow_mut() = true;
-    refresh(&f, Some("prod"));
+    refresh(&f, Some("prod"), false);
     assert!(!f.stdout_joined().contains("STALE-INDEX-LOCK"));
 }
 
@@ -1094,13 +1121,13 @@ fn refresh_decline_does_not_call_a_fresh_or_owned_lock_stale() {
 #[test]
 fn refresh_success_resets_the_decline_streak() {
     let f = declining_checkout();
-    refresh(&f, Some("prod"));
-    refresh(&f, Some("prod"));
+    refresh(&f, Some("prod"), false);
+    refresh(&f, Some("prod"), false);
     f.rev_list_counts.borrow_mut().insert("prod|HEAD..origin/main".into(), 0);
-    assert_eq!(refresh(&f, Some("prod")), 0);
+    assert_eq!(refresh(&f, Some("prod"), false), 0);
     f.rev_list_counts.borrow_mut().insert("prod|HEAD..origin/main".into(), 2);
-    refresh(&f, Some("prod"));
-    refresh(&f, Some("prod"));
+    refresh(&f, Some("prod"), false);
+    refresh(&f, Some("prod"), false);
     assert!(f.run_log.borrow().is_empty(), "two passes after a reset is not three in a row");
 }
 
@@ -1111,10 +1138,10 @@ fn refresh_escalates_again_for_a_new_uncleared_lock_after_the_old_one_vanished()
     *f.lock_remove_err.borrow_mut() = Some("Permission denied".into());
     for _ in 0..2 {
         *f.lock_age.borrow_mut() = Some(86_400);
-        refresh(&f, Some("prod"));
-        refresh(&f, Some("prod"));
+        refresh(&f, Some("prod"), false);
+        refresh(&f, Some("prod"), false);
         *f.lock_age.borrow_mut() = None;
-        refresh(&f, Some("prod"));
+        refresh(&f, Some("prod"), false);
     }
     let rows = f.run_log.borrow().iter().filter(|r| r.1.contains("cannot remove stale index.lock")).count();
     assert_eq!(rows, 2);
@@ -1175,7 +1202,7 @@ fn refresh_stashes_dirty_files_and_advances_with_no_lease_consulted() {
     let f = dirty_checkout(" M conf.sh\n");
     f.diff_statuses.borrow_mut().insert("repo|HEAD..origin/main".into(), vec![('M', "spira/conf.sh".into())]);
     f.show_files.borrow_mut().insert("repo|origin/main|spira/conf.sh".into(), b"new".to_vec());
-    assert_eq!(refresh(&f, Some("repo")), 0);
+    assert_eq!(refresh(&f, Some("repo"), false), 0);
     assert!(f.stdout_joined().contains("stashed dirty tracked files"), "{}", f.stdout_joined());
     assert!(f.written.borrow().contains_key(&PathBuf::from("repo/spira/conf.sh")));
 }

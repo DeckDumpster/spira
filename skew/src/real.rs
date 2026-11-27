@@ -34,6 +34,13 @@ pub fn config_resolves() -> bool {
     }
 }
 
+/// Whether the ref files alone show `A..B` is empty; anything they cannot tell is git's to answer.
+fn ends_name_one_commit(repo: &Path, range: &str) -> bool {
+    use spira_config::git_refs::{head_sha, sha_of};
+    let sha = |end: &str| if end == "HEAD" { head_sha(repo) } else { sha_of(repo, end) };
+    range.split_once("..").is_some_and(|(from, to)| sha(from).is_some_and(|from| sha(to) == Some(from)))
+}
+
 const GH_RELEASE: &str = "release";
 
 /// `gh release list` through `spawn`, counted as `skew:release-list` when it exits; Err is stderr's first line.
@@ -163,6 +170,9 @@ impl World for Real {
     fn same_repo(&self, a: &Path, b: &Path) -> bool {
         spira_config::repos::same_repo(&a.to_string_lossy(), &b.to_string_lossy())
     }
+    fn repo_store(&self, path: &Path) -> Option<PathBuf> {
+        spira_config::repos::gitstore(&path.to_string_lossy())
+    }
     fn home_repo(&self) -> String {
         self.registry().home_repo().to_string()
     }
@@ -238,6 +248,9 @@ impl World for Real {
         self.git(repo, &["merge-base", "--is-ancestor", ancestor, descendant]).0
     }
     fn rev_list_count(&self, repo: &Path, range: &str) -> Option<u64> {
+        if ends_name_one_commit(repo, range) {
+            return Some(0);
+        }
         let (ok, out) = self.git(repo, &["rev-list", "--count", range]);
         if ok { out.trim().parse().ok() } else { None }
     }
@@ -661,5 +674,26 @@ mod overrides_tests {
         std::fs::write(d.join("plain"), "").unwrap();
         assert!(!overrides_declared(Ok(d.join("plain").display().to_string())), "an unreadable directory runs nothing");
         assert!(!overrides_declared(Err("no key".into())));
+    }
+}
+
+#[cfg(test)]
+mod ref_tests {
+    use super::*;
+
+    /// No objects, so git cannot answer for this checkout: only reading the ref files can.
+    #[test_id(tzl0n1e)]
+    #[test]
+    fn a_range_whose_ends_name_one_commit_counts_zero_without_git() {
+        let tmp = testkit::TempDir::new("skew-range");
+        let repo = tmp.path().join("repo");
+        let sha = "0123456789abcdef0123456789abcdef01234567\n";
+        for (file, text) in [("HEAD", "ref: refs/heads/main\n"), ("refs/heads/main", sha), ("refs/remotes/origin/main", sha)] {
+            let path = repo.join(".git").join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let w = Real::new(tmp.path().to_path_buf());
+        assert_eq!(w.rev_list_count(&repo, "HEAD..origin/main"), Some(0));
     }
 }
