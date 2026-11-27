@@ -122,6 +122,7 @@ impl Repin {
         let mut lines = vec![];
         for t in crate::tasks::all().filter(|t| t.keys.iter().flat_map(|ks| ks.iter()).any(|k| take.contains_key(*k))) {
             engine.rebind(t.name, (t.build)(&next).handler);
+            engine.wake(t.name);
         }
         for (key, value) in &take {
             let old = self.held(key).unwrap_or_default();

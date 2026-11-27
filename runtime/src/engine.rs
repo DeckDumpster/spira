@@ -902,6 +902,18 @@ impl Engine {
         }
     }
 
+    /// Arms the tick of task `name` as a change to what it reads would, for a cause no store
+    /// change reports. A task that polls, or an engine with no sweep, keeps its own timer.
+    pub fn wake(&mut self, name: &str) {
+        if self.sweep.is_none() {
+            return;
+        }
+        let now = self.clock.now_ms();
+        if let Some(t) = self.ticking.get_mut(name).filter(|t| t.stream.is_some() && !t.wake.polls && t.signal_at.is_none()) {
+            t.signal_at = Some(now.max(t.last_tick_at.saturating_add(t.wake.min_gap_ms)));
+        }
+    }
+
     /// The body of the newest carry of `task` under `tag`, as the engine holds it now.
     pub fn carry_body(&self, task: &str, tag: &str) -> Option<String> {
         self.carries.get(task)?.iter().filter(|((_, t), _)| t == tag).map(|(_, e)| e).max_by_key(|e| e.at).map(|e| e.kind.body.clone())

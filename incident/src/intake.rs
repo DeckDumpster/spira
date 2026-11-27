@@ -824,6 +824,7 @@ mod tests {
         assert_eq!([0, 1, 2, 5, 6, 7, 40].map(retry_delay), [60, 120, 240, 1_920, 3_600, 3_600, 3_600]);
     }
 
+    // covers: UC-ops-detection-remediation-02
     #[test_id(t7l8eiw)]
     #[test]
     fn a_claim_that_lapsed_is_filed_and_a_live_one_is_left_alone() {
@@ -995,7 +996,6 @@ mod tests {
         assert_eq!(env.repo_override_ref().as_deref(), Some("incident:throughput-stall:alpha:7"));
     }
 
-    // covers: UC-ops-detection-remediation-02
     #[test_id(tqa3ntb)]
     #[test]
     fn two_filers_of_one_ref_serialise_into_one_creation_and_one_recurrence() {
