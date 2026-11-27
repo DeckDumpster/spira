@@ -1943,15 +1943,16 @@ pub fn ami_runs(gh: &dyn Gh, repo: &Path) -> Out {
         .collect())
 }
 
-pub fn ami_dispatch(gh: &dyn Gh, repo: &Path, ref_: &str) -> Out {
+pub fn ami_dispatch(gh: &dyn Gh, repo: &Path, ref_: &str, force: &str) -> Out {
     if ref_.is_empty() {
         warn!("forge: ami-dispatch: ref required");
         return fail(vec![]);
     }
-    let r = gh.call(
-        Some(repo),
-        &["workflow", "run", ROUND_AMI_WORKFLOW, "--ref", ref_],
-    );
+    let mut argv = vec!["workflow", "run", ROUND_AMI_WORKFLOW, "--ref", ref_];
+    if force == "force" {
+        argv.extend(["-f", "force=true"]);
+    }
+    let r = gh.call(Some(repo), &argv);
     Out {
         code: r.code,
         lines: passthrough(&r),

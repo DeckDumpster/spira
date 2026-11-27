@@ -1,8 +1,8 @@
 //! The submit-time proof that a branch changing the round image recipe still builds the image.
 //! The Round AMI workflow is dispatched on a per-candidate branch of the tip and its verdict
-//! read back; the workflow itself skips a recipe that already has an image. Every I/O is a port.
+//! read back; the workflow skips a recipe that already has an image unless forced. Every I/O is a port.
 
-pub const RECIPE_PATHS: [&str; 11] = [
+pub const RECIPE_PATHS: [&str; 12] = [
     "round-vm/ami-setup.sh",
     "round-vm/src/template.rs",
     "round-vm/src/template.sh",
@@ -10,6 +10,7 @@ pub const RECIPE_PATHS: [&str; 11] = [
     "round-vm/ssm-commands.jq",
     ".github/workflows/round-ami-build.yml",
     "round-vm/wait-image.sh",
+    "round-vm/wait-setup.sh",
     "rust-toolchain.toml",
     "flake.nix",
     "flake.lock",
@@ -75,7 +76,8 @@ pub trait Ports {
     fn say(&self, line: &str);
     fn push(&self, branch: &str) -> Result<(), String>;
     fn delete(&self, branch: &str);
-    fn dispatch(&self, branch: &str) -> Result<(), String>;
+    /// `force` builds even when an image already carries the tip's recipe hash.
+    fn dispatch(&self, branch: &str, force: bool) -> Result<(), String>;
     /// `Err` names what could not be read: the route and the forge's own answer.
     fn result(&self, branch: &str) -> Result<Build, String>;
     fn log_tail(&self, run: &str, lines: usize) -> Vec<String>;
@@ -102,6 +104,8 @@ pub fn gate(p: &dyn Ports, bead: &str, tip: &str, nonce: u64, wait_secs: u64) ->
     if !touches_recipe(&changed) {
         return Ok(Verdict::Skipped);
     }
+    // With no hash input changed, an image already carries this hash and an unforced run skips.
+    let force = !spira_config::recipe::touches(&changed);
     let branch = candidate_branch(bead, tip, nonce);
     let began = p.now();
     let (mut pushed, mut dispatched, mut idle, mut announced) = (false, false, 0u32, false);
@@ -126,7 +130,7 @@ pub fn gate(p: &dyn Ports, bead: &str, tip: &str, nonce: u64, wait_secs: u64) ->
                 }
             }
             Ok(Build::NotStarted) if !dispatched => {
-                let started = p.push(&branch).map(|()| pushed = true).and_then(|()| p.dispatch(&branch));
+                let started = p.push(&branch).map(|()| pushed = true).and_then(|()| p.dispatch(&branch, force));
                 if let Err(e) = started {
                     break Err(format!("cannot start the round image build on {branch}: {e}"));
                 }
@@ -224,8 +228,8 @@ mod tests {
         fn delete(&self, b: &str) {
             self.calls.borrow_mut().push(format!("delete {b}"));
         }
-        fn dispatch(&self, b: &str) -> Result<(), String> {
-            self.calls.borrow_mut().push(format!("dispatch {b}"));
+        fn dispatch(&self, b: &str, force: bool) -> Result<(), String> {
+            self.calls.borrow_mut().push(format!("dispatch {b}{}", if force { " force" } else { "" }));
             Ok(())
         }
         fn result(&self, _: &str) -> Result<Build, String> {
@@ -362,6 +366,26 @@ mod tests {
     fn a_successful_image_build_lets_the_submit_proceed() {
         let f = fake(&["round-vm/ssm-commands.jq"], vec![Some(Build::NotStarted), Some(Build::Success("8".into()))]);
         assert_eq!(gate(&f, "sp-x", "abc", 1, 5400), Ok(Verdict::Built("8".into())));
+    }
+
+    #[test_id(tyil6xq)]
+    #[test]
+    fn a_branch_changing_only_the_setup_waiter_pushes_and_forces_the_image_build() {
+        assert_forced("round-vm/wait-setup.sh");
+    }
+
+    #[test_id(ty6aww0)]
+    #[test]
+    fn a_branch_changing_only_the_image_waiter_forces_the_image_build() {
+        assert_forced("round-vm/wait-image.sh");
+    }
+
+    /// A path outside the recipe hash leaves an image already built, so an unforced run skips.
+    fn assert_forced(path: &str) {
+        let f = fake(&[path], vec![Some(Build::NotStarted), Some(Build::Success("8".into()))]);
+        assert_eq!(gate(&f, "sp-x", "0123456789abcdef", 7, 5400), Ok(Verdict::Built("8".into())));
+        let b = "spira-round-candidate/sp-x-0123456789ab-7";
+        assert_eq!(f.calls.borrow().join(";"), format!("push {b};dispatch {b} force;delete {b}"));
     }
 
     #[test_id(tz6bi4n)]

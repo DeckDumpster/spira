@@ -193,6 +193,38 @@ fn the_recipe_paths_are_the_ones_the_image_workflow_builds_on() {
     assert_eq!(ours, triggers);
 }
 
+#[test_id(tt7ys6e)]
+#[test]
+fn every_round_vm_script_the_image_workflow_runs_is_a_path_it_builds_on() {
+    let yml = std::fs::read_to_string(
+        spira_config::resolve::checkout_root_for_process().unwrap().join(".github/workflows/round-ami-build.yml"),
+    )
+    .unwrap();
+    let steps = &yml[yml.find("\njobs:").expect("the workflow has jobs")..];
+    let words: Vec<&str> = steps.split_whitespace().collect();
+    let ran: Vec<&str> = words
+        .windows(2)
+        .filter(|w| matches!(w[0], "bash" | "-f"))
+        .map(|w| w[1].trim_end_matches([')', '"', ';']))
+        .filter(|f| f.starts_with("round-vm/"))
+        .collect();
+    assert!(!ran.is_empty(), "the matcher found no round-vm script in the workflow");
+    let missing: Vec<&&str> = ran.iter().filter(|f| !super::RECIPE_PATHS.contains(*f)).collect();
+    assert!(missing.is_empty(), "the workflow runs {missing:?} but builds on no change to them");
+}
+
+#[test_id(tswadj6)]
+#[test]
+fn a_forced_candidate_build_is_not_skipped_for_having_an_image() {
+    let yml = std::fs::read_to_string(
+        spira_config::resolve::checkout_root_for_process().unwrap().join(".github/workflows/round-ami-build.yml"),
+    )
+    .unwrap();
+    let skips: Vec<&str> = yml.lines().filter(|l| l.contains(r#""$GITHUB_REF" != refs/heads/main"#) && l.contains("fresh=1")).collect();
+    assert_eq!(skips.len(), 1, "the matcher must find the candidate skip clause: {skips:?}");
+    assert!(skips[0].contains(r#"[ "${{ inputs.force }}" != true ]"#), "{}", skips[0]);
+}
+
 #[test_id(t8gvcn6)]
 #[test]
 fn only_a_signal_exit_of_the_runner_is_a_signal_death() {

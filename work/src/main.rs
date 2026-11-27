@@ -632,8 +632,12 @@ impl work::image::Ports for ImagePorts {
     fn delete(&self, branch: &str) {
         let _ = self.forge(&["ami-delete", branch]);
     }
-    fn dispatch(&self, branch: &str) -> Result<(), String> {
-        self.forge(&["ami-dispatch", branch]).map(drop).map_err(|e| format!("the forge refused the dispatch: {e}"))
+    fn dispatch(&self, branch: &str, force: bool) -> Result<(), String> {
+        let mut args = vec!["ami-dispatch", branch];
+        if force {
+            args.push("force");
+        }
+        self.forge(&args).map(drop).map_err(|e| format!("the forge refused the dispatch: {e}"))
     }
     fn result(&self, branch: &str) -> Result<work::image::Build, String> {
         let out = self.forge(&["ami-result", branch])?;
@@ -1226,12 +1230,31 @@ mod tests {
             }
         });
         p.push("b").unwrap();
-        let e = p.dispatch("b").unwrap_err();
+        let e = p.dispatch("b", false).unwrap_err();
         assert!(e.contains("the forge refused the dispatch") && e.contains("exited 1") && e.contains("no workflow"), "{e}");
         assert_eq!(p.log_tail("9", 5), vec!["line one".to_string(), "line two".to_string()]);
         let log = log.borrow();
         let at = |needle: &str| log.iter().position(|r| r.contains(needle)).unwrap();
         assert!(at("ami-push") < at("show wr-1") && at("show wr-1") < at("ami-dispatch"), "{log:?}");
+    }
+
+    #[test_id(t03bpsv)]
+    #[test]
+    fn only_a_forced_dispatch_sends_the_force_word_to_the_broker() {
+        use work::image::Ports;
+        for force in [true, false] {
+            let log = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+            let seen = log.clone();
+            let answer = recorded(0, "");
+            let p = ports(move |req, left| {
+                seen.borrow_mut().push(req.join(" "));
+                answer(req, left)
+            });
+            p.dispatch("cand", force).unwrap();
+            let sent = log.borrow()[0].clone();
+            assert!(sent.contains("ami-dispatch cand"), "{sent}");
+            assert_eq!(sent.contains("ami-dispatch cand force"), force, "{sent}");
+        }
     }
 
     #[test_id(t5zb3za)]

@@ -20,6 +20,9 @@ on:
       - round-vm/ami-setup.sh
       - round-vm/src/template.sh
       - round-vm/src/recipe.rs
+      - round-vm/wait-setup.sh
+      - round-vm/wait-image.sh
+      - round-vm/ssm-commands.jq
       - rust-toolchain.toml
       - flake.nix
       - flake.lock
@@ -76,7 +79,7 @@ jobs:
           if [ "$fresh" != 0 ] && [ "${{ github.event_name }}" = schedule ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
           if [ "$any" != 0 ] && [ "${{ github.event_name }}" = push ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
           if [ "$any" != 0 ] && [ "${{ github.event_name }}" = workflow_dispatch ] && [ "${{ inputs.force }}" != true ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
-          if [ "$any" != 0 ] && [ "$GITHUB_REF" != refs/heads/main ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
+          if [ "$any" != 0 ] && [ "$GITHUB_REF" != refs/heads/main ] && [ "${{ inputs.force }}" != true ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
 
       - name: Stage the tree
         if: steps.have.outputs.fresh != '1'
