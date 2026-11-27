@@ -31,6 +31,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("batcher.forge.corpus", Unit),
     ("batcher.forge.fetch", Git),
     ("batcher.forge.file", Store),
+    ("batcher.forge.note_left_out", Store),
     ("batcher.forge.observe", Store),
     ("batcher.forge.shots", Container),
     ("batcher.forge.verdict_write", Store),

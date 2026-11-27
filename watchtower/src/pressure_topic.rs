@@ -1,5 +1,5 @@
-//! `host/pressure`: the host's cpu and io PSI `full avg300` against their configured lines,
-//! published when either crosses its line. The band last published is kept in one file, so a
+//! `host/pressure`: the host's PSI cpu `some avg300` and io `full avg300` against their
+//! configured lines, published when either crosses its line. The band last published is kept in one file, so a
 //! pass on the same side says nothing and a reconnect republishes it.
 
 use std::path::{Path, PathBuf};
@@ -97,12 +97,14 @@ impl Pressure {
     /// One pass over `psi_dir`'s `cpu` and `io` files. The band is recorded only once the
     /// broker has taken it, so an undelivered crossing is published by a later pass.
     pub fn pass(&self, psi_dir: &Path, lines: &Lines, at: u64) -> Result<String, String> {
-        let read = |resource: &str| {
+        let read = |resource: &str, line: &str, parse: fn(&str) -> Option<f64>| {
             let path = psi_dir.join(resource);
             let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-            crate::probes::psi_full_avg300(&text).ok_or_else(|| format!("{} has no full avg300", path.display()))
+            parse(&text).ok_or_else(|| format!("{} has no {line} avg300", path.display()))
         };
-        let (cpu, io) = (read("cpu")?, read("io")?);
+        // The kernel reports system-wide cpu `full` as zero, so cpu is judged on `some`.
+        let cpu = read("cpu", "some", crate::probes::psi_some_avg300)?;
+        let io = read("io", "full", crate::probes::psi_full_avg300)?;
         let Some(band) = crossing(recorded(&self.record).as_ref(), cpu, io, lines, at) else {
             return Ok(format!("no crossing (cpu {cpu}, io {io})"));
         };

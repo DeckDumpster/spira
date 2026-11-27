@@ -12,8 +12,19 @@ pub struct Mapped {
     pub installed: String,
     /// The template file name in the release's `systemd/`, e.g. `spira-sentinel.service`.
     pub template: String,
-    /// For `spira-watch@.service`: the watcher name `%i` becomes.
+    /// For an instanced template (`spira-watch@.service`, `spira-sub@.service`): the name `%i`
+    /// becomes.
     pub watcher: Option<String>,
+}
+
+pub const SUB_TEMPLATE: &str = "spira-sub@.service";
+
+/// The subscribers this harness runs a `spira-sub` for.
+pub const SUBSCRIBERS: [&str; 1] = ["concierge"];
+
+/// The installed name of `name`'s `spira-sub` unit.
+pub fn subscriber_unit(name: &str, instance: &str) -> String {
+    format!("spira-sub-{name}-{instance}.service")
 }
 
 /// Map an installed unit file name back to its template, given the templates a release
@@ -27,10 +38,14 @@ pub fn template_for(installed: &str, templates: &BTreeSet<String>, instance: &st
         let Some(stem) = installed.strip_suffix(ext) else { continue };
         let base = stem.strip_suffix(&format!("-{instance}"))?;
         let t = format!("{base}{ext}");
-        if templates.contains(&t) && t != "spira-watch@.service" {
+        if templates.contains(&t) && !t.ends_with("@.service") {
             return mapped(&t, None);
         }
         if ext == ".service" {
+            let subscriber = SUBSCRIBERS.into_iter().find(|name| installed == subscriber_unit(name, instance));
+            if let Some(name) = subscriber.filter(|_| templates.contains(SUB_TEMPLATE)) {
+                return mapped(SUB_TEMPLATE, Some(name.to_string()));
+            }
             if let Some(name) = base.strip_prefix("spira-watch-") {
                 if !name.is_empty() && templates.contains("spira-watch@.service") {
                     return mapped("spira-watch@.service", Some(name.to_string()));

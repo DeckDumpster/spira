@@ -207,6 +207,16 @@ mod tests {
         assert!(!unit.contains('@'), "{unit}");
     }
 
+    #[test_id(t3xeh2i)]
+    #[test]
+    fn the_subscriber_unit_runs_the_releases_spira_sub_under_its_instance_name() {
+        let path = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/spira-sub@.service");
+        let unit = render_file(&path, &hv(), Some("concierge")).unwrap();
+        let want = format!("ExecStart={}/bin/spira-sub run --as concierge", hv().to_map()["SPIRA_PROD_ROOT"]);
+        assert!(directives(&unit).contains(&want.as_str()), "{unit}");
+        assert!(!unit.contains('@') && !unit.contains("%i"), "{unit}");
+    }
+
     #[test_id(th6sc9u)]
     #[test]
     fn proc_starts_unit_renders_with_exactly_two_capabilities_and_a_non_root_user() {

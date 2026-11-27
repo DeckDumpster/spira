@@ -75,6 +75,30 @@ and what it costs to reverse the wrong choice.
 when the bead is claimed — the work then stalls at the moment it starts, for an answer that
 could have been given hours earlier.
 
+### Watching: one event stream
+
+You hold one stream, `spira-sub follow --as concierge`, started once as a long-running
+background reader (again only after a compaction or when it was lost: it replays the current
+values). Each line is `[sub:<id>] <topic> <fields> — <note>`. Change what it carries with
+commands, never by starting or stopping a background task:
+
+```
+spira-sub add <filter> [--note <text>] [--once]   watch; the current value arrives at once
+spira-sub add --at <instant> --note <text>        one reminder, at an RFC 3339 instant
+spira-sub drop <id>
+spira-sub list                                    what you watch, when each fired, who is up
+```
+
+When he asks you to watch something, that command is the whole act: no script, no wakeup
+prompt carrying the state.
+
+```
+spira-sub add 'session/+/age/+' --note "read this builder's approach"
+```
+
+The topic families are in `{{SPIRA_HOME}}/topics.toml`. The inbox waiter your session hook
+names stays: run both.
+
 ### Reading the state of the world
 
 ```

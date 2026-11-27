@@ -442,6 +442,7 @@ pub enum Cause {
     NotInForce { dep: String },
     InForceUnread { dep: String, error: String },
     Uncertified,
+    RoundHeld { key: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -468,6 +469,7 @@ impl LeftOut {
             Cause::NotInForce { .. } => "blocked-not-in-force".into(),
             Cause::InForceUnread { .. } => "in-force-unread".into(),
             Cause::Uncertified => "uncertified".into(),
+            Cause::RoundHeld { .. } => "round-held".into(),
         }
     }
 
@@ -533,6 +535,10 @@ impl LeftOut {
             Cause::Uncertified => (
                 format!("it is SUBMITTED and not certified at {tip}, which a forge batch needs"),
                 format!("a PASS from its gate at {tip}, or a gate verdict there that certifies nothing, readmits it"),
+            ),
+            Cause::RoundHeld { key } => (
+                format!("the round it would be cut in ({key}) is held: its last assemble merged nothing new"),
+                "a new tip, or a change in the round's members, readmits it".into(),
             ),
         };
         format!("batcher {repo}: {id} left out of the cut: {why} — {exit}")

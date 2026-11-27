@@ -858,6 +858,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-pub",
  "spira-store",
  "spira-test-id",
  "testkit",
@@ -1003,7 +1004,10 @@ dependencies = [
 name = "inbox-rules"
 version = "1.0.0"
 dependencies = [
+ "ports",
  "regex",
+ "serde_json",
+ "spira-pub",
  "spira-test-id",
  "testkit",
 ]
@@ -1015,8 +1019,10 @@ dependencies = [
  "inbox-rules",
  "libc",
  "regex",
+ "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-pub",
  "spira-test-id",
  "spira-world",
  "testkit",
@@ -2482,7 +2488,6 @@ dependencies = [
  "ports",
  "reconciler-engine",
  "round-vm",
- "rumqttc",
  "runtime",
  "rusqlite",
  "sentinel",
@@ -2681,6 +2686,23 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-test-id",
+ "testkit",
+]
+
+[[package]]
+name = "spira-sub"
+version = "0.1.0"
+dependencies = [
+ "ports",
+ "rumqttc",
+ "serde",
+ "serde_json",
+ "spira-config",
+ "spira-otel",
+ "spira-pub",
+ "spira-test-id",
+ "spira-world",
+ "strand",
  "testkit",
 ]
 

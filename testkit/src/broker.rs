@@ -1,6 +1,7 @@
 //! A throwaway MQTT broker: the PATH `mosquitto`, running the shipped config on a socket in its
 //! own [`TempDir`]. A missing `mosquitto` panics; a test that needs one never skips.
 
+use std::collections::VecDeque;
 use std::os::unix::net::UnixDatagram;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -59,6 +60,7 @@ impl Process {
 pub struct Subscriber {
     client: rumqttc::Client,
     connection: rumqttc::Connection,
+    early: VecDeque<Delivered>,
 }
 
 /// One delivered message.
@@ -67,6 +69,12 @@ pub struct Delivered {
     pub topic: String,
     pub payload: Vec<u8>,
     pub retain: bool,
+}
+
+impl From<rumqttc::Publish> for Delivered {
+    fn from(p: rumqttc::Publish) -> Delivered {
+        Delivered { topic: p.topic, payload: p.payload.to_vec(), retain: p.retain }
+    }
 }
 
 impl Subscriber {
@@ -84,26 +92,27 @@ impl Subscriber {
             client.subscribe(*f, QoS::AtLeastOnce).expect("queue the subscription");
         }
         let mut acked = 0;
+        let mut early = VecDeque::new();
         while acked < filters.len() {
             match connection.recv_timeout(FAILSAFE) {
                 Ok(Ok(Event::Incoming(Packet::SubAck(_)))) => acked += 1,
-                // A retained value ahead of a later acknowledgement would be lost here.
-                Ok(Ok(Event::Incoming(Packet::Publish(p)))) => panic!("delivered before the subscriptions stood: {}", p.topic),
+                Ok(Ok(Event::Incoming(Packet::Publish(p)))) => early.push_back(p.into()),
                 Ok(Ok(_)) => {}
                 other => panic!("the broker never acknowledged the subscription: {other:?}"),
             }
         }
-        Subscriber { client, connection }
+        Subscriber { client, connection, early }
     }
 
     /// The next message; panics when none arrives.
     pub fn recv(&mut self) -> Delivered {
         use rumqttc::{Event, Packet};
+        if let Some(delivered) = self.early.pop_front() {
+            return delivered;
+        }
         loop {
             match self.connection.recv_timeout(FAILSAFE) {
-                Ok(Ok(Event::Incoming(Packet::Publish(p)))) => {
-                    return Delivered { topic: p.topic, payload: p.payload.to_vec(), retain: p.retain }
-                }
+                Ok(Ok(Event::Incoming(Packet::Publish(p)))) => return p.into(),
                 Ok(Ok(_)) => {}
                 other => panic!("no message arrived: {other:?}"),
             }

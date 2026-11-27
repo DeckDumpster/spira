@@ -463,6 +463,7 @@ forge_repo = ""
 gate_budget = "140"
 broker_socket = "fixture-broker.sock"
 session_linger_secs = 301
+sub_control_dir = "fixture-sub"
 gate_target_cap_mib = 55555
 gate_deadline = 300
 gate_build_stall = 300

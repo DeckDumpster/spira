@@ -172,8 +172,8 @@ fn run_main() -> ExitCode {
         for name in manifest.template_names() {
             println!("unit {}", install::manifest::inst_name(name, &instance));
         }
-        for w in &manifest.watch_names {
-            println!("unit {}", install::manifest::inst_watch_name(w, &instance));
+        for unit in manifest.instance_names(&instance) {
+            println!("unit {unit}");
         }
         for name in &manifest.unbuilt {
             println!("unbuilt {}", install::manifest::inst_name(name, &instance));

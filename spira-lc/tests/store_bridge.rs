@@ -14,11 +14,10 @@ use std::time::Duration;
 
 use lifecycle::bead::{BeadState, LifecycleRow};
 use runtime::ports::VirtualClock;
-use rumqttc::{Client, Connection, Event, MqttOptions, Packet, QoS, Transport};
 use serde_json::{json, Value};
 use state_store::{Config, Contract, Object, Ports, Request, Txn};
 use state_store_sqlite::{Options, SqliteBackend};
-use testkit::broker::Broker;
+use testkit::broker::{Broker, Subscriber};
 
 /// Bounds each wait on the server or the broker, so a broken one fails instead of hanging.
 const FAILSAFE: Duration = Duration::from_secs(30);
@@ -134,50 +133,19 @@ fn seed_dropped(store: &Path, id: &str) {
     assert!(contract.txn(&put, &Request::new("seed", "test", "seed")).unwrap().succeeded);
 }
 
-struct Subscriber {
-    _client: Client,
-    connection: Connection,
+fn next(sub: &mut Subscriber) -> (String, Value) {
+    let d = sub.recv();
+    (d.topic, serde_json::from_slice(&d.payload).unwrap())
 }
 
-impl Subscriber {
-    /// Subscribed to `filters` by the time this returns, so nothing published later is missed.
-    fn to(socket: &Path, filters: &[&str]) -> Subscriber {
-        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let id = format!("bridge-test-{}", N.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-        let mut options = MqttOptions::new(id, socket.to_str().unwrap(), 0);
-        options.set_transport(Transport::Unix);
-        options.set_keep_alive(Duration::ZERO);
-        let (client, mut connection) = Client::new(options, 32);
-        let all = filters.iter().map(|f| rumqttc::SubscribeFilter::new(f.to_string(), QoS::AtLeastOnce));
-        client.subscribe_many(all).unwrap();
-        loop {
-            match connection.recv_timeout(FAILSAFE) {
-                Ok(Ok(Event::Incoming(Packet::SubAck(_)))) => return Subscriber { _client: client, connection },
-                Ok(Ok(_)) => {}
-                other => panic!("no SUBACK: {other:?}"),
-            }
-        }
+/// The latest value of each topic, read until every one of `wanted` has arrived.
+fn until(sub: &mut Subscriber, wanted: &[&str]) -> BTreeMap<String, Value> {
+    let mut got = BTreeMap::new();
+    while !wanted.iter().all(|w| got.contains_key(*w)) {
+        let (topic, value) = next(sub);
+        got.insert(topic, value);
     }
-
-    fn next(&mut self) -> (String, Value) {
-        loop {
-            match self.connection.recv_timeout(FAILSAFE) {
-                Ok(Ok(Event::Incoming(Packet::Publish(p)))) => return (p.topic, serde_json::from_slice(&p.payload).unwrap()),
-                Ok(Ok(_)) => {}
-                other => panic!("no message arrived: {other:?}"),
-            }
-        }
-    }
-
-    /// The latest value of each topic, read until every one of `wanted` has arrived.
-    fn until(&mut self, wanted: &[&str]) -> BTreeMap<String, Value> {
-        let mut got = BTreeMap::new();
-        while !wanted.iter().all(|w| got.contains_key(*w)) {
-            let (topic, value) = self.next();
-            got.insert(topic, value);
-        }
-        got
-    }
+    got
 }
 
 /// A server whose bridge the broker has seen come up.
@@ -192,7 +160,7 @@ fn watched(server: Server, broker: &Broker) -> Server {
 
 fn wait_up(broker: &Broker) {
     let mut watch = Subscriber::to(broker.socket(), &[PUBLISHER]);
-    while watch.next().1["state"] != "up" {}
+    while next(&mut watch).1["state"] != "up" {}
 }
 
 #[test_id(tbdarbf)]
@@ -204,12 +172,12 @@ fn a_claim_is_published_as_the_beads_state_and_its_session_count() {
     server.create("sp-bra");
     server.claim("sp-bra");
 
-    let got = watching.until(&["bead/sp-bra/state", "bead/sp-bra/sessions"]);
+    let got = until(&mut watching, &["bead/sp-bra/state", "bead/sp-bra/sessions"]);
     assert_eq!(got["bead/sp-bra/state"], json!({"state": "WORKING", "from": "READY", "actor": "dwarf-1", "at": PINNED_NOW}));
     assert_eq!(got["bead/sp-bra/sessions"], json!({"sessions": 1, "holder": "dwarf-1", "at": PINNED_NOW}));
 
     let mut late = Subscriber::to(broker.socket(), &["bead/sp-bra/state"]);
-    assert_eq!(late.next().1["state"], "WORKING", "the state is retained for a later subscriber");
+    assert_eq!(next(&mut late).1["state"], "WORKING", "the state is retained for a later subscriber");
 }
 
 #[test_id(tnchd8g)]
@@ -225,8 +193,8 @@ fn a_refused_transition_publishes_nothing() {
     server.claim("sp-brb");
 
     // One thread publishes in commit order, so anything of the refusal would come first.
-    assert_eq!(watching.next().0, "bead/sp-brb/state");
-    assert_eq!(watching.next().0, "bead/sp-brb/sessions");
+    assert_eq!(next(&mut watching).0, "bead/sp-brb/state");
+    assert_eq!(next(&mut watching).0, "bead/sp-brb/sessions");
 }
 
 #[test_id(t3o6rgu)]
@@ -240,9 +208,9 @@ fn a_restarted_broker_is_handed_every_open_beads_state_again_and_no_terminal_one
     server.claim("sp-bropen");
     let (code, out) = server.event("sp-bropen", "WORKING", 1, "dwarf-1", json!({"Submit": {"tip": TIP}}));
     assert_eq!(code, 0, "{out}");
-    let mut held = before.until(&["bead/sp-bropen/state", "bead/sp-bropen/sessions"]);
+    let mut held = until(&mut before, &["bead/sp-bropen/state", "bead/sp-bropen/sessions"]);
     while held["bead/sp-bropen/state"]["state"] != "SUBMITTED" {
-        let (topic, value) = before.next();
+        let (topic, value) = next(&mut before);
         held.insert(topic, value);
     }
     let (code, out) = server.call(&["show", "sp-brgone"]);
@@ -250,18 +218,18 @@ fn a_restarted_broker_is_handed_every_open_beads_state_again_and_no_terminal_one
 
     broker.restart();
     let mut after = Subscriber::to(broker.socket(), &["bead/+/state", "bead/+/sessions"]);
-    let mut again = after.until(&["bead/sp-bropen/state", "bead/sp-bropen/sessions"]);
+    let mut again = until(&mut after, &["bead/sp-bropen/state", "bead/sp-bropen/sessions"]);
     // A later transition is published behind the whole republish, so it marks its end.
     server.create("sp-brlast");
     server.claim("sp-brlast");
-    again.extend(after.until(&["bead/sp-brlast/state"]));
+    again.extend(until(&mut after, &["bead/sp-brlast/state"]));
 
     assert_eq!(again["bead/sp-bropen/state"], held["bead/sp-bropen/state"]);
     assert_eq!(again["bead/sp-bropen/sessions"], held["bead/sp-bropen/sessions"]);
     assert!(!again.contains_key("bead/sp-brgone/state"), "a terminal bead was republished: {again:?}");
 
     let mut late = Subscriber::to(broker.socket(), &["bead/sp-bropen/state"]);
-    assert_eq!(late.next().1, held["bead/sp-bropen/state"]);
+    assert_eq!(next(&mut late).1, held["bead/sp-bropen/state"]);
     sink.expect(&["spira_lc_republished", "spira_lc_republish_seconds"], FAILSAFE);
 }
 
