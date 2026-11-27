@@ -2,6 +2,7 @@
 name = "watchdog"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 description = "spira-watchdog — the one watcher outside the scheduler: one pass on the platform's timer reads scheduler status and the scheduler unit's facts, and resets and starts it again with backoff while it is wedged or absent, and pages the Concierge inbox once per incident with the unit's last log lines."
 
 [lib]
@@ -12,6 +13,11 @@ path = "src/lib.rs"
 name = "spira-watchdog"
 path = "src/main.rs"
 test = false
+
+[[test]]
+name = "inbox_page"
+path = "tests/inbox_page.rs"
+required-features = ["integration"]
 
 [features]
 integration = ["inbox-rules/integration", "runtime/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration", "tsd/integration", "system-paths/integration", "spira-test-id/integration"]

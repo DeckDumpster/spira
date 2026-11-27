@@ -3,10 +3,9 @@
 //! grace is killed by pid, its cmdline re-verified first, and reported once on the concierge
 //! inbox with its tier and wall.
 
-use std::io::Write;
 use std::process::ExitCode;
 use std::time::Duration;
-use testenv::cap::{self, Breach};
+use testenv::cap;
 
 const USAGE: &str = "usage: testenv-cap scan [--dry-run] | watch --interval SECS | health";
 
@@ -19,30 +18,9 @@ fn caps() -> Result<(u64, u64, u64, u64), String> {
     ))
 }
 
-fn report(inbox: &str, b: &Breach) {
-    let line = format!(
-        "testenv over-cap killed: pid {} tier={} wall={}s cap={}s cmd={}",
-        b.proc.pid,
-        b.tier,
-        b.proc.age_secs,
-        b.cap,
-        b.proc.argv.join(" ")
-    );
-    println!("{line}");
-    let stamp = testenv::util::iso_utc(testenv::batch::now_epoch());
-    let written = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(inbox)
-        .and_then(|mut f| writeln!(f, "{stamp} {line}"));
-    if let Err(e) = written {
-        eprintln!("testenv-cap: cannot write {inbox}: {e}");
-    }
-}
-
 fn scan(dry: bool, grace: u64, exe: Option<&str>) -> Result<usize, String> {
     let (suite, gate, load_wait, slot_wait) = caps()?;
-    let inbox = spira_config::process::cfg("SPIRA_CONCIERGE_INBOX")?;
+    let inbox = inbox_rules::Sink::configured("testenv-cap")?;
     let run = std::path::PathBuf::from(spira_config::process::cfg("SPIRA_RUN")?);
     let procs = cap::uncounted(&run, cap::live());
     let mut killed = 0;
@@ -50,7 +28,7 @@ fn scan(dry: bool, grace: u64, exe: Option<&str>) -> Result<usize, String> {
         if dry {
             println!("would kill pid {} tier={} wall={}s cap={}s", b.proc.pid, b.tier, b.proc.age_secs, b.cap);
         } else if cap::kill_verified(&b.proc) {
-            report(&inbox, &b);
+            cap::report(&inbox, &b);
             testenv::telemetry::push_over_cap(&testenv::telemetry::sink(), b.tier);
             killed += 1;
         }

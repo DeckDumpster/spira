@@ -6,6 +6,8 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
+use inbox_rules::Sink;
+
 use crate::classify::{Facts, Partition, Store};
 use crate::config::Config;
 use crate::model::{AgedRow, Disposition, PartRow, ReportJson, ReportStrand, Row};
@@ -402,7 +404,12 @@ pub fn decide(r: &AgedRow, dry: bool, strand_grace: i64) -> Step {
 }
 
 pub fn check(cfg: &Config, c: Classified, dry: bool) -> i32 {
-    check_raising(cfg, &spira_store::lc_call::LcClient::configured(), c, dry, &mut |part, kind, id, detail, action| escalate(cfg, part, kind, id, detail, action))
+    check_into(cfg, &spira_store::lc_call::LcClient::configured(), &Sink::configured("strand"), c, dry)
+}
+
+/// [`check`] over a given store door and Concierge inbox.
+pub fn check_into(cfg: &Config, door: &Result<spira_store::lc_call::LcClient, String>, inbox: &Result<Sink, String>, c: Classified, dry: bool) -> i32 {
+    check_raising(cfg, door, c, dry, &mut |part, kind, id, detail, action| escalate(cfg, inbox, part, kind, id, detail, action))
 }
 
 type Raise<'a> = dyn FnMut(&str, &str, &str, &str, &str) + 'a;
@@ -687,23 +694,24 @@ fn inbox_line(title: &str, detail: &str, action: &str) -> String {
     format!("[strand] {title}: {detail} — {action}")
 }
 
-fn escalate_to_inbox(title: &str, detail: &str, action: &str) {
-    use std::io::Write;
-    let Ok(path) = spira_config::process::cfg("SPIRA_CONCIERGE_INBOX") else {
-        warn("check: SPIRA_CONCIERGE_INBOX unreadable — the unrostered row reached no one");
-        return;
+fn escalate_to_inbox(inbox: &Result<Sink, String>, title: &str, detail: &str, action: &str) {
+    let sink = match inbox {
+        Ok(sink) => sink,
+        Err(e) => {
+            warn(&format!("check: the concierge inbox cannot be written ({e}) — the unrostered row reached no one"));
+            return;
+        }
     };
-    let line = format!("{} {}\n", timefmt::utc_stamp(timefmt::now()), inbox_line(title, detail, action).replace('\n', " "));
-    let wrote = std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| f.write_all(line.as_bytes()));
-    if let Err(e) = wrote {
-        warn(&format!("check: cannot append to {path}: {e}"));
+    let line = format!("{} {}", timefmt::utc_stamp(timefmt::now()), inbox_line(title, detail, action).replace('\n', " "));
+    if let Err(e) = sink.record(&line) {
+        warn(&format!("check: the concierge inbox: {e}"));
     }
 }
 
-fn escalate(cfg: &Config, part: &str, kind: &str, id: &str, detail: &str, action: &str) {
+fn escalate(cfg: &Config, inbox: &Result<Sink, String>, part: &str, kind: &str, id: &str, detail: &str, action: &str) {
     let title = title_for(part, kind, id);
     if part == crate::unrostered::PART {
-        escalate_to_inbox(&title, detail, action);
+        escalate_to_inbox(inbox, &title, detail, action);
         return;
     }
     let bead = if id.is_empty() || id == "-" { None } else { match spira_store::lc_call::LcClient::configured() {

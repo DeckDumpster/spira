@@ -5,6 +5,7 @@
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
+use inbox_rules::Sink;
 use spira_otel::metrics::{MetricsSink, Point};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -280,7 +281,17 @@ pub fn inbox_line(epoch: u64, alarm: &str) -> String {
     format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z [watch:perf-watch] {alarm}\n", rem / 3600, rem % 3600 / 60, rem % 60)
 }
 
-pub fn append_inbox(path: &str, line: &str) {
+pub fn append_inbox(sink: &Sink, line: &str) {
+    if sink.inbox.as_os_str().is_empty() {
+        return;
+    }
+    if let Err(e) = sink.record(line.strip_suffix('\n').unwrap_or(line)) {
+        eprintln!("perf-watch: {e}");
+    }
+}
+
+/// A plain append of a finished line to a log that is not the inbox.
+pub fn append_line(path: &str, line: &str) {
     if path.is_empty() {
         return;
     }
@@ -445,13 +456,14 @@ mod tests {
         let cfg = Settings { budget_ms: 500, interval_secs: 0, remind_secs: 1800 };
         let dir = testkit::TempDir::new("perf-inbox");
         let inbox = dir.path().join("inbox");
+        let sink = Sink { inbox: inbox.clone(), cursor: dir.path().join("cursor"), bus: inbox_rules::Bus::Off, wake: String::new(), pattern: String::new(), name: "perf-watch".into() };
         let mut health = Health::default();
         let pass_at = |epoch: u64, health: &mut Health| {
             clock.epoch.set(epoch);
             let mut r = Scripted { clock: &clock, costs: [("list".to_string(), 730), ("show".to_string(), 1), ("gone".to_string(), 0)].into(), stats: STATS.into(), asked_stats: false };
             let out = run_pass(&cfg, &probes, &["stats".to_string()], health, &clock, &mut r).unwrap();
             for l in &out.lines {
-                append_inbox(&inbox.to_string_lossy(), &inbox_line(epoch, l));
+                append_inbox(&sink, &inbox_line(epoch, l));
             }
             *health = out.health;
         };

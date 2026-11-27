@@ -19,9 +19,15 @@ name = "no_fork_edges"
 path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "inbox_page"
+path = "tests/inbox_page.rs"
+required-features = ["integration"]
+
 [features]
-integration = ["spira-config/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
+integration = ["inbox-rules/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
 [dependencies]
+inbox-rules = { path = "../inbox-rules" }
 serde_json = "1"
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }

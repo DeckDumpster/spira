@@ -2,6 +2,12 @@
 //! The state file maps a condition's reference to when it was last noted; a condition seen
 //! again is silent until the reminder interval passes.
 
+use std::path::Path;
+
+use inbox_rules::Sink;
+
+use crate::intake::{now_epoch, now_iso};
+
 pub const REMINDER_S: i64 = 86_400;
 
 /// The state after seeing `reference` at `now`, and whether to write a note. Unrelated rows
@@ -27,6 +33,20 @@ pub fn decide(state: &str, reference: &str, now: i64) -> (bool, String) {
     };
     let out = rows.iter().map(|(r, t)| format!("{r}\t{t}\n")).collect();
     (due, out)
+}
+
+/// Notes `reference` in the Concierge inbox when it is due, and remembers it only once the line
+/// is there. `Ok(false)` is a condition not due; `Err` a due one that was not noted. The caller
+/// holds the incident lock.
+pub fn note(sink: &Sink, state_path: &Path, reference: &str, title: &str) -> Result<bool, String> {
+    let state = std::fs::read_to_string(state_path).unwrap_or_default();
+    let (due, next) = decide(&state, reference, now_epoch());
+    if !due {
+        return Ok(false);
+    }
+    sink.record(&format!("{} {}", now_iso(), line(title, reference)))?;
+    std::fs::write(state_path, next).map_err(|e| format!("{}: {e}", state_path.display()))?;
+    Ok(true)
 }
 
 /// One inbox line: single-line, so the triage reads it as one event.

@@ -261,6 +261,43 @@ fn append_and_push(inbox: &Path, line: &str, wake: &str, pattern: &str, flusher:
     Ok(true)
 }
 
+/// One writer of the inbox: where it writes, how it pushes, and the name it publishes as.
+#[derive(Debug, Clone)]
+pub struct Sink {
+    pub inbox: PathBuf,
+    pub cursor: PathBuf,
+    pub bus: Bus,
+    pub wake: String,
+    pub pattern: String,
+    pub name: String,
+}
+
+impl Sink {
+    /// The configured Concierge inbox, written as `name`. A key that is missing is an error.
+    pub fn configured(name: &str) -> Result<Sink, String> {
+        use spira_config::process::cfg;
+        Ok(Sink {
+            inbox: PathBuf::from(cfg("SPIRA_CONCIERGE_INBOX")?),
+            cursor: concierge_cursor(&cfg("SPIRA_RUN")?),
+            bus: Bus::Configured,
+            wake: cfg("SPIRA_CONCIERGE_PUSH_WAKE")?,
+            pattern: cfg("SPIRA_CONCIERGE_PUSH_PATTERN")?,
+            name: name.to_string(),
+        })
+    }
+
+    /// [`record`] of one finished line.
+    pub fn record(&self, line: &str) -> Result<bool, String> {
+        self.record_lines(&[line])
+    }
+
+    /// [`record_lines`] of finished lines.
+    pub fn record_lines(&self, lines: &[&str]) -> Result<bool, String> {
+        let flusher = || spira_config::release_env::tool("inbox-triage").map(PathBuf::from);
+        record_lines(&self.inbox, lines, &self.wake, &self.pattern, flusher, &self.cursor, || self.bus.publisher(&self.name))
+    }
+}
+
 /// When a spooled burst is due: the spool has stopped growing for `idle_ticks`, or
 /// `window_ticks` have passed. Time is the number of `tick` calls; the caller sleeps.
 pub struct Flush {
