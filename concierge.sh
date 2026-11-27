@@ -295,8 +295,7 @@ concierge_fd_holders() {
 # process ever sees a different `tmux` than the one already installed.
 tmux_shim_dir() { printf '%s' "$SPIRA_RUN/concierge-tmux-shim"; }
 
-# The session's own hooks: StopFailure hands a failed turn's delivery back
-# (hooks/concierge-turn-failed.sh); PreToolUse refuses a raw PR against a registered repo
+# The session's own hooks: PreToolUse refuses a raw PR against a registered repo
 # (hooks/concierge-raw-pr-fence.sh) and shows the statutes governing a decision command
 # first (hooks/statute-check-hook.sh).
 session_settings() {
@@ -304,7 +303,6 @@ session_settings() {
 import json, sys
 h = lambda p, t: [{"hooks": [{"type": "command", "command": p, "timeout": t}]}]
 print(json.dumps({"hooks": {
-    "StopFailure": h(sys.argv[1] + "/concierge-turn-failed.sh", 30),
     "PreToolUse": [{"matcher": "Bash", "hooks": h(sys.argv[1] + "/concierge-raw-pr-fence.sh", 30)[0]["hooks"] + h(sys.argv[1] + "/statute-check-hook.sh", 30)[0]["hooks"]}]}}))' \
         "$SPIRA_HOME/hooks"
 }

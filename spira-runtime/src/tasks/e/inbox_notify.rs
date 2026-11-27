@@ -67,7 +67,7 @@
 //!
 //! Each row's evidence block reads `{name} — {k} actionable event(s) with no reader, the oldest for {age}` or `{name} — DEGRADED for {age}: {why}` (`notify.rs:146`, `:286`).
 //!
-//! `notify` itself appends nothing to the inbox. `watchd page` (`notify.rs:189-214`) does, as `[watch:{name}] {text}`, but that is a different verb whose callers move with their own tasks.
+//! `notify` itself appends nothing to the inbox.
 //!
 //! ## Silence
 //!

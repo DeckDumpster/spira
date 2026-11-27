@@ -1,5 +1,4 @@
-//! The drop and dedup rules for the Concierge inbox. One implementation, two readers
-//! (`inbox-triage`, `watchd next`): two copies of "what is noise" is how they come to disagree.
+//! The drop and dedup rules for the Concierge inbox, shared by `inbox-triage`.
 //!
 //! And the one write leg, [`record`], for every writer of the inbox (`inbox-triage append`,
 //! spira-runtime's `World::inbox_append`, the scheduler watchdog's page): a line that matches the

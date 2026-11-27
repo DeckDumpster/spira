@@ -49,8 +49,6 @@ canonical reader is now this binary.
 watchd manifest                every valid row, expanded: name|kind|target|health
 watchd units                   the unit name of every `daemon` row, one per line
 watchd keys                    the placeholders a row may name, one per line
-watchd next <name> [--timeout SECS]  block until the row has an unread line that survives the inbox drop/dedup rules (`inbox-rules`), print it, advance the cursor, exit 0; exit 124 on timeout, 3 if another reader holds the row. Each delivery's text is kept in `<name>.delivered`; if `<name>.redeliver` exists `next` prints it first, marked `[redelivered] `, removes it and records the delivery again, leaving the cursor and dedup memory alone
-watchd undeliver <name> [--session PID]  with no live reader (the reader lock is free) and, given `--session`, a record whose `ancestors` holds that pid, copy the last delivery's text to `<name>.redeliver`; exit 0 on a live reader or missing record, 1 on an unreadable one
 watchd exec <name>              become that watcher; this is what ExecStart calls
 watchd status                  a table, one line per watcher, then a DEGRADED/NOT INSTALLED block
 watchd drain [name] [--all]    print what nobody has read, and mark it read
@@ -127,12 +125,6 @@ bead, else against a pass id built from the row, and the Concierge gets a `note`
 (fail) carrying the last twelve lines of output. A pass takes the row out of the ask. No match,
 several matches, no `RUN:`, an unusable `RUN:`, a missing tool, a failure or a timeout leave the row in
 the ask, with a `tried before escalating:` line naming the SOP, the tool and the exit code.
-
-`watchd page <row> <text> [key=value ...]` is the same step for an event that must reach the Concierge
-now rather than after `SPIRA_NOTIFY_AGE`: the line is logged on the row, offered to a matching SOP as
-`<text>` plus an `incident:` line of the fields, and put in the inbox as `[watch:<row>] <text>` only when
-no tool handled it. The row's cursor moves past it only when the row was caught up, so a page that died
-before delivery is still unread for `notify`.
 
 The same SOP runs at most twice for one incident key inside `SPIRA_NOTIFY_AGE` seconds
 (`<name>.sop-runs`); the third pass escalates. A passing tool does not mark the events read, so a

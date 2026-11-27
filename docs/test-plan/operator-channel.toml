@@ -337,11 +337,5 @@ launcher = { site = "release/src/session_hook.rs", needle = "hook_command" }
 [[use_case]]
 id = "UC-operator-channel-49"
 tier = "T1"
-statement = "The Concierge session is given no Stop hook: its settings carry the StopFailure hand-back and the two Bash PreToolUse hooks, and its liveness is the subscriber/concierge last will."
+statement = "The Concierge session is given no Stop hook: its settings carry the two Bash PreToolUse hooks, and its liveness is the subscriber/concierge last will."
 launcher = { site = "concierge.sh", needle = "session_settings" }
-
-[[use_case]]
-id = "UC-operator-channel-50"
-tier = "T1"
-statement = "The Concierge StopFailure hook, run for a turn that ended on an API error, hands that session's last inbox delivery back for the next waiter to print again; outside the Concierge it does nothing."
-launcher = { site = "concierge.sh", needle = "concierge-turn-failed.sh" }

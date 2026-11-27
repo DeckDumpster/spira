@@ -4,13 +4,13 @@
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
-use watchd::{commands, context, filter, manifest, next, notify, ops, tail};
+use watchd::{commands, context, filter, manifest, notify, ops, tail};
 
 use manifest::Row;
 use ops::Real;
 
 fn usage() -> &'static str {
-    "usage: watchd manifest|units|keys|exec <name>|status|drain [name] [--all]|peek [name] [--all] [--limit N]|tail <name> [--all] [--takeover] [--from-start]|next <name> [--timeout SECS]|undeliver <name> [--session PID]|tailers|restart [name]|notify|page <row> <text> [key=value ...]|prune|health-ids <file>"
+    "usage: watchd manifest|units|keys|exec <name>|status|drain [name] [--all]|peek [name] [--all] [--limit N]|tail <name> [--all] [--takeover] [--from-start]|tailers|restart [name]|notify|prune|health-ids <file>"
 }
 
 fn load_context() -> context::Context {
@@ -159,44 +159,6 @@ fn dispatch(sub: &str, rest: &[String]) -> Option<i32> {
                 &tail::TailArgs { name: &name, all: args.all, takeover: args.takeover, from_start: args.from_start },
             )
         }
-        "next" => {
-            let (name, timeout) = match rest {
-                [n] => (n, None),
-                [n, f, secs] if f == "--timeout" && secs.parse::<u64>().is_ok() => (n, Some(std::time::Duration::from_secs(secs.parse().unwrap()))),
-                _ => {
-                    eprintln!("usage: watchd next <name> [--timeout SECS]");
-                    std::process::exit(2);
-                }
-            };
-            let ctx = load_context();
-            let rows = need_rows(&ctx);
-            let dedup_window = match spira_config::process::cfg_parse::<u64>("SPIRA_CONCIERGE_INBOX_DEDUP") {
-                Ok(w) => w,
-                Err(e) => {
-                    eprintln!("watchd: {e}");
-                    std::process::exit(1);
-                }
-            };
-            match next::cmd_next(&rows, &ctx, &next::NextArgs { name, dedup_window, timeout, poll: std::time::Duration::from_millis(500), ancestors: spira_config::admission::ancestors(std::process::id(), &spira_config::admission::RealProcs) }) {
-                Ok(out) => {
-                    print!("{out}");
-                    0
-                }
-                Err(code) => code,
-            }
-        }
-        "undeliver" => {
-            let (name, session) = match rest {
-                [n] => (n, None),
-                [n, f, pid] if f == "--session" && pid.parse::<u32>().is_ok() => (n, pid.parse().ok()),
-                _ => {
-                    eprintln!("usage: watchd undeliver <name> [--session PID]");
-                    std::process::exit(2);
-                }
-            };
-            let ctx = load_context();
-            next::cmd_undeliver(&ctx.run, name, session)
-        }
         "tailers" => {
             let ctx = load_context();
             let rows = need_rows(&ctx);
@@ -228,22 +190,6 @@ fn dispatch(sub: &str, rest: &[String]) -> Option<i32> {
                     print!("{}", out.report);
                     out.code
                 }
-                Err(e) => {
-                    eprintln!("{e}");
-                    3
-                }
-            }
-        }
-        "page" => {
-            let [row, text, fields @ ..] = rest else {
-                eprintln!("usage: watchd page <row> <text> [key=value ...]");
-                std::process::exit(2);
-            };
-            let ctx = load_context();
-            let real = Real::new(ctx.systemctl.clone(), ctx.systemctl_override.as_deref());
-            let rows = need_rows(&ctx);
-            match notify::cmd_page(&rows, &real, &ctx, row, text, fields) {
-                Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{e}");
                     3
