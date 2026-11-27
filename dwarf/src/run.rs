@@ -1623,7 +1623,7 @@ impl<'a> Run<'a> {
             // tree this directory last built. A clean that cannot run leaves the directory
             // untrusted, so it is emptied — cold, never wrong.
             let path = self.d.env.child().get("PATH").cloned().unwrap_or_default();
-            match bd::clean(&self.home().join(bd::CLEAN_SCRIPT), work, &dir, &path, false) {
+            match bd::clean(&self.home().join(bd::CLEAN_SCRIPT), work, &dir, &path, false, &self.s.bead, Some(&self.s.repo_name)) {
                 Ok(out) => {
                     for l in out.lines().filter(|l| !l.trim().is_empty()) {
                         self.log(&format!("{f}: {l}"));
@@ -1655,7 +1655,7 @@ impl<'a> Run<'a> {
         let Some(lease) = self.s.build_dir.take() else { return };
         if let Some(work) = self.s.work.clone().filter(|w| w.is_dir()) {
             let path = self.d.env.child().get("PATH").cloned().unwrap_or_default();
-            if let Err(e) = spira_config::build_dir::clean(&self.home().join(spira_config::build_dir::CLEAN_SCRIPT), &work, lease.dir(), &path, true) {
+            if let Err(e) = spira_config::build_dir::clean(&self.home().join(spira_config::build_dir::CLEAN_SCRIPT), &work, lease.dir(), &path, true, &self.s.bead, Some(&self.s.repo_name)) {
                 self.log(&format!("{}: could not record the tree {} holds ({e}) — the next lease cleans its workspace crates", self.f(), lease.dir().display()));
             }
         }
