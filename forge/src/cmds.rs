@@ -1769,6 +1769,12 @@ pub fn force_cancel(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
 /// its tree, its workflow file and the harness at that commit; re-running it can only repeat
 /// the answer, so it is refused with that reason. Only a fault or an unfinished run is re-run.
 pub fn rerun_refusal(gh: &dyn Gh, repo: &Path, run_id: &str) -> Option<String> {
+    refusal(gh, repo, run_id, false)
+}
+
+/// With `flip`, a `failure` on its first attempt is admitted once: the attempt number is the
+/// input that changes, and the forge's own `run_attempt` records that it did.
+fn refusal(gh: &dyn Gh, repo: &Path, run_id: &str, flip: bool) -> Option<String> {
     let run = parse(
         &gh.call(
             Some(repo),
@@ -1785,6 +1791,15 @@ pub fn rerun_refusal(gh: &dyn Gh, repo: &Path, run_id: &str) -> Option<String> {
     let concl = jstr(&run, "conclusion").unwrap_or_default().to_lowercase();
     if concl != "success" && concl != "failure" {
         return None;
+    }
+    if flip && concl == "failure" {
+        return match run.get("run_attempt").and_then(Value::as_u64) {
+            Some(1) => None,
+            attempt => {
+                let attempt = attempt.map_or_else(|| "unreadable".to_string(), |a| a.to_string());
+                Some(format!("run {run_id} is at attempt {attempt}: the one discriminating rerun is of attempt 1"))
+            }
+        };
     }
     if concl == "failure" {
         let jobs = parse(
@@ -1815,7 +1830,12 @@ pub fn workflow_rerun(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
 /// With `wait_cancel`, a run this call cancelled is polled until it is `completed` before the
 /// rerun is asked for: the forge refuses a rerun of a run that has not completed.
 pub fn workflow_rerun_after_cancel(gh: &dyn Gh, repo: &Path, run_id: &str, wait_cancel: Option<u64>, sleep: &dyn Fn(u64)) -> Out {
-    if let Some(why) = rerun_refusal(gh, repo, run_id) {
+    workflow_rerun_as(gh, repo, run_id, false, wait_cancel, sleep)
+}
+
+/// [`workflow_rerun_after_cancel`], with `flip` for the rerun of a red test.
+pub fn workflow_rerun_as(gh: &dyn Gh, repo: &Path, run_id: &str, flip: bool, wait_cancel: Option<u64>, sleep: &dyn Fn(u64)) -> Out {
+    if let Some(why) = refusal(gh, repo, run_id, flip) {
         warn!("forge: workflow-rerun refused: {why}");
         return Out {
             code: 3,

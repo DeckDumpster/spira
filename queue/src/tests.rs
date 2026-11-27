@@ -329,6 +329,7 @@ struct FLib {
     /// When set, what `create_bug` fails with, whatever `bug_id` holds.
     bug_not_filed: RefCell<Option<NotFiled>>,
     amend_ok: Cell<bool>,
+    flip_filing_down: Cell<bool>,
     /// When set, what `amend_bug` fails with.
     note_not_filed: RefCell<Option<NotFiled>>,
     dead_beads: RefCell<Vec<String>>,
@@ -492,6 +493,13 @@ impl Lib for FLib {
         }
         let id = self.bug_id.borrow().clone();
         id.ok_or_else(|| NotFiled::Unknown("bd created nothing".into()))
+    }
+    fn file_flip_fix(&self, _: &Path, repo: &str, title: &str, body: &str) -> Result<String, String> {
+        self.log(format!("file_flip_fix {repo} {title}\n{body}"));
+        if self.flip_filing_down.get() {
+            return Err("bead.sh file exited 1: store down".into());
+        }
+        Ok("sp-flip".into())
     }
     fn amend_bug(&self, actor: &str, id: &str, note: &str) -> Result<bool, NotFiled> {
         self.log(format!("amend_bug {actor} {id} {note}"));
@@ -1137,10 +1145,11 @@ impl Forge for FForge {
         self.calls.borrow_mut().push(format!("dispatch {ref_}"));
         !*self.dispatch_refused.borrow()
     }
-    fn workflow_rerun(&self, _: &Path, _: &Path, run: &str) -> Rerun {
+    fn workflow_rerun(&self, _: &Path, _: &Path, run: &str, flip: bool) -> Rerun {
+        let flag = if flip { " --flip" } else { "" };
         self.calls
             .borrow_mut()
-            .push(format!("workflow-rerun {run}"));
+            .push(format!("workflow-rerun {run}{flag}"));
         if let Some(why) = self.rerun_decided.borrow().clone() {
             Rerun::Decided(why)
         } else if *self.rerun_refused.borrow() {
@@ -2085,6 +2094,7 @@ impl T {
             bug_id: RefCell::new(Some("sp-fix1".into())),
             bug_not_filed: RefCell::default(),
             amend_ok: Cell::new(true),
+            flip_filing_down: Cell::new(false),
             note_not_filed: RefCell::default(),
             dead_beads: RefCell::new(Vec::new()),
             pf_rc: Cell::new(0),
