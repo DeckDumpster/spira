@@ -1,12 +1,13 @@
 //! The subscription set and what is delivered for it. No I/O: time is the injected clock, and
 //! every method returns the lines to stream and what the connection and the set file owe.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use ports::Clock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use spira_pub::topics::{self, Class};
 
 use crate::render;
@@ -26,6 +27,12 @@ pub struct Entry {
     pub note: String,
     #[serde(default)]
     pub once: bool,
+    /// The interval deliveries are batched at; absent means at once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch_s: Option<u64>,
+    /// Per topic, the digest of the state value last delivered here: never the value.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub delivered: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -38,13 +45,17 @@ pub struct Saved {
 pub(crate) struct Sub {
     pub(crate) entry: Entry,
     pub(crate) last_fired_ms: Option<u64>,
-    /// The last state value delivered here, per topic.
-    seen: HashMap<String, Value>,
+    /// What the next batch holds: the latest value per topic.
+    pub(crate) pending: BTreeMap<String, Value>,
+    /// When the first of `pending` arrived, and when the batch is due. Set while it holds any.
+    since_ms: u64,
+    due_ms: Option<u64>,
 }
 
 /// What one step owes the outside.
 #[derive(Debug, Default, PartialEq)]
 pub struct Out {
+    /// Each element is one delivery: one line, or a batch's header and lines.
     pub lines: Vec<String>,
     /// Filters no remaining subscription holds.
     pub unsubscribe: Vec<String>,
@@ -77,27 +88,84 @@ fn depends_on(filter: &str, publisher: &str) -> bool {
     topics::families_matching(filter).any(|f| f.resident.iter().any(|r| r == publisher))
 }
 
+/// `value` with its keys in order: a build may unify serde_json's `preserve_order` in.
+fn key_ordered(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let ordered: BTreeMap<&String, &Value> = map.iter().collect();
+            Value::Object(ordered.into_iter().map(|(k, v)| (k.clone(), key_ordered(v))).collect())
+        }
+        Value::Array(items) => Value::Array(items.iter().map(key_ordered).collect()),
+        other => other.clone(),
+    }
+}
+
+fn digest(value: &Value) -> String {
+    format!("{:x}", Sha256::digest(key_ordered(value).to_string()))
+}
+
+/// The next multiple of the interval, so equal intervals fall due together.
+fn boundary(now_ms: u64, batch_s: u64) -> u64 {
+    let interval = batch_s.saturating_mul(1000).max(1);
+    (now_ms / interval + 1).saturating_mul(interval)
+}
+
+const NOT_BATCHED: &str = "delivers at once, so it cannot be batched";
+
 impl Sub {
+    fn new(entry: Entry) -> Sub {
+        Sub { entry, last_fired_ms: None, pending: BTreeMap::new(), since_ms: 0, due_ms: None }
+    }
+
     fn filter(&self) -> Option<&str> {
         self.entry.filter.as_deref()
     }
 
-    /// The line for `topic` = `value`, unless it is the state value last delivered here.
-    fn deliver(&mut self, topic: &str, value: &Value, state: bool, now: u64) -> Option<String> {
+    fn already_given(&self, topic: &str, value: &Value) -> bool {
+        self.entry.delivered.get(topic) == Some(&digest(value))
+    }
+
+    /// The line for `topic` = `value`, unless it is the state value last delivered here. The one
+    /// place a value counts as given.
+    fn deliver(&mut self, topic: &str, value: &Value, state: bool, now: u64, out: &mut Out) -> Option<String> {
         if state {
-            if self.seen.get(topic) == Some(value) {
+            if self.already_given(topic, value) {
                 return None;
             }
-            self.seen.insert(topic.to_string(), value.clone());
+            self.entry.delivered.insert(topic.to_string(), digest(value));
+            out.changed = true;
         }
         self.last_fired_ms = Some(now);
         Some(render::line(&self.entry.id, topic, value, &self.entry.note))
+    }
+
+    fn hold(&mut self, topic: &str, value: &Value, batch_s: u64, now: u64) {
+        if self.due_ms.is_none() {
+            self.since_ms = now;
+            self.due_ms = Some(boundary(now, batch_s));
+        }
+        self.pending.insert(topic.to_string(), value.clone());
+    }
+
+    /// The topic holds no value any more: there is none to batch, and its next one is news.
+    fn clear(&mut self, topic: &str, out: &mut Out) {
+        self.pending.remove(topic);
+        if self.pending.is_empty() {
+            self.due_ms = None;
+        }
+        out.changed |= self.entry.delivered.remove(topic).is_some();
+    }
+
+    /// Ends the batch being gathered and returns what it held.
+    fn take_pending(&mut self) -> BTreeMap<String, Value> {
+        self.due_ms = None;
+        std::mem::take(&mut self.pending)
     }
 }
 
 impl Core {
     pub fn new(clock: Arc<dyn Clock>, saved: Saved) -> Core {
-        let subs = saved.subs.into_iter().map(|entry| Sub { entry, last_fired_ms: None, seen: HashMap::new() }).collect();
+        let subs = saved.subs.into_iter().map(Sub::new).collect();
         Core { clock, next: saved.next.max(1), subs, current: BTreeMap::new(), publishers: BTreeMap::new(), echoes: Default::default() }
     }
 
@@ -131,14 +199,22 @@ impl Core {
     fn push(&mut self, filter: Option<String>, at_ms: Option<u64>, note: &str, once: bool) -> String {
         let id = format!("s{}", self.next);
         self.next += 1;
-        let entry = Entry { id: id.clone(), filter, at_ms, note: note.to_string(), once };
-        self.subs.push(Sub { entry, last_fired_ms: None, seen: HashMap::new() });
+        let entry = Entry { id: id.clone(), filter, at_ms, note: note.to_string(), once, batch_s: None, delivered: BTreeMap::new() };
+        self.subs.push(Sub::new(entry));
         id
     }
 
-    /// A new subscription. The caller subscribes its filter, which is what brings the retained
-    /// values; a publisher already known to be gone is said here, while someone is `listening`.
+    /// A new subscription delivered at once. See [`Core::add_classed`].
     pub fn add(&mut self, filter: &str, note: &str, once: bool, listening: bool) -> Result<(String, Out), String> {
+        self.add_classed(filter, note, once, None, listening)
+    }
+
+    /// A new subscription, batched when `batch_s` is given. The caller subscribes its filter, which is what brings the retained
+    /// values; a publisher already known to be gone is said here, while someone is `listening`.
+    pub fn add_classed(&mut self, filter: &str, note: &str, once: bool, batch_s: Option<u64>, listening: bool) -> Result<(String, Out), String> {
+        if once && batch_s.is_some() {
+            return Err("--batch conflicts with --once: a --once subscription delivers at once".to_string());
+        }
         if !topics::filter_matches_any(filter) {
             return Err(format!("filter {filter:?} matches no topic family declared in spira/topics.toml"));
         }
@@ -149,10 +225,12 @@ impl Core {
             let sub = self.subs.last_mut().expect("just pushed");
             for (topic, value) in &self.publishers {
                 if is_gone(value) && depends_on(filter, topic.trim_start_matches("publisher/")) {
-                    out.lines.extend(sub.deliver(topic, value, true, now));
+                    let line = sub.deliver(topic, value, true, now, &mut out);
+                    out.lines.extend(line);
                 }
             }
         }
+        self.subs.last_mut().expect("just pushed").entry.batch_s = batch_s;
         Ok((id, out))
     }
 
@@ -162,8 +240,41 @@ impl Core {
         (id, Out { changed: true, ..Out::default() })
     }
 
+    fn position(&self, id: &str) -> Result<usize, String> {
+        self.subs.iter().position(|s| s.entry.id == id).ok_or_else(|| format!("no subscription {id:?}; `spira-sub list` shows them"))
+    }
+
+    /// Changes how `id` is delivered. Becoming at once, it is given what its batch held. With
+    /// nobody `listening`, the next reader's replay has the state values, and the chatter,
+    /// which no replay holds, stays pending and due.
+    pub fn set_class(&mut self, id: &str, batch_s: Option<u64>, listening: bool) -> Result<Out, String> {
+        let at = self.position(id)?;
+        let now = self.now_ms();
+        let sub = &mut self.subs[at];
+        if batch_s.is_some() && sub.entry.once {
+            let kind = if sub.filter().is_some() { "--once" } else { "--at" };
+            return Err(format!("{id} is {kind}: it {NOT_BATCHED}"));
+        }
+        let mut out = Out { changed: true, ..Out::default() };
+        sub.entry.batch_s = batch_s;
+        match batch_s {
+            Some(batch_s) => sub.due_ms = sub.due_ms.map(|_| boundary(now, batch_s)),
+            None if listening => {
+                for (topic, value) in sub.take_pending() {
+                    let line = sub.deliver(&topic, &value, is_state(&topic), now, &mut out);
+                    out.lines.extend(line);
+                }
+            }
+            None => {
+                sub.pending.retain(|topic, _| !is_state(topic));
+                sub.due_ms = (!sub.pending.is_empty()).then_some(now);
+            }
+        }
+        Ok(out)
+    }
+
     pub fn remove(&mut self, id: &str) -> Result<Out, String> {
-        let at = self.subs.iter().position(|s| s.entry.id == id).ok_or_else(|| format!("no subscription {id:?}; `spira-sub list` shows them"))?;
+        let at = self.position(id)?;
         let mut out = Out { changed: true, ..Out::default() };
         self.discard(&[at], &mut out);
         Ok(out)
@@ -203,14 +314,15 @@ impl Core {
     }
 
     /// A message from the broker. With nobody `listening` nothing counts as delivered, so a
-    /// `--once` subscription waits for a reader; the value is kept for its replay.
+    /// `--once` subscription waits for a reader; the value is kept for its replay, and a
+    /// batched subscription's in its pending batch.
     pub fn message(&mut self, topic: &str, payload: &[u8], listening: bool) -> Out {
         let mut out = Out::default();
         let liveness = topic.starts_with("publisher/");
         if payload.is_empty() {
             self.current.remove(topic);
             self.publishers.remove(topic);
-            self.subs.iter_mut().for_each(|s| drop(s.seen.remove(topic)));
+            self.subs.iter_mut().for_each(|s| s.clear(topic, &mut out));
             return out;
         }
         let value = serde_json::from_slice(payload).unwrap_or_else(|_| Value::String(String::from_utf8_lossy(payload).into_owned()));
@@ -232,13 +344,17 @@ impl Core {
             let notice = !direct && liveness && depends_on(&filter, topic.trim_start_matches("publisher/"));
             if notice && !is_gone(&value) {
                 // Back up: its next going is news again.
-                sub.seen.remove(topic);
+                sub.clear(topic, &mut out);
+                continue;
+            }
+            if let Some(batch_s) = sub.entry.batch_s.filter(|_| direct) {
+                sub.hold(topic, &value, batch_s, now);
                 continue;
             }
             if !listening || !(direct || notice) {
                 continue;
             }
-            let Some(line) = sub.deliver(topic, &value, state, now) else { continue };
+            let Some(line) = sub.deliver(topic, &value, state, now, &mut out) else { continue };
             out.lines.push(line);
             if direct && sub.entry.once {
                 spent.push(at);
@@ -248,22 +364,30 @@ impl Core {
         out
     }
 
-    /// What a newly attached reader is told first: the current value of every state topic each
-    /// subscription selects, and every timer already due.
+    /// What a newly attached reader is told first: each subscribed state value not yet
+    /// delivered, every batch already due and every timer already due.
     pub fn attach(&mut self) -> Out {
         let mut out = Out::default();
         let now = self.now_ms();
         let mut spent = Vec::new();
         for (at, sub) in self.subs.iter_mut().enumerate() {
             let Some(filter) = sub.entry.filter.clone() else { continue };
-            sub.seen.clear();
             for (topic, value) in &self.publishers {
                 if !topics::filter_selects(&filter, topic) && is_gone(value) && depends_on(&filter, topic.trim_start_matches("publisher/")) {
-                    out.lines.extend(sub.deliver(topic, value, true, now));
+                    let line = sub.deliver(topic, value, true, now, &mut out);
+                    out.lines.extend(line);
                 }
             }
             for (topic, value) in self.current.iter().filter(|(t, _)| topics::filter_selects(&filter, t)) {
-                out.lines.extend(sub.deliver(topic, value, true, now));
+                if let Some(batch_s) = sub.entry.batch_s {
+                    // Unheard while it was delivered at once, so no batch holds it yet.
+                    if !sub.already_given(topic, value) {
+                        sub.hold(topic, value, batch_s, now);
+                    }
+                    continue;
+                }
+                let Some(line) = sub.deliver(topic, value, true, now, &mut out) else { continue };
+                out.lines.push(line);
                 if sub.entry.once {
                     spent.push(at);
                     break;
@@ -271,15 +395,47 @@ impl Core {
             }
         }
         self.discard(&spent, &mut out);
-        let due = self.fire_due(true);
-        out.lines.extend(due.lines);
-        out.changed |= due.changed;
+        for due in [self.flush_due(true), self.fire_due(true)] {
+            out.lines.extend(due.lines);
+            out.unsubscribe.extend(due.unsubscribe);
+            out.changed |= due.changed;
+        }
         out
     }
 
-    /// When the earliest timer is due.
+    /// When the earliest timer or batch is due.
     pub fn next_due_ms(&self) -> Option<u64> {
-        self.subs.iter().filter_map(|s| s.entry.at_ms).min()
+        self.subs.iter().flat_map(|s| [s.entry.at_ms, s.due_ms]).flatten().min()
+    }
+
+    /// Delivers every due batch as one delivery, while someone is `listening`; an unheard one
+    /// goes on gathering. A value back to what was last delivered is left out. What a
+    /// subscription since set to at once still holds goes as ordinary lines.
+    pub fn flush_due(&mut self, listening: bool) -> Out {
+        let mut out = Out::default();
+        if !listening {
+            return out;
+        }
+        let now = self.now_ms();
+        let mut block = Vec::new();
+        let mut since = u64::MAX;
+        for sub in self.subs.iter_mut().filter(|s| s.due_ms.is_some_and(|due| due <= now)) {
+            for (topic, value) in sub.take_pending() {
+                let Some(line) = sub.deliver(&topic, &value, is_state(&topic), now, &mut out) else { continue };
+                if sub.entry.batch_s.is_none() {
+                    out.lines.push(line);
+                    continue;
+                }
+                since = since.min(sub.since_ms);
+                block.push(line);
+            }
+        }
+        if !block.is_empty() {
+            let header = render::batch_line(block.len(), since);
+            block.insert(0, header);
+            out.lines.push(block.join("\n"));
+        }
+        out
     }
 
     /// Fires each due timer, once, while someone is `listening`; an unheard one stays due.
@@ -483,6 +639,186 @@ mod tests {
         let mut again = Core::new(Arc::new(clock), serde_json::from_str(&text).unwrap());
         assert_eq!(again.filters().into_iter().collect::<Vec<_>>(), ["round/#"]);
         assert_eq!(again.add("gate/#", "", false, true).unwrap().0, "s3");
+    }
+
+    const TEN_MINUTES: Option<u64> = Some(600);
+
+    fn batched(c: &mut Core, filter: &str) -> String {
+        c.add_classed(filter, "", false, TEN_MINUTES, true).unwrap().0
+    }
+
+    /// Moves the clock to the pending batch's instant and flushes it.
+    fn at_due(c: &mut Core, clock: &VirtualClock) -> Out {
+        clock.advance_to(c.next_due_ms().expect("a batch is pending"));
+        c.flush_due(true)
+    }
+
+    #[test_id(trd8907)]
+    #[test]
+    fn ten_changes_inside_one_interval_are_one_delivery_of_the_last_value() {
+        let (mut c, clock) = core();
+        batched(&mut c, "bead/+/state");
+        assert_eq!(c.next_due_ms(), None, "nothing pending arms no timer");
+        for n in 1..=10 {
+            assert!(say(&mut c, "bead/sp-a/state", json!({"state": format!("S{n}")})).lines.is_empty());
+            clock.advance(1000);
+        }
+        assert_eq!(c.next_due_ms(), Some(1_200_000), "a multiple of the interval");
+        assert!(c.list("concierge", true, 1).contains("batch 10m, 1 pending"));
+        clock.advance_to(1_199_999);
+        assert_eq!(c.flush_due(true), Out::default());
+        assert_eq!(at_due(&mut c, &clock).lines, ["[batch] n=1 since 1970-01-01T00:16:40Z\n[sub:s1] bead/sp-a/state state=S10"]);
+        assert_eq!(c.next_due_ms(), None);
+        assert!(!c.list("concierge", true, 1).contains("pending"));
+    }
+
+    #[test_id(tbujcct)]
+    #[test]
+    fn subscriptions_with_one_interval_fall_due_together_in_one_delivery() {
+        let (mut c, clock) = core();
+        batched(&mut c, "release/active");
+        batched(&mut c, "bead/+/state");
+        say(&mut c, "release/active", json!({"release": "r1"}));
+        clock.advance(60_000);
+        say(&mut c, "bead/sp-a/state", json!({"state": "LANDED"}));
+        let out = at_due(&mut c, &clock);
+        assert_eq!(out.lines, ["[batch] n=2 since 1970-01-01T00:16:40Z\n[sub:s1] release/active release=r1\n[sub:s2] bead/sp-a/state state=LANDED"]);
+    }
+
+    #[test_id(t935pt3)]
+    #[test]
+    fn a_value_back_to_what_was_delivered_flushes_nothing() {
+        let (mut c, clock) = core();
+        batched(&mut c, "release/active");
+        say(&mut c, "release/active", json!({"release": "a"}));
+        assert_eq!(at_due(&mut c, &clock).lines.len(), 1, "positive control");
+        say(&mut c, "release/active", json!({"release": "b"}));
+        say(&mut c, "release/active", json!({"release": "a"}));
+        assert!(at_due(&mut c, &clock).lines.is_empty());
+        assert_eq!(c.next_due_ms(), None);
+    }
+
+    #[test_id(tq2bwdh)]
+    #[test]
+    fn an_unheard_batch_keeps_gathering_and_is_given_to_the_next_reader() {
+        let (mut c, clock) = core();
+        batched(&mut c, "progress/+");
+        c.message("progress/sp-a", br#"{"note":"one"}"#, false);
+        clock.advance(3_600_000);
+        assert_eq!(c.flush_due(false), Out::default());
+        c.message("progress/sp-a", br#"{"note":"two"}"#, false);
+        assert_eq!(c.attach().lines, ["[batch] n=1 since 1970-01-01T00:16:40Z\n[sub:s1] progress/sp-a note=two"]);
+    }
+
+    #[test_id(t6c8cpc)]
+    #[test]
+    fn chatter_held_when_set_to_at_once_with_no_reader_reaches_the_next_one() {
+        let (mut c, _) = core();
+        batched(&mut c, "progress/+");
+        batched(&mut c, "release/active");
+        c.message("progress/sp-a", br#"{"note":"held"}"#, false);
+        c.message("release/active", br#"{"release":"r1"}"#, false);
+        assert!(c.set_class("s1", None, false).unwrap().lines.is_empty());
+        assert!(c.set_class("s2", None, false).unwrap().lines.is_empty());
+        assert_eq!(c.attach().lines, ["[sub:s2] release/active release=r1", "[sub:s1] progress/sp-a note=held"]);
+        assert_eq!(c.next_due_ms(), None);
+    }
+
+    #[test_id(t4lutwq)]
+    #[test]
+    fn a_state_value_republished_with_its_keys_reordered_is_not_news() {
+        let (mut c, _) = core();
+        c.add("release/active", "", false, true).unwrap();
+        assert_eq!(c.message("release/active", br#"{"a":1,"b":{"c":2,"d":3}}"#, true).lines.len(), 1);
+        assert!(c.message("release/active", br#"{"b":{"d":3,"c":2},"a":1}"#, true).lines.is_empty());
+    }
+
+    #[test_id(tqfvk56)]
+    #[test]
+    fn a_value_that_arrived_unheard_before_batching_still_reaches_a_batch() {
+        let (mut c, clock) = core();
+        c.add("release/active", "", false, false).unwrap();
+        c.message("release/active", br#"{"release":"r1"}"#, false);
+        c.set_class("s1", TEN_MINUTES, false).unwrap();
+        assert!(c.attach().lines.is_empty(), "it waits for its batch");
+        assert_eq!(at_due(&mut c, &clock).lines.len(), 1);
+    }
+
+    #[test_id(t0aftrt)]
+    #[test]
+    fn a_cleared_topic_leaves_its_batch_and_its_next_value_is_news() {
+        let (mut c, clock) = core();
+        batched(&mut c, "release/active");
+        say(&mut c, "release/active", json!({"release": "r1"}));
+        assert!(!c.message("release/active", b"", true).changed);
+        assert_eq!(c.next_due_ms(), None);
+        say(&mut c, "release/active", json!({"release": "r1"}));
+        assert_eq!(at_due(&mut c, &clock).lines.len(), 1);
+        assert!(c.message("release/active", b"", true).changed, "what was given is forgotten on disk too");
+        assert!(c.saved().subs[0].delivered.is_empty());
+    }
+
+    #[test_id(tdnhxi4)]
+    #[test]
+    fn a_publisher_going_is_told_to_a_batched_subscription_at_once() {
+        let (mut c, _) = core();
+        batched(&mut c, "bead/+/state");
+        assert_eq!(say(&mut c, "publisher/lc-serve", json!({"state": "gone"})).lines, ["[sub:s1] publisher/lc-serve state=gone"]);
+    }
+
+    #[test_id(trisuar)]
+    #[test]
+    fn setting_a_batched_subscription_to_at_once_gives_what_it_held() {
+        let (mut c, clock) = core();
+        let id = batched(&mut c, "release/active");
+        say(&mut c, "release/active", json!({"release": "r1"}));
+        let out = c.set_class(&id, None, true).unwrap();
+        assert_eq!(out.lines, ["[sub:s1] release/active release=r1"]);
+        assert!(out.changed && out.unsubscribe.is_empty());
+        assert_eq!(c.next_due_ms(), None);
+        assert_eq!(say(&mut c, "release/active", json!({"release": "r2"})).lines.len(), 1);
+        assert!(c.set_class(&id, TEN_MINUTES, true).unwrap().lines.is_empty());
+        clock.advance(1000);
+        assert!(say(&mut c, "release/active", json!({"release": "r3"})).lines.is_empty());
+        c.set_class(&id, Some(60), true).unwrap();
+        assert_eq!(c.next_due_ms(), Some(1_020_000), "a pending batch takes the new interval");
+        assert!(c.set_class("s9", None, true).unwrap_err().contains("no subscription \"s9\""));
+    }
+
+    #[test_id(tpw9cb7)]
+    #[test]
+    fn a_restarted_core_does_not_repeat_what_the_saved_set_says_was_given() {
+        let (mut c, clock) = core();
+        c.add("release/active", "", false, true).unwrap();
+        assert!(say(&mut c, "release/active", json!({"release": "SECRET"})).changed, "what was given must be written");
+        let text = serde_json::to_string(&c.saved()).unwrap();
+        assert!(!text.contains("SECRET"), "{text}");
+        let mut again = Core::new(Arc::new(clock), serde_json::from_str(&text).unwrap());
+        assert!(again.message("release/active", br#"{"release":"SECRET"}"#, false).lines.is_empty());
+        assert!(again.attach().lines.is_empty());
+        assert_eq!(say(&mut again, "release/active", json!({"release": "r2"})).lines.len(), 1);
+    }
+
+    #[test_id(trzjhod)]
+    #[test]
+    fn an_old_set_file_loads_as_delivered_at_once() {
+        let saved: Saved = serde_json::from_str(r#"{"next":2,"subs":[{"id":"s1","filter":"release/active","note":"","once":false}]}"#).unwrap();
+        let mut c = Core::new(Arc::new(VirtualClock::new(0)), saved);
+        assert_eq!(say(&mut c, "release/active", json!({"release": "r1"})).lines.len(), 1);
+    }
+
+    #[test_id(tqv67vu)]
+    #[test]
+    fn batch_with_once_or_on_a_timer_is_refused_and_changes_nothing() {
+        let (mut c, clock) = core();
+        let why = c.add_classed("release/active", "", true, TEN_MINUTES, true).unwrap_err();
+        assert!(why.contains("--batch") && why.contains("--once"), "{why}");
+        assert!(c.is_empty());
+        c.add("release/active", "", true, true).unwrap();
+        c.add_at(clock.now_ms() + 1000, "n");
+        assert!(c.set_class("s1", TEN_MINUTES, true).unwrap_err().contains("--once"));
+        assert!(c.set_class("s2", TEN_MINUTES, true).unwrap_err().contains("--at"));
+        assert!(c.saved().subs.iter().all(|s| s.batch_s.is_none()));
     }
 
     #[test_id(t2qin32)]

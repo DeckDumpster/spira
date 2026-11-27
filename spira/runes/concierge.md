@@ -78,12 +78,14 @@ could have been given hours earlier.
 ### Watching: one event stream
 
 You hold one stream, `spira-sub follow --as concierge`, started once as a long-running
-background reader (again only after a compaction or when it was lost: it replays the current
-values). Each line is `[sub:<id>] <topic> <fields> — <note>`. Change what it carries with
+background reader (again only after a compaction or when it was lost: it sends only values not
+yet delivered, so read current state with your tools). Each line is `[sub:<id>] <topic> <fields> — <note>`. Change what it carries with
 commands, never by starting or stopping a background task:
 
 ```
 spira-sub add <filter> [--note <text>] [--once]   watch; the current value arrives at once
+spira-sub add <filter> --batch <interval>         watch; changes arrive as one block per interval
+spira-sub set <id> --now | --batch <interval>     change how one is delivered
 spira-sub add --at <instant> --note <text>        one reminder, at an RFC 3339 instant
 spira-sub drop <id>
 spira-sub list                                    what you watch, when each fired, who is up

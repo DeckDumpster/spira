@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "lowercase")]
 pub enum Request {
-    Add { filter: String, note: String, once: bool },
+    Add { filter: String, note: String, once: bool, batch_s: Option<u64> },
     At { at_ms: u64, note: String },
     Drop { id: String },
+    Set { id: String, batch_s: Option<u64> },
     List,
     Follow,
 }
@@ -19,6 +20,7 @@ impl Request {
             Request::Add { .. } => "add",
             Request::At { .. } => "at",
             Request::Drop { .. } => "drop",
+            Request::Set { .. } => "set",
             Request::List => "list",
             Request::Follow => "follow",
         }
