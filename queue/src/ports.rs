@@ -179,6 +179,12 @@ pub trait Git {
     fn path_exists(&self, repo: &Path, rev: &str, path: &str) -> bool;
     /// `path` as it is in the tree at `rev`; None when absent.
     fn file_at(&self, repo: &Path, rev: &str, path: &str) -> Option<String>;
+    /// [`Git::file_at`] that keeps `Ok(None)` for a path the tree lacks; Err when git cannot say.
+    fn read_at(&self, repo: &Path, rev: &str, path: &str) -> Result<Option<String>, String>;
+    /// [`Git::is_ancestor`] that is Err, not false, when git cannot say.
+    fn ancestry(&self, repo: &Path, a: &str, b: &str) -> Result<bool, String>;
+    /// [`Git::merge_base`] that says why there is none.
+    fn fork_point(&self, repo: &Path, a: &str, b: &str) -> Result<String, String>;
     /// `grep -l -F <needle>` at `rev`, limited to the files matching the glob pathspec.
     fn grep_files(&self, repo: &Path, rev: &str, needle: &str, glob: &str) -> Vec<String>;
     /// `branch [-f] <name> <sha>`.
@@ -815,11 +821,20 @@ pub trait Clock {
     fn sleep(&self, secs: u64);
 }
 
+/// What a release was built from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseManifest {
+    pub commit: String,
+    pub repo: String,
+}
+
 pub trait Env {
     fn var(&self, k: &str) -> Option<String>;
     fn pid(&self) -> u32;
     fn read_stdin(&self) -> Result<String, String>;
     fn read_file(&self, p: &Path) -> Result<String, String>;
+    /// The running release's MANIFEST.
+    fn release_manifest(&self) -> Result<ReleaseManifest, String>;
     /// A registered config key's resolved value; a fake that declares none resolves empty.
     fn config(&self, k: &str) -> Result<String, String> {
         Ok(self.var(k).unwrap_or_default())

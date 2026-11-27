@@ -174,6 +174,7 @@ mod tests {
                 stack: Default::default(),
                 ejected_red_tip: None,
                 holder: None,
+                repo: None,
             },
         );
         assert_eq!(members(&commits, &ls, &|t| t == "real")[0].tip, "real");
@@ -208,6 +209,7 @@ mod tests {
                 stack: Default::default(),
                 ejected_red_tip: None,
                 holder: None,
+                repo: None,
             },
         )
     }

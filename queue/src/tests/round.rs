@@ -2085,6 +2085,222 @@ fn block(t: &T, id: &str, by: &[&str]) {
     }
 }
 
+/// The landing ref's gate owns `queue/`, and the running release is this repo's, built at `rel`.
+fn owning_queue(t: &T) {
+    t.git.files.borrow_mut().insert("b0:gate.steps".into(), "step true\nown queue/\n".into());
+    *t.env.manifest.borrow_mut() = Some(ReleaseManifest { commit: "rel".into(), repo: "spira".into() });
+    for tip in ["ta", "tb", "tc"] {
+        t.git.bases.borrow_mut().insert(("b0".into(), tip.into()), "b0".into());
+    }
+}
+
+/// `id`'s content row, blocked on `on`.
+fn content_row(t: &T, id: &str, on: &[&str]) {
+    t.bd.rows.borrow_mut().push(crate::model::BeadRow {
+        id: id.into(),
+        dependencies: on
+            .iter()
+            .map(|d| crate::model::Dependency { depends_on_id: d.to_string(), kind: "blocks".into() })
+            .collect(),
+        ..Default::default()
+    });
+}
+
+const WAITS: &str = "sp-b: blocked by sp-a, which changes the round machinery (`gate.steps` own) the running release lacks — waits for the release carrying sp-a";
+
+#[test_id(tftjnsd)]
+#[test]
+fn open_leaves_out_a_member_whose_blocker_in_the_round_changes_an_owned_path() {
+    let t = round_world();
+    owning_queue(&t);
+    block(&t, "sp-b", &["sp-a"]);
+    content_row(&t, "sp-a", &[]);
+    content_row(&t, "sp-b", &["sp-a"]);
+    t.git.stat("b0", "ta", &[("queue/src/x.rs", 1, 0)]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 1, "{}", t.out());
+    assert!(t.err().contains(&format!("{WAITS}; not admitted")), "{}", t.err());
+    assert!(t.err().contains("1 of 2 named members") && !t.lc.has("cut") && !t.qfile("round").exists(), "{}", t.err());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+}
+
+#[test_id(t80o8qv)]
+#[test]
+fn open_leaves_out_a_member_whose_landed_blocker_the_release_lacks() {
+    let landed = "a".repeat(40);
+    let t = round_world();
+    owning_queue(&t);
+    content_row(&t, "sp-b", &["sp-a"]);
+    set_row(&t, "sp-a", |r| {
+        r.state = "LANDED".into();
+        r.tip = Some(landed.clone());
+    });
+    t.git.ancestor(&landed, "b0");
+    t.git.log.borrow_mut().push(RangeCommit { sha: "land-a".into(), parents: vec!["before".into(), landed.clone()], subject: String::new() });
+    t.git.stat("before", "land-a", &[("queue/src/x.rs", 1, 0)]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-b"]), 1, "{}", t.out());
+    assert!(t.out().contains("not-in-force") && t.err().contains(WAITS), "{}\n{}", t.out(), t.err());
+    assert!(!t.lc.has("cut"));
+    t.git.ancestor(&landed, "rel");
+    assert_eq!(t.run(&["round", "open", "--members", "sp-b"]), 0, "{}", t.err());
+}
+
+#[test_id(tcy4n0w)]
+#[test]
+fn open_refuses_when_the_release_cannot_be_read() {
+    let t = round_world();
+    owning_queue(&t);
+    *t.env.manifest.borrow_mut() = None;
+    block(&t, "sp-b", &["sp-a"]);
+    content_row(&t, "sp-a", &[]);
+    content_row(&t, "sp-b", &["sp-a"]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 1, "{}", t.out());
+    assert!(t.out().contains("in-force-unread"), "{}", t.out());
+    assert!(t.err().contains("sp-b: whether the release carries sp-a could not be read: MANIFEST unreadable — not admitted"), "{}", t.err());
+    assert!(!t.lc.has("cut"));
+}
+
+#[test_id(tw1tap1)]
+#[test]
+fn open_judges_a_blocker_that_is_behind_the_landing_ref_by_what_it_changed_since_it_forked() {
+    let t = round_world();
+    owning_queue(&t);
+    block(&t, "sp-b", &["sp-a"]);
+    content_row(&t, "sp-a", &[]);
+    content_row(&t, "sp-b", &["sp-a"]);
+    t.git.bases.borrow_mut().insert(("b0".into(), "ta".into()), "fork".into());
+    t.git.stat("b0", "ta", &[("queue/src/landed-by-another.rs", 0, 1)]);
+    t.git.stat("fork", "ta", &[("docs/x.md", 1, 0)]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+}
+
+#[test_id(tz99t73)]
+#[test]
+fn open_admits_a_three_deep_chain_touching_no_owned_path_in_one_round() {
+    let t = round_world();
+    owning_queue(&t);
+    block(&t, "sp-b", &["sp-a"]);
+    block(&t, "sp-c", &["sp-b"]);
+    content_row(&t, "sp-a", &[]);
+    content_row(&t, "sp-b", &["sp-a"]);
+    content_row(&t, "sp-c", &["sp-b"]);
+    for tip in ["ta", "tb", "tc"] {
+        t.git.stat("b0", tip, &[("docs/x.md", 1, 0)]);
+    }
+    assert_eq!(t.run(&["round", "open", "--members", "sp-c,sp-b,sp-a"]), 0, "{}", t.err());
+    assert!(t.out().contains("members=sp-a:ta sp-b:tb sp-c:tc"), "{}", t.out());
+    assert_eq!(t.env.manifest_reads.get(), 1, "the release is read once per open");
+}
+
+#[test_id(to2zn2s)]
+#[test]
+fn stage_leaves_out_a_member_whose_blocker_ahead_changes_an_owned_path() {
+    let t = round_world();
+    owning_queue(&t);
+    content_row(&t, "sp-a", &[]);
+    content_row(&t, "sp-b", &["sp-a"]);
+    content_row(&t, "sp-c", &[]);
+    t.git.stat("b0", "ta", &[("queue/src/x.rs", 1, 0)]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    block(&t, "sp-b", &["sp-a"]);
+    assert_eq!(t.run(&["round", "stage", "--members", "sp-b:tb,sp-c:tc"]), 0, "{}\n{}", t.out(), t.err());
+    assert!(t.out().contains(&format!("{WAITS}; not staged")), "{}", t.out());
+    assert_eq!(kv_of(&t, "round-staged")["members"], "sp-c:tc");
+}
+
+/// sp-b depends on the landed sp-a at `landed`, which is on the landing ref.
+fn landed_blocker(t: &T, landed: &str) {
+    owning_queue(t);
+    content_row(t, "sp-b", &["sp-a"]);
+    set_row(t, "sp-a", |r| {
+        r.state = "LANDED".into();
+        r.tip = Some(landed.into());
+    });
+    t.git.ancestor(landed, "b0");
+}
+
+/// sp-a rides with sp-b, which depends on it, and changes `queue/`.
+fn owned_pair(t: &T) {
+    owning_queue(t);
+    block(t, "sp-b", &["sp-a"]);
+    content_row(t, "sp-a", &[]);
+    content_row(t, "sp-b", &["sp-a"]);
+    t.git.stat("b0", "ta", &[("queue/src/x.rs", 1, 0)]);
+}
+
+fn assert_unread(t: &T, members: &str, why: &str) {
+    assert_eq!(t.run(&["round", "open", "--members", members]), 1, "{}", t.out());
+    assert!(t.out().contains("in-force-unread") && t.err().contains(why), "{}\n{}", t.out(), t.err());
+    assert!(!t.lc.has("cut"));
+}
+
+#[test_id(tdl9cap)]
+#[test]
+fn open_judges_a_landed_blocker_no_merge_took_in_by_its_changes_since_the_release() {
+    let landed = "a".repeat(40);
+    let t = round_world();
+    landed_blocker(&t, &landed);
+    t.git.bases.borrow_mut().insert(("rel".into(), landed.clone()), "fork".into());
+    t.git.stat("fork", &landed, &[("queue/src/x.rs", 1, 0)]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-b"]), 1, "{}", t.out());
+    assert!(t.out().contains("not-in-force"), "{}", t.out());
+}
+
+#[test_id(tehed07)]
+#[test]
+fn open_refuses_a_landed_blocker_whose_tip_is_no_full_sha() {
+    let t = round_world();
+    landed_blocker(&t, "abc123");
+    assert_unread(&t, "sp-b", "its LANDED row for sp-a carries no full-sha tip (`abc123`)");
+}
+
+#[test_id(tpo8112)]
+#[test]
+fn open_refuses_when_git_cannot_say_whether_the_release_holds_a_landed_blocker() {
+    let t = round_world();
+    landed_blocker(&t, &"a".repeat(40));
+    t.git.cannot_say.borrow_mut().insert("ancestry");
+    assert_unread(&t, "sp-b", "git cannot walk");
+}
+
+#[test_id(t0qd4sv)]
+#[test]
+fn open_refuses_when_git_cannot_read_the_gate_definition() {
+    let t = round_world();
+    owned_pair(&t);
+    t.git.cannot_say.borrow_mut().insert("read_at");
+    assert_unread(&t, "sp-a,sp-b", "git cannot read");
+}
+
+#[test_id(tbosr7s)]
+#[test]
+fn open_refuses_when_the_gate_definition_does_not_parse() {
+    let t = round_world();
+    owned_pair(&t);
+    t.git.files.borrow_mut().insert("b0:gate.steps".into(), "nonsense\n".into());
+    assert_unread(&t, "sp-a,sp-b", "gate.steps on the landing ref does not read");
+}
+
+#[test_id(tzssv0v)]
+#[test]
+fn open_checks_nothing_when_the_release_is_of_another_repository() {
+    let t = round_world();
+    owned_pair(&t);
+    *t.env.manifest.borrow_mut() = Some(ReleaseManifest { commit: "rel".into(), repo: "elsewhere".into() });
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+}
+
+#[test_id(trh7hnx)]
+#[test]
+fn stage_leaves_out_a_member_whose_blocker_in_the_same_stage_changes_an_owned_path() {
+    let t = round_world();
+    owned_pair(&t);
+    content_row(&t, "sp-c", &[]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-c:tc"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "stage", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}\n{}", t.out(), t.err());
+    assert!(t.out().contains(&format!("{WAITS}; not staged")), "{}", t.out());
+    assert_eq!(kv_of(&t, "round-staged")["members"], "sp-a:ta");
+}
+
 #[test_id(tkma5fh)]
 #[test]
 fn open_refuses_a_member_given_at_a_tip_other_than_its_recorded_tip_and_creates_no_round() {

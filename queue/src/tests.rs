@@ -48,6 +48,8 @@ struct FGit {
     stats: RefCell<BTreeMap<(String, String), Vec<(String, u32, u32)>>>,
     /// "rev:path" -> contents, for `path_exists` and `file_at`.
     files: RefCell<BTreeMap<String, String>>,
+    /// The checked reads ("read_at", "ancestry") git cannot answer.
+    cannot_say: RefCell<BTreeSet<&'static str>>,
     /// needle -> files that hold it at any rev; "rev:needle" -> files that hold it at that rev.
     greps: RefCell<BTreeMap<String, Vec<String>>>,
     calls: RefCell<Vec<String>>,
@@ -152,6 +154,21 @@ impl Git for FGit {
     }
     fn file_at(&self, _: &Path, rev: &str, path: &str) -> Option<String> {
         self.files.borrow().get(&format!("{rev}:{path}")).cloned()
+    }
+    fn read_at(&self, repo: &Path, rev: &str, path: &str) -> Result<Option<String>, String> {
+        if self.cannot_say.borrow().contains("read_at") {
+            return Err("git cannot read".into());
+        }
+        Ok(self.file_at(repo, rev, path))
+    }
+    fn ancestry(&self, repo: &Path, a: &str, b: &str) -> Result<bool, String> {
+        if self.cannot_say.borrow().contains("ancestry") {
+            return Err("git cannot walk".into());
+        }
+        Ok(self.is_ancestor(repo, a, b))
+    }
+    fn fork_point(&self, repo: &Path, a: &str, b: &str) -> Result<String, String> {
+        self.merge_base(repo, a, b).ok_or_else(|| format!("no merge base of {a} and {b}"))
     }
     fn grep_files(&self, _: &Path, rev: &str, needle: &str, _: &str) -> Vec<String> {
         let greps = self.greps.borrow();
@@ -1917,9 +1934,16 @@ struct FEnv {
     stdin: RefCell<String>,
     /// Config keys that do not resolve.
     unresolved: RefCell<BTreeSet<String>>,
+    /// The running release's MANIFEST; unset reads as an unreadable one.
+    manifest: RefCell<Option<ReleaseManifest>>,
+    manifest_reads: Cell<u32>,
 }
 
 impl Env for FEnv {
+    fn release_manifest(&self) -> Result<ReleaseManifest, String> {
+        self.manifest_reads.set(self.manifest_reads.get() + 1);
+        self.manifest.borrow().clone().ok_or_else(|| "MANIFEST unreadable".to_string())
+    }
     fn var(&self, k: &str) -> Option<String> {
         self.vars.borrow().get(k).cloned()
     }
@@ -2186,6 +2210,7 @@ impl T {
             stack: Default::default(),
             ejected_red_tip: None,
             holder: None,
+            repo: None,
         };
         self.lc.rows.borrow_mut().as_mut().unwrap().push(row);
     }

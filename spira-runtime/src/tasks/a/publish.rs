@@ -1114,7 +1114,7 @@ pub mod edge {
         #[test]
         fn hand_landed_beads_are_members_of_the_range() {
             let commit = |sha: &str, subject: &str| queue::model::RangeCommit { sha: sha.into(), parents: vec!["p".into()], subject: subject.into() };
-            let row = |id: &str, tip: &str| queue::model::LcBeadRow { bead_id: id.into(), state: "LANDED".into(), tip: Some(tip.into()), since: Some(1), blocked_by: Vec::new(), reason: None, holds: Vec::new(), stack: Default::default(), ejected_red_tip: None, holder: None };
+            let row = |id: &str, tip: &str| queue::model::LcBeadRow { bead_id: id.into(), state: "LANDED".into(), tip: Some(tip.into()), since: Some(1), blocked_by: Vec::new(), reason: None, holds: Vec::new(), stack: Default::default(), ejected_red_tip: None, holder: None, repo: None };
             let commits = [commit("c2", "sp-b: x"), commit("c1", "sp-a: y")];
             let got = members_of(&commits, |_| Ok(vec![row("sp-a", "c1"), row("sp-b", "c2")]), &|_| true).unwrap();
             let got: Vec<_> = got.iter().map(|m| m.render()).collect();

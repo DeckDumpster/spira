@@ -159,6 +159,17 @@ pub struct BeadRow {
     pub priority: Option<i64>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub dependencies: Vec<Dependency>,
+}
+
+/// One edge of a bead row's `dependencies`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Dependency {
+    #[serde(default)]
+    pub depends_on_id: String,
+    #[serde(default, rename = "type")]
+    pub kind: String,
 }
 
 /// A `spira-lc list` / `show-batch` row, string-valued columns tolerated.
@@ -184,6 +195,8 @@ pub struct LcBeadRow {
     pub ejected_red_tip: Option<String>,
     #[serde(default)]
     pub holder: Option<String>,
+    #[serde(default)]
+    pub repo: Option<String>,
 }
 
 fn stack_tips_any<'de, D: serde::Deserializer<'de>>(

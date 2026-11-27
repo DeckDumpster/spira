@@ -670,6 +670,12 @@ and no bead moves, so a discarded stage returns nothing.
 `N` going red, being abandoned or being emptied discards the stage behind it; `round open`
 discards a stage whose round is gone.
 
+**A blocker not yet in force** (`ops/in_force.rs`). `round open` and `round stage` refuse
+(`not-in-force`) a member whose content blocker, riding with or ahead of it or LANDED outside the
+running release, changes a path the landing ref's `gate.steps` declares `own`; the exit is the
+release carrying that blocker. What cannot be read refuses too (`in-force-unread`). It is the
+twin of the cut's rule, batcher-cut/DESIGN.md "Left-out beads", which states when it applies.
+
 ## 10. Lifecycle machine
 
 There is no lifecycle switch: sp-v62vn retired `lifecycle_enforce`, and spira-lc is the

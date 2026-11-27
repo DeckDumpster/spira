@@ -118,6 +118,14 @@ fn stdout_of(cmd: &mut Command) -> Option<String> {
 
 // ------------------------------------------------------------------------------------ git
 
+/// (exit code, trimmed stdout, or stderr when it did not exit 0); Err when git cannot run.
+fn answered(cmd: &mut Command) -> Result<(Option<i32>, String), String> {
+    close_inherited_fds(cmd);
+    let o = cmd.stdin(Stdio::null()).output().map_err(|e| format!("git: {e}"))?;
+    let said = if o.status.success() { &o.stdout } else { &o.stderr };
+    Ok((o.status.code(), String::from_utf8_lossy(said).trim().to_string()))
+}
+
 fn parse_image_check(out: &str) -> ImageCheck {
     match out.trim().split_once(' ') {
         None if out.trim() == "present" => ImageCheck::Present,
@@ -259,6 +267,29 @@ impl Git for RealGit {
     }
     fn file_at(&self, repo: &Path, rev: &str, path: &str) -> Option<String> {
         stdout_of(git(repo).args(["show", &format!("{rev}:{path}")]))
+    }
+    fn read_at(&self, repo: &Path, rev: &str, path: &str) -> Result<Option<String>, String> {
+        let (code, listed) = answered(git(repo).args(["ls-tree", "--name-only", rev, "--", path]))?;
+        if code != Some(0) {
+            return Err(format!("git ls-tree {rev} -- {path}: {listed}"));
+        }
+        if listed.is_empty() {
+            return Ok(None);
+        }
+        self.file_at(repo, rev, path).map(Some).ok_or_else(|| format!("{path} on {rev} could not be read"))
+    }
+    fn ancestry(&self, repo: &Path, a: &str, b: &str) -> Result<bool, String> {
+        match answered(git(repo).args(["merge-base", "--is-ancestor", a, b]))? {
+            (Some(0), _) => Ok(true),
+            (Some(1), _) => Ok(false),
+            (_, why) => Err(format!("git merge-base --is-ancestor {a} {b}: {why}")),
+        }
+    }
+    fn fork_point(&self, repo: &Path, a: &str, b: &str) -> Result<String, String> {
+        match answered(git(repo).args(["merge-base", a, b]))? {
+            (Some(0), base) => Ok(base),
+            (_, why) => Err(format!("git merge-base {a} {b}: no merge base {why}")),
+        }
     }
     fn grep_files(&self, repo: &Path, rev: &str, needle: &str, glob: &str) -> Vec<String> {
         stdout_of(git(repo).args([
@@ -2813,6 +2844,15 @@ pub fn utc_stamp(t: u64) -> String {
 pub struct SysEnv;
 
 impl Env for SysEnv {
+    fn release_manifest(&self) -> Result<ReleaseManifest, String> {
+        let root = spira_config::release_env::release_root_for_process()?;
+        let field = |f: &str| {
+            spira_config::resolve::read_manifest_field(&root, f)
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| format!("{}/MANIFEST has no `{f}`", root.display()))
+        };
+        Ok(ReleaseManifest { commit: field("commit")?, repo: field("repo")? })
+    }
     fn var(&self, k: &str) -> Option<String> {
         std::env::var(k).ok()
     }
@@ -3070,6 +3110,30 @@ mod tests {
         assert_eq!(of_pre["commits"], serde_json::json!([prereq]));
         assert!(sent[..verb_at("cut")].iter().filter(|a| a[0] == "git-fact").count() == 2, "the ranges go before the cut: {sent:?}");
         assert!(sent[..verb_at("stage")].iter().filter(|a| a[0] == "git-fact").count() == 4, "and before the stage: {sent:?}");
+    }
+
+    #[test_id(tpygliw)]
+    #[test]
+    fn the_checked_reads_tell_a_git_that_cannot_say_from_a_no() {
+        let dir = testkit::TempDir::new("queue-checked-reads");
+        let repo = dir.path();
+        testkit::git(repo, &["init", "-q", "-b", "main"]);
+        std::fs::write(repo.join("held"), "x\n").unwrap();
+        testkit::git(repo, &["add", "held"]);
+        testkit::git(repo, &["commit", "-q", "-m", "base"]);
+        let base = testkit::git(repo, &["rev-parse", "HEAD"]);
+        testkit::git(repo, &["commit", "-q", "--allow-empty", "-m", "next"]);
+        let next = testkit::git(repo, &["rev-parse", "HEAD"]);
+        let git = RealGit;
+        let missing = "0".repeat(40);
+        assert_eq!(git.read_at(repo, &base, "absent"), Ok(None));
+        assert_eq!(git.read_at(repo, &base, "held"), Ok(Some("x\n".into())));
+        assert!(git.read_at(repo, &missing, "held").is_err());
+        assert_eq!(git.ancestry(repo, &base, &next), Ok(true));
+        assert_eq!(git.ancestry(repo, &next, &base), Ok(false));
+        assert!(git.ancestry(repo, &missing, &base).is_err());
+        assert_eq!(git.fork_point(repo, &base, &next), Ok(base.clone()));
+        assert!(git.fork_point(repo, &missing, &base).is_err());
     }
 
     #[test_id(tu0q60g)]

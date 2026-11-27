@@ -6,6 +6,7 @@ pub mod hand_land;
 pub mod deploy;
 pub mod forge_batch;
 pub mod helpers;
+mod in_force;
 pub mod integrate;
 pub mod land;
 pub mod lease;

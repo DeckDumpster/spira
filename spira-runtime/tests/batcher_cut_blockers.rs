@@ -137,7 +137,7 @@ fn gamma_repo(dir: &Path) -> (String, std::collections::BTreeMap<String, String>
     commit("l-ff");
     let fast_forwarded = git(dir, &["rev-parse", "HEAD"]);
     let mut tips = std::collections::BTreeMap::new();
-    for (id, path) in [("b-own", Some("owned/b")), ("b-free", Some("free/b")), ("a-own", None), ("a-free", None), ("a-lo", None), ("a-li", None), ("a-ff", None), ("a-bt", None), ("a-t0", None), ("a-dn", None)] {
+    for (id, path) in [("b-own", Some("owned/b")), ("b-free", Some("free/b")), ("a-own", None), ("a-free", None), ("a-lo", None), ("a-li", None), ("a-ff", None), ("a-bt", None), ("a-t0", None), ("a-dn", None), ("c-one", Some("free/c1")), ("c-two", Some("free/c2")), ("c-three", Some("free/c3"))] {
         git(dir, &["checkout", "-q", "-b", &format!("spira/{id}"), "main"]);
         if let Some(path) = path {
             touch(path);
@@ -170,7 +170,7 @@ fn a_certified_item_blocked_by_a_finished_item_is_cut_and_one_blocked_by_a_certi
     let other = Value::Object(other.as_object().unwrap().iter().map(|(k, v)| (k.clone(), if k == "repo" { json!("beta") } else { v.clone() })).collect());
     let gamma = dir.path().join("gamma");
     let (gamma_commit, gamma_tips, landed) = gamma_repo(&gamma);
-    let mut gamma_rows: Vec<Value> = ["b-own", "a-own", "b-free", "a-free", "a-lo", "a-li", "a-ff", "a-bt", "a-t0", "a-dn"]
+    let mut gamma_rows: Vec<Value> = ["b-own", "a-own", "b-free", "a-free", "a-lo", "a-li", "a-ff", "a-bt", "a-t0", "a-dn", "c-one", "c-two", "c-three"]
         .iter()
         .map(|id| with_repo(row(id, "CERTIFIED", &gamma_tips[*id], "{}"), "gamma"))
         .collect();
@@ -193,6 +193,9 @@ fn a_certified_item_blocked_by_a_finished_item_is_cut_and_one_blocked_by_a_certi
         item("a-bt", "task", "open", Some("l-beta")),
         item("a-t0", "task", "open", Some("l-t0")),
         item("a-dn", "task", "open", Some("d-done")),
+        item("c-one", "task", "open", None),
+        item("c-two", "task", "open", Some("c-one")),
+        item("c-three", "task", "open", Some("c-two")),
     ];
     let mut store = Store {
         rows: vec![
@@ -265,7 +268,7 @@ fn a_certified_item_blocked_by_a_finished_item_is_cut_and_one_blocked_by_a_certi
     pooled.sort();
     assert_eq!(
         pooled,
-        ["a-bt", "a-dn", "a-free", "a-li", "b-free", "b-own"],
+        ["a-bt", "a-dn", "a-free", "a-li", "b-free", "b-own", "c-one", "c-three", "c-two"],
         "a blocker touching no owned path rides with its dependant, a change the release carries is in force; the rest wait: {left:?}"
     );
     for (id, dep) in [("a-own", "b-own"), ("a-lo", "l-out"), ("a-ff", "l-ff")] {
