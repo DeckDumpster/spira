@@ -33,8 +33,9 @@ pub struct FileConfig<'a> {
 #[derive(Debug)]
 pub enum FileOutcome {
     Filed(String),
-    /// The database could not be reached; the caller must keep the spool entry.
-    Unreachable,
+    /// A store read or `bd create` failed, so the filing could not finish; the string says
+    /// why. The caller must keep the spool entry.
+    Unread(String),
     /// The database was reachable but the `bd create` guards refused the filing outright
     /// (a schema-delete text) — also kept spooled, since
     /// retrying an unreachable-looking failure is safer than silently dropping the event,
@@ -137,8 +138,9 @@ pub fn file_one(
     let reference = bounded.as_str();
     let hit = match dedup_incident(bd, cfg.db, reference, cfg.dedup_lookback_days, now) {
         Err(why) => {
-            log.push(format!("dedup could not read ({why}) — {reference} stays spooled"));
-            return FileOutcome::Unreachable;
+            let why = format!("dedup could not read ({why})");
+            log.push(format!("{why} — {reference} stays spooled"));
+            return FileOutcome::Unread(why);
         }
         Ok(h) => h,
     };
@@ -341,7 +343,7 @@ fn file_new(
         }
         Err(e) => {
             log.push(format!("create FAILED for {reference} — stays spooled ({e})"));
-            return FileOutcome::Unreachable;
+            return FileOutcome::Unread(format!("create failed ({e})"));
         }
     };
     match &predecessor {
@@ -654,7 +656,7 @@ mod tests {
         let known = vec!["spira".to_string()];
         let mut log = vec![];
         let out = file_one(&bd, &mailer, &clock, &cfg(&known), "incident:x", "x failed", b"payload", "spira,incident", &mut log);
-        assert!(matches!(out, FileOutcome::Unreachable));
+        assert!(matches!(out, FileOutcome::Unread(_)));
         assert_eq!(bd.created.borrow().len(), 0);
     }
 
@@ -670,7 +672,7 @@ mod tests {
         let known = vec!["spira".to_string()];
         let mut log = vec![];
         let out = file_one(&bd, &mailer, &clock, &cfg(&known), "incident:x", "x failed", b"payload", "spira,incident", &mut log);
-        assert!(matches!(out, FileOutcome::Unreachable));
+        assert!(matches!(out, FileOutcome::Unread(_)));
         assert_eq!(bd.created.borrow().len(), 0);
     }
 
@@ -700,6 +702,23 @@ mod tests {
         file_one(&bd, &mailer, &clock, &cfg(&known), "incident:x", "x failed", b"payload", "spira,incident", &mut log);
         assert!(log.iter().any(|l| l.contains("spira-lc: down") && l.contains("Unfinished label-keyed pass") && l.contains("incident:x stays spooled")), "{log:?}");
         assert!(!log.iter().any(|l| l.contains("database unreachable")), "{log:?}");
+    }
+
+    // covers: UC-ops-detection-remediation-10
+    #[test_id(twlw39t)]
+    #[test]
+    fn both_ref_fallbacks_read_by_the_reference() {
+        let bd = FakeBd::new();
+        let known = vec!["spira".to_string()];
+        let mut log = vec![];
+        file_one(&bd, &FakeMailer::default(), &FixedClock(1_000_000), &cfg(&known), "incident:new", "new failed", b"payload", "spira,incident", &mut log);
+        let lists = bd.lists.borrow();
+        for want in [Scope::Unfinished, Scope::HandedOn] {
+            assert!(
+                lists.iter().any(|(s, label, _, x)| *s == want && label.is_none() && x.as_deref() == Some("incident:new")),
+                "{want:?} fallback did not read by the reference: {lists:?}"
+            );
+        }
     }
 
     // covers: UC-ops-detection-remediation-03
