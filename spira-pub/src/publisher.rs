@@ -125,7 +125,7 @@ pub struct Publisher {
 }
 
 /// `SPIRA_BROKER_SOCKET` as `cfg` declares it; refused, naming the key, when it does not.
-fn configured_socket(cfg: &dyn Fn(&str) -> Result<String, String>) -> Result<String, PubError> {
+pub fn configured_socket(cfg: &dyn Fn(&str) -> Result<String, String>) -> Result<String, PubError> {
     use spira_config::broker::{socket_path, SOCKET_KEY};
     let refuse = |why: String| PubError::Config(format!("cannot find the broker ({SOCKET_KEY}): {why}"));
     cfg(SOCKET_KEY).map_err(refuse)?;

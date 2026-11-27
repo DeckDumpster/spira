@@ -368,6 +368,7 @@ pub fn run(args: &[String]) -> i32 {
     startup.mark("shipper");
     if let Some(store) = &control {
         crate::control::bridge::serve(store);
+        crate::control::topic_tap::serve(store);
     }
 
     stop_on_sigterm();

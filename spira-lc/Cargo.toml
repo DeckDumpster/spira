@@ -41,6 +41,11 @@ path = "tests/store_bridge.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "topic_tap"
+path = "tests/topic_tap.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "writer_retry"
 path = "tests/writer_retry.rs"
 required-features = ["integration"]
@@ -64,6 +69,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 spira-otel = { path = "../spira-otel" }
 spira-pub = { path = "../spira-pub" }
+# TLS off: the broker is a Unix socket. MQTT 5, so the topic tap sees each publish's retain flag.
+rumqttc = { version = "0.25.1", default-features = false }
 spira-desired-state = { path = "../desired-state" }
 serde_path_to_error = "0.1"
 sha2 = "0.10"

@@ -2480,6 +2480,7 @@ dependencies = [
  "ports",
  "reconciler-engine",
  "round-vm",
+ "rumqttc",
  "runtime",
  "rusqlite",
  "sentinel",
