@@ -56,7 +56,13 @@ fn run_main() -> ExitCode {
             }
         }
         "units" => skew::units(&w),
-        "refresh" => skew::refresh(&w, argv.get(1).map(String::as_str)),
+        "refresh" => match skew::refresh_args(argv.get(1..).unwrap_or_default()) {
+            Ok((repo, no_fetch)) => skew::refresh(&w, repo, no_fetch),
+            Err(unknown) => {
+                w.err(&format!("skew: unknown flag: {unknown}"));
+                1
+            }
+        },
         "gap" => skew::gap(&w, argv.get(1).map(String::as_str)),
         "copies" => {
             let rc = skew::copies(&w);
@@ -78,7 +84,7 @@ fn run_main() -> ExitCode {
         ),
         _ => {
             eprintln!(
-                "skew — skew check [--escalate] | units | refresh [repo] | gap [repo] | copies | foreign <repo> <base> <ref>"
+                "skew — skew check [--escalate] | units | refresh [repo] [--no-fetch] | gap [repo] | copies | foreign <repo> <base> <ref>"
             );
             2
         }

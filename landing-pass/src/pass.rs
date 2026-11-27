@@ -6,7 +6,7 @@ use crate::budget::{gate_fits, gate_lock_wait};
 use crate::model::{BeadRow, GateOutcome, GateRun, LandMode, RepoRow, RunRecord, Settings};
 use crate::order::{basefail_fix_decision, certify_order, is_base_fix, prior_pass_suites, OrderRow};
 use crate::ports::{Beads, Clock, Git, Lib, Procs, Tools};
-use crate::records::Files;
+use crate::records::{Against, Files, Graphs, Question};
 use crate::report::Reporter;
 use crate::util::{first_line, tail_bytes, tail_lines};
 use std::cell::{Cell, RefCell};
@@ -47,6 +47,9 @@ pub struct Pass<'a> {
     pub swept_conflict: Cell<u64>,
     /// Branches the walk answered from their settled marker, with no git call.
     pub settled_from_memory: Cell<u64>,
+    pub graphs: Graphs,
+    /// Repository paths already fetched this pass.
+    pub fetched: RefCell<HashSet<PathBuf>>,
 }
 
 /// Why the walk stopped at a branch.
@@ -223,7 +226,12 @@ impl<'a> Pass<'a> {
         for repo in self.rotated() {
             self.settle_landed_rows(repo);
             self.walk_repo(repo);
+            // A pr-mode repository's file is the pr pass's.
+            if repo.mode != LandMode::Pr {
+                self.graphs.write(&self.files, &repo.name);
+            }
         }
+        self.files.prune_graphs(&names);
 
         self.log(&format!(
             "landing: walk complete — {} branch(es), {} settled from memory",
@@ -232,13 +240,13 @@ impl<'a> Pass<'a> {
         ));
 
         for r in self.repos {
-            if !matches!(r.mode, LandMode::Push | LandMode::Queue) || r.path.as_os_str().is_empty() {
+            if !r.mode.refreshed() || r.path.as_os_str().is_empty() {
                 continue;
             }
             if !r.path.join(".git").exists() {
                 continue;
             }
-            let o = self.tools.skew_refresh(&r.path);
+            let o = self.tools.skew_refresh(&r.path, &["--no-fetch"]);
             if !o.is_empty() {
                 self.log(&o);
             }
@@ -299,18 +307,17 @@ impl<'a> Pass<'a> {
                 return;
             }
         };
-        let (refs, merged) = if rows.is_empty() {
-            Default::default()
-        } else {
-            if let Some(rem) = &repo.base_remote {
-                self.git.fetch(&repo.path, rem);
-            }
-            (self.git.spira_refs(&repo.path), self.git.merged_spira_refs(&repo.path, base_fq))
-        };
+        if rows.is_empty() {
+            return;
+        }
+        self.fetch_once(repo);
+        let refs = self.git.spira_refs(&repo.path);
+        let at = self.against(repo, base_fq);
+        let merged = self.graphs.merged(at, &refs);
         for (id, tip) in rows {
             let landed = match refs.iter().find(|(_, t)| *t == tip) {
                 Some((br, _)) => merged.contains(br),
-                None => self.git.is_ancestor(&repo.path, &tip, base_fq),
+                None => self.graphs.answer(at, &tip, Question::Ancestor, || true, || self.git.is_ancestor(&repo.path, &tip, base_fq)),
             };
             if !landed {
                 continue;
@@ -320,6 +327,23 @@ impl<'a> Pass<'a> {
                 self.log(&format!("CHECK6 {id}: tip {tip} is an ancestor of {base_fq} — settled LANDED"));
             }
         }
+    }
+
+    fn fetch_once(&self, repo: &RepoRow) {
+        if let Some(rem) = &repo.base_remote {
+            if self.fetched.borrow_mut().insert(repo.path.clone()) {
+                self.git.fetch(&repo.path, rem);
+            }
+        }
+    }
+
+    fn against<'b>(&'b self, repo: &'b RepoRow, base_fq: &'b str) -> Against<'b> {
+        Against { files: &self.files, git: self.git, name: &repo.name, path: &repo.path, base_fq }
+    }
+
+    /// Whether the base already holds `br` at `tip`, asked of git once per (tip, base commit).
+    pub(crate) fn content_on_base(&self, repo: &RepoRow, br: &str, tip: &str, base_fq: &str) -> bool {
+        self.graphs.content_on_base(self.against(repo, base_fq), br, tip)
     }
 
     pub fn walk_repo(&self, repo: &RepoRow) {
@@ -334,6 +358,10 @@ impl<'a> Pass<'a> {
                 self.lib.ask_repo_unreadable(name, &repo.path);
             }
             return;
+        }
+        // Ahead of every early return: the pass's refresh of this checkout does not fetch.
+        if repo.mode.refreshed() {
+            self.fetch_once(repo);
         }
         let refs = self.git.spira_refs(&repo.path);
         if refs.is_empty() {
@@ -353,10 +381,8 @@ impl<'a> Pass<'a> {
             ));
             return;
         };
-        if let Some(rem) = &repo.base_remote {
-            self.git.fetch(&repo.path, rem);
-        }
-        let merged = self.git.merged_spira_refs(&repo.path, &base_fq);
+        self.fetch_once(repo);
+        let merged = self.graphs.merged(self.against(repo, &base_fq), &refs);
         let basename = repo.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let land = self.s.run.join("worktree").join(format!(".landing.{basename}"));
         if repo.mode == LandMode::Push {
@@ -539,7 +565,8 @@ impl<'a> Pass<'a> {
             self.log(&format!("CHECK6 {id}: {br} is {} — the batcher's now, not certified again", bead.state));
             return Screen::Done(Flow::Next);
         }
-        if w.merged.contains(br) || self.git.content_on_base(&repo.path, br, &w.base_fq) {
+        let tip = w.enum_tip.get(br).map(String::as_str).unwrap_or_default();
+        if w.merged.contains(br) || self.content_on_base(repo, br, tip, &w.base_fq) {
             self.settle_content_on_base(w, br, id, bead);
             return Screen::Done(Flow::Next);
         }
@@ -1245,7 +1272,8 @@ impl<'a> Pass<'a> {
                 self.log(&format!("CHECK6 {id}: a dwarf took {br} while this pass ran — leaving its rebase to it"));
                 continue;
             }
-            if self.git.content_on_base(&repo.path, br, &w.base_fq) {
+            let tip = self.git.rev_parse(&repo.path, br).unwrap_or_default();
+            if self.content_on_base(repo, br, &tip, &w.base_fq) {
                 self.log(&format!("CHECK6 {id}: {} now contains every change on {br} — nothing left to rebase", w.base));
                 continue;
             }

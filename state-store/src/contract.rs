@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::Duration;
 
@@ -328,6 +329,7 @@ pub struct Contract<B: Backend> {
     shown: RwLock<BTreeMap<String, u64>>,
     commits: Mutex<u64>,
     committed: Condvar,
+    closing: AtomicBool,
 }
 
 /// What a plan decides at one snapshot head.
@@ -554,6 +556,7 @@ impl<B: Backend> Contract<B> {
             shown: RwLock::new(BTreeMap::new()),
             commits: Mutex::new(0),
             committed: Condvar::new(),
+            closing: AtomicBool::new(false),
         };
         let head = c.backend.head()?;
         let now = c.now_ms();
@@ -955,7 +958,7 @@ impl<B: Backend> Contract<B> {
                 }
                 continue;
             }
-            if self.now_ms() >= deadline {
+            if self.closing.load(Ordering::SeqCst) || self.now_ms() >= deadline {
                 return Ok(Watched::Progress {
                     progress_rev: head.max(cursor),
                 });
@@ -973,6 +976,12 @@ impl<B: Backend> Contract<B> {
     /// Wakes every waiting watch to re-read the log and the clock.
     pub fn wake_watchers(&self) {
         self.committed.notify_all();
+    }
+
+    /// Ends every watch, held or later, with `Progress` once it has no events to give.
+    pub fn close_watches(&self) {
+        self.closing.store(true, Ordering::SeqCst);
+        self.wake_watchers();
     }
 
     /// `locks/<resource>`, whose `create_rev` is the fencing token.

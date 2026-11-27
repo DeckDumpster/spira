@@ -495,3 +495,20 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         let reg = registry_for("q | /nope\n", "q");
         assert_eq!(publish_forge(&reg, "q", &env(&[])), None);
     }
+
+    /// No HEAD and no objects, so git cannot answer for these: only reading the files can.
+    #[test_id(ttq32d2)]
+    #[test]
+    fn same_repo_reads_a_checkout_and_its_linked_worktree_without_git() {
+        let t = testkit::TempDir::new("repos-same-store");
+        let (main, wt, other) = (t.path().join("main"), t.path().join("wt"), t.path().join("other"));
+        std::fs::create_dir_all(main.join(".git/refs/heads")).unwrap();
+        std::fs::create_dir_all(main.join(".git/worktrees/w")).unwrap();
+        std::fs::write(main.join(".git/worktrees/w/commondir"), "../..\n").unwrap();
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::write(wt.join(".git"), format!("gitdir: {}\n", main.join(".git/worktrees/w").display())).unwrap();
+        std::fs::create_dir_all(other.join(".git/refs/heads")).unwrap();
+        let s = |p: &std::path::Path| p.display().to_string();
+        assert!(same_repo(&s(&main), &s(&wt)));
+        assert!(!same_repo(&s(&main), &s(&other)));
+    }

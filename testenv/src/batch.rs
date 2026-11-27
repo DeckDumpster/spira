@@ -707,6 +707,23 @@ mod tests {
         s
     }
 
+    #[test_id(thdl32c)]
+    #[test]
+    fn a_suite_cut_at_its_cap_names_its_step_and_log() {
+        crate::cap::ONLY_MY_UNITS.with(|o| o.set(true));
+        let rt = FakeRuntime::new();
+        rt.suite("test-a.sh", 0, "ok 1 - a\n");
+        let dir = tmpdir("cut-report");
+        let s = session(&rt);
+        let c = cfg(Mode::Serial, &dir, 1);
+        with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
+        let cuts = rt.cut_here.lock().unwrap();
+        let (what, report) = &cuts[0];
+        assert_eq!(what, "tier/suite test-a.sh (in exec)");
+        let log = crate::cap::log_line("test-a.sh", &dir.join(".test-a.sh.raw"));
+        assert!(report.contains(&log), "{report:?}");
+    }
+
     #[test_id(tal286u)]
     #[test]
     // covers: UC-test-infrastructure-30

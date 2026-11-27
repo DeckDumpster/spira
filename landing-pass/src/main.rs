@@ -232,6 +232,8 @@ fn land() -> i32 {
         swept: Cell::new(0),
         swept_conflict: Cell::new(0),
         settled_from_memory: Cell::new(0),
+        graphs: Default::default(),
+        fetched: Default::default(),
     };
     p.run();
     landing_pass::telemetry::moved(&landing_pass::telemetry::sink(), out.moved());
