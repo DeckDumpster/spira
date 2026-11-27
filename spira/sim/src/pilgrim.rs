@@ -65,7 +65,7 @@ pub fn up(world: &Path, fixture: &str, steps: &dyn Steps) -> Result<(), String> 
     seed(world, fixture)
 }
 
-use crate::world::{ask_body, lc_socket, REPO_NAME};
+use crate::world::{lc_socket, REPO_NAME};
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Stdio};
 use std::time::Instant;
@@ -75,15 +75,29 @@ const LOOM_NEEDS_LOGS_URL: &str = "http://127.0.0.1:9";
 
 /// One `work <verb>` call as the pilgrim, over the world's own socket: `(exit code, stdout)`.
 pub fn work(world: &Path, verb: &str, args: &[&str]) -> Result<(i32, String), String> {
+    send(world, verb, args, None)
+}
+
+fn send(world: &Path, verb: &str, args: &[&str], body: Option<&str>) -> Result<(i32, String), String> {
     let mut argv = vec!["work", "-", verb];
     argv.extend_from_slice(args);
     argv.extend_from_slice(&["--actor", "pilgrim"]);
-    ask_body(&lc_socket(world), &argv)
-        .ok_or_else(|| format!("work {verb}: the world's lifecycle service did not answer"))
+    // The client follows a `queued wr-<n>` receipt to the recorded request's own answer.
+    let client = spira_store::lc_call::LcClient::socket(lc_socket(world));
+    let reply = match body {
+        Some(body) => client.call_stdin(&argv, body),
+        None => client.call(&argv),
+    }
+    .map_err(|e| format!("work {verb}: {e:?}"))?;
+    Ok((reply.code, reply.out))
 }
 
 fn ok(world: &Path, verb: &str, args: &[&str]) -> Result<String, String> {
-    match work(world, verb, args)? {
+    accepted(verb, args, work(world, verb, args)?)
+}
+
+fn accepted(verb: &str, args: &[&str], answer: (i32, String)) -> Result<String, String> {
+    match answer {
         (0, out) => Ok(out),
         (code, out) => Err(format!(
             "work {verb} {args:?} exited {code}: {}",
@@ -92,13 +106,12 @@ fn ok(world: &Path, verb: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
+const WALK_BODY: &str = "## Build\nNothing: a bead a pilgrim files to walk the loop.\n";
+
 /// Files a builder bead as the pilgrim and returns its id.
 pub fn file_bead(world: &Path, title: &str) -> Result<String, String> {
-    let out = ok(
-        world,
-        "file",
-        &[title, "--for", "builder", "--repo", REPO_NAME],
-    )?;
+    let args = [title, "--for", "builder", "--repo", REPO_NAME, "--body-file", "-"];
+    let out = accepted("file", &args, send(world, "file", &args, Some(WALK_BODY))?)?;
     out.lines()
         .rev()
         .find_map(|l| l.split_whitespace().last())

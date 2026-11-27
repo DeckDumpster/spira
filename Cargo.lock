@@ -2651,6 +2651,7 @@ dependencies = [
  "dwarf",
  "lifecycle",
  "queue",
+ "release",
  "runtime",
  "serde",
  "serde_json",
