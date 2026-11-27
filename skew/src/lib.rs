@@ -629,12 +629,22 @@ pub fn cksum(data: &str) -> u64 {
     hash
 }
 
+/// `refresh [repo] [--no-fetch]` → (repo, no_fetch); Err names a flag it does not take.
+pub fn refresh_args(args: &[String]) -> Result<(Option<&str>, bool), &str> {
+    let (flags, repos): (Vec<&str>, Vec<&str>) = args.iter().map(String::as_str).partition(|a| a.starts_with("--"));
+    match flags.iter().find(|f| **f != "--no-fetch") {
+        Some(unknown) => Err(unknown),
+        None => Ok((repos.first().copied(), !flags.is_empty())),
+    }
+}
+
 // =============================================================================================
 // refresh — advance a checkout to its base ref via stage-and-swap (checkout mode), rebuild
 // and activate (release mode), or check-only alarm (queue.local). See DESIGN.md §8.
 // =============================================================================================
 
-pub fn refresh(w: &dyn World, repo_arg: Option<&str>) -> i32 {
+/// `no_fetch` is for a caller that has just fetched the base's remote itself.
+pub fn refresh(w: &dyn World, repo_arg: Option<&str>, no_fetch: bool) -> i32 {
     let mut repo = match repo_arg {
         Some(r) => PathBuf::from(r),
         None => {
@@ -690,9 +700,8 @@ pub fn refresh(w: &dyn World, repo_arg: Option<&str>) -> i32 {
             w.out("skew: refresh: cannot resolve the ref $repo lands on");
             return 1;
         };
-        let remote = w.ref_remote(&base, &repo);
-        if let Some(r) = &remote {
-            w.fetch(&repo, r);
+        if !no_fetch {
+            fetch_base(w, &repo, &base);
         }
         let behind = w.rev_list_count(&repo, &format!("HEAD..{base}")).unwrap_or(0);
         if behind == 0 {
@@ -727,9 +736,8 @@ pub fn refresh(w: &dyn World, repo_arg: Option<&str>) -> i32 {
         return 1;
     };
     let base_branch = w.ref_branch(&base);
-    let remote = w.ref_remote(&base, &repo);
-    if let Some(r) = &remote {
-        w.fetch(&repo, r);
+    if !no_fetch {
+        fetch_base(w, &repo, &base);
     }
 
     let behind = w.rev_list_count(&repo, &format!("HEAD..{base}")).unwrap_or(0);
@@ -828,6 +836,12 @@ pub fn refresh(w: &dyn World, repo_arg: Option<&str>) -> i32 {
     0
 }
 
+fn fetch_base(w: &dyn World, repo: &Path, base: &str) {
+    if let Some(remote) = w.ref_remote(base, repo) {
+        w.fetch(repo, &remote);
+    }
+}
+
 pub const DECLINE_ALARM_AFTER: u64 = 3;
 pub const DECLINE_REALARM_EVERY: u64 = 180;
 pub const STALE_LOCK_SECS: u64 = 600;
@@ -898,14 +912,8 @@ fn stale_lock_note(w: &dyn World, repo: &Path) -> String {
 }
 
 fn repo_name_for_path(w: &dyn World, path: &Path) -> Option<String> {
-    for n in w.repo_names() {
-        if let Some(p) = w.repo_root(&n) {
-            if w.same_repo(path, &p) {
-                return Some(n);
-            }
-        }
-    }
-    None
+    let store = w.repo_store(path)?;
+    w.repo_names().into_iter().find(|n| w.repo_root(n).and_then(|p| w.repo_store(&p)).as_ref() == Some(&store))
 }
 
 fn refresh_check_only(w: &dyn World, repo: &Path, name: &str) -> i32 {
