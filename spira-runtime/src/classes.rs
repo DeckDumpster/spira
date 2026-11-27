@@ -44,6 +44,8 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("batcher.local.eject_red", Store),
     ("batcher.local.fetch", Git),
     ("batcher.local.file", Store),
+    ("batcher.local.image_build", Unit),
+    ("batcher.local.image_clean", Git),
     ("batcher.local.land", Host),
     ("batcher.local.lc_certify", Store),
     ("batcher.local.note_left_out", Store),
