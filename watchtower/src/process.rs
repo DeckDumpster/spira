@@ -61,20 +61,8 @@ pub fn getenv_i64(k: &str, default: i64) -> i64 {
     getenv(k).and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
-/// Where `lib.sh` itself lives, found on `$PATH` — NEVER `$SPIRA_HOME`. The bash always
-/// had lib.sh's functions available by sourcing it relative to `$0`
-/// (`. "$(dirname "$0")/lib.sh"`) at the top of the script, regardless of what `SPIRA_HOME`
-/// was set to; `SPIRA_HOME` only steers what lib.sh's OWN functions read afterwards (e.g.
-/// `bulk_ready_by_rune`'s runes lookup). A compiled binary has no `$0` directory to be
-/// relative to, so this is the equivalent self-location — used by every seam that needs
-/// lib.sh's CODE (`git::spira_landref`, `seams::registry`, `seams::pipeline_probe`).
-/// Conflating this with `$SPIRA_HOME` was a real bug (sp-lnmbq): a suite that points
-/// `SPIRA_HOME` at a fixture directory holding only a `runes/` and no `lib.sh` at all
-/// made every one of those seams source
-/// nothing and fail closed, even though the fixture never intended to replace lib.sh
-/// itself — only what its ALREADY-real functions read. `SPIRA_HOME` still reaches those
-/// functions correctly: it is inherited in the subprocess's own environment, never passed
-/// as the sourcing path.
+/// Where `lib.sh` itself lives, found on `$PATH`, never `$SPIRA_HOME`; empty when it is not
+/// on `$PATH`.
 pub fn lib_sh_dir() -> String {
     incident::which("lib.sh")
         .and_then(|p| std::path::Path::new(&p).parent().map(|d| d.to_string_lossy().into_owned()))

@@ -201,7 +201,7 @@ fn escalate_unopened(reg: &spira_config::repos::Registry, now: i64, act: &Acting
     }
 }
 
-pub fn run(now: i64, spira_home: &str, db: &str, home_repo: &str, incident_sh: &str, cfg: &Cfg) {
+pub fn run(now: i64, db: &str, home_repo: &str, incident_sh: &str, cfg: &Cfg) {
     if !incident::is_usable(incident_sh) {
         log(&format!(
             "watchtower: pr-stall-check skipped — {} not readable",
@@ -213,7 +213,14 @@ pub fn run(now: i64, spira_home: &str, db: &str, home_repo: &str, incident_sh: &
         log("watchtower: pr-stall-check skipped — spira-lc is unreachable");
         return;
     };
-    pass(&seams::registry(spira_home), now, &Acting { lc: &lc, cfg, db, home_repo }, &mut |f| {
+    let registry = match seams::registry() {
+        Ok(r) => r,
+        Err(e) => {
+            log(&format!("watchtower: pr-stall-check skipped — {e}"));
+            return;
+        }
+    };
+    pass(&registry, now, &Acting { lc: &lc, cfg, db, home_repo }, &mut |f| {
         incident::alarm(incident_sh, f);
     });
 }

@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use watchtower::process::{getenv, getenv_i64, lib_sh_dir, resolved_incident_sh};
+use watchtower::process::{getenv, getenv_i64, resolved_incident_sh};
 use watchtower::{conditions, czar_outcome, deploy_fault, dolt_drop, drift, git, load_fence, lock_holders, pr_stall, probes, release_skew, sccache_wedge, slow_query, throttle};
 
 /// The checks, in the order CHECK 6 ran them (`dispatch.rs`).
@@ -43,7 +43,7 @@ pub fn run(check: &str) -> Result<String, String> {
         }
         "pr-stall-check" => {
             let cfg = pr_stall::Cfg { stall_secs: reg_i64("SPIRA_PR_STALL_MINS")? * 60, gh_bin: reg("SPIRA_GH")?, gh_timeout: Duration::from_secs(getenv_i64("GH_TIMEOUT", 120) as u64) };
-            pr_stall::run(n, &lib_sh_dir(), &reg("SPIRA_DB")?, &reg("SPIRA_HOME_REPO")?, &resolved_incident_sh(), &cfg);
+            pr_stall::run(n, &reg("SPIRA_DB")?, &reg("SPIRA_HOME_REPO")?, &resolved_incident_sh(), &cfg);
         }
         "lock-holders-check" => return lock_holders_check(n, &run),
         "release-skew-check" => {
@@ -93,7 +93,7 @@ fn throttle_check(n: i64, run: &Path) -> Result<(), String> {
     let cfg = throttle::Cfg { depth_at: reg_i64("SPIRA_QUEUE_THROTTLE_DEPTH_AT")?, release_at: reg_i64("SPIRA_QUEUE_THROTTLE_RELEASE_AT")?, stall_mins: reg_i64("SPIRA_QUEUE_THROTTLE_STALL_MINS")? };
     let stamp = getenv("SPIRA_THROTTLE_STAMP").map(PathBuf::from).unwrap_or_else(|| run.join("queue-throttled"));
     let repo = getenv("SPIRA_TC_REPO").or_else(|| getenv("SPIRA_REPO"));
-    let land_ref = getenv("SPIRA_TC_LAND_REF").or_else(|| repo.as_deref().and_then(|r| git::spira_landref(&lib_sh_dir(), r)));
+    let land_ref = getenv("SPIRA_TC_LAND_REF").or_else(|| repo.as_deref().and_then(git::spira_landref));
     let override_off = reg("SPIRA_QUEUE_THROTTLE_OVERRIDE")? == "off";
     let ctx = throttle::Ctx { db: &db, home_repo: &home_repo, incident_sh: &inc, stamp: &stamp, override_off, repo: repo.as_deref(), land_ref: land_ref.as_deref(), land_ref_default_for_log: "origin/main" };
     throttle::run(n, &cfg, &ctx);
@@ -103,7 +103,7 @@ fn throttle_check(n: i64, run: &Path) -> Result<(), String> {
 fn lock_holders_check(n: i64, run: &Path) -> Result<String, String> {
     let stall_mins = reg_i64("SPIRA_QUEUE_THROTTLE_STALL_MINS")?;
     let repo = getenv("SPIRA_TC_REPO").or_else(|| getenv("SPIRA_REPO"));
-    let land_ref = getenv("SPIRA_TC_LAND_REF").or_else(|| repo.as_deref().and_then(|r| git::spira_landref(&lib_sh_dir(), r)));
+    let land_ref = getenv("SPIRA_TC_LAND_REF").or_else(|| repo.as_deref().and_then(git::spira_landref));
     let Some(depth) = throttle::compute_depth(repo.as_deref(), land_ref.as_deref()) else {
         return Ok("watchtower: lock-holders-check skipped — spira-lc is unreachable, depth unknown".into());
     };

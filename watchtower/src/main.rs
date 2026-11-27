@@ -6,7 +6,7 @@
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
-use watchtower::process::{self, getenv, getenv_i64, lib_sh_dir, resolved_incident_sh};
+use watchtower::process::{self, getenv, getenv_i64, resolved_incident_sh};
 use watchtower::{host_real, conditions, czar_outcome, deploy_fault, drift, git, load_fence, lock_holders, log, pr_stall, pressure_topic, probes, release_skew, sccache_wedge, dolt_drop, slow_query, sweep, throttle};
 
 use std::path::PathBuf;
@@ -121,7 +121,7 @@ fn main() {
             let mut tc_land_ref = getenv("SPIRA_TC_LAND_REF");
             if tc_land_ref.is_none() {
                 if let Some(repo) = &tc_repo {
-                    tc_land_ref = git::spira_landref(&lib_sh_dir(), repo);
+                    tc_land_ref = git::spira_landref(repo);
                 }
             }
             let ctx = throttle::Ctx {
@@ -168,7 +168,6 @@ fn main() {
             );
             pr_stall::run(
                 n,
-                &lib_sh_dir(),
                 &reg("SPIRA_DB"),
                 &reg("SPIRA_HOME_REPO"),
                 &resolved_incident_sh(),
@@ -183,7 +182,7 @@ fn main() {
             let stall_mins = reg_i64("SPIRA_QUEUE_THROTTLE_STALL_MINS");
             let tc_repo = getenv("SPIRA_TC_REPO").or_else(|| getenv("SPIRA_REPO"));
             let land_ref = getenv("SPIRA_TC_LAND_REF")
-                .or_else(|| tc_repo.as_deref().and_then(|r| git::spira_landref(&lib_sh_dir(), r)));
+                .or_else(|| tc_repo.as_deref().and_then(git::spira_landref));
             let Some(depth) = throttle::compute_depth(tc_repo.as_deref(), land_ref.as_deref()) else {
                 log::log("watchtower: lock-holders-check skipped — spira-lc is unreachable, depth unknown");
                 return;
