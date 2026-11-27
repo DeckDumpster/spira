@@ -5,6 +5,9 @@
 //! code it tests.
 
 use std::collections::BTreeMap;
+use std::ffi::{CStr, CString};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -215,8 +218,8 @@ pub const DEFAULT_CAP: u64 = 900;
 
 /// A repository's warm build state on the host, kept between runs: cargo's target dir and
 /// registry. A testenv run never builds in the warm target and never copies it: the target is
-/// mounted as an overlay lower layer and the run writes to its own upper layer, which is merged
-/// into the warm target only when the run passes. The lock is shared for the life of a run and
+/// mounted as an overlay lower layer and the run writes to its own upper layer, whose files the
+/// merge moves into the warm target only when the run passes. The lock is shared for the life of a run and
 /// exclusive to write the target, so runs overlap and only a writer waits for them to finish.
 /// The other writer is a round-vm host round, which builds in the target directly under the
 /// exclusive lock, so the target also holds what a red or stopped round compiled.
@@ -499,17 +502,8 @@ impl Cache {
         match exclusive {
             Some(_ex) => {
                 let held = Instant::now();
-                let upper = run.join("upper");
-                // batch-job: the merge of a finished run, bounded by the host rather than a remote
-                let _ = std::process::Command::new("find").arg(&upper).args(["-type", "c", "-delete"]).status();
-                // batch-job: the merge of a finished run, bounded by the host rather than a remote
-                let merged = std::process::Command::new("cp")
-                    .args(["-a", "--reflink=auto", "--no-preserve=xattr"])
-                    .arg(format!("{}/.", upper.display()))
-                    .arg(self.dir.join("target"))
-                    .output();
-                match merged {
-                    Ok(o) if o.status.success() => {
+                match move_into(&run.join("upper"), &self.dir.join("target")) {
+                    Ok(()) => {
                         if let Some(b) = self.enforce_cutoff() {
                             log(&format!(
                                 "{cname}: warm target was {} MiB after the merge, over the {} MiB cutoff: removed; the next run builds cold",
@@ -518,12 +512,10 @@ impl Cache {
                             ));
                         }
                     }
-                    Ok(o) => log(&format!(
-                        "{cname}: warm cache publish failed (not a verdict; the warm target is stale): cp rc={} {}",
-                        o.status.code().unwrap_or(-1),
-                        String::from_utf8_lossy(&o.stderr).lines().next().unwrap_or("").trim()
+                    Err((path, e)) => log(&format!(
+                        "{cname}: warm cache publish failed (not a verdict; the warm target is stale): {}: {e}",
+                        path.display()
                     )),
-                    Err(e) => log(&format!("{cname}: warm cache publish failed (not a verdict; the warm target is stale): {e}")),
                 }
                 log(&format!("{cname}: warm cache merge held the lock {}s", held.elapsed().as_secs()));
             }
@@ -531,6 +523,77 @@ impl Cache {
         }
         remove_run_dir(&run);
     }
+}
+
+/// Moves everything under `from` onto the same relative path under `to`, replacing what is
+/// there; the two must share a filesystem. An overlay whiteout (a character device) stays
+/// behind. Err names the path that stopped the merge.
+fn move_into(from: &Path, to: &Path) -> Result<(), (PathBuf, std::io::Error)> {
+    let at = |path: &Path| {
+        let path = path.to_path_buf();
+        move |e| (path, e)
+    };
+    for entry in std::fs::read_dir(from).map_err(at(from))? {
+        let entry = entry.map_err(at(from))?;
+        let (src, dst) = (entry.path(), to.join(entry.file_name()));
+        let kind = entry.file_type().map_err(at(&src))?;
+        if kind.is_char_device() {
+            continue;
+        }
+        if kind.is_dir() {
+            let created = match std::fs::create_dir(&dst) {
+                Ok(()) => true,
+                // A symlink to a directory is refused: moving through it would leave the target.
+                Err(_) if std::fs::symlink_metadata(&dst).is_ok_and(|m| m.is_dir()) => false,
+                Err(e) => return Err((src, e)),
+            };
+            move_into(&src, &dst)?;
+            // Last, so a read-only mode does not stop the moves into it.
+            if created {
+                std::fs::metadata(&src).and_then(|m| std::fs::set_permissions(&dst, m.permissions())).map_err(at(&src))?;
+            }
+        } else {
+            strip_xattrs(&src).and_then(|()| std::fs::rename(&src, &dst)).map_err(at(&src))?;
+        }
+    }
+    Ok(())
+}
+
+/// Removes every extended attribute of `path` itself but the host's `security.*` labels, which
+/// an unprivileged process may not remove: a rootless overlay may leave
+/// `user.overlay.*` on a file it copied up, which must not reach the next run's lower layer.
+fn strip_xattrs(path: &Path) -> std::io::Result<()> {
+    let c = CString::new(path.as_os_str().as_bytes())?;
+    // SAFETY: a NUL-terminated path; a zero size only asks for the length.
+    let size = unsafe { libc::llistxattr(c.as_ptr(), std::ptr::null_mut(), 0) };
+    if size == 0 {
+        return Ok(());
+    }
+    if size < 0 {
+        let e = std::io::Error::last_os_error();
+        return if e.raw_os_error() == Some(libc::ENOTSUP) { Ok(()) } else { Err(e) };
+    }
+    let mut names = vec![0u8; size as usize];
+    // SAFETY: the buffer is writable for the length passed.
+    let got = unsafe { libc::llistxattr(c.as_ptr(), names.as_mut_ptr().cast(), names.len()) };
+    let Ok(got) = usize::try_from(got) else { return Err(std::io::Error::last_os_error()) };
+    // Removing a `user.*` attribute needs write permission, which a build's read-only file lacks.
+    let meta = std::fs::symlink_metadata(path)?;
+    let read_only = meta.is_file() && meta.permissions().mode() & 0o200 == 0;
+    if read_only {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(meta.permissions().mode() | 0o200))?;
+    }
+    for name in names[..got].split_inclusive(|b| *b == 0).filter(|n| !n.starts_with(b"security.")) {
+        let name = CStr::from_bytes_with_nul(name).map_err(std::io::Error::other)?;
+        // SAFETY: both strings are NUL-terminated.
+        if unsafe { libc::lremovexattr(c.as_ptr(), name.as_ptr()) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    if read_only {
+        std::fs::set_permissions(path, meta.permissions())?;
+    }
+    Ok(())
 }
 
 /// Whole cores each of `tiers` concurrent containers may use on a `cores`-core host: the
@@ -954,6 +1017,116 @@ mod tests {
         assert!(!cache.share_dir("g").exists());
     }
 
+    fn c_path(p: &Path) -> CString {
+        CString::new(p.as_os_str().as_bytes()).unwrap()
+    }
+
+    /// False when the temp filesystem refuses user xattrs.
+    fn set_user_xattr(p: &Path) -> bool {
+        // SAFETY: NUL-terminated strings and a value of the stated length.
+        unsafe { libc::lsetxattr(c_path(p).as_ptr(), c"user.t".as_ptr(), b"1".as_ptr().cast(), 1, 0) == 0 }
+    }
+
+    fn xattr_bytes(p: &Path) -> isize {
+        // SAFETY: a size query writes nothing.
+        unsafe { libc::llistxattr(c_path(p).as_ptr(), std::ptr::null_mut(), 0) }
+    }
+
+    fn published(cache: &Cache) -> String {
+        let lines = std::sync::Mutex::new(Vec::<String>::new());
+        cache.publish("c", &|m: &str| lines.lock().unwrap().push(m.to_string()));
+        let text = lines.lock().unwrap().join("\n");
+        text
+    }
+
+    #[test_id(tv42i0u)]
+    #[test]
+    fn a_publish_moves_the_upper_files_into_the_target() {
+        use std::os::unix::fs::MetadataExt;
+        let root = testkit::TempDir::new("foreign-publish-moves");
+        let cache = Cache::new(root.path(), "r");
+        cache.prepare().unwrap();
+        let (run, target) = (cache.run_dir("c"), cache.dir.join("target"));
+        let upper = run.join("upper");
+        for d in [upper.join("deps"), target.join("deps")] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::os::unix::fs::DirBuilderExt::mode(&mut std::fs::DirBuilder::new(), 0o710).create(upper.join("new")).unwrap();
+        std::fs::create_dir(upper.join("new/inner")).unwrap();
+        let dir_mode = std::fs::metadata(upper.join("new")).unwrap().mode();
+        std::fs::write(upper.join("deps/a.o"), "new").unwrap();
+        std::fs::write(upper.join("new/inner/b.o"), "b").unwrap();
+        std::os::unix::fs::symlink("a.o", upper.join("deps/link")).unwrap();
+        std::fs::write(target.join("deps/a.o"), "old").unwrap();
+        std::fs::write(target.join("deps/gone.o"), "kept").unwrap();
+        // The kernel lets anyone make the 0:0 device, which is what an overlay whiteout is.
+        // SAFETY: a NUL-terminated path.
+        assert_eq!(unsafe { libc::mknod(c_path(&upper.join("deps/gone.o")).as_ptr(), libc::S_IFCHR | 0o600, 0) }, 0);
+        let marked = set_user_xattr(&upper.join("deps/a.o"));
+        // A copied-up read-only artifact: removing its xattr needs write permission.
+        std::fs::write(upper.join("deps/ro.o"), "ro").unwrap();
+        set_user_xattr(&upper.join("deps/ro.o"));
+        std::fs::set_permissions(upper.join("deps/ro.o"), std::fs::Permissions::from_mode(0o444)).unwrap();
+        let inode = std::fs::metadata(upper.join("deps/a.o")).unwrap().ino();
+
+        let text = published(&cache);
+
+        assert!(!text.contains("failed"), "{text}");
+        assert!(text.contains("warm cache merge held the lock"), "{text}");
+        let moved = target.join("deps/a.o");
+        assert_eq!(std::fs::metadata(&moved).unwrap().ino(), inode, "moved, not copied");
+        assert_eq!(std::fs::read_to_string(&moved).unwrap(), "new");
+        if marked {
+            assert_eq!(xattr_bytes(&moved), 0, "no xattr");
+            assert_eq!(xattr_bytes(&target.join("deps/ro.o")), 0, "no xattr on a read-only file");
+        }
+        assert_eq!(std::fs::metadata(target.join("deps/ro.o")).unwrap().mode() & 0o777, 0o444);
+        assert_eq!(std::fs::read_to_string(target.join("deps/gone.o")).unwrap(), "kept", "a whiteout is not carried over");
+        assert_eq!(std::fs::read_link(target.join("deps/link")).unwrap(), Path::new("a.o"));
+        assert_eq!(std::fs::read_to_string(target.join("new/inner/b.o")).unwrap(), "b");
+        assert_eq!(std::fs::metadata(target.join("new")).unwrap().mode(), dir_mode);
+        assert!(!run.exists(), "the run dir is gone");
+    }
+
+    #[test_id(ts2jcct)]
+    #[test]
+    fn a_publish_that_cannot_move_a_file_names_it_and_removes_the_run() {
+        let root = testkit::TempDir::new("foreign-publish-fails");
+        let cache = Cache::new(root.path(), "r");
+        cache.prepare().unwrap();
+        let upper = cache.run_dir("c").join("upper");
+        std::fs::create_dir_all(&upper).unwrap();
+        std::fs::write(upper.join("clash"), "a file").unwrap();
+        std::fs::create_dir_all(cache.dir.join("target/clash")).unwrap();
+
+        let text = published(&cache);
+
+        let want = format!("c: warm cache publish failed (not a verdict; the warm target is stale): {}: ", upper.join("clash").display());
+        assert!(text.contains(&want), "{text}");
+        assert!(text.contains("warm cache merge held the lock"), "{text}");
+        assert!(!cache.run_dir("c").exists());
+    }
+
+    #[test_id(tsleyqk)]
+    #[test]
+    fn a_publish_never_moves_a_file_through_a_symlink_out_of_the_target() {
+        let root = testkit::TempDir::new("foreign-publish-symlink");
+        let cache = Cache::new(root.path(), "r");
+        cache.prepare().unwrap();
+        let upper = cache.run_dir("c").join("upper");
+        let outside = root.path().join("outside");
+        std::fs::create_dir_all(upper.join("d")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(upper.join("d/f"), "x").unwrap();
+        std::os::unix::fs::symlink(&outside, cache.dir.join("target/d")).unwrap();
+
+        let text = published(&cache);
+
+        assert!(text.contains(&format!("the warm target is stale): {}: ", upper.join("d").display())), "{text}");
+        assert!(!outside.join("f").exists());
+        assert!(!cache.run_dir("c").exists());
+    }
+
     fn flock_intent(dir: &Path, who: &str) -> std::fs::File {
         use std::os::fd::AsRawFd;
         let mut f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(dir.join("intent")).unwrap();
@@ -978,7 +1151,7 @@ mod tests {
             let cache = Cache::new(root.path(), "r").polled(Duration::from_millis(1));
             cache.prepare().unwrap();
             let rt = crate::fixture::fake::FakeRuntime::new();
-            // A red tier publishes nothing, so no test here spawns the merge.
+            // A red tier publishes nothing.
             rt.once_rc.lock().unwrap().extend([("a".to_string(), 1), ("b".to_string(), 1)]);
             Waiting {
                 cache,
