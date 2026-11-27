@@ -967,6 +967,10 @@ impl Git for RealGit {
         c.args(["worktree", "add", "-q", "--detach"]).arg(tree).arg(at);
         let _ = git_ok(c);
     }
+    fn tree_on_landing(&self, tree: &Path, base: &str) -> bool {
+        git_refs::head_branch(tree).as_deref() == Some("landing")
+            && git_refs::head_sha(tree).is_some_and(|head| git_refs::sha_of(tree, base) == Some(head))
+    }
     fn tree_checkout_landing(&self, tree: &Path, base: &str) -> bool {
         let mut c = git(tree);
         c.args(["checkout", "-q", "-B", "landing", base]);

@@ -27,7 +27,7 @@ pub trait Beads {
 }
 
 /// `RealGit` answers `spira_refs`, `branch_exists` and `rev_parse` from the ref files, starting
-/// git only when they cannot tell.
+/// git only when they cannot tell, and `tree_on_landing` from the ref files alone.
 pub trait Git {
     /// `for-each-ref refs/heads/spira/*` → (short name, tip).
     fn spira_refs(&self, repo: &Path) -> Vec<(String, String)>;
@@ -50,6 +50,10 @@ pub trait Git {
     /// A private landing worktree (push mode): exists?
     fn tree_ok(&self, tree: &Path) -> bool;
     fn tree_add_detached(&self, repo: &Path, tree: &Path, at: &str);
+    /// The landing tree has `landing` checked out at `base`. False when it cannot be told.
+    fn tree_on_landing(&self, _tree: &Path, _base: &str) -> bool {
+        false
+    }
     /// `checkout -q -B landing <base>` in the landing tree.
     fn tree_checkout_landing(&self, tree: &Path, base: &str) -> bool;
     /// `merge --no-edit -q -m <subject> <branch>`; Err(conflicted paths) after aborting.
