@@ -1,7 +1,8 @@
 use spira_sim::world::{
-    broker_pid_file, control_store, db_root, down, is_world_serve, lc_pid_file, lc_socket, release_source, serve_argv,
-    ReleaseSource, Steps, RELEASE_ENV, TESTENV_ENV,
+    broker_pid_file, broker_socket, control_store, db_root, down, is_world_serve, lc_pid_file, lc_socket, release_source,
+    serve_argv, ProcessSteps, ReleaseSource, Steps, RELEASE_ENV, TESTENV_ENV,
 };
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -122,6 +123,27 @@ fn down_stops_the_broker_after_the_serve_that_publishes_to_it_and_before_the_dat
     let steps = Fake::default();
     down(&dir, &steps).unwrap();
     assert_eq!(*steps.calls.lock().unwrap(), ["lc_stop 11", "broker_stop 22", "db_down"]);
+}
+
+#[test_id(tf7cvob)]
+#[test]
+fn the_worlds_real_broker_accepts_once_up_and_down_leaves_no_process_behind() {
+    let t = testkit::TempDir::new("simbk");
+    let dir = t.join("w");
+    let systemd = dir.join("release/systemd");
+    std::fs::create_dir_all(&systemd).unwrap();
+    std::fs::write(dir.join(spira_sim::world::MARKER), "").unwrap();
+    let template = "mosquitto.conf";
+    std::fs::copy(testkit::manifest_dir().join("../../systemd").join(template), systemd.join(template)).unwrap();
+
+    ProcessSteps.broker_up(&dir).unwrap();
+
+    let pid: u32 = std::fs::read_to_string(broker_pid_file(&dir)).unwrap().parse().unwrap();
+    let socket = broker_socket(&dir);
+    assert!(UnixStream::connect(&socket).is_ok(), "{} does not accept", socket.display());
+    down(&dir, &ProcessSteps).unwrap();
+    assert!(!Path::new(&format!("{}/{pid}", system_paths::PROC)).exists(), "broker pid {pid} outlived the world");
+    assert!(UnixStream::connect(&socket).is_err(), "{} still accepts", socket.display());
 }
 
 /// A directory shaped like `spira-releases/<sha>`.

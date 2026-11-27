@@ -210,7 +210,7 @@ impl Watching {
             cmd.args(args)
                 .args(["--as", "t"])
                 .env_clear()
-                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+                .env("PATH", system_paths::SYSTEM_PATH_MIN)
                 .env("SPIRA_TOML", world.join("config/sim.toml"))
                 .env("SPIRA_RELEASE", world.join("release"))
                 .env("HOME", world.join("home"))
