@@ -3507,6 +3507,15 @@ fn settings_refused(
     FAULT
 }
 
+/// Whether the round's CI declaration is the landing ref's, so no member's diff chose what the
+/// round VM was asked to run. An unresolved landing ref counts against no member.
+fn declaration_unchanged(w: &World, c: &Ctx, path: &Path, wt: &Path) -> bool {
+    c.r.landref.as_deref().is_none_or(|base| {
+        fs::read_to_string(wt.join(gate::own::DECL)).ok()
+            == w.git.file_at(path, base, gate::own::DECL)
+    })
+}
+
 /// Whether `text` holds `key` as a whole word: `FOO_X` is not named by `FOO_X_ROOT`.
 fn names_key(text: &str, key: &str) -> bool {
     let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
@@ -4225,7 +4234,17 @@ fn certify_pass(
             w.err(format!(
                 "queue.sh {label}: {why}; the round is not judged\n{shown}"
             ));
-            return faulted_pass(w, by, label, c, batch, &format!("{why}\n{shown}"));
+            let why_shown = format!("{why}\n{shown}");
+            if !results.join("ci.result").exists() && !matches!(out.rc, 124 | 137) {
+                if declaration_unchanged(w, c, path, &wt) {
+                    return infra_pass(w, label, c, batch, &why_shown);
+                }
+                w.err(format!(
+                    "queue.sh {label}: {} differs from the landing ref, so a member's diff may be why the CI entry never ran",
+                    gate::own::DECL
+                ));
+            }
+            return faulted_pass(w, by, label, c, batch, &why_shown);
         }
     } else if attest.is_none() {
         prune_round_results(w, c, batch);
