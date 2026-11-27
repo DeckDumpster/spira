@@ -22,7 +22,7 @@ fn local() -> Repo {
 }
 
 fn batch() -> OpenBatch {
-    OpenBatch { id: "batch-7".into(), version: 3, pr: Some(88), branch: "spira/batch-7".into(), sealed_head: "h7".into(), members: vec!["sp-a".into()], batcher_owned: true, owner: "batcher".into() }
+    OpenBatch { id: "batch-7".into(), version: 3, pr: Some(88), branch: "spira/batch-7".into(), sealed_head: "h7".into(), members: vec!["sp-a".into()], batcher_owned: true, owner: "batcher".into(), flip: Flip::No }
 }
 
 fn with(repo: Repo) -> Snapshot {
@@ -90,6 +90,49 @@ fn t5_red_goes_to_judgement() {
     let (carry, acts) = decide(&Carry::default(), &red);
     assert!(effects(&acts).contains(&JUDGEMENT), "{acts:?}");
     assert_eq!(carry.repos["spira"].state, State::Judging);
+}
+
+const NAMED_TEST_RED: &str = "red\nfailed-step: gate / Run tests\nstep-log:         FAIL [   0.412s] (1/1) demo::it a_test\n";
+
+fn flipping(check: Check, pr_state: PrState, flip: Flip) -> Snapshot {
+    let batch = OpenBatch { flip, ..batch() };
+    with(Repo { mode: "queue".into(), open_batch: Some(batch), pr_state, check, ..busy().repos["spira"].clone() })
+}
+
+#[test_id(tr24rm2)]
+#[test]
+fn a_batch_the_flip_rerun_speaks_for_goes_to_the_verdict_leg_each_tick_neither_pushed_nor_judged() {
+    for (check, pr) in [(Check::Red, PrState::Open), (Check::Green, PrState::Open), (Check::None, PrState::Merged)] {
+        let snap = flipping(check, pr, Flip::VerdictPass);
+        let (carry, first) = decide_with(&Policy::default(), &Carry::default(), &snap, 1);
+        let (_, again) = decide_with(&Policy::default(), &carry, &snap, 2);
+        for acts in [&first, &again] {
+            assert_eq!(effects(acts), [RECONCILE], "{check:?} {pr:?}");
+        }
+        assert_ne!(first[0].key, again[0].key, "each tick asks anew: {check:?}");
+    }
+}
+
+#[test_id(thh4c7d)]
+#[test]
+fn a_red_the_verdict_leg_already_judged_is_not_judged_again() {
+    let (_, acts) = decide(&Carry::default(), &flipping(Check::Red, PrState::Open, Flip::Judged));
+    assert_eq!(acts, Vec::<Act>::new());
+}
+
+#[test_id(tusd816)]
+#[test]
+fn the_flip_speaks_for_a_named_test_red_and_for_the_green_or_merge_that_owes_a_fix_bead() {
+    let hold = |rerun, owed, judged, merged, out: &str| flip_hold(&FlipRecord { rerun, owed, judged }, merged, out);
+    assert_eq!(hold(false, false, false, false, NAMED_TEST_RED), Flip::VerdictPass);
+    assert_eq!(hold(true, true, false, false, NAMED_TEST_RED), Flip::VerdictPass);
+    assert_eq!(hold(true, true, false, false, "green\n"), Flip::VerdictPass);
+    assert_eq!(hold(true, true, false, true, ""), Flip::VerdictPass);
+    assert_eq!(hold(true, false, true, false, NAMED_TEST_RED), Flip::Judged);
+    assert_eq!(hold(false, false, true, false, NAMED_TEST_RED), Flip::Judged);
+    assert_eq!(hold(true, true, false, false, "pending\n"), Flip::No);
+    assert_eq!(hold(true, false, false, false, "green\n"), Flip::No);
+    assert_eq!(hold(false, false, false, false, "red\nred-suite: test-a.sh\n"), Flip::No);
 }
 
 /// `classify_fault_rerun`: a harness fault reruns once.

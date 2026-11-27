@@ -715,6 +715,145 @@ fn step_on_queue_local_settles_a_green_publish_before_publishing_again() {
     assert!(settled < published, "{out}");
 }
 
+// ------------------------------------------------------- the flip rerun of a test-only red
+
+const NEXTEST_RED: &str = "red\nfailed-step: gate / Run tests\nrun-url: http://r/77\nstep-log:         FAIL [   0.412s] (957/957) demo::it a_test\nstep-log:      Summary [ 60.0s] 957 tests run: 956 passed, 1 failed, 0 skipped\nstep-log:         FAIL [   0.412s] (957/957) demo::it a_test\n";
+
+fn flip_world() -> T {
+    let mut t = T::new(LandMode::Queue);
+    t.submitted(&["sp-a", "sp-b"]);
+    batch(&t);
+    t.lib.s.batcher_bin = Some(PathBuf::from("batcher"));
+    *t.scripts.judgement.borrow_mut() = RunOut { rc: 0, out: "id=sp-j1\n".into(), err: String::new() };
+    *t.forge.run.borrow_mut() = Some("77".into());
+    t
+}
+
+fn pass_on(t: &T, status: &str) -> i32 {
+    t.forge.status.borrow_mut().push(Some(status.into()));
+    t.run(&["verdict", "spira"])
+}
+
+#[test_id(ttycgoo)]
+#[test]
+fn a_test_only_red_gets_the_flip_rerun_before_anyone_is_judged_or_ejected() {
+    let t = flip_world();
+    assert_eq!(pass_on(&t, NEXTEST_RED), 0, "{}", t.err());
+    assert_eq!(count(&t.forge.calls, "workflow-rerun 77 --flip"), 1, "{:?}", t.forge.calls.borrow());
+    assert!(record(&t).contains("flip_rerun=77\n"), "{}", record(&t));
+    assert!(record(&t).contains("flip_tests=demo::it a_test\n"), "{}", record(&t));
+    assert!(!has_call(&t.scripts.calls, "judgement-ci"));
+    assert!(!t.lc.has("eject-member"), "{:?}", t.lc.calls.borrow());
+    assert!(!has_call(&t.forge.calls, "pr-close"));
+}
+
+#[test_id(t7v0a3b)]
+#[test]
+fn a_green_flip_rerun_files_a_fix_bead_per_test_and_then_lands() {
+    let t = flip_world();
+    let red = "red\nrun-url: http://r/77\nstep-log: FAILED tests/test_a.py::test_x - boom\nstep-log: FAILED tests/test_a.py::test_y[1, 2] - bang\nstep-log: == 2 failed, 9 passed in 2s ==\n";
+    assert_eq!(pass_on(&t, red), 0, "{}", t.err());
+    assert_eq!(pass_on(&t, "green\nhead-sha: h1\nrun-url: http://r/77/2\n"), 0, "{}", t.err());
+    let filed: Vec<String> = t.lib.calls.borrow().iter().filter(|c| c.starts_with("file_flip_fix")).cloned().collect();
+    assert_eq!(filed.len(), 2, "{filed:?}");
+    assert!(filed[0].starts_with("file_flip_fix spira spira: tests/test_a.py::test_x flipped on batch PR 12 and was rerun — fix it or replace it with a deterministic test\n"), "{}", filed[0]);
+    assert!(filed[0].contains("FAILED tests/test_a.py::test_x - boom") && filed[0].contains("http://r/77/2"), "{}", filed[0]);
+    assert!(filed[1].contains("tests/test_a.py::test_y[1; 2] flipped"), "{}", filed[1]);
+    assert!(t.lib.has("push origin h1:main"), "{}", t.out());
+    let calls = t.lib.calls.borrow();
+    let at = |p: &str| calls.iter().position(|c| c.starts_with(p)).unwrap();
+    assert!(at("file_flip_fix") < at("push origin h1:main"));
+}
+
+#[test_id(ttn1nna)]
+#[test]
+fn a_flip_whose_fix_bead_cannot_be_filed_is_not_landed_and_is_filed_on_a_later_pass() {
+    let t = flip_world();
+    assert_eq!(pass_on(&t, NEXTEST_RED), 0, "{}", t.err());
+    t.lib.flip_filing_down.set(true);
+    assert_eq!(pass_on(&t, "green\nhead-sha: h1\n"), 1);
+    assert!(!t.lib.has("push origin h1:main"));
+    assert!(record(&t).contains("flip_tests=demo::it a_test\n"), "{}", record(&t));
+    t.lib.flip_filing_down.set(false);
+    assert_eq!(pass_on(&t, "green\nhead-sha: h1\n"), 0, "{}", t.err());
+    assert!(t.lib.has("push origin h1:main"));
+}
+
+#[test_id(tmlja8y)]
+#[test]
+fn a_pr_merged_on_a_green_flip_rerun_still_files_its_fix_beads_before_it_lands() {
+    let t = flip_world();
+    assert_eq!(pass_on(&t, NEXTEST_RED), 0, "{}", t.err());
+    *t.forge.pr_state.borrow_mut() = Some("merged".into());
+    *t.forge.merge_commit.borrow_mut() = Some("abc123".into());
+    t.lib.flip_filing_down.set(true);
+    assert_eq!(t.run(&["verdict", "spira"]), 1);
+    assert!(t.qfile("open").exists());
+    assert!(!t.lib.has("bead_close"));
+    t.lib.flip_filing_down.set(false);
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert_eq!(count(&t.lib.calls, "file_flip_fix"), 2);
+    assert!(t.lib.has("bead_close sp-a abc123"));
+}
+
+#[test_id(t42d827)]
+#[test]
+fn a_flip_rerun_that_is_red_again_goes_to_judgement_as_red_twice_and_is_not_rerun() {
+    let t = flip_world();
+    let red = format!("{NEXTEST_RED}run-id: 77\n");
+    assert_eq!(pass_on(&t, &red), 0, "{}", t.err());
+    assert_eq!(pass_on(&t, &red), 0, "{}", t.err());
+    assert_eq!(count(&t.forge.calls, "workflow-rerun"), 1);
+    assert_eq!(count(&t.scripts.calls, "judgement-ci"), 1);
+    let j = t.scripts.calls.borrow().iter().find(|c| c.starts_with("judgement-ci")).cloned().unwrap();
+    assert!(j.contains("red twice on the same run 77"), "{j}");
+    assert!(t.lib.calls.borrow().iter().any(|c| c.starts_with("comment sp-a") && c.contains("red twice on the same run")), "{:?}", t.lib.calls.borrow());
+}
+
+#[test_id(txsdt2g)]
+#[test]
+fn a_red_with_more_failures_than_the_flip_cap_or_unnamed_ones_is_judged_without_a_rerun() {
+    let four: String = (0..4).map(|n| format!("step-log: FAILED t.py::t{n} - x\n")).collect();
+    let truncated = "step-log: FAILED t.py::t0 - x\nstep-log: == 9 failed, 1 passed in 2s ==\n";
+    let tier_only = "step-log: CI FAILED during step: unit\n";
+    let with_errors = "step-log: FAILED t.py::t0 - x\nstep-log: == 1 failed, 2 errors in 2s ==\n";
+    let second_job_cut = "failed-step: a / t\nstep-log: FAILED t.py::t0 - x\nstep-log: FAILED t.py::t1 - x\nstep-log: == 2 failed in 2s ==\nfailed-step: b / t\nstep-log: == 2 failed in 2s ==\n";
+    let a_job_naming_no_test = "failed-step: a / t\nstep-log: FAILED t.py::t0 - x\nfailed-step: b / lint\nstep-log: lint: refused\n";
+    for log in [four.as_str(), truncated, tier_only, with_errors, second_job_cut, a_job_naming_no_test] {
+        let t = flip_world();
+        assert_eq!(pass_on(&t, &format!("red\n{log}")), 0, "{}", t.err());
+        assert_eq!(count(&t.forge.calls, "workflow-rerun"), 0, "{log}");
+        assert_eq!(count(&t.scripts.calls, "judgement-ci"), 1, "{log}");
+    }
+}
+
+#[test_id(trkks75)]
+#[test]
+fn tests_red_on_both_runs_are_owed_no_flip_bead_even_if_the_pr_then_merges() {
+    let t = flip_world();
+    assert_eq!(pass_on(&t, NEXTEST_RED), 0, "{}", t.err());
+    assert_eq!(pass_on(&t, NEXTEST_RED), 0, "{}", t.err());
+    assert!(!record(&t).contains("flip_tests="), "{}", record(&t));
+    *t.forge.pr_state.borrow_mut() = Some("merged".into());
+    *t.forge.merge_commit.borrow_mut() = Some("abc123".into());
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(!has_call(&t.lib.calls, "file_flip_fix"));
+}
+
+#[test_id(te9m6zh)]
+#[test]
+fn a_rebuild_on_a_moved_base_gives_the_new_head_its_own_flip_rerun() {
+    let t = flip_world();
+    assert_eq!(pass_on(&t, NEXTEST_RED), 0, "{}", t.err());
+    t.git.set("origin/main", "b1");
+    assert_eq!(pass_on(&t, "green\nhead-sha: h1\n"), 0, "{}", t.err());
+    assert!(t.out().contains("rebuilt on moved base"), "{}", t.out());
+    assert!(!record(&t).contains("flip_"), "{}", record(&t));
+    assert_eq!(pass_on(&t, NEXTEST_RED), 0, "{}", t.err());
+    assert_eq!(count(&t.forge.calls, "workflow-rerun 77 --flip"), 2);
+    assert!(!has_call(&t.scripts.calls, "judgement-ci"));
+}
+
 // ------------------------------------------------------------------ queue.forge batch
 
 fn batch(t: &T) {
@@ -1639,6 +1778,7 @@ fn a_pytest_failure_with_no_annotations_is_a_test_red_not_a_setup_red() {
         err: String::new(),
     };
     *t.forge.run.borrow_mut() = Some("77".into());
+    *t.forge.rerun_decided.borrow_mut() = Some("run 77 is at attempt 2".into());
     t.forge.status.borrow_mut().push(Some("red\nfailed-step: gate / Run tests\nstep-log: FAILED tests/test_progress_file.py::test_x - AssertionError\nstep-log: ===== 1 failed, 9 passed in 2s =====\nstep-log: CI FAILED during step: unit\n".into()));
     assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
     assert!(
@@ -1649,12 +1789,8 @@ fn a_pytest_failure_with_no_annotations_is_a_test_red_not_a_setup_red() {
         "{:?}",
         t.scripts.calls
     );
-    assert!(!t
-        .forge
-        .calls
-        .borrow()
-        .iter()
-        .any(|c| c.starts_with("workflow-rerun")));
+    assert_eq!(count(&t.forge.calls, "workflow-rerun 77 --flip"), 1);
+    assert!(!record(&t).contains("flip_"), "{}", record(&t));
     assert!(t.out().contains("called judgement (sp-j3)"), "{}", t.out());
 }
 
@@ -1687,12 +1823,7 @@ fn a_nextest_failure_with_no_annotations_is_a_test_red_not_a_setup_red() {
             t.scripts.calls,
             t.out()
         );
-        assert!(!t
-            .forge
-            .calls
-            .borrow()
-            .iter()
-            .any(|c| c.starts_with("workflow-rerun")));
+        assert_eq!(count(&t.forge.calls, "workflow-rerun 77 --flip"), 1);
         assert!(!t.lc.has("eject-member"), "{:?}", t.lc.calls.borrow());
     }
 }

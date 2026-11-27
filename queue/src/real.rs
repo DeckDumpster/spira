@@ -1055,6 +1055,9 @@ impl Lib for RealLib {
         }
         filed
     }
+    fn file_flip_fix(&self, run: &Path, repo: &str, title: &str, body: &str) -> Result<String, String> {
+        gate::flip::file_bead(&run.join("tmp"), repo, "batcher", "flip", title, body)
+    }
     fn amend_bug(&self, actor: &str, id: &str, note: &str) -> Result<bool, NotFiled> {
         if !self.bead_live(id) {
             return Ok(false);
@@ -1980,12 +1983,13 @@ impl Forge for RealForge {
         )))
         .ok()
     }
-    fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) -> Rerun {
+    fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str, flip: bool) -> Rerun {
+        let args: &[&str] = if flip { &[run, "--flip"] } else { &[run] };
         rerun_of(said(&forge_call(
             forge,
             "workflow-rerun",
             repo,
-            &[run],
+            args,
             None,
         )))
     }

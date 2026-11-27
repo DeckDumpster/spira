@@ -875,7 +875,7 @@ fn rerun_or_alarm(
             ));
             return FAIL;
         };
-        w.forge.workflow_rerun(&c.s.forge, path, &run);
+        w.forge.workflow_rerun(&c.s.forge, path, &run, false);
         rec.remove("rerun");
         rec.push("rerun", &run);
         landing_log(

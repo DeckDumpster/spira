@@ -317,6 +317,8 @@ pub trait Lib {
         labels: &str,
         body: &str,
     ) -> Result<String, NotFiled>;
+    /// The fix bead of a test that flipped (`gate::flip::file_bead`) → its id.
+    fn file_flip_fix(&self, run: &Path, repo: &str, title: &str, body: &str) -> Result<String, String>;
     /// Append `note` to bead `id` when it is still open: `Ok(false)` when it is closed or
     /// unknown, `Err` when the note did not land — either way the caller then files a new bead.
     fn amend_bug(&self, actor: &str, id: &str, note: &str) -> Result<bool, NotFiled>;
@@ -511,8 +513,8 @@ pub trait Forge {
     fn run_cancel(&self, forge: &Path, repo: &Path, run: &str);
     /// `dispatch <repo> <ref> <suites>`: whether the forge accepted a new gate run on `ref_`.
     fn workflow_dispatch(&self, forge: &Path, repo: &Path, ref_: &str, suites: &str) -> bool;
-    /// `workflow-rerun <repo> <run>`.
-    fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) -> Rerun;
+    /// `workflow-rerun <repo> <run>`, with `--flip` for the one discriminating rerun of a red test.
+    fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str, flip: bool) -> Rerun;
     /// `ami-runs <repo>`: the Round AMI runs not yet completed; None when the forge cannot be read.
     fn ami_runs(&self, forge: &Path, repo: &Path) -> Option<Vec<String>>;
     /// `ami-dispatch <repo> <ref>`: whether the forge accepted a new Round AMI run.

@@ -102,8 +102,35 @@ context seam) else `cannot resolve base ref`, 1. Status = check-status's first l
 | green, `head-sha:` missing or ≠ sealed head | refused as a harness fault (law-fail-closed-at-the-source) | `pr-close`, members CERTIFIED, record removed, operator mail naming which |
 | green, base unmoved | fast-forward | push `<head>:<base-branch>`; failed → stderr, 1. Else line; lifecycle land (switch ON); concierge mail; per member `land_mark LANDED`, `gh_issue_closeout`, `bead_close_on_land`; record removed; batch branch deleted on the remote and locally; stale `spira/queue/*` refs already on the base reaped |
 | green, base moved | rebuild when no member tip is already in the new base: worktree at the new base, `land_subject` merges of every tip in order, force-push to the batch branch, reseal `head`/`members`/`base`, `retries=0`, concierge mail. Otherwise (a conflict, or a tip already in base) | `pr-close`; per member LANDED `already-in-base` (+ closeout/close) if its tip is in the new base, else CERTIFIED; record removed |
-| red | — | `judgement=` already on the record → a line, 0. No `red-suite:` lines → a line, 0 (the batcher re-checks). `SPIRA_BATCHER_ENABLE=0` → stderr, 1. Else `batcher judgement-ci <repo> --suites <csv> --members <ids> --evidence "PR <n>[ — <run-url>]"`; `id=` answered → `judgement=<id>` appended atomically, a line; none → stderr, 1 |
+| red | — | `judgement=` already on the record → a line, 0. First branch, the flip rerun (below): it takes a red that names only tests and has had no rerun. Otherwise: no `red-suite:` lines → a line, 0 (the batcher re-checks). `SPIRA_BATCHER_ENABLE=0` → stderr, 1. Else `batcher judgement-ci <repo> --suites <csv> --members <ids> --evidence "PR <n>[ — <run-url>]"`; `id=` answered → `judgement=<id>` appended atomically, a line; none → stderr, 1 |
 | anything else | — | stderr `unknown check status: <s>`, 1 |
+
+**The flip rerun** (law-a-flipping-test-is-disabled-by-a-registry-row). Taken when there is
+no `red-suite:` line, the step log names every failure it counts (pytest `FAILED <id>::<test>`,
+nextest red lines), there are 1 to `MAX_GATE_FLIPS` (3) of them, and the record has no
+`flip_rerun`. The keys are written, then `workflow-rerun <run> --flip`. Started: one line, 0;
+nothing is judged, barred or ejected. Refused or failed: the keys are dropped and the red goes
+on as in the table.
+
+- `flip_rerun=<run>`: the run that was rerun. A later red on this record goes on as in the
+  table; the member note and the judgement evidence say it was red twice on the same run.
+- `flip_tests=<csv>`: the tests still owed a fix bead (a `,` in a test id is written `;`).
+  Before a green lands, from the green row or from the reconciler's merged PR, each gets one
+  bead (`gate::flip::file_bead`) and is struck from the key. A filing that fails ends the pass
+  with 1 and the record open: a flip is never landed without its record. No registry row is
+  written.
+- `flip_first=<text>`: the first run's lines and URL, for the bead's body.
+
+`queue.step` neither judges nor pushes these itself. For a batcher-owned forge batch with a red
+the rerun takes or has taken, or a green that owes a fix bead (and for any such batch's merged
+PR), it runs `queue verdict` each tick (`queue_step::flip_hold`); once that pass has recorded a
+judgement the task leaves the red alone.
+
+A second red strikes `flip_tests`: red on both runs is a defect, not a flip. The keys are
+written before the forge is asked, so a pass that dies between the two leaves a later red read
+as the second one and judged; the other order could land a flip with no record.
+
+A rebuild on a moved base drops all three: the new head's run is a new one.
 
 After the pass the lock is dropped. A stashed `attributing-<pr>` record (§4 D2) is never
 silently ignored: each is named on stderr and the exit is 1.
@@ -113,7 +140,7 @@ silently ignored: each is named on stderr and the exit is 1.
 Records are the ones DESIGN.md §3 already specifies (`open`, `publish`), read with
 `records::Kv` (last occurrence of a key wins, as `grep | cut` did for single keys). Keys
 this pass writes: `retries=` (rewrite), `head= retries=0 members= base=` (reseal),
-`judgement=` (append). New files: none. `publish-red` as before.
+`judgement=` (append); `flip_rerun= flip_tests= flip_first=` (§2.2). New files: none. `publish-red` as before.
 
 Settings read through the context seam (R1), resolved by conf.sh exactly as verdict.sh saw
 them: `SPIRA_QUEUE_CI_MAXSEC[_<NAME>]` (3600), `SPIRA_QUEUE_CI_IDLE_SEC[_<NAME>]` (600),

@@ -1531,6 +1531,28 @@ fn workflow_rerun_of_a_decided_run_is_refused_with_the_unchanged_inputs() {
     }
 }
 
+#[test_id(ts3pvz1)]
+#[test]
+fn the_flip_flag_reruns_a_failed_run_on_its_first_attempt_only() {
+    let at = |attempt: u32| {
+        let gh = rerun_gh("failure", r#"{"jobs":[{"name":"suites","conclusion":"failure"}]}"#);
+        gh.on_in_turn(&["api", "repos/{owner}/{repo}/actions/runs/9"], &[&format!(r#"{{"status":"completed","conclusion":"failure","run_attempt":{attempt},"head_sha":"abc","path":".github/workflows/gate.yml"}}"#)]);
+        gh
+    };
+    let flip = |gh: &FakeGh| crate::client::workflow_rerun_verb(gh, repo(), &["9".to_string(), "--flip".to_string()]);
+
+    let first = at(1);
+    assert_eq!(flip(&first).code, 0);
+    assert!(index_of(&first, is_rerun).is_some());
+
+    let second = at(2);
+    crate::diag::take();
+    assert_eq!(flip(&second).code, 3);
+    assert!(index_of(&second, is_rerun).is_none());
+    let why = crate::diag::take().join("\n");
+    assert!(why.contains("attempt 2"), "{why}");
+}
+
 const LOST_RUNNER_JOBS: &str = r#"{"jobs":[{"name":"suites","id":99,"conclusion":"failure","steps":[{"name":"Download binaries","conclusion":"cancelled"},{"name":"Suites","conclusion":"skipped"}]}]}"#;
 const PROVISION_JOBS: &str = r#"{"jobs":[{"name":"provision","id":98,"conclusion":"failure","steps":[{"name":"Provision","conclusion":"failure"}]},{"name":"suites","id":99,"conclusion":"skipped"}]}"#;
 const FAULT_LOG_JOBS: &str = r#"{"jobs":[{"name":"suites","id":99,"conclusion":"failure","steps":[{"name":"Suites","conclusion":"failure"}]}]}"#;

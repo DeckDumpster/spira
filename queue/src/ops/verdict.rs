@@ -271,6 +271,79 @@ fn test_red_csv(out: &str) -> String {
     seen.join(",")
 }
 
+/// The failed test a step-log line names: a pytest `FAILED <id>::<test>` or a nextest red.
+fn named_test(l: &str) -> Option<String> {
+    let pytest = l
+        .strip_prefix("FAILED ")
+        .map(|rest| rest.split_once(" - ").map_or(rest, |(id, _)| id).trim())
+        .filter(|id| id.contains("::"))
+        .map(str::to_string);
+    let test =
+        pytest.or_else(|| nextest_red_in(l).map(|(binary, test)| format!("{binary} {test}")))?;
+    // `flip_tests` is a CSV.
+    Some(test.replace(',', ";"))
+}
+
+/// How many failures a summary line counts (`2 failed, 1 error`, `1 timed out`).
+fn counted_failures(l: &str) -> usize {
+    let words: Vec<&str> = l.trim_start_matches('=').split_whitespace().collect();
+    words
+        .windows(2)
+        .filter(|w| {
+            ["failed", "error", "timed", "exec"]
+                .iter()
+                .any(|s| w[1].starts_with(s))
+        })
+        .filter_map(|w| w[0].parse::<usize>().ok())
+        .sum()
+}
+
+/// `(test, its line)` for each failing test of the red. None when any failed job names no test
+/// or counts more failures than it names: a rerun would leave some without a fix bead.
+fn named_failures(out: &str) -> Option<Vec<(String, String)>> {
+    // One block per `failed-step:`, after the lines that precede the first.
+    let mut jobs: Vec<Vec<&str>> = vec![Vec::new()];
+    for l in out.lines() {
+        if l.starts_with("failed-step: ") {
+            jobs.push(Vec::new());
+        } else if let (Some(line), Some(job)) = (l.strip_prefix("step-log: "), jobs.last_mut()) {
+            job.push(line.trim());
+        }
+    }
+    let mut named: Vec<(String, String)> = Vec::new();
+    for (i, job) in jobs.iter().enumerate() {
+        if i == 0 && job.is_empty() {
+            continue;
+        }
+        let mut here: Vec<(String, &str)> = Vec::new();
+        for l in job {
+            if let Some(test) = named_test(l) {
+                if !here.iter().any(|(t, _)| *t == test) {
+                    here.push((test, l));
+                }
+            }
+        }
+        let counted = job.iter().map(|l| counted_failures(l)).max().unwrap_or(0);
+        if here.is_empty() || counted > here.len() {
+            return None;
+        }
+        for (test, line) in here {
+            if !named.iter().any(|(t, _)| *t == test) {
+                named.push((test, line.to_string()));
+            }
+        }
+    }
+    Some(named)
+}
+
+/// The failures of a red the flip rerun takes: named tests only, no more than the flip cap.
+pub fn flip_candidate(out: &str) -> Option<Vec<(String, String)>> {
+    if !red_suites_csv(out).is_empty() {
+        return None;
+    }
+    named_failures(out).filter(|f| (1..=gate::engine::MAX_GATE_FLIPS).contains(&f.len()))
+}
+
 fn publish_status(w: &World, c: &Ctx, path: &Path, kv: &Kv) -> String {
     let pr = kv.get("pr").unwrap_or("");
     let branch = kv.get("branch").unwrap_or("");
@@ -496,7 +569,7 @@ fn rerun_gate(w: &World, c: &Ctx, path: &Path, branch: &str) -> Result<(), NoRer
     let Some(run) = w.forge.run_id(&c.s.forge, path, branch) else {
         return Err(NoRerun::Other(format!("no gate run found for {branch}")));
     };
-    match w.forge.workflow_rerun(&c.s.forge, path, &run) {
+    match w.forge.workflow_rerun(&c.s.forge, path, &run, false) {
         Rerun::Started => Ok(()),
         Rerun::Decided(why) => Err(NoRerun::Decided(why)),
         Rerun::Failed => Err(NoRerun::Other(format!(
@@ -1288,7 +1361,8 @@ fn record_forge_state(w: &World, c: &Ctx, b: &Batch, ci: &str, run: &str, meta: 
 fn record_pass(w: &World, c: &Ctx, b: &Batch, status: &str, out: &str) {
     use tsd::pass::{Cause, PassRecord, Place};
     let retries = b.kv.get("retries").unwrap_or("0");
-    let key = format!("{}/{retries}/{status}", b.head);
+    let flip = b.kv.get("flip_rerun").map_or("", |_| "+flip");
+    let key = format!("{}/{retries}/{status}{flip}", b.head);
     if b.kv.get("pass_recorded") == Some(key.as_str()) {
         return;
     }
@@ -1634,6 +1708,16 @@ fn green(w: &World, c: &Ctx, b: &Batch, base: &str, out: &str) -> i32 {
         }
         return OK;
     }
+    let mut second = format!("green on the same run, head {ci_head}");
+    if let Some(u) = tagged(out, "run-url: ").last() {
+        second.push_str(&format!(" — {u}"));
+    }
+    if let Err(e) = file_flips(w, c, b.rec, &b.kv, pr, &second) {
+        w.err(format!(
+            "verdict {name}: PR {pr} green after a flip rerun, not landed: {e}"
+        ));
+        return FAIL;
+    }
     let remote = c.r.ref_remote(base).unwrap_or_default();
     let base_branch = ref_branch(base).to_string();
     let current = w.git.rev_parse(b.path, base);
@@ -1823,7 +1907,15 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
                         w,
                         c,
                         b,
-                        &["head", "members", "retries", "base"],
+                        &[
+                            "head",
+                            "members",
+                            "retries",
+                            "base",
+                            FLIP_RERUN,
+                            FLIP_TESTS,
+                            FLIP_FIRST,
+                        ],
                         &[
                             ("head", &h),
                             ("retries", "0"),
@@ -2084,7 +2176,7 @@ fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
             return OK;
         }
     } else if let Some(run) = w.forge.run_id(&c.s.forge, b.path, &b.branch) {
-        match w.forge.workflow_rerun(&c.s.forge, b.path, &run) {
+        match w.forge.workflow_rerun(&c.s.forge, b.path, &run, false) {
             Rerun::Started => {
                 w.out(format!("verdict {name}: PR {pr} red — {bo}no suite annotations (step: {}); re-running run {run} once", if step.is_empty() { "unknown" } else { &step }));
                 return match rewrite(
@@ -2206,12 +2298,14 @@ fn note_red_evidence(w: &World, c: &Ctx, b: &Batch, out: &str) {
         .last()
         .map(|r| r.trim().to_string())
         .unwrap_or_default();
-    let key = format!("{run}/{}", b.head);
+    let twice = b.kv.get(FLIP_RERUN);
+    let again = twice.map_or("", |_| "+twice");
+    let key = format!("{run}/{}{again}", b.head);
     if b.kv.get("evidence_noted") == Some(key.as_str()) {
         return;
     }
     if tagged(out, "fail-evidence: ").is_empty() {
-        if run.is_empty() {
+        if run.is_empty() && twice.is_none() {
             return;
         }
         let tail: Vec<&str> = tagged(out, "step-log: ");
@@ -2228,7 +2322,11 @@ fn note_red_evidence(w: &World, c: &Ctx, b: &Batch, out: &str) {
         .last()
         .map(|u| u.trim().to_string())
         .unwrap_or_default();
-    let note = format!("Batch PR {} for {} went red at run {run} {url}. The failing lines, so you need no forge access:\n{evidence}", b.pr, b.name);
+    let went = twice.map_or_else(
+        || format!("went red at run {run}"),
+        |first| format!("went red twice on the same run {first}"),
+    );
+    let note = format!("Batch PR {} for {} {went} {url}. The failing lines, so you need no forge access:\n{evidence}", b.pr, b.name);
     for m in &b.members {
         w.lib.comment(&m.id, &note);
     }
@@ -2238,6 +2336,109 @@ fn note_red_evidence(w: &World, c: &Ctx, b: &Batch, out: &str) {
             b.name
         ));
     }
+}
+
+const FLIP_RERUN: &str = "flip_rerun";
+const FLIP_TESTS: &str = "flip_tests";
+const FLIP_FIRST: &str = "flip_first";
+const FLIP_LINE_MAX: usize = 300;
+
+/// The one discriminating rerun of a red that names only tests
+/// (law-a-flipping-test-is-disabled-by-a-registry-row). `None`: no rerun, judge the red.
+fn flip_rerun(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> Option<i32> {
+    let (name, pr) = (b.name, &b.pr);
+    if b.kv.get(FLIP_RERUN).is_some() {
+        // Red on both runs is a real defect, not a flip: no test is owed a flip bead.
+        if b.kv.get(FLIP_TESTS).is_some() {
+            if let Err(e) = rewrite(w, c, b, &[FLIP_TESTS], &[]) {
+                w.err(format!(
+                    "verdict {name}: PR {pr} cannot strike the tests that were red twice: {e}"
+                ));
+                return Some(FAIL);
+            }
+        }
+        return None;
+    }
+    let failures = flip_candidate(out)?;
+    let run = w.forge.run_id(&c.s.forge, b.path, &b.branch)?;
+    let tests: Vec<&str> = failures.iter().map(|(t, _)| t.as_str()).collect();
+    let tests = tests.join(",");
+    let mut first: Vec<String> = failures
+        .iter()
+        .map(|(_, l)| l.chars().take(FLIP_LINE_MAX).collect())
+        .collect();
+    if let Some(u) = tagged(out, "run-url: ").last() {
+        first.push(u.trim().to_string());
+    }
+    let first = records::one_line(&first.join(" | "));
+    let keys = [FLIP_RERUN, FLIP_TESTS, FLIP_FIRST];
+    // Recorded before the forge is asked: a rerun with no record could land its flip unfiled.
+    let add = [
+        (FLIP_RERUN, run.as_str()),
+        (FLIP_TESTS, tests.as_str()),
+        (FLIP_FIRST, first.as_str()),
+    ];
+    if let Err(e) = rewrite(w, c, b, &keys, &add) {
+        w.err(format!(
+            "verdict {name}: PR {pr} cannot record the flip rerun, not asked: {e}"
+        ));
+        return Some(FAIL);
+    }
+    if w.forge.workflow_rerun(&c.s.forge, b.path, &run, true) == Rerun::Started {
+        w.out(format!(
+            "verdict {name}: PR {pr} red — {bo}only named tests ({tests}); re-running run {run} once"
+        ));
+        return Some(OK);
+    }
+    if let Err(e) = rewrite(w, c, b, &keys, &[]) {
+        w.err(format!(
+            "verdict {name}: PR {pr} the flip rerun did not start but is still recorded: {e}"
+        ));
+        return Some(FAIL);
+    }
+    None
+}
+
+/// One fix bead per test still in `flip_tests`, each struck from the record once filed. Err: a
+/// flip is never landed without its record.
+pub(super) fn file_flips(
+    w: &World,
+    c: &Ctx,
+    rec: &Open,
+    kv: &Kv,
+    pr: &str,
+    second: &str,
+) -> Result<(), String> {
+    let name = c.r.name.as_str();
+    let tests: Vec<&str> = kv
+        .get(FLIP_TESTS)
+        .unwrap_or("")
+        .split(',')
+        .filter(|t| !t.is_empty())
+        .collect();
+    let run = kv.get(FLIP_RERUN).unwrap_or("");
+    let first = kv.get(FLIP_FIRST).unwrap_or("");
+    for (i, test) in tests.iter().enumerate() {
+        let title = format!("{name}: {test} flipped on batch PR {pr} and was rerun — fix it or replace it with a deterministic test");
+        let body = format!(
+            "{test} was red on batch PR {pr} and run {run} was rerun once on the same tree (law-a-flipping-test-is-disabled-by-a-registry-row). No registry row was written, so it can flip again on a later batch.\n\nFirst run: {first}\nRerun:     {second}\n\n## Build\n\nFind the nondeterminism in {test} in {name}, then fix the test or replace it with a deterministic one.\n"
+        );
+        let id = w
+            .lib
+            .file_flip_fix(&c.s.run, name, &title, &body)
+            .map_err(|e| format!("the fix bead of flipped test {test} could not be filed: {e}"))?;
+        let rest = tests[i + 1..].join(",");
+        let add: Vec<(&str, &str)> = (!rest.is_empty())
+            .then_some((FLIP_TESTS, rest.as_str()))
+            .into_iter()
+            .collect();
+        rec.rewrite(w, c, &[FLIP_TESTS], &add)
+            .map_err(|e| format!("fix bead {id} of {test} filed but not recorded: {e}"))?;
+        w.out(format!(
+            "verdict {name}: PR {pr} flipped — {test}, fix bead {id}"
+        ));
+    }
+    Ok(())
 }
 
 /// A red batch PR goes to the batcher persona (D1): the suites and a run link, nothing else
@@ -2276,6 +2477,9 @@ fn red(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
         }
         return setup_red(w, c, b, out, bo);
     }
+    if let Some(rc) = flip_rerun(w, c, b, out, bo) {
+        return rc;
+    }
     super::round::raise_forge_reds(w, c, &b.kv, &suites);
     for m in &b.members {
         if let Err(e) = super::round::record_batch_red(c, &m.id, &m.tip) {
@@ -2304,6 +2508,9 @@ fn red(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
     let mut evidence = format!("PR {pr}");
     if let Some(u) = tagged(out, "run-url: ").last() {
         evidence.push_str(&format!(" — {u}"));
+    }
+    if let Some(run) = b.kv.get(FLIP_RERUN) {
+        evidence.push_str(&format!(" — red twice on the same run {run}"));
     }
     let r = w
         .scripts

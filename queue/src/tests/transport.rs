@@ -452,3 +452,17 @@ fn a_note_the_store_could_not_answer_is_resent_under_one_request_id() {
     assert_eq!(ids.len(), 3);
     assert!(ids[1].is_some() && ids[1] == ids[2], "{ids:?}");
 }
+
+#[test_id(tomd342)]
+#[test]
+fn the_real_forge_adapter_asks_the_configured_forge_for_the_flip_rerun_by_its_flag() {
+    let dir = testkit::TempDir::new("queue-flip-flag");
+    let log = dir.path().join("argv");
+    let forge = dir.path().join("forge");
+    testkit::write_exe(&forge, &format!("#!/bin/sh\necho \"$@\" >> {}\n", log.display()));
+    use crate::ports::Forge as _;
+    for flip in [true, false] {
+        crate::real::RealForge.workflow_rerun(&forge, std::path::Path::new("repo"), "77", flip);
+    }
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "workflow-rerun repo 77 --flip\nworkflow-rerun repo 77\n");
+}

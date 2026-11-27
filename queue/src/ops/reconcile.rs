@@ -112,6 +112,17 @@ fn land(
             ),
         );
     };
+    // Auto-merge can land a green flip rerun before any pass reads it green.
+    let second = format!("the PR merged after the rerun, as {sha}");
+    let filed = super::verdict::file_flips(w, c, file, kv, pr, &second);
+    // Filing rewrites the record: saving the older copy would file again.
+    let kv = &match file.reread(w, c) {
+        Ok(kv) => kv,
+        Err(e) => return cannot_act(w, c, file, kv, &format!("cannot re-read the record: {e}")),
+    };
+    if let Err(e) = filed {
+        return cannot_act(w, c, file, kv, &format!("PR {pr} merged, not landed: {e}"));
+    }
     if let Some(id) = kv.get("batch_id").filter(|b| !b.is_empty()) {
         match w.lc.batch_state(id) {
             Some((s, _)) if matches!(s.as_str(), "LANDED" | "SETTLED") => {}

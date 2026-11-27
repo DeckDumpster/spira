@@ -182,7 +182,7 @@ struct State {
 /// The most flips one gate records: past it the box is the problem, not the tests
 /// (law-a-detector-files-a-bounded-batch). The round's own bound is `MAX_FLIP_TESTS` in
 /// `batcher/src/drive.rs`.
-const MAX_GATE_FLIPS: usize = 3;
+pub const MAX_GATE_FLIPS: usize = 3;
 
 /// The one discriminating rerun of a red unit test phase (DESIGN.md "The rerun of a red test"):
 /// the failing tests run once more on the same tree under the same nextest config. A test
