@@ -197,7 +197,7 @@ fn verdict(text: &str) -> String {
     });
     let faults = || text.lines().filter_map(|l| l.trim().strip_prefix("fault=")).map(str::trim);
     // A line that says what cut the pass outranks the over-cap handler's counts; the last of either is how certify ended.
-    let fault = faults().filter(|s| s.starts_with("FAULT")).last().or_else(|| faults().filter(|s| s.starts_with("over-cap") || s.starts_with("capacity")).last());
+    let fault = faults().filter(|s| s.starts_with("FAULT")).next_back().or_else(|| faults().filter(|s| s.starts_with("over-cap") || s.starts_with("capacity")).next_back());
     match (named, fault) {
         (Some(steps), _) => format!("RED: {steps}"),
         (None, _) if text.contains("red-output=") => "RED".to_string(),
