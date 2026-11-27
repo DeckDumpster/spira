@@ -104,7 +104,8 @@ impl Git for FakeGit {
     fn spira_refs(&self, _: &Path) -> Vec<(String, String)> {
         self.refs.borrow().clone()
     }
-    fn merged_spira_refs(&self, _: &Path, _: &str) -> HashSet<String> {
+    fn merged_spira_refs(&self, _: &Path, base: &str) -> HashSet<String> {
+        self.rec(format!("merged_spira_refs {base}"));
         self.merged.borrow().clone()
     }
     fn branch_exists(&self, _: &Path, b: &str) -> bool {
@@ -127,10 +128,13 @@ impl Git for FakeGit {
         self.rec(format!("content_on_base {b}"));
         self.content.borrow().contains(b)
     }
-    fn count(&self, _: &Path, _: &str) -> Option<u64> {
+    fn count(&self, _: &Path, range: &str) -> Option<u64> {
+        self.rec(format!("count {range}"));
         Some(2)
     }
-    fn fetch(&self, _: &Path, _: &str) {}
+    fn fetch(&self, _: &Path, remote: &str) {
+        self.rec(format!("fetch {remote}"));
+    }
     fn tree_ok(&self, _: &Path) -> bool {
         self.tree.get()
     }
@@ -620,6 +624,8 @@ impl H {
             swept: Cell::new(0),
             swept_conflict: Cell::new(0),
             settled_from_memory: Cell::new(0),
+            graphs: Default::default(),
+            fetched: Default::default(),
         }
     }
     fn run(&self) {
@@ -3223,4 +3229,81 @@ fn an_express_bead_is_queued_for_gate_worker_as_an_express_job() {
     let queued = crate::gateq::GateQueue::new(&h.s.run).queued();
     let express: Vec<(&str, bool)> = queued.iter().map(|j| (j.bead.as_str(), j.express)).collect();
     assert!(express.contains(&("sp-x", true)) && express.contains(&("sp-n", false)), "{express:?}");
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// The graph memo: a pass redoes only what moved
+// ──────────────────────────────────────────────────────────────────────────────
+
+const QUEUE_BASE: &str = "refs/remotes/origin/main";
+
+/// A forge-queue repository with a waiting row off every live tip and three branches: one
+/// with gate-worker, one held by a round, one not handed on.
+fn quiet_queue() -> H {
+    let mut h = H::new(LandMode::Queue);
+    h.s.gate_worker = true;
+    h.git.shas.borrow_mut().insert(QUEUE_BASE.into(), "b00".into());
+    h.closed("sp-sub", "t1");
+    h.bead("sp-round", "IN_DELIVERY", &[]);
+    h.git.add("spira/sp-round", "t2");
+    h.beads.batched.borrow_mut().insert("sp-round".into());
+    h.bead("sp-ready", "READY", &[]);
+    h.git.add("spira/sp-ready", "t3");
+    h.lc.waiting.borrow_mut().push(("sp-gone".to_string(), "tw".to_string()));
+    h
+}
+
+fn asked(h: &H, method: &str) -> Vec<String> {
+    let prefix = format!("{method} ");
+    h.git.calls.borrow().iter().filter_map(|c| c.strip_prefix(&prefix).map(String::from)).collect()
+}
+
+#[test_id(t528zfb)]
+#[test]
+fn a_pass_in_which_no_ref_moved_asks_git_only_to_fetch() {
+    let h = quiet_queue();
+    h.pass().run();
+    assert!(!asked(&h, "content_on_base").is_empty() && !asked(&h, "is_ancestor").is_empty(), "{:?}", h.git.calls.borrow());
+    h.git.calls.borrow_mut().clear();
+    h.pass().run();
+    for method in ["content_on_base", "is_ancestor", "merged_spira_refs", "count"] {
+        assert_eq!(asked(&h, method), Vec::<String>::new(), "{method} asked again: {:?}", h.git.calls.borrow());
+    }
+    assert_eq!(asked(&h, "fetch"), vec!["origin"]);
+}
+
+#[test_id(t7q15m9)]
+#[test]
+fn a_moved_base_or_tip_is_asked_again() {
+    let h = quiet_queue();
+    h.pass().run();
+    h.git.shas.borrow_mut().insert(QUEUE_BASE.into(), "b01".into());
+    h.git.calls.borrow_mut().clear();
+    h.pass().run();
+    let mut again = asked(&h, "content_on_base");
+    again.sort();
+    assert_eq!(again, vec!["spira/sp-round", "spira/sp-sub"]);
+    h.git.refs.borrow_mut().iter_mut().filter(|(b, _)| b == "spira/sp-sub").for_each(|(_, t)| *t = "t1b".into());
+    h.git.calls.borrow_mut().clear();
+    h.pass().run();
+    assert_eq!(asked(&h, "content_on_base"), vec!["spira/sp-sub"]);
+}
+
+#[test_id(togeaoc)]
+#[test]
+fn the_graph_memo_holds_only_what_the_pass_walked_for_mapped_repositories() {
+    let h = quiet_queue();
+    h.lc.waiting.borrow_mut().clear();
+    let dir = h.s.run.join("landing-graph");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("spira"), "b00\ntold ancestor 1\ntold content 1\n").unwrap();
+    fs::write(dir.join("unmapped"), "b00\nt1 content 1\n").unwrap();
+    h.pass().run();
+    let kept = fs::read_to_string(dir.join("spira")).unwrap();
+    let mut lines = kept.lines();
+    assert_eq!(lines.next(), Some("b00"));
+    let tips: std::collections::BTreeSet<&str> = lines.filter_map(|l| l.split(' ').next()).collect();
+    assert_eq!(tips.into_iter().collect::<Vec<_>>(), vec!["t1", "t2", "t3"]);
+    let files: Vec<_> = fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(files, vec!["spira"]);
 }

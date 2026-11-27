@@ -812,6 +812,8 @@ impl Beads for RealBeads {
 
 pub struct RealGit;
 
+use spira_config::git_refs::{self, Ref};
+
 fn git(repo: &Path) -> std::process::Command {
     let mut c = command("git");
     c.arg("-C").arg(repo).stdin(Stdio::null());
@@ -830,6 +832,9 @@ fn git_out(c: std::process::Command) -> Option<String> {
 
 impl Git for RealGit {
     fn spira_refs(&self, repo: &Path) -> Vec<(String, String)> {
+        if let Some(tips) = git_refs::branch_tips(repo, "refs/heads/spira/") {
+            return tips;
+        }
         let mut c = git(repo);
         c.args(["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/spira/*"]);
         git_out(c)
@@ -845,11 +850,19 @@ impl Git for RealGit {
         git_out(c).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(String::from).collect()
     }
     fn branch_exists(&self, repo: &Path, branch: &str) -> bool {
+        match git_refs::read_ref_in(repo, &format!("refs/heads/{branch}")) {
+            Ref::Sha(_) => return true,
+            Ref::Absent => return false,
+            Ref::Object(_) | Ref::Unknown => {}
+        }
         let mut c = git(repo);
         c.args(["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")]);
         git_ok(c)
     }
     fn rev_parse(&self, repo: &Path, rev: &str) -> Option<String> {
+        if let Some(sha) = git_refs::sha_of(repo, rev) {
+            return Some(sha);
+        }
         let mut c = git(repo);
         c.args(["rev-parse", "--verify", "-q", rev]);
         git_out(c).filter(|s| !s.is_empty())
@@ -1314,6 +1327,28 @@ impl Clock for RealClock {
     }
     fn sleep(&self, secs: u64) {
         std::thread::sleep(std::time::Duration::from_secs(secs));
+    }
+}
+
+#[cfg(test)]
+mod ref_read_tests {
+    use super::*;
+
+    #[test_id(tuum97b)]
+    #[test]
+    fn tips_existence_and_a_ref_name_are_answered_from_the_ref_files() {
+        let t = testkit::TempDir::new("landing-pass-ref-files");
+        let (tip, base) = ("a".repeat(40), "b".repeat(40));
+        let dotgit = t.path().join(".git");
+        for (name, sha) in [("refs/heads/spira/sp-a", &tip), ("refs/remotes/origin/main", &base)] {
+            fs::create_dir_all(dotgit.join(name).parent().unwrap()).unwrap();
+            fs::write(dotgit.join(name), format!("{sha}\n")).unwrap();
+        }
+        fs::write(dotgit.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        assert_eq!(RealGit.spira_refs(t.path()), vec![("spira/sp-a".to_string(), tip)]);
+        assert!(RealGit.branch_exists(t.path(), "spira/sp-a"));
+        assert!(!RealGit.branch_exists(t.path(), "spira/sp-b"));
+        assert_eq!(RealGit.rev_parse(t.path(), "refs/remotes/origin/main"), Some(base));
     }
 }
 

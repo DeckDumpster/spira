@@ -26,6 +26,8 @@ pub trait Beads {
     fn context(&self, id: &str, now: i64) -> String;
 }
 
+/// `RealGit` answers `spira_refs`, `branch_exists` and `rev_parse` from the ref files, starting
+/// git only when they cannot tell.
 pub trait Git {
     /// `for-each-ref refs/heads/spira/*` → (short name, tip).
     fn spira_refs(&self, repo: &Path) -> Vec<(String, String)>;

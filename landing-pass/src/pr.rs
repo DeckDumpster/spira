@@ -10,10 +10,11 @@
 use crate::model::{BeadRow, LandMode, RepoRow, Settings};
 use crate::ports::{Beads, Git, Lib, Procs, Tools};
 use crate::pr_branch;
-use crate::records::Files;
+use crate::records::{Against, Files, Graphs};
 use crate::report::Reporter;
 use crate::util::unix_now;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 pub trait PrTools {
     /// Record pr mode's `merged` exit by content proof when the delivery row is PR_OPEN.
@@ -63,8 +64,11 @@ impl<'a> PrPass<'a> {
             return (0, 0);
         }
         let (mut seen, mut acted) = (0u64, 0u64);
+        let mut fetched = HashSet::new();
         for r in pr {
-            let (s, a) = self.repo(r);
+            let graphs = Graphs::default();
+            let (s, a) = self.repo(r, &graphs, &mut fetched);
+            graphs.write(self.files, &r.name);
             seen += s;
             acted += a;
         }
@@ -75,7 +79,7 @@ impl<'a> PrPass<'a> {
         (seen, acted)
     }
 
-    fn repo(&self, r: &RepoRow) -> (u64, u64) {
+    fn repo(&self, r: &RepoRow, graphs: &Graphs, fetched: &mut HashSet<PathBuf>) -> (u64, u64) {
         let name = &r.name;
         if r.path.as_os_str().is_empty() || !r.path.join(".git").exists() {
             self.log(&format!("landing-pass {name}: {} is not a git checkout — skipped", r.path.display()));
@@ -88,7 +92,9 @@ impl<'a> PrPass<'a> {
             return (0, 0);
         };
         if let Some(rem) = &r.base_remote {
-            self.git.fetch(&r.path, rem);
+            if fetched.insert(r.path.clone()) {
+                self.git.fetch(&r.path, rem);
+            }
         }
         let refs = self.git.spira_refs(&r.path);
         if refs.is_empty() {
@@ -140,7 +146,8 @@ impl<'a> PrPass<'a> {
             if self.files.content_settled(br, tip) {
                 continue;
             }
-            if self.git.content_on_base(&r.path, br, &base_fq) {
+            let at = Against { files: self.files, git: self.git, name, path: &r.path, base_fq: &base_fq };
+            if graphs.content_on_base(at, br, tip) {
                 self.log(&format!("landing-pass {name}: {base} already contains every change on {br} — nothing to land"));
                 // The Delivered event is this mode's close: the branch's PR carries the evidence.
                 // Best-effort additive; a machine that cannot be asked or

@@ -1,10 +1,166 @@
 //! The pass's own files under $SPIRA_RUN (DESIGN.md §2.4).
 
 use crate::model::{RunRecord, StatusFile};
+use crate::ports::Git;
 use crate::util::atomic_write;
 use spira_config::branch_key::branch_key;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// What is asked of a tip against one base commit; each answer is fixed for that pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Question {
+    Ancestor,
+    Content,
+}
+
+impl Question {
+    fn word(self) -> &'static str {
+        match self {
+            Question::Ancestor => "ancestor",
+            Question::Content => "content",
+        }
+    }
+    fn parse(word: &str) -> Option<Question> {
+        [Question::Ancestor, Question::Content].into_iter().find(|q| q.word() == word)
+    }
+}
+
+/// One repository's answers against `base`; only those consulted are written back.
+#[derive(Debug)]
+struct RepoGraph {
+    base: String,
+    /// (answer, consulted this pass)
+    known: BTreeMap<(String, Question), (bool, bool)>,
+}
+
+impl RepoGraph {
+    /// A missing or unreadable file, or one for another base commit, is empty.
+    fn load(file: &Path, base: &str) -> RepoGraph {
+        let text = fs::read_to_string(file).unwrap_or_default();
+        let mut lines = text.lines();
+        let mut known = BTreeMap::new();
+        if lines.next() == Some(base) {
+            for l in lines {
+                let mut f = l.split(' ');
+                let (Some(tip), Some(q), Some(a @ ("0" | "1")), None) = (f.next(), f.next().and_then(Question::parse), f.next(), f.next())
+                else {
+                    continue;
+                };
+                known.insert((tip.to_string(), q), (a == "1", false));
+            }
+        }
+        RepoGraph { base: base.to_string(), known }
+    }
+
+    fn render(&self) -> String {
+        let mut out = format!("{}\n", self.base);
+        for ((tip, q), (a, _)) in self.known.iter().filter(|(_, (_, consulted))| *consulted) {
+            out.push_str(&format!("{tip} {} {}\n", q.word(), u8::from(*a)));
+        }
+        out
+    }
+}
+
+/// The graph answers remembered across passes, one file per repository under
+/// `$SPIRA_RUN/landing-graph/`, each loaded once a pass.
+#[derive(Debug, Default)]
+pub struct Graphs(RefCell<HashMap<String, RepoGraph>>);
+
+/// The repository and base ref a graph question is asked against.
+#[derive(Clone, Copy)]
+pub struct Against<'a> {
+    pub files: &'a Files,
+    pub git: &'a dyn Git,
+    pub name: &'a str,
+    pub path: &'a Path,
+    pub base_fq: &'a str,
+}
+
+impl Against<'_> {
+    fn base_sha(&self) -> Option<String> {
+        self.git.rev_parse(self.path, self.base_fq)
+    }
+}
+
+impl Graphs {
+    fn file(files: &Files, name: &str) -> PathBuf {
+        files.graph_dir().join(name)
+    }
+
+    /// Run `f` on the repository's answers for `base`; a base that moved mid-pass starts empty.
+    fn with<T>(&self, at: Against, base: &str, f: impl FnOnce(&mut RepoGraph) -> T) -> T {
+        let mut all = self.0.borrow_mut();
+        let g = all.entry(at.name.to_string()).or_insert_with(|| RepoGraph::load(&Graphs::file(at.files, at.name), base));
+        if g.base != base {
+            *g = RepoGraph { base: base.to_string(), known: BTreeMap::new() };
+        }
+        f(g)
+    }
+
+    fn get(&self, at: Against, base: &str, tip: &str, q: Question) -> Option<bool> {
+        self.with(at, base, |g| {
+            g.known.get_mut(&(tip.to_string(), q)).map(|(a, consulted)| {
+                *consulted = true;
+                *a
+            })
+        })
+    }
+
+    fn put(&self, at: Against, base: &str, tip: &str, q: Question, answer: bool) {
+        self.with(at, base, |g| g.known.insert((tip.to_string(), q), (answer, true)));
+    }
+
+    /// The remembered answer for `tip`, else `ask`'s. It is kept only if the base and, per
+    /// `still`, the thing asked about did not move while git was answering.
+    pub fn answer(&self, at: Against, tip: &str, q: Question, still: impl FnOnce() -> bool, ask: impl FnOnce() -> bool) -> bool {
+        let Some(base) = at.base_sha() else { return ask() };
+        if let Some(a) = self.get(at, &base, tip, q) {
+            return a;
+        }
+        let a = ask();
+        if still() && at.base_sha().as_ref() == Some(&base) {
+            self.put(at, &base, tip, q, a);
+        }
+        a
+    }
+
+    /// `br`'s content answer, remembered under `tip` only while `br` is still at it.
+    pub fn content_on_base(&self, at: Against, br: &str, tip: &str) -> bool {
+        let still = || at.git.rev_parse(at.path, br).as_deref() == Some(tip);
+        self.answer(at, tip, Question::Content, still, || at.git.content_on_base(at.path, br, at.base_fq))
+    }
+
+    /// The branches of `refs` merged into the base: from memory when it answers for every
+    /// tip, else from one `merged_spira_refs`.
+    pub fn merged(&self, at: Against, refs: &[(String, String)]) -> HashSet<String> {
+        if refs.is_empty() {
+            return HashSet::new();
+        }
+        let Some(base) = at.base_sha() else { return at.git.merged_spira_refs(at.path, at.base_fq) };
+        let known: Vec<Option<bool>> = refs.iter().map(|(_, tip)| self.get(at, &base, tip, Question::Ancestor)).collect();
+        if known.iter().all(Option::is_some) {
+            return refs.iter().zip(known).filter(|(_, a)| *a == Some(true)).map(|((br, _), _)| br.clone()).collect();
+        }
+        let merged = at.git.merged_spira_refs(at.path, at.base_fq);
+        let now = at.git.spira_refs(at.path);
+        if at.base_sha().as_ref() == Some(&base) {
+            for r in refs.iter().filter(|r| now.contains(r)) {
+                self.put(at, &base, &r.1, Question::Ancestor, merged.contains(&r.0));
+            }
+        }
+        merged
+    }
+
+    /// Write the repository's consulted answers; one never opened this pass keeps its file.
+    pub fn write(&self, files: &Files, name: &str) {
+        if let Some(g) = self.0.borrow().get(name) {
+            let _ = atomic_write(&Graphs::file(files, name), &g.render());
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeferredRecord {
@@ -56,6 +212,18 @@ impl Files {
     }
     pub fn with_release(run: &Path, release: &str) -> Files {
         Files { run: run.to_path_buf(), release: release.to_string() }
+    }
+    pub fn graph_dir(&self) -> PathBuf {
+        self.run.join("landing-graph")
+    }
+    /// Remove the graph file of every repository not in `keep`.
+    pub fn prune_graphs(&self, keep: &[&str]) {
+        let Ok(rd) = fs::read_dir(self.graph_dir()) else { return };
+        for e in rd.flatten() {
+            if !e.file_name().to_str().is_some_and(|n| keep.contains(&n)) {
+                let _ = fs::remove_file(e.path());
+            }
+        }
     }
     pub fn status(&self) -> PathBuf {
         self.run.join("landing.status")
