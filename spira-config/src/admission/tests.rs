@@ -500,3 +500,22 @@ fn the_retired_wrapper_names_the_inner_compiler_with_every_argument() {
 fn the_test_threads_literal_is_the_test_threads_constant() {
     assert_eq!(crate::run_test_threads_literal!(), RUN_TEST_THREADS.to_string());
 }
+
+#[test_id(tn95gr5)]
+#[test]
+fn a_mutex_whose_file_was_deleted_under_the_waiter_locks_the_file_now_at_that_path() {
+    let d = testkit::TempDir::new("adm-mutex-unlinked");
+    let (dir, mut opens) = (d.path().join("repo"), 0);
+    let held = Mutex::lock_opened(&dir, "lock", &mut || {
+        opens += 1;
+        if opens == 1 {
+            fs::remove_dir_all(&dir).unwrap();
+        }
+    })
+    .unwrap();
+    let other = File::open(dir.join("lock")).expect("the lock file is at its path");
+    // SAFETY: a non-blocking flock on a descriptor we own.
+    assert_ne!(unsafe { libc::flock(other.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0, "the held lock excludes a new opener");
+    assert_eq!(opens, 2);
+    drop(held);
+}

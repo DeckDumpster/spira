@@ -25,16 +25,22 @@
 //!   unit built after that last recorded run (`.unit-tests-built-stamp`): the record cannot name
 //!   what such a build was made from. A submitted builder's release reserves its folder
 //!   (`<n>.gate`, naming the bead) for that bead's gate: a reserved idle folder is taken only
-//!   when no unreserved one is idle, and any take or eviction removes the reservation. A release
+//!   when no unreserved one is idle, and any take or deletion removes the reservation. A release
 //!   judges every crate changed since that record by unit: a `.fingerprint` unit stamped after the
 //!   newest mtime and ctime of the crate's changed files is kept, any other is removed, and a crate
 //!   left with no kept unit (or with a deleted file) is cleaned, before the new record is written,
 //!   so the record never names bytes the artifacts were not built from.
 //! - **Flat folders move once.** [`migrate_flat`] moves each idle `dir.<n>` that records its
 //!   repository into that repository's directory and deletes the other idle ones.
-//! - **Idle-only eviction.** Over the disk budget (`SPIRA_DWARF_BUILD_BUDGET_GIB`), idle
-//!   directories go least recently used first, until the total is under; live ones are counted
-//!   but never removed.
+//! - **Three deletions, no age rule.** A whole folder is deleted only while idle, and only:
+//!   (a) over the disk budget (`SPIRA_DWARF_BUILD_BUDGET_GIB`, [`evict_over_budget`]): from the
+//!   repository holding the most idle folders, least recently used first; no repository's last
+//!   folder goes while any repository holds two. (b) [`evict_unregistered`]: its repository is no
+//!   longer in the registry. (c) At a release: its repository is cut back to the most folders it
+//!   leased at once in the day ending at its newest lease (`<repo>/peaks.json`), never below one.
+//!   A lease is never refused or delayed for want of space.
+//! - **Deleting is a rename.** The folder moves into `<base>/.reap` under the repository's
+//!   allocation lock and its own; [`reap`] removes it later. Its bytes count until then.
 //!
 //! - **Trim on release.** [`trim`] drops what no later build can use: idle profiles, and
 //!   incremental, `deps`, `.fingerprint` and `build` entries untouched in the lease and a day old.
@@ -44,6 +50,7 @@
 //! Dependencies still come from sccache, which is shared, content-addressed and append-only, so
 //! no lease can make another session's dependencies cold.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -88,7 +95,9 @@ pub struct Lease {
     started: SystemTime,
     /// What the lease-time clean did; None until the caller says.
     cleaned: Option<LeaseState>,
-    /// What [`migrate_flat`] did, or could not do, on the way to this lease: for the caller's log.
+    /// The bases it was leased under: what a release cuts back.
+    bases: Vec<PathBuf>,
+    /// What went wrong or moved on the way to this lease: for the caller's log.
     pub notes: Vec<String>,
 }
 
@@ -156,25 +165,243 @@ impl Lease {
         self.toolchain = toolchain_of(root);
     }
 
-    /// Trim the directory ([`trim`]), then release it to idle, recording now as its last use so
-    /// the next lease prefers it.
-    pub fn release(self) -> Trimmed {
+    /// Trim the directory ([`trim`]), release it to idle, recording now as its last use so
+    /// the next lease prefers it, then delete the repository's surplus idle folders.
+    pub fn release(self) -> Released {
         self.release_stamped()
     }
 
     /// [`Lease::release`], leaving the folder reserved for `bead`'s gate: [`lease_for`] takes a
     /// reserved idle folder only when no unreserved one is idle. The second value is the result of
     /// writing the reservation; the folder is released either way.
-    pub fn release_reserved(self, bead: &str) -> (Trimmed, std::io::Result<()>) {
+    pub fn release_reserved(self, bead: &str) -> (Released, std::io::Result<()>) {
         let reserved = std::fs::write(side(&self.dir, "gate"), bead);
         (self.release_stamped(), reserved)
     }
 
-    fn release_stamped(self) -> Trimmed {
+    fn release_stamped(self) -> Released {
         let trimmed = trim(&self.dir, self.started, SystemTime::now());
         write_record(&self.dir, &FolderRecord::new(&self.repo, self.tree.clone(), self.toolchain.clone(), SystemTime::now()));
-        let _ = self.lock.0.set_len(0);
-        trimmed
+        let Lease { lock, bases, repo, .. } = self;
+        let _ = lock.0.set_len(0);
+        // Unlocked first: the folder just released is one of those the cut counts as idle.
+        drop(lock);
+        Released { trimmed, deleted: delete_surplus(&bases, &repo) }
+    }
+}
+
+/// What a release did: what [`trim`] removed inside the folder, and the whole idle folders of its
+/// repository it deleted as surplus.
+#[derive(Debug)]
+pub struct Released {
+    pub trimmed: Trimmed,
+    pub deleted: Vec<Deleted>,
+}
+
+/// Why a whole folder was deleted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Why {
+    OverBudget { gib: u64 },
+    Unregistered,
+    Surplus { keep: usize },
+}
+
+/// One deleted directory; `repo` is None for a stray, which is no repository's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Deleted {
+    pub dir: PathBuf,
+    pub repo: Option<String>,
+    pub why: Why,
+}
+
+impl Deleted {
+    /// The `why` label of `build_dir_evicted`.
+    pub fn why_label(&self) -> &'static str {
+        match self.why {
+            Why::OverBudget { .. } => "budget",
+            Why::Unregistered => "unregistered",
+            Why::Surplus { .. } => "surplus",
+        }
+    }
+}
+
+/// The caller's log line.
+impl std::fmt::Display for Deleted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let repo = self.repo.as_deref().unwrap_or_default();
+        write!(f, "evicted idle build directory {} (", self.dir.display())?;
+        match self.why {
+            Why::OverBudget { gib } => write!(f, "over the {gib} GiB budget)"),
+            Why::Unregistered => write!(f, "repo:{repo} is no longer registered)"),
+            Why::Surplus { keep } => write!(f, "back to repo:{repo}'s {keep} folders)"),
+        }
+    }
+}
+
+/// The one [`Peaks`] version this build reads and writes.
+const PEAKS_VERSION: u32 = 1;
+const PEAKS_FILE: &str = "peaks.json";
+/// How much of a repository's own lease history, ending at its newest lease, sets its normal count.
+const PEAK_WINDOW: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+
+/// `<first base>/<repo>/peaks.json`: how many folders the repository held at each lease.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Peaks {
+    version: u32,
+    peaks: Vec<Peak>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Peak {
+    #[serde(serialize_with = "write_utc_stamp", deserialize_with = "utc_stamp")]
+    at: SystemTime,
+    live: usize,
+}
+
+fn peaks_path(bases: &[PathBuf], repo: &str) -> Option<PathBuf> {
+    bases.first().map(|b| b.join(repo).join(PEAKS_FILE))
+}
+
+/// The record; None when there is none, Err when it cannot be trusted.
+fn read_peaks(path: &Path) -> Result<Option<Peaks>, String> {
+    if matches!(path.try_exists(), Ok(false)) {
+        return Ok(None);
+    }
+    read_versioned(path, PEAKS_VERSION).map(Some)
+}
+
+/// How many of the repository's folders a lease holds. The caller holds the allocation lock.
+fn leased_count(bases: &[PathBuf], repo: &str) -> usize {
+    repo_folders(bases, repo).iter().filter(|d| matches!(probe(d), Probe::Leased)).count()
+}
+
+/// What a folder is to a lease. A deletion holds an unnamed lock: that folder is not a build's.
+enum Probe {
+    Idle(SlotLock),
+    Leased,
+    Deleting,
+}
+
+/// Only under the repository's allocation lock, or a probe's own lock reads as a deletion.
+fn probe(dir: &Path) -> Probe {
+    match try_lock(dir) {
+        Some(lock) => Probe::Idle(lock),
+        None if !holder_of(dir).is_empty() => Probe::Leased,
+        None => Probe::Deleting,
+    }
+}
+
+/// Append a lease holding `live` folders at `at`, and prune to the window ending at the newest
+/// entry. With no history to trust, the entry counts every folder the repository has, so no
+/// release cuts on a count nobody recorded. Returns what could not be done. The caller holds the
+/// allocation lock.
+fn record_peak(bases: &[PathBuf], repo: &str, live: usize, at: SystemTime) -> Vec<String> {
+    let Some(path) = peaks_path(bases, repo) else { return Vec::new() };
+    let mut notes = Vec::new();
+    let history = read_peaks(&path).unwrap_or_else(|e| {
+        notes.push(format!("build folder history started again: {e}"));
+        None
+    });
+    let (mut peaks, live) = match history {
+        Some(r) => (r.peaks, live),
+        None => (Vec::new(), live.max(repo_folders(bases, repo).len())),
+    };
+    peaks.push(Peak { at, live });
+    let newest = peaks.iter().map(|p| p.at).max().unwrap_or(at);
+    peaks.retain(|p| newest.duration_since(p.at).is_ok_and(|age| age <= PEAK_WINDOW));
+    let written = serde_json::to_string(&Peaks { version: PEAKS_VERSION, peaks }).map_err(std::io::Error::other).and_then(|text| crate::write_atomic(&path, &text));
+    if let Err(e) = written {
+        // An older record would understate the count, and a release would cut on it.
+        let _ = std::fs::remove_file(&path);
+        notes.push(format!("cannot record the build folder history {}: {e}", path.display()));
+    }
+    notes
+}
+
+/// Delete the repository's idle folders beyond its normal count, least recently used first.
+/// Without a record it can trust, nothing is deleted.
+fn delete_surplus(bases: &[PathBuf], repo: &str) -> Vec<Deleted> {
+    let Ok(_alloc) = alloc_lock(bases, repo) else { return Vec::new() };
+    let Some(path) = peaks_path(bases, repo) else { return Vec::new() };
+    let most = match read_peaks(&path) {
+        Ok(Some(r)) => r.peaks.iter().map(|p| p.live).max(),
+        Ok(None) => None,
+        Err(e) => {
+            eprintln!("no surplus build folder of repo:{repo} is deleted: {e}");
+            None
+        }
+    };
+    let Some(keep) = most.map(|m| m.max(1)) else { return Vec::new() };
+    let folders = repo_folders(bases, repo);
+    let mut surplus = folders.len().saturating_sub(keep);
+    let mut by_age: Vec<(SystemTime, PathBuf)> = folders.into_iter().map(|d| (last_used(&d), d)).collect();
+    by_age.sort();
+    let mut gone = Vec::new();
+    for (_, dir) in by_age {
+        if surplus == 0 {
+            break;
+        }
+        let Some(held) = try_lock(&dir) else { continue };
+        if discard(&dir, held) {
+            surplus -= 1;
+            gone.push(Deleted { dir, repo: Some(repo.to_string()), why: Why::Surplus { keep } });
+        }
+    }
+    gone
+}
+
+/// The directory under a base where deleted folders wait for [`reap`].
+const REAP_DIR: &str = ".reap";
+
+/// Delete the idle folder `dir`: rename it, its record and its reservation into the base's
+/// [`REAP_DIR`], then drop its lock file. The caller holds the repository's allocation lock, so no
+/// lease can be opening that lock file.
+fn discard(dir: &Path, held: SlotLock) -> bool {
+    let parts = || {
+        let repo_dir = dir.parent()?;
+        Some((repo_dir.parent()?, repo_dir.file_name()?.to_str()?, dir.file_name()?.to_str()?))
+    };
+    let Some((base, repo, n)) = parts() else { return false };
+    let reap = base.join(REAP_DIR);
+    let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos();
+    let to = reap.join(format!("{repo}.{n}.{nanos}"));
+    if std::fs::create_dir_all(&reap).is_err() {
+        return false;
+    }
+    match std::fs::rename(dir, &to) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            eprintln!("cannot delete idle build directory {}: {e}", dir.display());
+            return false;
+        }
+    }
+    for ext in ["json", "gate"] {
+        let _ = std::fs::rename(side(dir, ext), side(&to, ext));
+    }
+    let _ = std::fs::remove_file(side(dir, "lock"));
+    drop(held);
+    true
+}
+
+/// Everything waiting in the bases' [`REAP_DIR`]s.
+fn awaiting_reap(bases: &[PathBuf]) -> Vec<PathBuf> {
+    bases.iter().flat_map(|b| children(&b.join(REAP_DIR))).collect()
+}
+
+/// Remove everything waiting to be reaped.
+pub fn reap(bases: &[PathBuf]) {
+    awaiting_reap(bases).iter().for_each(|c| remove_any(c));
+}
+
+/// Remove what is waiting now, on a thread nobody joins: what the process does not finish, a
+/// later lease's does. Every lease starts one.
+pub fn reap_in_background(bases: &[PathBuf]) {
+    let waiting = awaiting_reap(bases);
+    if !waiting.is_empty() {
+        std::thread::spawn(move || waiting.iter().for_each(|c| remove_any(c)));
     }
 }
 
@@ -254,13 +481,17 @@ impl FolderRecord {
 
 /// The record of the folder `dir`; the error names the file and what is wrong with it.
 pub fn read_record(dir: &Path) -> Result<FolderRecord, String> {
-    let path = side(dir, "json");
+    read_versioned(&side(dir, "json"), RECORD_VERSION)
+}
+
+/// A typed record whose `version` is `want`; the error names the file and what is wrong with it.
+fn read_versioned<T: serde::de::DeserializeOwned>(path: &Path, want: u32) -> Result<T, String> {
     let fail = |why: String| format!("{}: {why}", path.display());
-    let bytes = std::fs::read(&path).map_err(|e| fail(e.to_string()))?;
+    let bytes = std::fs::read(path).map_err(|e| fail(e.to_string()))?;
     let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| fail(e.to_string()))?;
     match value.get("version").and_then(serde_json::Value::as_u64) {
-        Some(v) if v == u64::from(RECORD_VERSION) => serde_path_to_error::deserialize(value).map_err(|e| fail(format!("{}: {}", e.path(), e.inner()))),
-        Some(v) => Err(fail(format!("version {v} is not {RECORD_VERSION}"))),
+        Some(v) if v == u64::from(want) => serde_path_to_error::deserialize(value).map_err(|e| fail(format!("{}: {}", e.path(), e.inner()))),
+        Some(v) => Err(fail(format!("version {v} is not {want}"))),
         None => Err(fail("no version".into())),
     }
 }
@@ -349,6 +580,14 @@ fn base_slots(base: &Path) -> Vec<PathBuf> {
     repo_dirs(base).iter().flat_map(|r| slots(r).into_iter().map(move |n| r.join(n.to_string()))).collect()
 }
 
+/// Every folder of `repo` across the bases.
+fn repo_folders(bases: &[PathBuf], repo: &str) -> Vec<PathBuf> {
+    bases.iter().flat_map(|b| {
+        let repo_dir = b.join(repo);
+        slots(&repo_dir).into_iter().map(move |n| repo_dir.join(n.to_string()))
+    }).collect()
+}
+
 /// Try the folder's lock without waiting: Some(guard holding it) when it was idle.
 fn try_lock(dir: &Path) -> Option<SlotLock> {
     let f = std::fs::OpenOptions::new().write(true).open(side(dir, "lock")).ok()?;
@@ -434,7 +673,7 @@ pub fn lease_for(bases: &[PathBuf], who: &str, repo: &str, ceiling: usize) -> Re
         let _ = std::fs::create_dir_all(b);
     }
     let (moved, failed) = migrate(bases);
-    let notes: Vec<String> = moved.iter().map(|(from, to)| describe_move(from, to.as_deref())).chain(failed).collect();
+    let mut notes: Vec<String> = moved.iter().map(|(from, to)| describe_move(from, to.as_deref())).chain(failed).collect();
     let alloc = alloc_lock(bases, repo)?;
     let mut leased = 0;
     let mut idle = Vec::new();
@@ -442,11 +681,10 @@ pub fn lease_for(bases: &[PathBuf], who: &str, repo: &str, ceiling: usize) -> Re
         let repo_dir = base.join(repo);
         for n in slots(&repo_dir) {
             let dir = repo_dir.join(n.to_string());
-            match try_lock(&dir) {
-                Some(lock) => idle.push(((!side(&dir, "gate").exists(), last_used(&dir), dir), lock)),
-                // An eviction holds an unnamed lock: that folder is not a build's.
-                None if !holder_of(&dir).is_empty() => leased += 1,
-                None => {}
+            match probe(&dir) {
+                Probe::Idle(lock) => idle.push(((!side(&dir, "gate").exists(), last_used(&dir), dir), lock)),
+                Probe::Leased => leased += 1,
+                Probe::Deleting => {}
             }
         }
     }
@@ -459,8 +697,9 @@ pub fn lease_for(bases: &[PathBuf], who: &str, repo: &str, ceiling: usize) -> Re
         None => new_slot(bases, repo)?,
     };
     claim(&mut lock, who);
+    notes.extend(record_peak(bases, repo, leased + 1, SystemTime::now()));
     drop(alloc);
-    Ok(Lease { notes, ..take(dir, repo, lock)? })
+    Ok(Lease { notes, ..take(bases, dir, repo, lock)? })
 }
 
 /// Why [`lease_dir`] did not lease the folder.
@@ -492,12 +731,18 @@ pub fn lease_dir(bases: &[PathBuf], dir: &Path, who: &str, owner: &str, wait: st
     }
     let until = std::time::Instant::now() + wait;
     let mut named = false;
-    let lock = loop {
+    let (lock, notes) = loop {
         // Under the allocation lock, so a scanning lease's probe never reads as a holder.
         let alloc = alloc_lock(bases, repo)?;
+        // Deletions hold this lock too: a folder deleted during the wait is gone, not held.
+        if !is_slot(dir) {
+            return Ok(Err(Refused::Gone));
+        }
         if let Some(mut f) = try_lock(dir) {
             claim(&mut f, who);
-            break f;
+            // This one's own lock is held, so the count includes it.
+            let notes = record_peak(bases, repo, leased_count(bases, repo), SystemTime::now());
+            break (f, notes);
         }
         drop(alloc);
         let now_holder = holder_of(dir);
@@ -510,7 +755,8 @@ pub fn lease_dir(bases: &[PathBuf], dir: &Path, who: &str, owner: &str, wait: st
         }
         std::thread::sleep(std::time::Duration::from_millis(100).min(wait));
     };
-    let mut lease = take(dir.to_path_buf(), repo, lock)?;
+    let mut lease = take(bases, dir.to_path_buf(), repo, lock)?;
+    notes.iter().for_each(|n| eprintln!("{n}"));
     // The caller named the folder for what it holds: warm unless that had to be emptied.
     lease.reused = lease.unreadable.is_none();
     Ok(Ok(lease))
@@ -557,7 +803,8 @@ fn claim(lock: &mut SlotLock, who: &str) {
     let _ = lock.0.write_all(who.as_bytes());
 }
 
-fn take(dir: PathBuf, repo: &str, lock: SlotLock) -> std::io::Result<Lease> {
+fn take(bases: &[PathBuf], dir: PathBuf, repo: &str, lock: SlotLock) -> std::io::Result<Lease> {
+    reap_in_background(bases);
     std::fs::create_dir_all(&dir)?;
     let _ = std::fs::remove_file(side(&dir, "gate"));
     let _ = std::fs::remove_file(dir.join(FIRST_BUILT));
@@ -573,7 +820,7 @@ fn take(dir: PathBuf, repo: &str, lock: SlotLock) -> std::io::Result<Lease> {
     }
     // Written at once, so a holder that never releases still leaves a true repository.
     write_record(&dir, &FolderRecord::new(repo, None, None, SystemTime::now()));
-    Ok(Lease { dir, repo: repo.to_string(), lock, reused, unreadable, tree: None, toolchain: None, started: SystemTime::now(), cleaned: None, notes: Vec::new() })
+    Ok(Lease { dir, repo: repo.to_string(), lock, reused, unreadable, tree: None, toolchain: None, started: SystemTime::now(), cleaned: None, bases: bases.to_vec(), notes: Vec::new() })
 }
 
 /// The `n` of every flat `dir.<n>.lock` directly under `base`.
@@ -742,61 +989,91 @@ pub fn trim(dir: &Path, lease_start: SystemTime, now: SystemTime) -> Trimmed {
     t
 }
 
-/// Evict idle directories under `bases`, least recently used first, until everything under the
-/// bases together holds at most `budget_bytes`. A live slot is measured but never touched; a
-/// directory that is not a slot goes by the age of its newest write unless a live process stands in it.
-/// Returns the directories removed, in the order they went. Bytes are each directory's own
-/// blocks ([`crate::build::size_of`]); the filesystem's fullness is never read.
-pub fn evict_idle(bases: &[PathBuf], budget_bytes: u64) -> Vec<PathBuf> {
-    evict_idle_with(bases, budget_bytes, &crate::build::size_of)
+/// Delete idle directories until everything under the bases holds at most `budget_bytes`, in
+/// [`next_victim`]'s order. A live folder is measured but never touched; a directory that is not a
+/// folder goes by the age of its newest write unless a live process stands in it. Bytes are each
+/// directory's own blocks ([`crate::build::size_of`]); the filesystem's fullness is never read.
+pub fn evict_over_budget(bases: &[PathBuf], budget_bytes: u64) -> Vec<Deleted> {
+    let why = Why::OverBudget { gib: budget_bytes >> 30 };
+    evict_budget(bases, budget_bytes, &crate::build::size_of, Path::new(system_paths::PROC))
+        .into_iter()
+        .map(|c| Deleted { repo: c.repo().map(str::to_string), dir: c.path, why: why.clone() })
+        .collect()
 }
 
-/// [`evict_idle`] with the measurement injected: `size` answers the bytes one directory holds.
-pub fn evict_idle_with(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path) -> u64) -> Vec<PathBuf> {
-    evict_idle_in(bases, budget_bytes, size, Path::new(system_paths::PROC))
-}
-
-/// [`evict_idle_with`] with the process table's root injected.
+/// [`evict_over_budget`]'s paths, with the measurement and the process table's root injected.
 pub fn evict_idle_in(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path) -> u64, proc_root: &Path) -> Vec<PathBuf> {
+    evict_budget(bases, budget_bytes, size, proc_root).into_iter().map(|c| c.path).collect()
+}
+
+fn is_idle(bases: &[PathBuf], repo: &str, dir: &Path) -> bool {
+    let Ok(_alloc) = alloc_lock(bases, repo) else { return false };
+    // A local, so it drops before the allocation lock does.
+    let probe = try_lock(dir);
+    probe.is_some()
+}
+
+fn evict_budget(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path) -> u64, proc_root: &Path) -> Vec<Candidate> {
     let mut sized = Vec::new();
+    let mut waiting = 0;
     for b in bases {
         let repos = repo_dirs(b);
         for path in base_slots(b) {
             sized.push((Kind::Slot, size(&path), path));
         }
         let in_repos = repos.iter().flat_map(|r| dirs(r).into_iter().filter(|d| !is_slot(d)));
-        for path in dirs(b).into_iter().filter(|p| !repos.contains(p)).chain(in_repos) {
+        let reap = b.join(REAP_DIR);
+        for path in dirs(b).into_iter().filter(|p| !repos.contains(p) && *p != reap).chain(in_repos) {
             sized.push((Kind::Stray, size(&path), path));
         }
+        waiting += children(&reap).iter().map(|c| size(c)).sum::<u64>();
     }
-    if sized.iter().map(|(_, bytes, _)| bytes).sum::<u64>() <= budget_bytes {
+    if sized.iter().map(|(_, bytes, _)| bytes).sum::<u64>() + waiting <= budget_bytes {
         return Vec::new();
     }
-    let candidates = sized
-        .into_iter()
-        .filter(|(_, bytes, _)| *bytes > 0)
-        .map(|(kind, bytes, path)| {
-            let age = match kind {
-                Kind::Slot => last_used(&path),
-                Kind::Stray => newest_touch(&path, true),
-            };
-            Candidate { path, kind, bytes, age }
-        })
-        .collect();
-    evict_walk(candidates, budget_bytes, &mut |c| match c.kind {
-        // Under the folder's own lock: one a session takes meanwhile is skipped. Its record goes
-        // with its bytes, so it is the last the next lease takes.
-        Kind::Slot => {
-            let Some(held) = try_lock(&c.path) else { return false };
-            // A name left by a holder that died would count this folder as leased meanwhile.
-            let _ = held.0.set_len(0);
-            empty(&c.path);
-            let _ = std::fs::remove_file(side(&c.path, "gate"));
-            let _ = std::fs::remove_file(side(&c.path, "json"));
-            true
+    let mut folders: Folders = BTreeMap::new();
+    // Every folder there is, empty ones too: what another deletion is noticed by.
+    let mut seen: Folders = BTreeMap::new();
+    let mut fixed = waiting;
+    let mut candidates = Vec::new();
+    for (kind, bytes, path) in sized {
+        let mut c = Candidate { path, kind, bytes, age: SystemTime::UNIX_EPOCH };
+        if let Some(repo) = c.repo() {
+            *seen.entry(repo.to_string()).or_default() += 1;
+            // Probed under the allocation lock, so a scanning lease never reads the probe as a holder.
+            let idle = is_idle(bases, repo, &c.path);
+            // An idle folder holding nothing is not one the repository would miss.
+            if !idle || bytes > 0 {
+                *folders.entry(repo.to_string()).or_default() += 1;
+            }
+            if !idle {
+                fixed += bytes;
+                continue;
+            }
+        }
+        c.age = match kind {
+            Kind::Slot => last_used(&c.path),
+            Kind::Stray => newest_touch(&c.path, true),
+        };
+        candidates.push(c);
+    }
+    evict_walk(candidates, &folders, fixed, budget_bytes, &mut |c| match c.repo() {
+        // Under both locks: a folder a session takes meanwhile is skipped.
+        Some(repo) => {
+            let Ok(_alloc) = alloc_lock(bases, repo) else { return false };
+            let expected = seen.get(repo).copied().unwrap_or(0);
+            // Another eviction took one since the count: this one may now be the last.
+            if repo_folders(bases, repo).len() < expected {
+                return false;
+            }
+            let gone = try_lock(&c.path).is_some_and(|held| discard(&c.path, held));
+            if gone {
+                seen.insert(repo.to_string(), expected - 1);
+            }
+            gone
         }
         // Read at the removal, not before the age scan: a process may have started standing here since.
-        Kind::Stray => {
+        None => {
             // A flat folder not yet moved may still be leased.
             let flat_lock = is_slot(&c.path).then(|| try_lock(&c.path));
             if matches!(flat_lock, Some(None)) || stood_in(&c.path, &held_by_processes(proc_root)) {
@@ -806,6 +1083,56 @@ pub fn evict_idle_in(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path) 
             true
         }
     })
+}
+
+/// What a lease deletes: over the budget, then for repositories no longer registered. The second
+/// value is [`evict_unregistered`]'s refusal, for the caller's log.
+pub fn evict_at_lease(bases: &[PathBuf], budget_bytes: u64, registry: &crate::repos::Registry) -> (Vec<Deleted>, Option<String>) {
+    let mut gone = evict_over_budget(bases, budget_bytes);
+    match evict_unregistered(bases, registry.home_repo(), &registered_repos(registry)) {
+        Ok(more) => {
+            gone.extend(more);
+            (gone, None)
+        }
+        Err(refused) => (gone, Some(refused)),
+    }
+}
+
+/// The registry as [`evict_unregistered`] reads it: the rows of its map, none without a map.
+pub fn registered_repos(registry: &crate::repos::Registry) -> Vec<String> {
+    if registry.map_present() { registry.names() } else { Vec::new() }
+}
+
+/// Delete every idle folder of a repository `registered` does not name, and its directory once
+/// nothing is left in it. A list without `home` is no list of this box's repositories: nothing is
+/// deleted and the refusal is returned.
+pub fn evict_unregistered(bases: &[PathBuf], home: &str, registered: &[String]) -> Result<Vec<Deleted>, String> {
+    if !registered.iter().any(|r| r == home) {
+        return Err(format!("no build folder is deleted as unregistered: the repository registry {registered:?} does not name the home repository {home:?}, so it cannot be trusted"));
+    }
+    let gone_repos: BTreeSet<String> = bases
+        .iter()
+        .flat_map(|b| repo_dirs(b))
+        .filter_map(|d| d.file_name()?.to_str().map(str::to_string))
+        .filter(|r| !registered.contains(r))
+        .collect();
+    let mut gone = Vec::new();
+    for repo in gone_repos {
+        let Ok(_alloc) = alloc_lock(bases, &repo) else { continue };
+        for dir in repo_folders(bases, &repo) {
+            if try_lock(&dir).is_some_and(|held| discard(&dir, held)) {
+                gone.push(Deleted { dir, repo: Some(repo.clone()), why: Why::Unregistered });
+            }
+        }
+        // The first base last: it holds the allocation lock.
+        for base in bases.iter().rev() {
+            let repo_dir = base.join(&repo);
+            if slots(&repo_dir).is_empty() && dirs(&repo_dir).is_empty() {
+                let _ = std::fs::remove_dir_all(&repo_dir);
+            }
+        }
+    }
+    Ok(gone)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -823,29 +1150,58 @@ struct Candidate {
     age: SystemTime,
 }
 
-/// The candidates in the order eviction tries them: empty ones dropped, oldest first, ties by
-/// path; none at all while the total is within budget.
-fn eviction_order(candidates: &[Candidate], budget_bytes: u64) -> Vec<&Candidate> {
-    if candidates.iter().map(|c| c.bytes).sum::<u64>() <= budget_bytes {
-        return Vec::new();
+impl Candidate {
+    /// The repository whose folder this is; None for a stray.
+    fn repo(&self) -> Option<&str> {
+        match self.kind {
+            Kind::Slot => self.path.parent()?.file_name()?.to_str(),
+            Kind::Stray => None,
+        }
     }
-    let mut order: Vec<&Candidate> = candidates.iter().filter(|c| c.bytes > 0).collect();
-    order.sort_by(|a, b| (a.age, &a.path).cmp(&(b.age, &b.path)));
-    order
 }
 
-/// Walk [`eviction_order`] until the total is within budget. `remove` tries one removal and says
-/// whether it happened; a refused candidate stays counted. Returns the paths removed, in order.
-fn evict_walk(candidates: Vec<Candidate>, budget_bytes: u64, remove: &mut dyn FnMut(&Candidate) -> bool) -> Vec<PathBuf> {
-    let mut total: u64 = candidates.iter().map(|c| c.bytes).sum();
-    let mut gone = Vec::new();
-    for c in eviction_order(&candidates, budget_bytes) {
-        if total <= budget_bytes {
-            break;
+/// Every repository's folder count, leased ones included.
+type Folders = BTreeMap<String, usize>;
+
+/// Which of the untried candidates goes next: strays, oldest first; then the least recently used
+/// idle folder of the repository with the most idle ones (ties: the one whose oldest is least
+/// recently used). While any repository holds two folders, no repository's last one goes.
+fn next_victim(left: &[Candidate], folders: &Folders) -> Option<usize> {
+    let age = |i: &usize| (left[*i].age, &left[*i].path);
+    if let Some(stray) = (0..left.len()).filter(|i| left[*i].kind == Kind::Stray).min_by_key(age) {
+        return Some(stray);
+    }
+    let spare = folders.values().any(|n| *n > 1);
+    let mut idle: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (i, c) in left.iter().enumerate() {
+        if let Some(repo) = c.repo() {
+            idle.entry(repo).or_default().push(i);
         }
-        if remove(c) {
+    }
+    idle.into_iter()
+        .filter(|(repo, _)| !spare || folders.get(*repo).is_some_and(|n| *n > 1))
+        .filter_map(|(_, of_repo)| Some((of_repo.len(), of_repo.into_iter().min_by_key(age)?)))
+        .max_by(|(a_count, a), (b_count, b)| a_count.cmp(b_count).then_with(|| age(b).cmp(&age(a))))
+        .map(|(_, oldest)| oldest)
+}
+
+/// Try [`next_victim`]s until the total (`fixed` bytes no candidate holds, plus theirs) is within
+/// budget. `remove` tries one removal and says whether it happened; a refused candidate stays
+/// counted. Empty directories are never tried. Returns what was removed, in order.
+fn evict_walk(mut left: Vec<Candidate>, folders: &Folders, fixed: u64, budget_bytes: u64, remove: &mut dyn FnMut(&Candidate) -> bool) -> Vec<Candidate> {
+    let mut folders = folders.clone();
+    let mut total: u64 = fixed + left.iter().map(|c| c.bytes).sum::<u64>();
+    left.retain(|c| c.bytes > 0);
+    let mut gone = Vec::new();
+    while total > budget_bytes {
+        let Some(i) = next_victim(&left, &folders) else { break };
+        let c = left.swap_remove(i);
+        if remove(&c) {
             total = total.saturating_sub(c.bytes);
-            gone.push(c.path.clone());
+            if let Some(n) = c.repo().and_then(|r| folders.get_mut(r)) {
+                *n -= 1;
+            }
+            gone.push(c);
         }
     }
     gone
@@ -869,10 +1225,10 @@ fn sample(name: &'static str, value: u64, dir: Option<String>) -> Sample {
 }
 
 /// What a lease or a release of `dir` reports: its own bytes, the pool the budget counts (every
-/// repository's folders), the base total (everything under each base, including what no budget counts) and
+/// repository's folders and what waits to be reaped), the base total (everything under each base, including what no budget counts) and
 /// the budget itself. `size` answers the bytes one path holds.
 pub fn lease_samples(bases: &[PathBuf], dir: &Path, budget_bytes: u64, size: &dyn Fn(&Path) -> u64) -> Vec<Sample> {
-    let pool: u64 = bases.iter().flat_map(|b| base_slots(b)).map(|d| size(&d)).sum();
+    let pool: u64 = bases.iter().flat_map(|b| base_slots(b)).chain(awaiting_reap(bases)).map(|d| size(&d)).sum();
     let base: u64 = bases.iter().map(|b| size(b)).sum();
     vec![
         sample("build_dir_bytes", size(dir), Some(dir.display().to_string())),
@@ -882,9 +1238,14 @@ pub fn lease_samples(bases: &[PathBuf], dir: &Path, budget_bytes: u64, size: &dy
     ]
 }
 
-/// One event per directory [`evict_idle`] removed.
-pub fn eviction_samples(gone: &[PathBuf]) -> Vec<Sample> {
-    gone.iter().map(|d| sample("build_dir_evicted", 1, Some(d.display().to_string()))).collect()
+/// One event per deleted directory.
+pub fn eviction_samples(gone: &[Deleted]) -> Vec<Sample> {
+    gone.iter()
+        .map(|d| {
+            let labels = vec![("dir", d.dir.display().to_string()), ("repo", d.repo.clone().unwrap_or_default()), ("why", d.why_label().to_string())];
+            Sample { name: "build_dir_evicted", value: 1.0, labels }
+        })
+        .collect()
 }
 
 /// One `build_dir_lease` event, and the first build's seconds when one was stamped.
@@ -927,8 +1288,8 @@ pub fn meter_report(report: &LeaseReport) {
     push(&crate::process::metrics_sink("build-dir"), &report_samples(report));
 }
 
-/// Push one event per directory evicted.
-pub fn meter_evictions(gone: &[PathBuf]) {
+/// Push one event per directory deleted.
+pub fn meter_evictions(gone: &[Deleted]) {
     push(&crate::process::metrics_sink("build-dir"), &eviction_samples(gone));
 }
 
@@ -1240,7 +1601,7 @@ mod tests {
         touch(&l.dir().join("debug/deps/old.rlib"), 30 * H, 30 * H);
         let t = l.release();
         assert!(!base.join("spira/1/debug/deps/old.rlib").exists());
-        assert!(t.stale > 0, "{t:?}");
+        assert!(t.trimmed.stale > 0, "{t:?}");
     }
 
     #[test_id(twlh7hs)]
@@ -1634,9 +1995,9 @@ mod tests {
     fn pushed_samples_reach_the_endpoint_with_their_names_and_the_dir_label() {
         let (addr, h) = spira_otel::metrics::run::fixture_sink();
         let sink = spira_otel::metrics::MetricsSink::new(Some(&addr), "build-dir", std::time::Duration::from_secs(2));
-        push(&sink, &eviction_samples(&[PathBuf::from("x/dir.7")]));
+        push(&sink, &eviction_samples(&[Deleted { dir: "x/dir.7".into(), repo: Some("a-repo".into()), why: Why::Unregistered }]));
         let body = h.join().unwrap();
-        for want in ["build_dir_evicted", "dir", "x/dir.7", "build-dir"] {
+        for want in ["build_dir_evicted", "dir", "x/dir.7", "build-dir", "a-repo", "unregistered"] {
             assert!(body.contains(want), "{want} missing from the push");
         }
     }
@@ -1830,25 +2191,49 @@ mod tests {
         let one = lease(&bases, "a").unwrap();
         fill(&one.dir().join("x"), 8);
         one.release();
-        let gone = evict_idle_with(&bases, 0, &|_| 1 << 20);
+        let gone = evict_idle_in(&bases, 0, &|p| u64::from(p.is_dir()) << 20, &empty_proc(d.path()));
         assert_eq!(gone.len(), 1);
         assert!(!bases[0].join("spira/1.json").exists());
     }
 
-    #[test_id(t5z21a3)]
-    #[test]
-    fn a_budget_of_zero_with_one_idle_directory_removes_it_and_reports_one_event_naming_it() {
-        let gone = evict_walk(vec![slot(0, 1, 100, 3)], 0, &mut |_| true);
-        assert_eq!(gone, [PathBuf::from("b0/r/1")]);
-        assert_eq!(eviction_samples(&gone), [Sample { name: "build_dir_evicted", value: 1.0, labels: vec![("dir", "b0/r/1".into())] }]);
+    /// [`evict_walk`] over candidates that are every folder their repositories have.
+    fn walk(cs: Vec<Candidate>, budget: u64, remove: &mut dyn FnMut(&Candidate) -> bool) -> Vec<PathBuf> {
+        let mut folders = Folders::new();
+        cs.iter().filter_map(Candidate::repo).for_each(|r| *folders.entry(r.to_string()).or_default() += 1);
+        evict_walk(cs, &folders, 0, budget, remove).into_iter().map(|c| c.path).collect()
     }
 
-    #[test_id(txutbsf)]
+    #[test_id(tz0onm6)]
     #[test]
-    fn strays_are_ranked_with_idle_slots_oldest_first() {
-        let cs = vec![slot(0, 2, 10, 1), stray("hand.1", 10, 3), slot(0, 1, 10, 5)];
-        let gone = evict_walk(cs, 0, &mut |_| true);
-        assert_eq!(gone, [PathBuf::from("b0/r/1"), PathBuf::from("b0/hand.1"), PathBuf::from("b0/r/2")]);
+    fn a_budget_of_zero_with_one_idle_directory_removes_it() {
+        assert_eq!(walk(vec![slot(0, 1, 100, 3)], 0, &mut |_| true), [PathBuf::from("b0/r/1")]);
+    }
+
+    #[test_id(t93nt7o)]
+    #[test]
+    fn each_deletion_is_one_event_naming_its_directory_repository_and_reason_and_a_log_line_saying_why() {
+        let of = |repo: Option<&str>, why: Why| Deleted { dir: "b0/r/1".into(), repo: repo.map(str::to_string), why };
+        let cases = [
+            (of(Some("r"), Why::OverBudget { gib: 7 }), "r", "budget", "(over the 7 GiB budget)"),
+            (of(Some("r"), Why::Unregistered), "r", "unregistered", "(repo:r is no longer registered)"),
+            (of(Some("r"), Why::Surplus { keep: 3 }), "r", "surplus", "(back to repo:r's 3 folders)"),
+            (of(None, Why::OverBudget { gib: 7 }), "", "budget", "(over the 7 GiB budget)"),
+        ];
+        for (deleted, repo, why, reason) in cases {
+            assert_eq!(deleted.to_string(), format!("evicted idle build directory b0/r/1 {reason}"));
+            let samples = eviction_samples(std::slice::from_ref(&deleted));
+            assert_eq!(samples.len(), 1);
+            let want = [("dir", "b0/r/1"), ("repo", repo), ("why", why)].map(|(k, v)| (k, v.to_string()));
+            assert_eq!((samples[0].name, &samples[0].labels[..]), ("build_dir_evicted", &want[..]));
+        }
+    }
+
+    #[test_id(tpiriqa)]
+    #[test]
+    fn strays_go_before_every_folder_oldest_first() {
+        let cs = vec![slot(0, 2, 10, 1), stray("hand.2", 10, 2), slot(0, 1, 10, 5), stray("hand.1", 10, 3)];
+        let gone = walk(cs, 0, &mut |_| true);
+        assert_eq!(gone, ["b0/hand.1", "b0/hand.2", "b0/r/1", "b0/r/2"].map(PathBuf::from));
     }
 
     #[test_id(t20fuzg)]
@@ -1856,7 +2241,7 @@ mod tests {
     fn a_stray_with_a_process_standing_in_it_is_spared_and_the_others_go() {
         let held = [PathBuf::from("b0/hand.1/debug")];
         let cs = vec![slot(0, 2, 10, 1), stray("hand.1", 10, 3), slot(0, 1, 10, 5)];
-        let gone = evict_walk(cs, 0, &mut |c| !(c.kind == Kind::Stray && stood_in(&c.path, &held)));
+        let gone = walk(cs, 0, &mut |c| !(c.kind == Kind::Stray && stood_in(&c.path, &held)));
         assert_eq!(gone, [PathBuf::from("b0/r/1"), PathBuf::from("b0/r/2")]);
     }
 
@@ -1888,30 +2273,30 @@ mod tests {
     #[test]
     fn eviction_removes_least_recently_used_first_never_a_refused_live_one_and_stops_once_under_budget() {
         let cs = vec![slot(0, 4, 100, 1), slot(0, 1, 100, 9), slot(0, 2, 100, 5), slot(0, 3, 100, 3)];
-        let gone = evict_walk(cs, 100, &mut |c| c.path != Path::new("b0/r/1"));
+        let gone = walk(cs, 100, &mut |c| c.path != Path::new("b0/r/1"));
         assert_eq!(gone, [PathBuf::from("b0/r/2"), PathBuf::from("b0/r/3"), PathBuf::from("b0/r/4")]);
         let cs = vec![slot(0, 1, 100, 9), slot(0, 2, 100, 5), slot(0, 3, 100, 3)];
-        assert_eq!(evict_walk(cs, 150, &mut |_| true), [PathBuf::from("b0/r/1"), PathBuf::from("b0/r/2")], "folder 3 stays: the total is under budget");
+        assert_eq!(walk(cs, 150, &mut |_| true), [PathBuf::from("b0/r/1"), PathBuf::from("b0/r/2")], "folder 3 stays: the total is under budget");
     }
 
     #[test_id(tguthyx)]
     #[test]
     fn an_eviction_within_budget_removes_nothing_and_empty_directories_are_never_candidates() {
-        assert!(evict_walk(vec![slot(0, 1, 100, 9)], 100, &mut |_| panic!("under budget")).is_empty());
+        assert!(walk(vec![slot(0, 1, 100, 9)], 100, &mut |_| panic!("under budget")).is_empty());
         let cs = vec![slot(0, 1, 0, 9), slot(0, 2, 100, 1)];
-        assert_eq!(evict_walk(cs, 0, &mut |_| true), [PathBuf::from("b0/r/2")]);
+        assert_eq!(walk(cs, 0, &mut |_| true), [PathBuf::from("b0/r/2")]);
     }
 
     #[test_id(t88ueyg)]
     #[test]
     fn eviction_counts_every_base_against_one_budget() {
         let cs = vec![slot(0, 1, 100, 2), slot(1, 1, 100, 1)];
-        assert_eq!(evict_walk(cs, 100, &mut |_| true), [PathBuf::from("b0/r/1")]);
+        assert_eq!(walk(cs, 100, &mut |_| true), [PathBuf::from("b0/r/1")]);
     }
 
-    #[test_id(tkdsla4)]
+    #[test_id(tgmhi63)]
     #[test]
-    fn evicting_an_idle_slot_empties_it_and_keeps_the_directory_and_its_lock() {
+    fn evicting_the_only_idle_folder_deletes_its_directory_and_its_lock() {
         let d = testkit::TempDir::new("bdir-evict-slot");
         let base = d.path().join("base");
         let slot = base.join("spira/1");
@@ -1919,8 +2304,7 @@ mod tests {
         std::fs::write(base.join("spira/1.lock"), "").unwrap();
         let gone = evict_idle_in(std::slice::from_ref(&base), 0, &crate::build::size_of, &empty_proc(d.path()));
         assert_eq!(gone, std::slice::from_ref(&slot));
-        assert!(slot.is_dir() && !holds_anything(&slot), "emptied in place");
-        assert!(base.join("spira/1.lock").exists());
+        assert!(!slot.exists() && !base.join("spira/1.lock").exists());
     }
 
     #[test_id(tm0bptj)]
@@ -2167,6 +2551,366 @@ mod tests {
             numbers.sort();
             assert_eq!(numbers, ["1", "2", "3"]);
         }
+    }
+
+    /// 10 units for a folder holding `x`, nothing for anything else.
+    fn ten(p: &Path) -> u64 {
+        u64::from(p.join("x").exists()) * 10
+    }
+
+    /// `count` folders of `repo`, leased at once, filled and released.
+    fn idle_folders(bases: &[PathBuf], repo: &str, count: usize) -> Vec<PathBuf> {
+        let held: Vec<Lease> = (0..count).map(|i| lease_in(bases, &format!("{repo}-{i}"), repo)).collect();
+        held.into_iter()
+            .map(|l| {
+                let dir = l.dir().to_path_buf();
+                fill(&dir.join("x"), 1);
+                l.release();
+                dir
+            })
+            .collect()
+    }
+
+    #[test_id(t9g79m7)]
+    #[test]
+    fn over_budget_the_repository_with_the_most_idle_folders_loses_its_least_recently_used_first() {
+        let d = testkit::TempDir::new("bdir-fair");
+        let bases = vec![d.path().join("base")];
+        let a = idle_folders(&bases, "A", 5);
+        let b = idle_folders(&bases, "B", 1);
+        for (dir, secs) in a.iter().zip([50, 20, 40, 10, 30]) {
+            set_last_used(dir, secs);
+        }
+        set_last_used(&b[0], 1);
+        let gone = evict_idle_in(&bases, 60 - 25, &ten, &empty_proc(d.path()));
+        assert_eq!(gone, [a[3].clone(), a[1].clone(), a[4].clone()]);
+        assert!(b[0].join("x").exists(), "a quiet repository keeps its only folder, though it is the oldest in the pool");
+    }
+
+    #[test_id(t0e7jka)]
+    #[test]
+    fn a_repositorys_last_folder_goes_only_when_every_repository_is_down_to_one() {
+        let d = testkit::TempDir::new("bdir-last");
+        let bases = vec![d.path().join("base")];
+        let a = idle_folders(&bases, "A", 1);
+        let b = idle_folders(&bases, "B", 1);
+        set_last_used(&a[0], 2);
+        set_last_used(&b[0], 1);
+        assert_eq!(evict_idle_in(&bases, 5, &ten, &empty_proc(d.path())), [b[0].clone(), a[0].clone()]);
+
+        let d = testkit::TempDir::new("bdir-last-counted");
+        let bases = vec![d.path().join("base")];
+        let a = idle_folders(&bases, "A", 2);
+        let b = idle_folders(&bases, "B", 1);
+        set_last_used(&a[0], 3);
+        set_last_used(&a[1], 4);
+        set_last_used(&b[0], 1);
+        let _live = lease_in(&bases, "a-live", "A");
+        let idle_a = if _live.dir() == a[0] { a[1].clone() } else { a[0].clone() };
+        let gone = evict_idle_in(&bases, 0, &ten, &empty_proc(d.path()));
+        assert_eq!(gone, [idle_a, b[0].clone()], "A's second folder goes before B's only one: leased folders count");
+    }
+
+    #[test_id(tyghwb7)]
+    #[test]
+    fn a_repository_holding_two_leased_folders_keeps_every_other_repositorys_last_one() {
+        let d = testkit::TempDir::new("bdir-last-two-leased");
+        let bases = vec![d.path().join("base")];
+        let _live = [lease_in(&bases, "a1", "A"), lease_in(&bases, "a2", "A")];
+        let b = idle_folders(&bases, "B", 1);
+        assert!(evict_idle_in(&bases, 0, &ten, &empty_proc(d.path())).is_empty());
+        assert!(b[0].join("x").exists());
+    }
+
+    #[test_id(tp04vus)]
+    #[test]
+    fn a_leased_folder_over_the_budget_stays_and_no_lease_is_refused_for_space() {
+        let d = testkit::TempDir::new("bdir-no-refusal");
+        let bases = vec![d.path().join("base")];
+        let a = lease_in(&bases, "a1", "A");
+        fill(&a.dir().join("x"), 1);
+        assert!(evict_idle_in(&bases, 0, &ten, &empty_proc(d.path())).is_empty());
+        assert!(a.dir().join("x").exists());
+        assert!(lease_for(&bases, "b1", "B", 64).is_ok());
+    }
+
+    fn folders_of(base: &Path, repo: &str) -> Vec<u64> {
+        slots(&base.join(repo))
+    }
+
+    fn write_peaks(base: &Path, repo: &str, entries: &[(&str, usize)]) {
+        let rows: Vec<String> = entries.iter().map(|(at, live)| format!(r#"{{"at":"{at}","live":{live}}}"#)).collect();
+        std::fs::write(base.join(repo).join("peaks.json"), format!(r#"{{"version":1,"peaks":[{}]}}"#, rows.join(","))).unwrap();
+    }
+
+    #[test_id(t2tkdb4)]
+    #[test]
+    fn a_release_cuts_a_repository_back_to_the_most_folders_it_leased_at_once_in_its_last_day() {
+        let d = testkit::TempDir::new("bdir-surplus");
+        let base = d.path().join("base");
+        let bases = vec![base.clone()];
+        let a = idle_folders(&bases, "A", 3);
+        assert_eq!(folders_of(&base, "A"), [1, 2, 3], "three leased at once: three are normal");
+
+        // A quiet repository: its last day is the day ending at its own newest build.
+        write_peaks(&base, "A", &[("2000-01-01T00:00:00.000000000Z", 3)]);
+        assert!(delete_surplus(&bases, "A").is_empty(), "no age rule: however old, the day is the repository's own");
+
+        for (dir, secs) in a.iter().zip([20, 10, 30]) {
+            set_last_used(dir, secs);
+        }
+        let one = lease_in(&bases, "a-again", "A");
+        assert_eq!(one.dir(), a[2]);
+        one.release();
+        assert_eq!(folders_of(&base, "A"), [3], "the older peak is over a day before the newest lease");
+        assert!(a[2].join("x").exists());
+    }
+
+    #[test_id(tapa7k4)]
+    #[test]
+    fn a_release_deletes_the_least_recently_used_idle_folder_first() {
+        let d = testkit::TempDir::new("bdir-surplus-lru");
+        let base = d.path().join("base");
+        let bases = vec![base.clone()];
+        let a = idle_folders(&bases, "A", 3);
+        for (dir, secs) in a.iter().zip([20, 10, 30]) {
+            set_last_used(dir, secs);
+        }
+        write_peaks(&base, "A", &[("2999-01-01T00:00:00.000000000Z", 2)]);
+        lease_dir(&bases, &a[2], "gate", "", std::time::Duration::ZERO).unwrap().unwrap().release();
+        assert_eq!(folders_of(&base, "A"), [1, 3]);
+    }
+
+    #[test_id(t1oeu3s)]
+    #[test]
+    fn a_release_that_cannot_read_the_peaks_record_deletes_nothing() {
+        let good = r#"{"version":1,"peaks":[{"at":"2026-09-29T19:18:40.000000000Z","live":1}]}"#;
+        let cases = [
+            ("garbage", Some("not json".to_string())),
+            ("version 2", Some(good.replace("\"version\":1", "\"version\":2"))),
+            ("unknown field", Some(good.replace("{\"version\"", "{\"extra\":0,\"version\""))),
+            ("missing", None),
+            ("sound", Some(good.to_string())),
+        ];
+        for (name, text) in cases {
+            let d = testkit::TempDir::new("bdir-peaks-bad");
+            let base = d.path().join("base");
+            let bases = vec![base.clone()];
+            let a = idle_folders(&bases, "A", 2);
+            match text {
+                Some(t) => std::fs::write(base.join("A/peaks.json"), t).unwrap(),
+                None => std::fs::remove_file(base.join("A/peaks.json")).unwrap(),
+            }
+            lease_dir(&bases, &a[0], "gate", "", std::time::Duration::ZERO).unwrap().unwrap().release();
+            let want: &[u64] = if name == "sound" { &[1] } else { &[1, 2] };
+            assert_eq!(folders_of(&base, "A"), want, "{name}");
+        }
+    }
+
+    #[test_id(tv23v7o)]
+    #[test]
+    fn an_evicted_folder_leaves_its_path_at_once_and_its_bytes_wait_in_the_reap_directory() {
+        let d = testkit::TempDir::new("bdir-rename");
+        let base = d.path().join("base");
+        let bases = vec![base.clone()];
+        let a = idle_folders(&bases, "A", 1);
+        let live = lease_in(&bases, "b1", "B");
+        assert_eq!(evict_idle_in(&bases, 0, &ten, &empty_proc(d.path())), [a[0].clone()]);
+        for left in ["A/1", "A/1.lock", "A/1.json", "A/1.gate"] {
+            assert!(!base.join(left).exists(), "{left}");
+        }
+        assert!(children(&base.join(".reap")).iter().any(|c| c.join("x").exists()), "renamed, not yet removed");
+        reap(&bases);
+        assert!(children(&base.join(".reap")).is_empty());
+        assert!(live.dir().is_dir());
+    }
+
+    #[test_id(tfgdqij)]
+    #[test]
+    fn bytes_waiting_to_be_reaped_count_against_the_budget_and_are_no_candidate() {
+        let d = testkit::TempDir::new("bdir-reap-counts");
+        let base = d.path().join("base");
+        let bases = vec![base.clone()];
+        let a = idle_folders(&bases, "A", 1);
+        let waiting = base.join(".reap/B.1.7");
+        fill(&waiting.join("x"), 1);
+        let proc = empty_proc(d.path());
+        assert!(evict_idle_in(&bases, 20, &ten, &proc).is_empty(), "positive control: within budget");
+        assert_eq!(evict_idle_in(&bases, 19, &ten, &proc), [a[0].clone()]);
+        assert!(waiting.join("x").exists(), "eviction leaves it to the reaper");
+    }
+
+    #[test_id(tojme4t)]
+    #[test]
+    fn an_unregistered_repositorys_idle_folders_go_and_its_leased_one_stays() {
+        let d = testkit::TempDir::new("bdir-unregistered");
+        let base = d.path().join("base");
+        let bases = vec![base.clone(), d.path().join("second")];
+        let home = idle_folders(&bases, "home", 1);
+        let a = idle_folders(&bases, "A", 1);
+        let b = idle_folders(&bases, "B", 2);
+        let c = idle_folders(&bases, "C", 2);
+        let live = lease_dir(&bases, &b[0], "b-live", "", std::time::Duration::ZERO).unwrap().unwrap();
+        let registered = ["home", "A"].map(String::from);
+        let mut gone = evict_unregistered(&bases, "home", &registered).unwrap();
+        gone.sort_by(|x, y| x.dir.cmp(&y.dir));
+        let mut want: Vec<Deleted> = [(&b[1], "B"), (&c[0], "C"), (&c[1], "C")]
+            .map(|(dir, repo)| Deleted { dir: dir.clone(), repo: Some(repo.into()), why: Why::Unregistered })
+            .into();
+        want.sort_by(|x, y| x.dir.cmp(&y.dir));
+        assert_eq!(gone, want);
+        assert!(live.dir().join("x").exists(), "a leased folder stays");
+        assert!(home[0].join("x").exists() && a[0].join("x").exists(), "registered repositories keep theirs");
+        assert!(bases.iter().all(|b| !b.join("C").exists()), "an emptied repository's directories go");
+    }
+
+    #[test_id(tfjyykl)]
+    #[test]
+    fn a_registry_that_does_not_name_the_home_repository_deletes_nothing_and_says_why() {
+        let d = testkit::TempDir::new("bdir-unregistered-refused");
+        let bases = vec![d.path().join("base")];
+        let b = idle_folders(&bases, "B", 1);
+        for registered in [vec![], vec!["A".to_string()]] {
+            let refused = evict_unregistered(&bases, "home", &registered).unwrap_err();
+            assert!(refused.contains("does not name the home repository \"home\""), "{refused}");
+            assert!(b[0].join("x").exists());
+        }
+        assert_eq!(evict_unregistered(&bases, "home", &["home".to_string()]).unwrap().len(), 1, "positive control");
+    }
+
+    #[test_id(t3qkocu)]
+    #[test]
+    fn the_registered_repositories_are_the_maps_rows_and_none_without_a_map() {
+        let env = BTreeMap::from([("SPIRA_HOME_REPO".to_string(), "home".to_string())]);
+        let registry = |map| crate::repos::Registry::new(map, &env, Path::new("x"));
+        assert_eq!(registered_repos(&registry(Some("home|x\nA|y\n"))), ["home", "A"]);
+        assert!(registered_repos(&registry(None)).is_empty(), "the home name alone is not a registry");
+    }
+
+    #[test_id(t1uqbje)]
+    #[test]
+    fn lease_dir_waiting_on_a_folder_that_is_then_deleted_says_it_is_gone() {
+        let d = testkit::TempDir::new("bdir-gone-while-waiting");
+        let base = d.path().join("base");
+        let bases = vec![base.clone()];
+        let a = idle_folders(&bases, "A", 1);
+        // A deletion in progress: the folder's lock is held under no name.
+        let alloc = alloc_lock(&bases, "A").unwrap();
+        let held = try_lock(&a[0]).unwrap();
+        held.0.set_len(0).unwrap();
+        let waiter = {
+            let (b, dir) = (bases.clone(), a[0].clone());
+            std::thread::spawn(move || lease_dir(&b, &dir, "gate", "builder", std::time::Duration::from_secs(10)).unwrap().map(drop))
+        };
+        assert!(discard(&a[0], held));
+        drop(alloc);
+        assert_eq!(waiter.join().unwrap(), Err(Refused::Gone));
+    }
+
+    #[test_id(t82h6no)]
+    #[test]
+    fn a_lease_with_no_trustworthy_history_keeps_every_folder_the_repository_has() {
+        for (name, damage) in [("missing", None), ("garbage", Some("not json")), ("version 2", Some(r#"{"version":2,"peaks":[]}"#))] {
+            let d = testkit::TempDir::new("bdir-peaks-lost");
+            let base = d.path().join("base");
+            let bases = vec![base.clone()];
+            idle_folders(&bases, "A", 3);
+            match damage {
+                Some(text) => std::fs::write(base.join("A/peaks.json"), text).unwrap(),
+                None => std::fs::remove_file(base.join("A/peaks.json")).unwrap(),
+            }
+            lease_in(&bases, "one", "A").release();
+            assert_eq!(folders_of(&base, "A"), [1, 2, 3], "{name}: a count nobody recorded is not a count of one");
+        }
+    }
+
+    #[test_id(tjsud68)]
+    #[test]
+    fn a_folder_reserved_while_a_gate_holds_another_of_the_repository_survives_its_release() {
+        let d = testkit::TempDir::new("bdir-gate-peak");
+        let base = d.path().join("base");
+        let bases = vec![base.clone()];
+        let a = idle_folders(&bases, "A", 2);
+        std::fs::remove_file(base.join("A/peaks.json")).unwrap();
+        set_last_used(&a[0], 1);
+        write_peaks(&base, "A", &[("2000-01-01T00:00:00.000000000Z", 1)]);
+        let builder = lease_in(&bases, "sp-a", "A");
+        assert_eq!(builder.dir(), a[1]);
+        let _gate = lease_dir(&bases, &a[0], "gate", "", std::time::Duration::ZERO).unwrap().unwrap();
+        builder.release_reserved("sp-a").1.unwrap();
+        assert_eq!(folders_of(&base, "A"), [1, 2], "two were leased at once");
+    }
+
+    #[test_id(tylirmn)]
+    #[test]
+    fn a_lease_removes_what_an_earlier_process_left_waiting() {
+        let d = testkit::TempDir::new("bdir-reap-leftover");
+        let base = d.path().join("base");
+        let left = base.join(".reap/A.1.7");
+        fill(&left.join("x"), 1);
+        let _l = lease_in(std::slice::from_ref(&base), "one", "A");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20); // clock-safe: a cap on waiting for the reaper
+        while left.exists() && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert!(!left.exists());
+    }
+
+    #[test_id(ta0rkc0)]
+    #[test]
+    fn an_idle_folder_holding_nothing_does_not_count_as_one_its_repository_holds() {
+        let d = testkit::TempDir::new("bdir-empty-beside-warm");
+        let bases = vec![d.path().join("base")];
+        let a = idle_folders(&bases, "A", 2);
+        std::fs::remove_file(a[0].join("x")).unwrap();
+        let b = idle_folders(&bases, "B", 1);
+        set_last_used(&a[1], 2);
+        set_last_used(&b[0], 1);
+        assert_eq!(evict_idle_in(&bases, 10, &ten, &empty_proc(d.path())), [b[0].clone()], "A's one warm folder is its last: B's older one goes first");
+
+        let d = testkit::TempDir::new("bdir-all-empty");
+        let bases = vec![d.path().join("base")];
+        for dir in idle_folders(&bases, "A", 2) {
+            std::fs::remove_file(dir.join("x")).unwrap();
+        }
+        let b = idle_folders(&bases, "B", 1);
+        assert_eq!(evict_idle_in(&bases, 0, &ten, &empty_proc(d.path())), [b[0].clone()], "two empty folders protect nobody");
+    }
+
+    #[test_id(tu98tce)]
+    #[test]
+    fn a_folder_another_eviction_took_since_the_count_leaves_the_repositorys_last_one() {
+        let d = testkit::TempDir::new("bdir-two-evictions");
+        let base = d.path().join("base");
+        let bases = vec![base.clone()];
+        let a = idle_folders(&bases, "A", 2);
+        let b = idle_folders(&bases, "B", 1);
+        let stray = base.join("zz");
+        std::fs::create_dir_all(&stray).unwrap();
+        // Strays are sized after every folder is listed: the other eviction lands between the two.
+        let size = |p: &Path| {
+            if p == stray {
+                let alloc = alloc_lock(&bases, "A").unwrap();
+                assert!(discard(&a[0], try_lock(&a[0]).unwrap()));
+                drop(alloc);
+            }
+            if p == a[0] { 10 } else { ten(p) }
+        };
+        assert!(evict_idle_in(&bases, 0, &size, &empty_proc(d.path())).is_empty());
+        assert!(a[1].join("x").exists() && b[0].join("x").exists());
+    }
+
+    #[test_id(tvjw5vp)]
+    #[test]
+    fn the_pool_gauge_counts_what_waits_to_be_reaped_as_the_budget_does() {
+        let d = testkit::TempDir::new("bdir-meter-reap");
+        let base = d.path().join("base");
+        let bases = vec![base.clone()];
+        let l = lease_in(&bases, "a", "A");
+        fill(&l.dir().join("x"), 1);
+        fill(&base.join(".reap/B.1.7/x"), 1);
+        let s = lease_samples(&bases, l.dir(), 777, &|p| if p.join("x").exists() { 10 } else { 0 });
+        assert_eq!(value(&s, "build_dir_pool_bytes", None), Some(20.0));
     }
 
     #[test_id(tu291h4)]

@@ -882,3 +882,106 @@ fn a_lease_pushes_what_its_clean_removed_under_its_holder_and_mode() {
     }
     let _ = (p.kill(), p.wait());
 }
+
+#[test_id(tvmdu2m)]
+#[test]
+fn a_hand_lease_over_budget_says_why_it_evicted_another_repositorys_idle_folder() {
+    let b = setup("bdcli-over-budget");
+    let toml = spira_config::process::fixture_toml(
+        b._d.path(),
+        &[("SPIRA_DWARF_BUILD_BASE", b.base.to_str().unwrap()), ("SPIRA_DWARF_BUILD_BUDGET_GIB", "0"), ("SPIRA_DWARF_BUILD_FOLDERS_PER_REPO", "5")],
+    );
+    let b = Box_ { toml, ..b };
+    let theirs = b.base.join("other/1");
+    std::fs::create_dir_all(theirs.join("debug")).unwrap();
+    std::fs::write(theirs.join("debug/x"), vec![1u8; 4096]).unwrap();
+    std::fs::write(b.base.join("other/1.lock"), "").unwrap();
+    let mut p = sleeper();
+    let (dir, err) = b.lease("hand-1", &p);
+    assert_eq!(dir, b.base.join("spira/1"), "{err}");
+    let want = format!("evicted idle build directory {} (over the 0 GiB budget)", theirs.display());
+    assert!(err.contains(&want), "{err}");
+    assert!(!theirs.exists());
+    wait_until("the holder reaps what it deleted", || std::fs::read_dir(b.base.join(".reap")).map_or(0, Iterator::count) == 0);
+    release(&b, &mut p);
+}
+
+#[test_id(ttgluic)]
+#[test]
+fn a_hand_lease_deletes_the_idle_folder_of_a_repository_the_registry_no_longer_names() {
+    let b = setup("bdcli-unregistered");
+    let map = spira_config::process::fixture_repo_map(b._d.path(), &["spira", "kept"]);
+    let toml = spira_config::process::fixture_toml(
+        b._d.path(),
+        &[
+            ("SPIRA_DWARF_BUILD_BASE", b.base.to_str().unwrap()),
+            ("SPIRA_DWARF_BUILD_BUDGET_GIB", "60"),
+            ("SPIRA_DWARF_BUILD_FOLDERS_PER_REPO", "5"),
+            ("SPIRA_REPO_MAP", map.to_str().unwrap()),
+            ("SPIRA_HOME_REPO", "spira"),
+        ],
+    );
+    let b = Box_ { toml, ..b };
+    for repo in ["kept", "removed"] {
+        std::fs::create_dir_all(b.base.join(repo).join("1/debug")).unwrap();
+        std::fs::write(b.base.join(repo).join("1.lock"), "").unwrap();
+    }
+    let mut p = sleeper();
+    let (_, err) = b.lease("hand-1", &p);
+    let want = format!("evicted idle build directory {} (repo:removed is no longer registered)", b.base.join("removed/1").display());
+    assert!(err.contains(&want), "{err}");
+    assert!(!b.base.join("removed").exists() && b.base.join("kept/1").is_dir(), "{err}");
+    release(&b, &mut p);
+}
+
+fn wait_until(what: &str, done: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(20); // clock-safe: a cap on waiting for the holder's effect on disk
+    while !done() && Instant::now() < deadline {
+        // clock-safe: cap on the wait for the holder
+        std::thread::sleep(Duration::from_millis(100)); // clock-safe: poll of the holder's effect
+    }
+    assert!(done(), "{what}");
+}
+
+#[test_id(ty58cmy)]
+#[test]
+fn a_hand_leases_release_deletes_the_repositorys_surplus_folder() {
+    let b = setup("bdcli-surplus");
+    for n in ["1", "2"] {
+        std::fs::create_dir_all(b.base.join("spira").join(n)).unwrap();
+        std::fs::write(b.base.join(format!("spira/{n}.lock")), "").unwrap();
+    }
+    let mut p = sleeper();
+    b.lease("hand-1", &p);
+    // A day whose newest lease is in the far future and held one folder.
+    std::fs::write(b.base.join("spira/peaks.json"), r#"{"version":1,"peaks":[{"at":"2999-01-01T00:00:00.000000000Z","live":1}]}"#).unwrap();
+    let folders = || ["spira/1", "spira/2"].iter().filter(|d| b.base.join(d).exists()).count();
+    assert_eq!(folders(), 2, "nothing is cut while the lease is held");
+    let _ = (p.kill(), p.wait());
+    wait_until("the holder's release cuts the repository back to one folder", || folders() == 1);
+}
+
+#[test_id(t2sspj7)]
+#[test]
+fn a_hand_lease_that_cannot_check_the_registry_says_why_and_deletes_nothing() {
+    let b = setup("bdcli-refused");
+    let map = spira_config::process::fixture_repo_map(b._d.path(), &["another"]);
+    let toml = spira_config::process::fixture_toml(
+        b._d.path(),
+        &[
+            ("SPIRA_DWARF_BUILD_BASE", b.base.to_str().unwrap()),
+            ("SPIRA_DWARF_BUILD_BUDGET_GIB", "60"),
+            ("SPIRA_DWARF_BUILD_FOLDERS_PER_REPO", "5"),
+            ("SPIRA_REPO_MAP", map.to_str().unwrap()),
+            ("SPIRA_HOME_REPO", "spira"),
+        ],
+    );
+    let b = Box_ { toml, ..b };
+    std::fs::create_dir_all(b.base.join("removed/1/debug")).unwrap();
+    std::fs::write(b.base.join("removed/1.lock"), "").unwrap();
+    let mut p = sleeper();
+    let (_, err) = b.lease("hand-1", &p);
+    assert!(err.contains("does not name the home repository \"spira\""), "{err}");
+    assert!(b.base.join("removed/1").is_dir(), "{err}");
+    release(&b, &mut p);
+}

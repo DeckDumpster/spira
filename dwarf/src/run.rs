@@ -1607,8 +1607,9 @@ impl<'a> Run<'a> {
     /// Lease this session's owned build directory and point every build at it (sp-ke0uk8):
     /// `CARGO_TARGET_DIR` in the session's environment, which the agent's cargo, `testenv`'s
     /// unit run and `work checks` all resolve. Never waits: a lease takes an idle directory or
-    /// makes a new one. Then idle directories over the disk budget go, least recently used first.
-    fn lease_build_dir(&mut self, work: &Path) -> Result<(), Abort> {
+    /// makes a new one. Then idle directories over the disk budget or of an unregistered
+    /// repository are deleted.
+    pub(crate) fn lease_build_dir(&mut self, work: &Path) -> Result<(), Abort> {
         use spira_config::build_dir as bd;
         let f = self.f().to_string();
         if self.s.build_dir.is_none() {
@@ -1642,11 +1643,13 @@ impl<'a> Run<'a> {
                 }
             }
             let budget = (self.conf.i(bd::BUDGET_ENV).max(0) as u64).saturating_mul(1 << 30);
-            let evicted = bd::evict_idle(&bases, budget);
-            for gone in &evicted {
-                self.log(&format!("{f}: evicted idle build directory {} (over the {} GiB budget)", gone.display(), budget >> 30));
+            let registry = spira_config::repos::Registry::from_env(self.conf.v.clone(), self.home());
+            let (deleted, refused) = bd::evict_at_lease(&bases, budget, &registry);
+            if let Some(why) = refused {
+                self.log(&format!("{f}: {why}"));
             }
-            bd::meter_evictions(&evicted);
+            self.log_deleted(&deleted);
+            bd::reap_in_background(&bases);
             bd::meter(&bases, &dir, budget);
             self.s.build_dir = Some(lease);
         }
@@ -1669,16 +1672,25 @@ impl<'a> Run<'a> {
         }
         let dir = lease.dir().to_path_buf();
         let report = lease.report(&self.s.bead);
-        let (trimmed, reserved) = if self.s.submitted_at.is_some() { lease.release_reserved(&self.s.bead) } else { (lease.release(), Ok(())) };
+        let (released, reserved) = if self.s.submitted_at.is_some() { lease.release_reserved(&self.s.bead) } else { (lease.release(), Ok(())) };
         if let Err(e) = reserved {
             self.log(&format!("{}: could not reserve build directory {d} for {}'s gate: cannot write {d}.gate: {e} — any session may lease it", self.f(), self.s.bead, d = dir.display()));
         }
-        self.log(&format!("{}: released build directory {}: {trimmed}", self.f(), dir.display()));
+        self.log(&format!("{}: released build directory {}: {}", self.f(), dir.display(), released.trimmed));
         self.log(&format!("{}: {report}", self.f()));
+        self.log_deleted(&released.deleted);
         use spira_config::build_dir as pool;
         pool::meter_report(&report);
         let bases = pool::parse_bases(&self.conf.s(pool::BASE_ENV));
+        pool::reap_in_background(&bases);
         pool::meter(&bases, &dir, (self.conf.i(pool::BUDGET_ENV).max(0) as u64).saturating_mul(1 << 30));
+    }
+
+    fn log_deleted(&self, deleted: &[spira_config::build_dir::Deleted]) {
+        for gone in deleted {
+            self.log(&format!("{}: {gone}", self.f()));
+        }
+        spira_config::build_dir::meter_evictions(deleted);
     }
 
     /// The session-id arguments for this launch. A checkpoint left by a world stop is
