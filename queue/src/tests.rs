@@ -5398,6 +5398,36 @@ fn a_concierge_claim_binds_every_actor_but_the_concierge() {
     assert!(!concierge_claimed("batcher", "verdict"));
 }
 
+#[test_id(thi99dd)]
+#[test]
+fn an_eject_whose_abandon_did_not_complete_claims_no_requeue() {
+    for (record, refused, rc) in [
+        (
+            "pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n",
+            Some("refused: IllegalTransition"),
+            1,
+        ),
+        ("pr=12\nmembers=sp-a:ta sp-b:tb\nversion=3\n", None, 0),
+    ] {
+        let t = T::new(LandMode::Queue);
+        t.open_record(record);
+        t.lc_requeues_to("sp-b", "tb", None, "CERTIFIED");
+        t.lc.abandon_refused.set(refused);
+        assert_eq!(
+            t.run(&["eject", "sp-a", "--reason", "bad"]),
+            rc,
+            "{}",
+            t.err()
+        );
+        let out = t.out();
+        assert!(out.contains("queue.sh eject: sp-b reads IN_DELIVERY (abandon-batch did not complete)"), "{out}");
+        assert!(!out.contains("returned to"), "{out}");
+        let mails = format!("{:?}", t.lib.mails.borrow());
+        assert!(mails.contains("Survivors not requeued (abandon-batch did not complete): sp-b:IN_DELIVERY"), "{mails}");
+        assert!(!mails.contains("Survivors requeued"), "{mails}");
+    }
+}
+
 // covers: UC-landing-merge-queue-29
 #[test_id(tg7dkmt)]
 #[test]
@@ -5449,6 +5479,23 @@ fn abandon_reports_each_member_in_the_state_spira_lc_requeued_it_to() {
         assert!(!text.contains("sp-c:CERTIFIED"), "{text}");
         assert!(!text.contains("sp-c: returned to CERTIFIED"), "{text}");
     }
+}
+
+#[test_id(t9xeh5w)]
+#[test]
+fn an_abandon_whose_abandon_batch_is_refused_claims_no_return() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta sp-b:tb sp-c:tc sp-d:td\nbatch_id=spira-1\nversion=3\nbranch=spira/queue/x\nowner=batcher\n");
+    t.lc_row("sp-a", "REWORK", "ta", 5);
+    t.lc_requeues_to("sp-b", "tb", None, "CERTIFIED");
+    t.lc.abandon_refused.set(Some("refused: IllegalTransition"));
+    t.var("SPIRA_QUEUE_ACTOR", "op");
+    assert_eq!(t.run(&["abandon", "--reason", "x"]), 0, "{}", t.err());
+    let (out, log) = (t.out(), t.landing_log());
+    assert!(out.contains("queue.sh abandon: sp-b: reads IN_DELIVERY (abandon-batch did not complete)"), "{out}");
+    assert!(out.contains("sp-a: left as REWORK"), "{out}");
+    assert!(!out.contains("returned to"), "{out}");
+    assert!(log.contains("members=sp-a:REWORK,sp-b:IN_DELIVERY"), "{log}");
 }
 
 #[test_id(tnac5da)]
