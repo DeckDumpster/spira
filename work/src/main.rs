@@ -129,6 +129,13 @@ fn main() {
         }
     }
 
+    if verb == "submit" {
+        if let Err(e) = reads_gate() {
+            eprintln!("{}", refusal(R::SubmitReads, "submit", &[("err", &e)]));
+            { let code = REFUSED; spira_otel::run::finish(code); std::process::exit(code) };
+        }
+    }
+
     let tip = if verb == "submit" { read_tip(&bound) } else { None };
 
     let read_stdin = || {
@@ -675,6 +682,23 @@ fn scratch_gate() -> Result<(), String> {
     let land = spira_config::repos::landref(&reg, &checkout.to_string_lossy()).ok_or("the landing ref cannot be resolved, so the branch cannot be checked for session scratch")?;
     let root = git_line(&["rev-parse", "--show-toplevel"]).ok_or("not inside a git worktree")?;
     work::scratch::gate(std::path::Path::new(&root), &land)
+}
+
+/// Refuses a submit to the home repository whose branch removes something the active release
+/// reads; a release or landing ref that cannot be identified refuses.
+fn reads_gate() -> Result<(), String> {
+    let root = git_line(&["rev-parse", "--show-toplevel"]).ok_or("not inside a git worktree")?;
+    let common = git_line(&["rev-parse", "--path-format=absolute", "--git-common-dir"]).ok_or("cannot read the git dir")?;
+    let checkout = std::path::Path::new(&common).parent().ok_or("cannot find the checkout")?;
+    let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), checkout);
+    let checkout = checkout.to_string_lossy();
+    if reg.name_at(&checkout).as_deref() != Some(reg.home_repo()) {
+        return Ok(());
+    }
+    let land = spira_config::repos::landref(&reg, &checkout).ok_or("the landing ref cannot be resolved, so the branch cannot be checked for removals the active release reads")?;
+    let root = std::path::Path::new(&root);
+    let sha = work::reads::release_commit(root, std::env::var(spira_config::RELEASE_ENV).ok().as_deref())?;
+    work::reads::gate(root, &land, &sha)
 }
 
 /// Refuses a submit to a non-home repository whose diff against its landing ref edits a contract

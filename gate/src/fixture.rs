@@ -4,7 +4,7 @@
 //! so a key the landing ref still requires cannot leave it. A refusal names the key, instead
 //! of surfacing as a harness fault when a round computes its image.
 
-use spira_config::resolve::{default_conf_d, resolve, ResolveInput};
+use spira_config::resolve::{default_conf_d, resolve, ResolveInput, Resolved};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
@@ -18,40 +18,91 @@ pub fn check(tree: &Path, base: Option<&str>) -> Result<usize, String> {
     let fixture = tree.join(FIXTURE);
     let home = tree.join("spira");
     let doc = tree_doc(&fixture, &home)?;
-    let env = BTreeMap::new();
-    let resolve_against = |doc: &spira_config::SpiraToml, conf_d: &Path, what: &str| {
-        resolve(ResolveInput { env: &env, home: &home, repo: tree, toml: Some(doc), conf_d })
-            .map_err(|e| format!("{FIXTURE} does not resolve against {what}: {e}"))
-    };
-    let resolved = resolve_against(&doc, &default_conf_d(&home), "this tree's config keys")?;
+    let resolved = resolve_fixture(tree, &doc, &default_conf_d(&home), "this tree's config keys")?;
     if let Some(base) = base {
-        let scratch = std::env::temp_dir().join(format!("gate-fixture-config-{}-{}", std::process::id(), SCRATCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
-        let _ = std::fs::remove_dir_all(&scratch);
-        std::fs::create_dir_all(&scratch).map_err(|e| format!("scratch for the landing ref's keys: {e}"))?;
-        // batch-job: a gate step that extracts the landing ref under full gate load
-        let archive = Command::new("timeout").args(["60", "git", "-C"]).arg(tree).args(["archive", base, "spira/conf.d"]).output()
-            .map_err(|e| format!("git archive {base}: {e}"))?;
-        if !archive.status.success() {
-            return Err(format!("git archive {base} spira/conf.d: {}", String::from_utf8_lossy(&archive.stderr).trim()));
-        }
-        // batch-job: a gate step that extracts the landing ref under full gate load
-        let mut tar = Command::new("timeout").args(["60", "tar", "-x"]).arg("-C").arg(&scratch).stdin(std::process::Stdio::piped()).spawn()
-            .map_err(|e| format!("tar: {e}"))?;
-        let written = std::io::Write::write_all(&mut tar.stdin.take().unwrap(), &archive.stdout);
-        let unpacked = tar.wait().map_err(|e| format!("tar: {e}"))?.success();
-        if let (Err(e), false) = (&written, unpacked) {
-            return Err(format!("tar did not unpack the landing ref {base}'s config keys: {e}"));
-        }
-        let landed = unpacked.then(|| landing_doc(&fixture, &scratch.join("spira")).and_then(|landing| resolve_against(&landing, &scratch.join("spira/conf.d"), &format!("the landing ref {base}'s config keys (a round runs that code against this fixture)"))));
-        let landed = landed.map(|r| r.map_err(|e| match key_new_on_branch(&e, &home.join("conf.d"), &scratch.join("spira/conf.d")) {
-            Some(k) => format!("{e}; {k} is new on this branch (spira/conf.d/{k} is not on {base}): let it resolve from its conf.d file in the generic pass, with no hand-written step in spira-config/src/resolve.rs and no COMPUTED_KEYS entry in spira-config/src/process.rs"),
-            None => e,
-        }));
-        let _ = std::fs::remove_dir_all(&scratch);
-        landed.unwrap_or_else(|| Err(format!("could not unpack the landing ref {base}'s config keys")))?;
+        against_rev(tree, base, &format!("the landing ref {base}"))?;
         merged_delta(tree, base)?;
     }
     Ok(resolved.values.len())
+}
+
+fn resolve_fixture(tree: &Path, doc: &spira_config::SpiraToml, conf_d: &Path, what: &str) -> Result<Resolved, String> {
+    let env = BTreeMap::new();
+    resolve(ResolveInput { env: &env, home: &tree.join("spira"), repo: tree, toml: Some(doc), conf_d })
+        .map_err(|e| format!("{FIXTURE} does not resolve against {what}: {e}"))
+}
+
+/// The tree's fixture must resolve against the key registry of `rev`, the code that reads it;
+/// `what` names `rev` in a refusal.
+pub fn against_rev(tree: &Path, rev: &str, what: &str) -> Result<(), String> {
+    let fixture = tree.join(FIXTURE);
+    let home = tree.join("spira");
+    let scratch = std::env::temp_dir().join(format!("gate-fixture-config-{}-{}", std::process::id(), SCRATCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+    let _ = std::fs::remove_dir_all(&scratch);
+    std::fs::create_dir_all(&scratch).map_err(|e| format!("scratch for {what}'s keys: {e}"))?;
+    // batch-job: a gate step that extracts the landing ref under full gate load
+    let archive = Command::new("timeout").args(["60", "git", "-C"]).arg(tree).args(["archive", rev, "spira/conf.d"]).output()
+        .map_err(|e| format!("git archive {rev}: {e}"))?;
+    if !archive.status.success() {
+        return Err(format!("git archive {rev} spira/conf.d: {}", String::from_utf8_lossy(&archive.stderr).trim()));
+    }
+    // batch-job: a gate step that extracts the landing ref under full gate load
+    let mut tar = Command::new("timeout").args(["60", "tar", "-x"]).arg("-C").arg(&scratch).stdin(std::process::Stdio::piped()).spawn()
+        .map_err(|e| format!("tar: {e}"))?;
+    let written = std::io::Write::write_all(&mut tar.stdin.take().unwrap(), &archive.stdout);
+    let unpacked = tar.wait().map_err(|e| format!("tar: {e}"))?.success();
+    if let (Err(e), false) = (&written, unpacked) {
+        return Err(format!("tar did not unpack {what}'s config keys: {e}"));
+    }
+    let landed = unpacked.then(|| landing_doc(&fixture, &scratch.join("spira")).and_then(|landing| resolve_fixture(tree, &landing, &scratch.join("spira/conf.d"), &format!("{what}'s config keys (a round runs that code against this fixture)"))));
+    let landed = landed.map(|r| r.map_err(|e| match key_new_on_branch(&e, &home.join("conf.d"), &scratch.join("spira/conf.d")) {
+        Some(k) => format!("{e}; {k} is new on this branch (spira/conf.d/{k} is not on {rev}): let it resolve from its conf.d file in the generic pass, with no hand-written step in spira-config/src/resolve.rs and no COMPUTED_KEYS entry in spira-config/src/process.rs"),
+        None => e,
+    }));
+    let _ = std::fs::remove_dir_all(&scratch);
+    landed.unwrap_or_else(|| Err(format!("could not unpack {what}'s config keys")))?;
+    Ok(())
+}
+
+/// Whether the fixture at `tree` lacks a key it held where the branch left `land`.
+pub fn drops_keys(tree: &Path, land: &str) -> Result<bool, String> {
+    let git = |args: &[&str]| {
+        let o = Command::new("timeout").args(["5", "git", "-C"]).arg(tree).args(args).output().map_err(|e| format!("git {}: {e}", args.join(" ")))?;
+        match o.status.success() {
+            true => Ok(String::from_utf8_lossy(&o.stdout).into_owned()),
+            false => Err(format!("git {}: {}", args.join(" "), String::from_utf8_lossy(&o.stderr).trim())),
+        }
+    };
+    let fork = git(&["merge-base", land, "HEAD"])?.trim().to_string();
+    if git(&["ls-tree", &fork, "--", FIXTURE])?.is_empty() {
+        return Ok(false);
+    }
+    let before = keys_of(&git(&["show", &format!("{fork}:{FIXTURE}")])?)?;
+    let after = match std::fs::read_to_string(tree.join(FIXTURE)) {
+        Ok(text) => keys_of(&text)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(e) => return Err(format!("{FIXTURE}: {e}")),
+    };
+    Ok(!before.is_subset(&after))
+}
+
+fn keys_of(text: &str) -> Result<std::collections::BTreeSet<Vec<String>>, String> {
+    fn walk(table: &toml::Table, path: &mut Vec<String>, out: &mut std::collections::BTreeSet<Vec<String>>) {
+        for (name, value) in table {
+            path.push(name.clone());
+            match value.as_table() {
+                Some(inner) => walk(inner, path, out),
+                None => {
+                    out.insert(path.clone());
+                }
+            }
+            path.pop();
+        }
+    }
+    let table = text.parse::<toml::Table>().map_err(|e| format!("{FIXTURE}: {e}"))?;
+    let mut out = Default::default();
+    walk(&table, &mut Vec::new(), &mut out);
+    Ok(out)
 }
 
 /// The key a resolve refusal is about, when only the tree registers it.
