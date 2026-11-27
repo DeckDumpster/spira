@@ -373,6 +373,7 @@ pub enum Attribution {
 /// base-untestable, never branch-red on a base that merely did not look. Only when every
 /// branch red is red on the base too does the base's own rule apply (all timeouts →
 /// base-timeout, else base-red: the caller subtracts those units rather than holding the branch).
+/// The caller does not ask when the rerun held a flip back.
 pub fn attribute(
     (branch_out, branch_tiers): (&str, &[Tier]),
     base_ran: bool,

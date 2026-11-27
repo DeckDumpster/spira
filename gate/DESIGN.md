@@ -300,7 +300,8 @@ on the branch and absent from the base trial's ran-set is checked in this order:
   Its output is appended to the base's output, and its wall time is metered as the
   `base-rerun` phase.
 
-Then, given the branch trial failed with an ordinary red:
+Then, given the branch trial failed with an ordinary red (a held flip skips these rules and is
+`branch-red`; see "The rerun of a red test"):
 
 * base trial not run, or it exited 124 or 75 → NO_VERDICT `base-untestable`
 * the red names no suite (a fence, a unit phase): base passed → FAIL `branch-red`, suite `-`

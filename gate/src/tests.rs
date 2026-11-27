@@ -3971,6 +3971,7 @@ fn held_flips_beside_a_red_base_fence_are_still_named_on_the_verdict() {
     assert_eq!(f.run(), FAIL, "{}", f.stderr());
     let verdict = verdict_message(&f);
     assert!(verdict.contains("gate: local/main is red on:"), "{verdict}");
+    assert!(!verdict.contains("red on this branch and not on"), "{verdict}");
     assert!(verdict.contains("\ngate: held back by the flip cap (3): t::t000004 "), "{verdict}");
 }
 
@@ -3978,10 +3979,11 @@ fn held_flips_beside_a_red_base_fence_are_still_named_on_the_verdict() {
 #[test]
 fn held_flips_stay_the_branchs_red_when_the_base_was_never_tried() {
     let f = rerun_fake(&many_reds("FAIL", 4), Some(&many_reds("PASS", 4)));
-    f.runs.borrow_mut().insert(BASE.into(), (NOVERDICT, String::new()));
+    f.runs.borrow_mut().insert(BASE.into(), (NOVERDICT, "base-host-broke".into()));
     assert_eq!(f.run(), FAIL, "{}", f.stderr());
     let verdict = verdict_message(&f);
     assert!(verdict.contains("\ngate: held back by the flip cap (3): t::t000004 "), "{verdict}");
+    assert!(verdict.contains("local/main gave no verdict") && verdict.contains("base-host-broke"), "{verdict}");
     assert!(!verdict.contains("fences pass"), "{verdict}");
 }
 

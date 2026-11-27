@@ -1706,9 +1706,14 @@ impl<'w, W: World> Trial<'w, W> {
                 if base_ran && base_rc != 0 {
                     let base_reds = parse::red_units(&base_out, &base_tiers);
                     let (own, inherited): (Vec<String>, Vec<String>) = parse::red_units(&out, &tiers).into_iter().partition(|x| !base_reds.contains(x));
+                    let own = if rerun.held {
+                        format!("charged to this branch without a base comparison: {}", spaced(&own))
+                    } else {
+                        format!("red on this branch and not on {base}: {}", spaced(&own))
+                    };
                     return v(FAIL, "branch-red", format!(
-                        "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: red on this branch and not on {base}: {}\ngate: inherited, not judged (red on {base} too): {}\ngate: {base} is red on: {}{}",
-                        spaced(&own), spaced(&inherited), spaced(&base_reds), rerun.text));
+                        "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: {own}\ngate: inherited, not judged (red on {base} too): {}\ngate: {base} is red on: {}{}",
+                        spaced(&inherited), spaced(&base_reds), rerun.text));
                 }
                 if let Some(flips) = (!rerun.held).then(|| self.shared_unit_red(&out, &tiers)).flatten() {
                     let notes: String = flips.iter().map(|(t, beads)| format!(
@@ -1719,7 +1724,8 @@ impl<'w, W: World> Trial<'w, W> {
                 }
                 let failed = parse::failed_tests(&out);
                 let closing = if !base_ran && rerun.held {
-                    format!("gate: {base} was not tried; a held flip is charged to this branch without it.")
+                    let said = if base_out.trim().is_empty() { String::new() } else { format!("\n--- {base}'s own attempt ---\n{}", parse::tail_bytes(&base_out, 4000)) };
+                    format!("gate: {base} gave no verdict; a held flip is charged to this branch without it.{said}")
                 } else if matches!(comp, Composition::Unit { .. }) && failed.is_empty() {
                     format!("gate: {base}'s fences pass, so the red is charged to this branch.")
                 } else if matches!(comp, Composition::Unit { .. }) {
