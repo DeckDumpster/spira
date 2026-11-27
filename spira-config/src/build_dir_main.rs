@@ -18,6 +18,8 @@ use std::time::Duration;
 
 /// The file under `SPIRA_RUN` each hand lease's report is appended to.
 const LOG: &str = "build-dir.log";
+/// At this size the log becomes `<LOG>.1`, replacing the one before.
+const LOG_CAP_BYTES: u64 = 1 << 20;
 const POLL: Duration = Duration::from_millis(500);
 const USAGE: &str = "usage: spira-build-dir lease --who <label> --pid <pid> [--root <tree>] --repo <name>";
 
@@ -141,6 +143,9 @@ fn log_report(report: &bd::LeaseReport) {
 
 fn append(run: &Path, line: &str) -> std::io::Result<()> {
     std::fs::create_dir_all(run)?;
+    if std::fs::metadata(run.join(LOG)).is_ok_and(|m| m.len() >= LOG_CAP_BYTES) {
+        std::fs::rename(run.join(LOG), run.join(format!("{LOG}.1")))?;
+    }
     std::fs::OpenOptions::new().append(true).create(true).open(run.join(LOG))?.write_all(line.as_bytes())
 }
 

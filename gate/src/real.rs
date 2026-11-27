@@ -318,10 +318,12 @@ impl Real {
             Err(bd::Refused::NotASlot) => return Err((BuilderMiss::Gone, "it is not a pool directory".into())),
         };
         let linked = (|| -> Result<(), String> {
-            bd::clean(&self.home.join(bd::CLEAN_SCRIPT), tree, lease.dir(), &b.path, false, &b.bead, None)?;
+            let cleaned = bd::clean(&self.home.join(bd::CLEAN_SCRIPT), tree, lease.dir(), &b.path, false, &b.bead, None);
+            // A failed clean still reports what it removed, and the gate does not empty the folder.
             if let Some(report) = bd::clean_report(lease.dir()) {
                 lease.note_clean(&report);
             }
+            cleaned?;
             crate::warm::normalize_mtimes(tree, &b.tip)?;
             let (link, debug) = (tree.join("target").join("debug"), lease.dir().join("debug"));
             fs::create_dir_all(&debug).map_err(|e| format!("{}: {e}", debug.display()))?;
