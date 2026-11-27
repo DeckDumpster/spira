@@ -108,8 +108,7 @@ impl Profile {
             .join(":");
         Profile {
             tree: tree.to_path_buf(),
-            // SAFETY: getuid has no preconditions and cannot fail.
-            caller_uid: unsafe { libc::getuid() },
+            caller_uid: spira_config::resolve::current_uid(),
             target: target.to_path_buf(),
             home: home.to_path_buf(),
             gitdir: worktree_gitdir(tree),
