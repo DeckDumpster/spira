@@ -127,11 +127,11 @@ async fn say(what: String) {
 /// on return, so the next round can bind the same address; on `stop` the open sessions go on to
 /// their end, on a closed channel they are cut.
 pub async fn run(cfg: Option<spira_submission::Config>, delivery: Option<Delivery>, tx: mpsc::Sender<Submit>, stop: impl Future<Output = ()>) {
-    run_within(cfg, delivery, tx, stop, IO_TIMEOUT).await
+    run_within(cfg, delivery, tx, stop, IO_TIMEOUT, IO_TIMEOUT).await
 }
 
-/// [`run`] with `io` bounding every read, write and handshake step and the wait for a journaled reply.
-pub async fn run_within(cfg: Option<spira_submission::Config>, delivery: Option<Delivery>, tx: mpsc::Sender<Submit>, stop: impl Future<Output = ()>, io: Duration) {
+/// [`run`] with `io` bounding every read, write and handshake step and `reply` the wait for a journaled reply.
+pub async fn run_within(cfg: Option<spira_submission::Config>, delivery: Option<Delivery>, tx: mpsc::Sender<Submit>, stop: impl Future<Output = ()>, io: Duration, reply: Duration) {
     tokio::pin!(stop);
     let cfg = match cfg {
         Some(c) => on_pool("submission config", Arc::new(move || Some(c.clone()).filter(|c| c.cert.is_file() && c.key.is_file()))).await.unwrap_or(None),
@@ -146,7 +146,7 @@ pub async fn run_within(cfg: Option<spira_submission::Config>, delivery: Option<
         }
     };
     let cfg = Arc::new(cfg);
-    let sink = Arc::new(EventSink { tx: tx.clone(), delivery, reply_within: io });
+    let sink = Arc::new(EventSink { tx: tx.clone(), delivery, reply_within: reply });
     let mut sessions = JoinSet::new();
     loop {
         tokio::select! {
@@ -513,7 +513,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel::<Submit>(4);
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
         let addr = b.cfg.socket();
-        let server = tokio::spawn(run_within(Some(b.cfg.clone()), Some(b.delivery.clone()), tx, async { let _ = stop_rx.await; }, Duration::from_millis(100)));
+        let server = tokio::spawn(run_within(Some(b.cfg.clone()), Some(b.delivery.clone()), tx, async { let _ = stop_rx.await; }, Duration::from_secs(30), Duration::ZERO));
         let mut c = Client::connect(addr).await;
         submit_message(&mut c, "<t1@x>").await;
         let held = rx.recv().await.unwrap();
@@ -530,7 +530,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel::<Submit>(4);
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
         let addr = b.cfg.socket();
-        let server = tokio::spawn(run_within(Some(b.cfg.clone()), None, tx, async { let _ = stop_rx.await; }, Duration::from_millis(100)));
+        let server = tokio::spawn(run_within(Some(b.cfg.clone()), None, tx, async { let _ = stop_rx.await; }, Duration::from_millis(100), Duration::from_millis(100)));
         let mut raw = loop {
             match TcpStream::connect(addr).await {
                 Ok(t) => break t,
@@ -553,7 +553,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel::<Submit>(4);
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
         let addr = b.cfg.socket();
-        let server = tokio::spawn(run_within(Some(b.cfg.clone()), None, tx, async { let _ = stop_rx.await; }, Duration::from_millis(100)));
+        let server = tokio::spawn(run_within(Some(b.cfg.clone()), None, tx, async { let _ = stop_rx.await; }, Duration::from_millis(100), Duration::from_millis(100)));
         let mut c = Client::connect(addr).await;
         assert!(c.line().await.starts_with("220"));
         c.say(&format!("AUTH PLAIN {}", plain("ryan", "hunter2"))).await;
