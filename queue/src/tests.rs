@@ -541,6 +541,8 @@ struct FScripts {
     repo_testenv: RefCell<RunOut>,
     /// The status `ci.result` carries when it is not the one the exit code implies.
     repo_ci_status: RefCell<Option<String>>,
+    /// The entry never reached its verdict: no `ci.result`, and this `round-fault.out`.
+    repo_round_fault: RefCell<Option<String>>,
     round_vm_results: RefCell<Vec<(String, String)>>,
     /// The `runner.meta` it leaves beside them (empty = none).
     round_vm_meta: RefCell<String>,
@@ -799,15 +801,15 @@ impl Scripts for FScripts {
         fs::write(handle, "777").unwrap();
         fs::create_dir_all(results).unwrap();
         let out = self.repo_testenv.borrow().clone();
-        let status = self
-            .repo_ci_status
-            .borrow()
-            .clone()
-            .or_else(|| match out.rc {
-                0 => Some("ok".into()),
-                1 => Some("red".into()),
-                _ => None,
-            });
+        let fault = self.repo_round_fault.borrow().clone();
+        if let Some(fault) = &fault {
+            fs::write(results.join("round-fault.out"), fault).unwrap();
+        }
+        let status = self.repo_ci_status.borrow().clone().or_else(|| match out.rc {
+            0 if fault.is_none() => Some("ok".into()),
+            1 if fault.is_none() => Some("red".into()),
+            _ => None,
+        });
         if let Some(status) = status {
             fs::write(results.join("ci.result"), format!("{status} 1 1\n")).unwrap();
         }
