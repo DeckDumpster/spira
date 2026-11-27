@@ -57,11 +57,13 @@ fn put<B: Backend>(c: &Contract<B>, key: &str, v: Object, id: &str) -> u64 {
     r.rev
 }
 
+type Hook = Box<dyn FnOnce() + Send>;
+
 /// Delegates to a backend, and can run a hook after a range read or lose a commit's reply.
 pub struct Interpose<B: Backend> {
     inner: B,
     after_range: Mutex<Option<Box<dyn FnOnce() + Send>>>,
-    after_logs: Mutex<Option<(usize, Box<dyn FnOnce() + Send>)>>,
+    after_logs: Mutex<Option<(usize, Hook)>>,
     ambiguous_commit: AtomicBool,
     gc_rows: AtomicUsize,
     returned: Mutex<Vec<String>>,
