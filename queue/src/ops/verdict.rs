@@ -3,6 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
+use spira_config::unit_tier::nextest_red_in;
+
 use super::forge_batch::{self, Open};
 use super::helpers::report_refused_filing;
 use super::{idents, landing_log, owner_refused, require_lc, resolve, Ctx, World, FAIL, OK, USAGE};
@@ -227,24 +229,26 @@ pub fn red_suites_csv(out: &str) -> String {
     seen.join(",")
 }
 
-/// Failing tests named in a failed step's log tail: `FAILED <file>::<test>` files, else the
-/// repo's own `CI FAILED during step: <tier>`, else a bare `N failed` count as `tests`.
+/// Failing tests named in a failed step's log tail: `FAILED <file>::<test>` files and nextest
+/// red binaries, else the repo's own `CI FAILED during step: <tier>`, else a bare `N failed`
+/// count as `tests`.
 fn test_red_csv(out: &str) -> String {
     let mut seen: Vec<String> = Vec::new();
     let mut tier: Option<String> = None;
     let mut counted = false;
     for l in tagged(out, "step-log: ") {
         let l = l.trim();
-        if let Some(rest) = l.strip_prefix("FAILED ") {
-            let file = rest
-                .split("::")
+        let pytest = l.strip_prefix("FAILED ").map(|rest| {
+            rest.split("::")
                 .next()
                 .unwrap_or("")
                 .split_whitespace()
                 .next()
-                .unwrap_or("");
-            if !file.is_empty() && !seen.iter().any(|s| s == file) {
-                seen.push(file.to_string());
+                .unwrap_or("")
+        });
+        if let Some(suite) = pytest.or_else(|| nextest_red_in(l).map(|(binary, _)| binary)) {
+            if !suite.is_empty() && !seen.iter().any(|s| s == suite) {
+                seen.push(suite.to_string());
             }
         } else if let Some(t) = l.split("CI FAILED during step:").nth(1) {
             tier = Some(t.trim().replace(char::is_whitespace, "-")).filter(|t| !t.is_empty());

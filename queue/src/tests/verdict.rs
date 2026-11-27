@@ -527,6 +527,7 @@ fn a_publish_red_that_names_a_suite_or_a_test_is_never_rerun() {
     for red in [
         "red\nred-suite: test-a.sh\n",
         "red\nrun-id: 77\nstep-log: FAILED tests/test_x.py::t - boom\n",
+        "red\nrun-id: 77\nstep-log:         FAIL [   0.412s] (1/1) demo::it a_test\n",
     ] {
         let t = T::new(LandMode::QueueLocal);
         publish_record(&t);
@@ -1655,6 +1656,45 @@ fn a_pytest_failure_with_no_annotations_is_a_test_red_not_a_setup_red() {
         .iter()
         .any(|c| c.starts_with("workflow-rerun")));
     assert!(t.out().contains("called judgement (sp-j3)"), "{}", t.out());
+}
+
+#[test_id(tsogawz)]
+#[test]
+fn a_nextest_failure_with_no_annotations_is_a_test_red_not_a_setup_red() {
+    for status in ["FAIL", "TIMEOUT"] {
+        let mut t = T::new(LandMode::Queue);
+        t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta\nopened=500\nbranch=spira/queue/x\nowner=batcher\nbatch_id=spira-1\nversion=3\n");
+        t.git.set("origin/main", "b0");
+        *t.forge.rerun_decided.borrow_mut() = Some("no input changed".into());
+        t.lib.s.batcher_bin = Some(PathBuf::from("batcher"));
+        *t.scripts.judgement.borrow_mut() = RunOut {
+            rc: 0,
+            out: "id=sp-j3\n".into(),
+            err: String::new(),
+        };
+        *t.forge.run.borrow_mut() = Some("77".into());
+        let red = format!("step-log:         {status} [   0.412s] (957/957) dumpstar-cli::rust_cache a_lost_server_under_on_is_said_once_and_the_run_goes_on_cold\n");
+        t.forge.status.borrow_mut().push(Some(format!(
+            "red\nfailed-step: gate / Run tests\n{red}step-log:      Summary [ 60.0s] 957 tests run: 956 passed, 1 failed, 0 skipped\n{red}"
+        )));
+        assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+        assert!(
+            has_call(
+                &t.scripts.calls,
+                "judgement-ci batcher spira dumpstar-cli::rust_cache "
+            ),
+            "{status}: {:?} / {}",
+            t.scripts.calls,
+            t.out()
+        );
+        assert!(!t
+            .forge
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("workflow-rerun")));
+        assert!(!t.lc.has("eject-member"), "{:?}", t.lc.calls.borrow());
+    }
 }
 
 #[test_id(tp27xdf)]
