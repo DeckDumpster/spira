@@ -9,6 +9,8 @@ use crate::classify::{classify, fold_program, UNRESOLVED};
 
 pub const STARTS: &str = "spira_proc_starts_total";
 pub const THREAD_STARTS: &str = "spira_proc_thread_starts_total";
+pub const EXECS: &str = "spira_proc_execs_total";
+pub const HOST_FORKS: &str = "spira_proc_host_forks_total";
 pub const DROPPED: &str = "spira_proc_starts_dropped_total";
 pub const BPF_NS: &str = "spira_proc_starts_bpf_ns_total";
 pub const BPF_RUNS: &str = "spira_proc_starts_bpf_runs_total";
@@ -26,12 +28,14 @@ pub struct StartCount {
     pub n: u64,
 }
 
-/// Everything one drain took out of the kernel. `dropped` and `cost` are the kernel's own running
-/// totals (arrays that are never emptied), so they replace rather than add.
+/// Everything one drain took out of the kernel. `dropped`, `cost` and `host_forks` are the kernel's
+/// own running totals, so they replace rather than add.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Drain {
     pub starts: Vec<StartCount>,
     pub threads: Vec<(u64, u64)>,
+    pub execs: Vec<(u64, u64)>,
+    pub host_forks: Option<u64>,
     pub dropped: [u64; 2],
     pub cost: [(u64, u64); 4],
 }
@@ -42,6 +46,8 @@ type StartKey = (String, String, String, String);
 pub struct Totals {
     starts: BTreeMap<StartKey, u64>,
     threads: BTreeMap<String, u64>,
+    execs: BTreeMap<String, u64>,
+    host_forks: Option<u64>,
     dropped: [u64; 2],
     cost: [(u64, u64); 4],
 }
@@ -62,6 +68,10 @@ impl Totals {
         for (cgroup, n) in d.threads {
             *self.threads.entry(class_of(cgroup, resolve).0).or_default() += n;
         }
+        for (cgroup, n) in d.execs {
+            *self.execs.entry(class_of(cgroup, resolve).0).or_default() += n;
+        }
+        self.host_forks = d.host_forks;
         self.dropped = d.dropped;
         self.cost = d.cost;
     }
@@ -80,6 +90,12 @@ impl Totals {
         for (class, &n) in &self.threads {
             out.push(s(THREAD_STARTS, n as f64, &[("unit_class", class)]));
         }
+        for (class, &n) in &self.execs {
+            out.push(s(EXECS, n as f64, &[("unit_class", class)]));
+        }
+        if let Some(n) = self.host_forks {
+            out.push(s(HOST_FORKS, n as f64, &[]));
+        }
         for (reason, &n) in DROP_REASONS.iter().zip(&self.dropped) {
             out.push(s(DROPPED, n as f64, &[("reason", reason)]));
         }
@@ -90,6 +106,11 @@ impl Totals {
         out.push(s(SELF_CPU, self_cpu_seconds, &[]));
         out
     }
+}
+
+/// The `processes N` line of a `/proc/stat` text: every task the kernel has created since boot.
+pub fn host_forks(stat: &str) -> Option<u64> {
+    stat.lines().find_map(|l| l.strip_prefix("processes "))?.trim().parse().ok()
 }
 
 /// utime + stime of a `/proc/<pid>/stat` text, in seconds; the fields follow the `)` closing comm.
@@ -145,16 +166,48 @@ mod tests {
         assert_eq!(value(&t.series(0.0, SystemTime::UNIX_EPOCH), STARTS, ("program", "round_vm-*")), Some(2.0));
     }
 
+    #[test_id(tj8ht7j)]
+    #[test]
+    fn execs_of_two_drains_sum_by_unit_class() {
+        let mut t = Totals::default();
+        let mut slice_only = |_| Some("/system.slice".to_string()); // not a path: a cgroup path
+        t.fold(Drain { execs: vec![(7, 3)], ..Drain::default() }, &mut slice_only);
+        t.fold(Drain { execs: vec![(7, 3)], ..Drain::default() }, &mut slice_only);
+        let series = t.series(0.0, SystemTime::UNIX_EPOCH);
+        assert_eq!(value(&series, EXECS, ("unit_class", "system")), Some(6.0));
+    }
+
+    #[test_id(t906l2r)]
+    #[test]
+    fn the_host_fork_counter_is_the_latest_one_read_and_absent_until_read() {
+        assert_eq!(host_forks("cpu  1 2 3\nctxt 9\nprocesses 58619\nprocs_running 2\n"), Some(58619));
+        assert_eq!(host_forks("garbage"), None);
+
+        let mut t = Totals::default();
+        t.fold(Drain::default(), &mut resolver);
+        assert!(!t.series(0.0, SystemTime::UNIX_EPOCH).iter().any(|s| s.name == HOST_FORKS));
+        t.fold(Drain { host_forks: Some(10), ..Drain::default() }, &mut resolver);
+        t.fold(Drain { host_forks: Some(25), ..Drain::default() }, &mut resolver);
+        let series = t.series(0.0, SystemTime::UNIX_EPOCH);
+        let pushed: Vec<(f64, usize)> = series.iter().filter(|s| s.name == HOST_FORKS).map(|s| (s.value, s.labels.len())).collect();
+        assert_eq!(pushed, vec![(25.0, 0)]);
+
+        t.fold(Drain::default(), &mut resolver);
+        assert!(!t.series(0.0, SystemTime::UNIX_EPOCH).iter().any(|s| s.name == HOST_FORKS), "a stale count must not be pushed as a fresh one");
+    }
+
     #[test_id(tbwjsl4)]
     #[test]
-    fn the_series_carry_the_six_names_and_only_their_labels() {
+    fn the_series_carry_the_eight_names_and_only_their_labels() {
         let mut t = Totals::default();
-        let d = Drain { starts: vec![start(7, "git", 1)], threads: vec![(7, 1)], dropped: [1, 2], cost: [(10, 2); 4] };
+        let d = Drain { starts: vec![start(7, "git", 1)], threads: vec![(7, 1)], execs: vec![(7, 1)], host_forks: Some(1), dropped: [1, 2], cost: [(10, 2); 4] };
         t.fold(d, &mut resolver);
         let series = t.series(1.5, SystemTime::UNIX_EPOCH);
-        let allowed: [(&str, &[&str]); 6] = [
+        let allowed: [(&str, &[&str]); 8] = [
             (STARTS, &["unit_class", "unit", "program", "starter"]),
             (THREAD_STARTS, &["unit_class"]),
+            (EXECS, &["unit_class"]),
+            (HOST_FORKS, &[]),
             (DROPPED, &["reason"]),
             (BPF_NS, &["prog"]),
             (BPF_RUNS, &["prog"]),
@@ -171,7 +224,7 @@ mod tests {
                 assert_eq!(got, want, "{name}");
             }
         }
-        assert_eq!(series.len(), 1 + 1 + 2 + 8 + 1);
+        assert_eq!(series.len(), 1 + 1 + 1 + 1 + 2 + 8 + 1);
         assert_eq!(value(&series, DROPPED, ("reason", "counts_full")), Some(2.0));
         assert_eq!(series.iter().find(|s| s.name == SELF_CPU).map(|s| s.value), Some(1.5));
     }
