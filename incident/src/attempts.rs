@@ -17,7 +17,7 @@ pub fn of_file(outcome: &FileOutcome) -> Option<Outcome> {
     Some(match outcome {
         FileOutcome::Filed(id) if !id.trim().is_empty() => Outcome::Delivered { id: id.clone() },
         FileOutcome::Filed(_) => Outcome::Failed { reason: "the filing returned no bead id".into() },
-        FileOutcome::Unreachable => Outcome::Failed { reason: "the beads store could not be reached; the event stays spooled".into() },
+        FileOutcome::Unread(why) => Outcome::Failed { reason: format!("{why}; the event stays spooled") },
         FileOutcome::Refused => Outcome::Failed { reason: "the filing was refused by its guards; the event stays spooled".into() },
         FileOutcome::LaneRefused(reason) => Outcome::Failed { reason: format!("{reason}; the event stays spooled") },
         FileOutcome::Skew => return None,
@@ -100,7 +100,7 @@ mod tests {
     #[test]
     fn a_filing_with_no_id_is_a_failure_and_skew_is_no_attempt() {
         assert_eq!(of_file(&FileOutcome::Filed("sp-1".into())), Some(Outcome::Delivered { id: "sp-1".into() }));
-        for o in [FileOutcome::Filed(" ".into()), FileOutcome::Unreachable, FileOutcome::Refused] {
+        for o in [FileOutcome::Filed(" ".into()), FileOutcome::Unread("create failed (x)".into()), FileOutcome::Refused] {
             assert!(matches!(of_file(&o), Some(Outcome::Failed { .. })), "{o:?}");
         }
         assert_eq!(of_file(&FileOutcome::Skew), None);

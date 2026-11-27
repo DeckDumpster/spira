@@ -378,6 +378,93 @@ fn a_carried_assembling_round_with_nothing_in_flight_is_cut_through_the_handler(
     assert_eq!(leg.members, [("sp-0iavy8.1".to_string(), "t1".to_string())]);
 }
 
+/// The PR opens without its screenshots; they are asked for once, after it exists.
+#[test_id(t4swm4o)]
+#[test]
+fn an_opened_batch_pr_asks_for_its_shots_once() {
+    use spira_runtime::tasks::a::batcher_local::{Assembled, Leg};
+    let mut world = one_submitted_flying(None);
+    let before = serde_json::to_string(&world).unwrap();
+    world.repos.get_mut("deckdumpster").unwrap().open_batch = Some(Batch { pr: 378, head: "h-round".into(), members: vec!["sp-0iavy8.1".into()] });
+    let after = serde_json::to_string(&world).unwrap();
+    let opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let saw = opened.clone();
+    let assembled = serde_json::to_string(&Assembled { merged: vec![("sp-0iavy8.1".into(), "t1".into())], base: "b1".into(), suites: false, ..Assembled::default() }).unwrap();
+    let mut r = TaskRig::new(1, BatcherForge::new(BTreeMap::new()).registration())
+        .unwrap()
+        .double(OBSERVE, move |_| Ok(if saw.load(std::sync::atomic::Ordering::SeqCst) { after.clone() } else { before.clone() }))
+        .double(ASSEMBLE, move |_| Ok(assembled.clone()))
+        .double(BATCH_OPEN, move |_| {
+            opened.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(r#"{"pr":"378","head":"h-round"}"#.into())
+        });
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, ASSEMBLE, BATCH_OPEN].contains(e)) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.tick(STREAM, EventKind::new(STATE, &serde_json::to_string(&waiting_on_a_round(State::Assembling)).unwrap())).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(CADENCE_MS * 2).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let names: Vec<&str> = r.requested().iter().map(|q| q.name.as_str()).collect();
+    let open = names.iter().position(|n| *n == BATCH_OPEN).unwrap_or_else(|| panic!("no batch_open was requested: {names:?}"));
+    let shots: Vec<usize> = (0..names.len()).filter(|i| names[*i] == SHOTS).collect();
+    assert!(matches!(shots[..], [at] if at > open), "one shots request follows the open: {names:?}");
+    let input = &r.requested()[shots[0]].input;
+    let leg: Leg = serde_json::from_str(input).unwrap();
+    assert_eq!((leg.repo.as_str(), leg.base.as_str(), leg.head.as_str(), leg.key.as_str()), ("deckdumpster", "b1", "h-round", "deckdumpster:b1:h-round"));
+    assert_eq!(serde_json::from_str::<serde_json::Value>(input).unwrap()["pr"], "378", "{input}");
+}
+
+/// A forge repo whose round tree holds member `sp-aaa`, with doubles for `queue`, `testenv`
+/// and the forge, each recording that it ran.
+fn forge_fixture(d: &std::path::Path) -> (batcher_cut::io::Env, batcher_cut::io::Repo, spira_runtime::tasks::a::batcher_local::Leg) {
+    let tree = d.join("tree");
+    std::fs::create_dir_all(&tree).unwrap();
+    testkit::git(&tree, &["init", "-q", "-b", "main"]);
+    testkit::git(&tree, &["commit", "-q", "--allow-empty", "-m", "base"]);
+    let base = testkit::git(&tree, &["rev-parse", "HEAD"]).trim().to_string();
+    testkit::git(&tree, &["checkout", "-q", "-b", "spira/sp-aaa"]);
+    std::fs::write(tree.join("work"), "work").unwrap();
+    testkit::git(&tree, &["add", "work"]);
+    testkit::git(&tree, &["commit", "-q", "-m", "sp-aaa: work"]);
+    let head = testkit::git(&tree, &["rev-parse", "HEAD"]).trim().to_string();
+    let at = d.display();
+    testkit::write_exe(d.join("queue"), &format!("#!/bin/sh\ncat > {at}/body\necho pr=378\n"));
+    testkit::write_exe(d.join("testenv"), &format!("#!/bin/sh\ntouch {at}/captured\n[ ! -e {at}/capture-fails ] || {{ echo 'no page' >&2; exit 1; }}\n"));
+    std::fs::write(d.join("forge.sh"), format!("printf '%s|' \"$1\" \"$3\" \"$4\" > {at}/commented\n[ ! -e {at}/comment-refused ]\n")).unwrap();
+    let repo = batcher_cut::io::Repo { name: "alpha".into(), path: tree.clone(), base: "main".into(), forge: d.join("forge.sh"), land: batcher_cut::io::Land::Local };
+    let leg = spira_runtime::tasks::a::batcher_local::Leg { members: vec![("sp-aaa".into(), head.clone())], wt: tree.display().to_string(), base, head, pr: "378".into(), ..spira_runtime::tasks::a::batcher_local::Leg::on("alpha") };
+    (batcher_cut::io::lifecycle_tests_env(d), repo, leg)
+}
+
+#[test_id(t9ipbwr)]
+#[test]
+fn batch_open_answers_the_head_it_opened_and_captures_nothing() {
+    let d = testkit::TempDir::new("forge-edge-open");
+    let (env, repo, leg) = forge_fixture(d.path());
+    let opened = edge::open_pr(&env, &repo, &leg).unwrap();
+    assert_eq!((opened.pr.as_str(), opened.head.as_str()), ("378", leg.head.as_str()));
+    assert!(d.path().join("body").exists(), "control: the batch was opened through queue");
+    assert!(!d.path().join("captured").exists(), "batch_open ran testenv");
+}
+
+#[test_id(tlt3fdo)]
+#[test]
+fn shots_comments_the_section_on_the_pr_and_reports_a_refused_comment() {
+    let d = testkit::TempDir::new("forge-edge-shots");
+    let (env, repo, leg) = forge_fixture(d.path());
+    let commented = d.path().join("commented");
+    assert_eq!(edge::post_shots(&env, &repo, &leg, None).unwrap(), "");
+    assert!(d.path().join("captured").exists() && !commented.exists(), "no pages, so nothing to post");
+    std::fs::write(d.path().join("capture-fails"), "").unwrap();
+    let section = edge::post_shots(&env, &repo, &leg, None).unwrap();
+    assert!(section.contains("capture failed: "), "{section}");
+    assert_eq!(std::fs::read_to_string(&commented).unwrap(), format!("pr-comment|378|{section}|"));
+    std::fs::write(d.path().join("comment-refused"), "").unwrap();
+    let refused = edge::post_shots(&env, &repo, &leg, None).unwrap_err();
+    assert!(refused.contains("pr-comment 378"), "{refused}");
+}
+
 /// The rig after three cadences with `hung` requested and never answered.
 fn waiting_out_a_hung(hung: &str) -> TaskRig {
     let assembled = serde_json::to_string(&spira_runtime::tasks::a::batcher_local::Assembled { merged: vec![("dd-a".into(), "t1".into())], ..Default::default() }).unwrap();
@@ -554,4 +641,22 @@ fn the_batch_open_runner_answers_the_pr_already_open_for_its_members() {
     assert_eq!(edge::already_open(Some(&open("", &["dd-a", "dd-b"])), &asked), None, "a record with no PR is no PR");
     assert_eq!(edge::already_open(Some(&open("12", &["dd-a"])), &asked), None);
     assert_eq!(edge::already_open(None, &asked), None);
+}
+
+#[test_id(t4q6acv)]
+#[test]
+fn a_pr_adopted_before_its_open_answered_still_gets_its_shots_once() {
+    use spira_runtime::tasks::a::batcher_local::Leg;
+    let rc = RepoCarry { state: State::Opening, round_key: Some("dd-a:t1".into()), members: vec![("dd-a".into(), "t1".into())], base: "b1".into(), ..RepoCarry::default() };
+    let carry = Carry { repos: [("deckdumpster".to_string(), rc)].into() };
+    let mut s = busy();
+    let repo = s.repos.get_mut("deckdumpster").unwrap();
+    repo.open_batch = Some(Batch { pr: 378, head: String::new(), members: vec!["dd-a".into()] });
+    repo.in_flight = Some(vec![BATCH_OPEN.to_string()]);
+    let (adopted, acts) = decide(&carry, &s);
+    assert!(acts.iter().all(|a| a.effect != SHOTS), "{acts:?}");
+    let (next, acts) = on_outcome(&adopted, BATCH_OPEN, true, r#"{"pr":"378","head":"h-round"}"#, &Leg::on("deckdumpster"), NOW);
+    assert_eq!(next, adopted);
+    let shots: Vec<Leg> = acts.iter().filter(|a| a.effect == SHOTS).map(|a| serde_json::from_str(&a.input).unwrap()).collect();
+    assert_eq!(shots.iter().map(|l| (l.pr.as_str(), l.head.as_str())).collect::<Vec<_>>(), [("378", "h-round")]);
 }

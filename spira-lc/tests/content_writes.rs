@@ -415,6 +415,32 @@ fn a_content_write_against_a_store_with_no_writer_key_is_refused_by_the_key_and_
     assert!(!shown.contains("refused note") && !shown.contains("writes:refused"), "a refused write landed: {shown}");
 }
 
+#[test_id(tmkbrgm)]
+#[test]
+fn work_open_items_answers_titles_and_outcomes_from_the_content_store_and_logs_under_its_own_name() {
+    let Some(store) = Store::up() else { return };
+    let id = "sp-waiting1";
+    store.sql(&format!(
+        "INSERT INTO issues (id, title, description, design, acceptance_criteria, notes, priority) VALUES ('{id}', 'a waiting item', '## Outcome\nit answers\n\n## Build\nnot this', '', '', '', 1)"
+    ));
+    let mut lc = Lc::with_keys(&store, "oi", "", &[("SPIRA_SLOW_QUERY_MS", "0")]);
+    provision(&lc);
+    lc.serve();
+    let (rc, out) = lc.settled(&["create-bead", id, "--repo", "spira", "--ready"], None);
+    assert_eq!(rc, 0, "{out}");
+    let (rc, out) = lc.settled(&["work", "-", "open-items", "--repo", "spira", "--json", "--actor", "skuld"], None);
+    assert_eq!(rc, 0, "{out}");
+    let rows: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
+    assert_eq!(rows, serde_json::json!([{ "id": id, "state": "READY", "priority": 1, "title": "a waiting item", "outcome": "it answers" }]));
+    let log = lc.dir.join("run/slow-queries.log");
+    let mut polls = 0;
+    while !std::fs::read_to_string(&log).unwrap_or_default().lines().any(|l| l.split('\t').nth(1) == Some("work:open-items") && l.ends_with("\tREQUEST")) {
+        polls += 1;
+        assert!(polls < 3_000, "no work:open-items request line in {}", log.display());
+        std::thread::sleep(Duration::from_millis(10)); // clock-safe: polls the slow log, the signal waited on
+    }
+}
+
 fn writer_lc(store: &Store, name: &str) -> Lc {
     writer_lc_with(store, name, &[])
 }

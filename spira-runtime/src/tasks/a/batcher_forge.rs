@@ -65,6 +65,9 @@
 //! | Assembling / Opening | `assemble` / `batch_open` lost at restart | unchanged (the same leg is asked again) |
 //! | Open | `batch.settled` | Idle |
 //!
+//! `shots` is requested on `batch_open`'s answer, for the PR just opened, also when `observe` adopted
+//! that PR first; its outcome moves no state.
+//!
 //! Illegal: a second `batch_open` while the projection shows one open is refused naming `Open`.
 //!
 //! ## Act
@@ -77,8 +80,8 @@
 //! | `batcher.forge.fetch` / `.assemble` | git | 60 s / 120 s | repo + round_key | lock held (`main.rs:261-264`) |
 //! | `batcher.forge.corpus` | unit (`unit.start`) | `SPIRA_BATCHER_WALL_SECS` | repo + round + run n | one live run (`vm.rs:370`) |
 //! | `batcher.forge.withdraw` | store | 30 s | bead + version | not CERTIFIED (`io.rs:1178-1194`, `:851`) |
-//! | `batcher.forge.shots` | container | 1500 s (`io.rs:1477-1478`) | repo + base + head | — best effort |
-//! | `batcher.forge.batch_open` | forge | 120 s (unverified) | repo + head | batch already open (`io.rs:577-586`) |
+//! | `batcher.forge.shots` | container | 1500 s (`io.rs:1477-1478`) | repo + base + head | — best effort; comments the section on the PR |
+//! | `batcher.forge.batch_open` | forge | 120 s (unverified) | repo + head | moved member, foreign commits, batch already open (`io.rs:577-586`); runs no capture |
 //! | `batcher.forge.file` (judgement / incident) | store | 30 s | judgement ref | duplicate (`io.rs:2129`, `main.rs:461`) |
 //! | `batcher.forge.verdict_write` | store | 5 s | repo + at | — (`io.rs:1434`) |
 //! | `inbox.append` | store | 10 s | line | — |
@@ -331,11 +334,13 @@ pub struct Carry {
     pub repos: BTreeMap<String, RepoCarry>,
 }
 
-/// What `batch_open` answers: the PR it opened.
+/// What `batch_open` answers: the PR it opened, and the round head it opened it at.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Opened {
     #[serde(default)]
     pub pr: String,
+    #[serde(default)]
+    pub head: String,
 }
 
 pub fn step(state: State, event: Trigger) -> Result<State, String> {
@@ -382,6 +387,12 @@ impl Machine<'_> {
         self.rc.leg = None;
         let key = format!("{}:{}", self.repo, digest(self.rc.round_key.as_deref().unwrap_or_default()));
         self.acts.push(Leg { key, ..self.leg() }.act(BATCH_OPEN));
+    }
+
+    /// Best effort: nothing waits on the capture, and its outcome moves no state.
+    fn shots(&mut self, opened: Opened) {
+        let key = format!("{}:{}:{}", self.repo, self.rc.base, opened.head);
+        self.acts.push(Leg { key, head: opened.head, pr: opened.pr, ..self.leg() }.act(SHOTS));
     }
 
     fn verdict(&mut self, verdict: &str, why: &str) {
@@ -541,6 +552,14 @@ impl Machine<'_> {
                     self.reset();
                 } else {
                     self.go(Trigger::BatchOpened);
+                    self.shots(o);
+                }
+            }
+            // `observe` adopted the PR before this answer came: its shots are still to ask for.
+            (State::Open, BATCH_OPEN) if ok => {
+                let o: Opened = serde_json::from_str(body).unwrap_or_default();
+                if !o.pr.is_empty() {
+                    self.shots(o);
                 }
             }
             _ => {}
@@ -708,7 +727,7 @@ fn in_flight(view: &Projection, stream: &StreamKey, snap: &mut Snapshot) {
 pub mod edge {
     use batcher_cut::io;
 
-    use super::super::batcher_local::edge::{env, leg};
+    use super::super::batcher_local::{edge::{env, leg}, Leg};
     use super::{Batch, Opened, Repo, Snapshot};
     use crate::{Effects, EffectSpec};
 
@@ -765,39 +784,54 @@ pub mod edge {
         super::super::batcher_local::edge::withdraw(e, k, spec)
     }
 
-    /// `testenv shots` for the round's head, as the PR body's shots section; best effort.
+    /// `testenv shots` for the opened PR's head, posted on the PR as a comment; best effort.
     pub fn shots(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
         let loom = spira_config::process::cfg("SPIRA_LOOM_ADDR").ok();
-        Ok(io::batch_shots_section(&env.testenv_bin, &env.run, loom.as_deref(), &leg.repo, &leg.base, &leg.head))
+        post_shots(&env, &batcher_cut::find_repo(&env, &leg.repo)?, &leg, loom.as_deref())
+    }
+
+    /// [`shots`] on a resolved repo.
+    pub fn post_shots(env: &io::Env, repo: &io::Repo, leg: &Leg, loom: Option<&str>) -> Result<String, String> {
+        let section = io::batch_shots_section(&env.testenv_bin, &env.run, loom, &repo.name, &leg.base, &leg.head);
+        if !section.is_empty() {
+            io::forge_pr_comment(repo, &leg.pr, &section)?;
+        }
+        Ok(section)
     }
 
     /// The PR of the open batch that holds exactly `members`, once it has one.
     pub fn already_open(open: Option<&io::OpenBatch>, members: &[(String, String)]) -> Option<String> {
         let ids = |m: &[(String, String)]| m.iter().map(|(id, _)| id.clone()).collect::<std::collections::BTreeSet<_>>();
-        open.filter(|o| !o.pr.is_empty() && ids(&o.members) == ids(members)).map(|o| o.pr.clone())
+        open.filter(|o| !o.pr.is_empty() && ids(&o.members) == ids(members)).map(|o| o.pr.trim_start_matches('#').to_string())
     }
 
     /// The batch PR (`open_round_pr`), or the one already open for these members, since an open
-    /// asked again after a restart may have succeeded: refused when a member moved since the round was built or
-    /// the head carries a non-member's commits.
+    /// asked again after a restart may have succeeded. Refused when a member moved since the
+    /// round was built or the head carries a non-member's commits.
     pub fn batch_open(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
         let repo = batcher_cut::find_repo(&env, &leg.repo)?;
         if let Some(pr) = already_open(io::read_open_batch(&env, &leg.repo)?.as_ref(), &leg.members) {
-            return json(&Opened { pr });
+            return json(&Opened { pr, head: io::head_of(std::path::Path::new(&leg.wt))? });
         }
+        json(&open_pr(&env, &repo, &leg)?)
+    }
+
+    /// [`batch_open`] on a resolved repo, with no batch open for it yet.
+    pub fn open_pr(env: &io::Env, repo: &io::Repo, leg: &Leg) -> Result<Opened, String> {
         let members: Vec<batcher::core::Member> = leg.members.iter().map(|(id, tip)| batcher::core::Member { id: id.clone(), tip: tip.clone(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![], provisional: false }).collect();
-        let moved = io::moved_members(&repo, &leg.base, &members);
+        let moved = io::moved_members(repo, &leg.base, &members);
         if !moved.is_empty() {
             return Err(format!("refused to open — {} changed since the round was built (new patches); rebuild and retest", moved.join(", ")));
         }
         let head = io::head_of(std::path::Path::new(&leg.wt))?;
-        let (pr, armed) = batcher_cut::open_round_pr(&env, &repo, &members, &head, spira_config::vtime::now_epoch(), None, None, None)?;
+        // No shots here: a capture outlives this effect's deadline; `shots` comments them later.
+        let (pr, armed) = batcher_cut::open_round_pr(env, repo, &members, &head, "", spira_config::vtime::now_epoch(), None, None, None)?;
         if let Err(e) = armed {
             eprintln!("batcher.forge {}: PR {pr} opened, auto-merge not armed ({e}) — the reconciler arms it", leg.repo);
         }
-        json(&Opened { pr })
+        Ok(Opened { pr, head })
     }
 
     /// The judgement a twice-red round files against its members.

@@ -1210,7 +1210,7 @@ pub(crate) fn call_request(req: Request, peer: Peer, door: &Door, received: Inst
 /// The slow-call counters for an answer that went out `answered` after its request was read.
 pub(crate) fn count_answer(called: &Called, answered: Duration) {
     let method = called.method();
-    let measured = if called.verb == "ops-view" { method.as_str() } else { called.verb.as_str() };
+    let measured = crate::slow::measured_of(&called.verb, &method);
     crate::slow::request_done(measured, &method, &called.caller, called.task.as_deref(), answered, called.recorder.snapshot().children);
     crate::slow::sample(&method, &called.caller, answered);
 }
@@ -1218,7 +1218,7 @@ pub(crate) fn count_answer(called: &Called, answered: Duration) {
 /// The reads and followups the answer's request made, and its span.
 pub(crate) fn record_served(spans: Option<&spira_otel::Sink>, called: &Called, size: usize, started: SystemTime, received: Instant, answered: Duration) {
     let method = called.method();
-    let measured = if called.verb == "ops-view" { method.as_str() } else { called.verb.as_str() };
+    let measured = crate::slow::measured_of(&called.verb, &method);
     let (caller, ans) = (&called.caller, &called.ans);
     let began = *called.began.lock().unwrap_or_else(|e| e.into_inner());
     let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(called.accepted);

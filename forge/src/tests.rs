@@ -1105,6 +1105,15 @@ fn pr_list_open_lists_every_open_pr_with_its_branch() {
 const ARMED: &str = r#"{"autoMergeRequest":{"mergeMethod":"MERGE"},"state":"OPEN"}"#;
 const UNARMED: &str = r#"{"autoMergeRequest":null,"state":"OPEN"}"#;
 
+#[test_id(t9y9m54)]
+#[test]
+fn pr_comment_reports_gh_s_exit() {
+    let gh = FakeGh::default();
+    gh.on(&["pr", "comment", "12", "--body", "said"], 0, "");
+    assert_eq!(pr_comment(&gh, repo(), "12", "said").code, 0);
+    assert_eq!(pr_comment(&gh, repo(), "13", "said").code, 1, "an unposted comment is not a success");
+}
+
 #[test_id(tvhujs8)]
 #[test]
 fn pr_automerge_arms_squash_and_reports_gh_s_exit() {
