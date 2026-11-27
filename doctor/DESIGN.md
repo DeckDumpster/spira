@@ -82,6 +82,10 @@ phase 0, before phase 0 has touched anything, so what they find there necessaril
 this install and cannot be something the install broke (`doctor_check_failed_units`'s own
 comment, carried forward verbatim from sp-r15cf). Outside that flag, both checks stay FAIL.
 
+The flag also makes **store** stricter in one case: an unset or empty `SPIRA_DOLT_DATA` is one
+FAIL, because install refuses it. It replaces every verdict of the not-installing empty-key
+branch, including the host/port probe.
+
 ### 3.4 The two mandatory callers
 
 | caller | invocation | reads |
