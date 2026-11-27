@@ -1009,8 +1009,11 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let began = Instant::now();
     let mut fin = run_recorded(args, deps, &results, &rec);
     let queued = armed.waited().as_secs();
-    if let Some((what, secs)) = armed.finish() {
-        deps.log(&cap::over_cap_line(&what, secs, cap.source));
+    if let Some(trip) = armed.finish() {
+        deps.log(&cap::over_cap_line(&trip.what, trip.secs, cap.source));
+        for line in &trip.logs {
+            deps.log(line);
+        }
         fin = Finish::fault(2, "over-cap", fin.ran);
     }
     fin.timing = Some(Box::new((queued, began.elapsed().as_secs().saturating_sub(queued))));

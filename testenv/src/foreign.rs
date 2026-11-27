@@ -581,7 +581,7 @@ impl TierRun<'_> {
 
     /// `excused` is the cache wait already given back to the deadline; this tier's is added.
     fn run_tier(&self, name: &str, excused: &mut Duration) -> (Outcome, u64) {
-        let _running = crate::cap::running(name);
+        let running = crate::cap::running(name);
         let tier = &self.decl.tier[name];
         let t0 = Instant::now();
         if self.cache.prepare().is_err() {
@@ -630,7 +630,10 @@ impl TierRun<'_> {
             cpus: Some(share.to_string()),
             pids_limit: Some(self.pids_limit),
         };
+        running.log(&req.output);
+        running.step("container");
         let rc = self.rt.run_once(&req).rc;
+        running.step(&format!("warm-cache merge, container rc={rc} after {}s", t0.elapsed().as_secs()));
         self.rt.purge(&cname);
         drop(attached);
         if self.cache.share.is_none() {
