@@ -140,6 +140,17 @@ pub fn head_sha(repo: &Path) -> Option<String> {
     }
 }
 
+/// The branch checked out at `repo`, or `HEAD` when detached; `None` when the files do not say.
+pub fn head_branch(repo: &Path) -> Option<String> {
+    let head = fs::read_to_string(git_dirs(repo)?.0.join("HEAD")).ok()?;
+    let head = head.trim();
+    match head.strip_prefix("ref: refs/heads/") {
+        Some(branch) => Some(branch.to_string()),
+        None if is_sha(head) => Some("HEAD".into()),
+        None => None,
+    }
+}
+
 /// The commit a ref names when the ref files say so outright; `None` when git must be asked.
 pub fn sha_of(repo: &Path, name: &str) -> Option<String> {
     match read_ref_in(repo, name) {

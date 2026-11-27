@@ -289,7 +289,8 @@ enum BranchVerdict { Gone, NotClosed, WrongRepo, Superseded, CutoverRound, Eject
 - Enumerate `refs/heads/spira/*` with tips (count them all into `branches`, pr included).
   None → next repository. pr → nothing more here.
 - No landref → "CHECK6 <name>: cannot resolve the ref its branches land on — skipped. …".
-  Fetch the base's remote if it has one. push: ensure the landing worktree.
+  Fetch the base's remote if it has one. push: ensure the landing worktree, checking out
+  `-B landing <base_fq>` only when it is not already on `landing` at the base.
 - One bulk bead read for every id. Order by `certify_order` (bucket 0 base-fix
   `external_ref = basefail:<name>:*`, 1 express label, 2 rest; each by priority then
   closed_at). Log the base-fix and express fronts.

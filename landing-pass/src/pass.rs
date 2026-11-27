@@ -386,7 +386,7 @@ impl<'a> Pass<'a> {
                 self.lib.prune_worktrees(&repo.path);
                 self.git.tree_add_detached(&repo.path, &land, &base_fq);
             }
-            if self.git.tree_ok(&land) {
+            if self.git.tree_ok(&land) && !self.git.tree_on_landing(&land, &base_fq) {
                 self.git.tree_checkout_landing(&land, &base_fq);
             }
         }

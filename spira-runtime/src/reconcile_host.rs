@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use reconciler::{Host, Mail, Ref};
 use runtime::socket::lc_call;
-use spira_config::git_refs::{branch_tips, git_dirs, is_sha, read_ref_in};
+use spira_config::git_refs::{branch_tips, read_ref_in};
 use spira_config::repos::Registry;
 use spira_config::runes;
 use unit_run::dbus::{bus_path, Conn, Val};
@@ -320,13 +320,7 @@ impl Host for RuntimeHost {
     }
 
     fn head_branch(&self, path: &Path) -> Option<String> {
-        let head = fs::read_to_string(git_dirs(path)?.0.join("HEAD")).ok()?;
-        let head = head.trim();
-        match head.strip_prefix("ref: refs/heads/") {
-            Some(branch) => Some(branch.to_string()),
-            None if is_sha(head) => Some("HEAD".into()),
-            None => None,
-        }
+        spira_config::git_refs::head_branch(path)
     }
 }
 

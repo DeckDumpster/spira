@@ -75,6 +75,8 @@ struct FakeGit {
     shas: RefCell<HashMap<String, String>>,
     head: Cell<u32>,
     tree: Cell<bool>,
+    /// The base commit the landing tree was last checked out at.
+    landing_at: RefCell<Option<Option<String>>>,
     merge_conflict: RefCell<HashSet<String>>,
     deleted: RefCell<Vec<String>>,
     matching: RefCell<HashMap<String, Vec<String>>>,
@@ -145,7 +147,12 @@ impl Git for FakeGit {
     fn tree_add_detached(&self, _: &Path, _: &Path, _: &str) {
         self.tree.set(true);
     }
-    fn tree_checkout_landing(&self, _: &Path, _: &str) -> bool {
+    fn tree_on_landing(&self, _: &Path, base: &str) -> bool {
+        *self.landing_at.borrow() == Some(self.shas.borrow().get(base).cloned())
+    }
+    fn tree_checkout_landing(&self, _: &Path, base: &str) -> bool {
+        self.rec(format!("tree_checkout_landing {base}"));
+        *self.landing_at.borrow_mut() = Some(self.shas.borrow().get(base).cloned());
         true
     }
     fn tree_merge(&self, _: &Path, _: &str, b: &str, _: &str, _: &str) -> Result<(), String> {
@@ -3274,6 +3281,24 @@ fn a_pass_in_which_no_ref_moved_asks_git_only_to_fetch() {
         assert_eq!(asked(&h, method), Vec::<String>::new(), "{method} asked again: {:?}", h.git.calls.borrow());
     }
     assert_eq!(asked(&h, "fetch"), vec!["origin"]);
+}
+
+#[test_id(te3kcqg)]
+#[test]
+fn a_quiet_push_pass_checks_out_the_landing_tree_only_when_the_base_moves() {
+    let h = H::new(LandMode::Push);
+    h.git.shas.borrow_mut().insert(QUEUE_BASE.into(), "b00".into());
+    h.bead("sp-ready", "READY", &[]);
+    h.git.add("spira/sp-ready", "t1");
+    h.pass().run();
+    assert_eq!(asked(&h, "tree_checkout_landing"), vec![QUEUE_BASE]);
+    h.git.calls.borrow_mut().clear();
+    h.pass().run();
+    assert_eq!(asked(&h, "tree_checkout_landing"), Vec::<String>::new());
+    h.git.shas.borrow_mut().insert(QUEUE_BASE.into(), "b01".into());
+    h.git.calls.borrow_mut().clear();
+    h.pass().run();
+    assert_eq!(asked(&h, "tree_checkout_landing"), vec![QUEUE_BASE]);
 }
 
 #[test_id(t7q15m9)]
