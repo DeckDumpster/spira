@@ -187,12 +187,12 @@ const MAX_GATE_FLIPS: usize = 3;
 /// The one discriminating rerun of a red unit test phase (DESIGN.md "The rerun of a red test"):
 /// the failing tests run once more on the same tree under the same nextest config. A test
 /// green on the rerun is a flip: fix bead filed, registry row written, verdict stands without
-/// it. `Ok` carries the note a FAIL appends; `Err` is a verdict that ends the trial.
-fn rerun_red_tests<W: World>(w: &W, at: RerunScope, name: &str, cmd: &str) -> Result<String, Verdict> {
-    let Composition::Unit { crates, targets, .. } = at.comp else { return Ok(String::new()) };
+/// it. `Err` is a verdict that ends the trial.
+fn rerun_red_tests<W: World>(w: &W, at: RerunScope, name: &str, cmd: &str) -> Result<RerunNote, Verdict> {
+    let Composition::Unit { crates, targets, .. } = at.comp else { return Ok(RerunNote::default()) };
     let failed = parse::failed_tests(at.out);
     if parse::red_units(at.out, at.tiers) != ["phase:test"] || failed.is_empty() || parse::fence_refusal(at.out).is_some() {
-        return Ok(String::new());
+        return Ok(RerunNote::default());
     }
     let rerunnable = |t: &&String| t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':');
     let nextest: Vec<String> = parse::failed_nextest(at.out).into_iter().filter(|t| rerunnable(&t)).collect();
@@ -288,7 +288,15 @@ fn rerun_red_tests<W: World>(w: &W, at: RerunScope, name: &str, cmd: &str) -> Re
         tail.push_str(&line);
         tail.push('\n');
     }
-    Ok(format!("\n{}", tail.trim_end()))
+    Ok(RerunNote { text: format!("\n{}", tail.trim_end()), held: !held.is_empty() })
+}
+
+#[derive(Default)]
+struct RerunNote {
+    /// What a `branch-red` FAIL appends.
+    text: String,
+    /// A flip was held back by the cap: the red is the branch's whatever the base shows.
+    held: bool,
 }
 
 /// What the rerun of a red unit test phase reads: the first run and the tree it ran on.
@@ -1285,7 +1293,7 @@ impl<'w, W: World> Trial<'w, W> {
         }
 
         // THE RERUN comes before the checkout of the base: it runs on the tree the first run ran on.
-        let rerun_note = {
+        let rerun = {
             let mut rerun_env = compose::test_phase_env(&with_bins(env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED")), tree_def.as_ref(), tools.as_ref()), jobs);
             rerun_env.retain(|(k, _)| k != spira_config::unit_tier::DENY_LIST_ENV);
             rerun_env.push((spira_config::unit_tier::DENY_LIST_ENV.to_string(), tree.join(compose::DENY_LIST).to_string_lossy().into_owned()));
@@ -1630,7 +1638,10 @@ impl<'w, W: World> Trial<'w, W> {
                 parse::tail_bytes(&base_out, 4000)));
         }
         let spaced = |v: &[String]| v.join(" ");
-        let attribution = if testenv.is_some() && base_testenv.is_none() {
+        // A held flip passed its rerun, so no base comparison can clear it.
+        let attribution = if rerun.held {
+            Attribution::BranchRed("phase:test".into())
+        } else if testenv.is_some() && base_testenv.is_none() {
             if matches!(base_def, Ok(Resolved::Column(_))) {
                 Attribution::BranchRed(parse::red_units(&out, &tiers).into_iter().next().unwrap_or_else(|| "-".into()))
             } else {
@@ -1696,10 +1707,10 @@ impl<'w, W: World> Trial<'w, W> {
                     let base_reds = parse::red_units(&base_out, &base_tiers);
                     let (own, inherited): (Vec<String>, Vec<String>) = parse::red_units(&out, &tiers).into_iter().partition(|x| !base_reds.contains(x));
                     return v(FAIL, "branch-red", format!(
-                        "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: red on this branch and not on {base}: {}\ngate: inherited, not judged (red on {base} too): {}\ngate: {base} is red on: {}",
-                        spaced(&own), spaced(&inherited), spaced(&base_reds)));
+                        "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: red on this branch and not on {base}: {}\ngate: inherited, not judged (red on {base} too): {}\ngate: {base} is red on: {}{}",
+                        spaced(&own), spaced(&inherited), spaced(&base_reds), rerun.text));
                 }
-                if let Some(flips) = self.shared_unit_red(&out, &tiers) {
+                if let Some(flips) = (!rerun.held).then(|| self.shared_unit_red(&out, &tiers)).flatten() {
                     let notes: String = flips.iter().map(|(t, beads)| format!(
                         "gate: not judged — {t} also failed on {} with disjoint diffs in the last 7d: a red on the base or in the gate, not this branch's\n",
                         beads.join(", "))).collect();
@@ -1707,14 +1718,16 @@ impl<'w, W: World> Trial<'w, W> {
                     return v(PASS, "pass", format!("gate: {name}'s own gate failed: {cmd}\n{out}\n{notes}"));
                 }
                 let failed = parse::failed_tests(&out);
-                let closing = if matches!(comp, Composition::Unit { .. }) && failed.is_empty() {
+                let closing = if !base_ran && rerun.held {
+                    format!("gate: {base} was not tried; a held flip is charged to this branch without it.")
+                } else if matches!(comp, Composition::Unit { .. }) && failed.is_empty() {
                     format!("gate: {base}'s fences pass, so the red is charged to this branch.")
                 } else if matches!(comp, Composition::Unit { .. }) {
                     format!("gate: {base}'s fences pass; its tests were not run (unit mode tries the base's fences only), so the red is charged to this branch: {}", spaced(&failed))
                 } else {
                     format!("gate: the same command passes against {base}, so this is the branch's own.")
                 };
-                v(FAIL, "branch-red", format!("gate: {name}'s own gate failed: {cmd}\n{out}\n{closing}{rerun_note}"))
+                v(FAIL, "branch-red", format!("gate: {name}'s own gate failed: {cmd}\n{out}\n{closing}{}", rerun.text))
             }
             Attribution::BaseTimeout(s) => {
                 self.s.suite = s;

@@ -3949,6 +3949,42 @@ fn flips_beyond_the_cap_file_nothing_are_named_as_held_back_and_the_item_goes_ba
     assert_eq!(certified(&f, "pass"), 0);
 }
 
+#[test_id(tbyjsvv)]
+#[test]
+fn held_flips_that_other_beads_also_showed_stay_red_and_file_no_deletion() {
+    let first = many_reds("FAIL", 4);
+    let digest = |bead: &str, tip: &str, file: &str| (bead.to_string(), spira_config::ejection::digest(tip, &[file.into()], &first));
+    let f = rerun_fake(&first, Some(&many_reds("PASS", 4)));
+    *f.prior_failures.borrow_mut() = Ok(vec![digest("sp-x", "t1", "a.rs"), digest("sp-y", "t2", "b.rs")]);
+    let status = f.run();
+    assert_eq!((status, f.flips.borrow().len()), (FAIL, 0), "(status, deletion incidents)");
+    assert_eq!((f.fix_beads.borrow().len(), certified(&f, "pass")), (3, 0), "(fix beads, certified passes)");
+    let verdict = verdict_message(&f);
+    assert!(verdict.contains("\ngate: held back by the flip cap (3): t::t000004 "), "{verdict}");
+}
+
+#[test_id(tmhqnd6)]
+#[test]
+fn held_flips_beside_a_red_base_fence_are_still_named_on_the_verdict() {
+    let f = rerun_fake(&many_reds("FAIL", 4), Some(&many_reds("PASS", 4)));
+    f.runs.borrow_mut().insert(BASE.into(), (1, "gate-step RED rc=1 :: fence-f".into()));
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    let verdict = verdict_message(&f);
+    assert!(verdict.contains("gate: local/main is red on:"), "{verdict}");
+    assert!(verdict.contains("\ngate: held back by the flip cap (3): t::t000004 "), "{verdict}");
+}
+
+#[test_id(tld5v6r)]
+#[test]
+fn held_flips_stay_the_branchs_red_when_the_base_was_never_tried() {
+    let f = rerun_fake(&many_reds("FAIL", 4), Some(&many_reds("PASS", 4)));
+    f.runs.borrow_mut().insert(BASE.into(), (NOVERDICT, String::new()));
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    let verdict = verdict_message(&f);
+    assert!(verdict.contains("\ngate: held back by the flip cap (3): t::t000004 "), "{verdict}");
+    assert!(!verdict.contains("fences pass"), "{verdict}");
+}
+
 #[test_id(thocb57)]
 #[test]
 fn only_a_recorded_flip_uses_the_cap_and_every_flip_after_the_third_row_is_held() {

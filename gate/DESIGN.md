@@ -509,12 +509,16 @@ Each failing test is judged on the rerun output: **flip** (a `PASS [` / `... ok`
   first in first-run order. Every flipped test after the third row gets no bead and no row, the
   message adds `gate: held back by the flip cap (3): <tests>`, and the item goes back as FAIL:
   that many flips is the box, not the tests. Held tests are the one exception to
-  law-a-flipping-test-is-disabled-by-a-registry-row. The FAIL and the line are the unattributed
-  `branch-red` path's: the cross-bead PASS and the base-fences-red FAIL keep their own messages.
+  law-a-flipping-test-is-disabled-by-a-registry-row. A held flip is the branch's red whatever the
+  base trial shows, a red base fence or an untried base included, because it passed its rerun and
+  no base comparison can clear it. It skips the cross-bead detector (no PASS, no deletion
+  incident), and every `branch-red` FAIL carries the held, red-twice and not-rerun lines,
+  including the base-fences-red FAIL. A base trial that ends the gate early (deadline, stall,
+  signal, a harness fault) is still NO_VERDICT.
 * Any red-twice or unproven test sends the item back as FAIL `branch-red`, the message adding
   `gate: red twice on the same tree <T>: <tests>` and/or `gate: not rerun: <tests>`. Rows for
   flips among them are still written. A red the cross-bead detector (`shared_unit_red`) matches
-  keeps its behaviour.
+  keeps its behaviour, unless a flip was held back.
 * A fences or suites composition, a red beside a red fence or a failed build, never reruns.
 * `flip.rs` calls `bead.sh` and `test-registry` through the bounded runner (60 s each) for both the gate and the round.
 
