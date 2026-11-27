@@ -5,7 +5,7 @@
 //! signal takes) and finishes `FAULT reason=over-cap`, naming what was running. `testenv-cap`
 //! scans live runs and kills any that outlive their cap plus [`GRACE`], plus the load-wait
 //! bound for a suite-tier run, whose cap starts only once load admission lets it in. The run's
-//! own clock stands still for the whole of every admission-slot wait ([`hold`]) and it
+//! own clock stands still for the whole of every admission-slot or warm-cache wait ([`hold`]) and it
 //! publishes the waits in a ledger the scan subtracts ([`uncounted`]); a run with no ledger
 //! gets the flat slot-wait bound instead.
 
@@ -156,6 +156,8 @@ struct Clock {
     start: Instant,
     limit: Duration,
     held_since: Option<Instant>,
+    /// Live [`Held`] guards: concurrent tiers wait at once and finish waiting in any order.
+    holds: u32,
     excused: Duration,
     ledger: Option<PathBuf>,
 }
@@ -250,19 +252,35 @@ pub fn remaining() -> Option<u64> {
     Some(k.left().as_secs())
 }
 
+/// The cap armed on a thread, for a thread it spawns to [`hold`].
+#[derive(Clone)]
+pub struct Handle(Option<Arc<Mutex<Clock>>>);
+
+pub fn handle() -> Handle {
+    Handle(CURRENT.with(|c| c.borrow().clone()))
+}
+
+impl Handle {
+    pub fn adopt(self) {
+        CURRENT.with(|c| *c.borrow_mut() = self.0);
+    }
+}
+
 /// While this lives the cap armed on this thread does not count.
 pub struct Held(Option<Arc<Mutex<Clock>>>);
 
-/// Stops the clock of the cap armed on this thread while the run waits for an admission slot.
+/// Stops the clock of the cap armed on this thread while the run waits for an admission slot
+/// or a warm cache.
 pub fn hold() -> Held {
-    let clock = CURRENT.with(|c| c.borrow().clone()).filter(|k| {
+    let clock = CURRENT.with(|c| c.borrow().clone());
+    if let Some(k) = &clock {
         let mut k = k.lock().unwrap();
-        k.held_since.is_none() && {
+        k.holds += 1;
+        if k.holds == 1 {
             k.held_since = Some(Instant::now());
             publish(&k);
-            true
         }
-    });
+    }
     Held(clock)
 }
 
@@ -270,7 +288,8 @@ impl Drop for Held {
     fn drop(&mut self) {
         if let Some(k) = &self.0 {
             let mut k = k.lock().unwrap();
-            if let Some(t) = k.held_since.take() {
+            k.holds -= 1;
+            if let Some(t) = (k.holds == 0).then(|| k.held_since.take()).flatten() {
                 k.excused += t.elapsed();
                 publish(&k);
             }
@@ -313,6 +332,7 @@ pub fn arm(cap: Cap, ledger: Option<PathBuf>) -> Armed {
         start: Instant::now(),
         limit,
         held_since: None,
+        holds: 0,
         excused: Duration::ZERO,
         ledger,
     }));
@@ -581,7 +601,7 @@ mod tests {
         armed.finish();
         assert_eq!(remaining(), None);
         let ago = |s| Instant::now() - Duration::from_secs(s);
-        let queued = Clock { start: ago(1_000), limit: Duration::from_secs(1_600), held_since: Some(ago(1_000)), excused: Duration::ZERO, ledger: None };
+        let queued = Clock { start: ago(1_000), limit: Duration::from_secs(1_600), held_since: Some(ago(1_000)), holds: 1, excused: Duration::ZERO, ledger: None };
         assert!((1_599..=1_600).contains(&queued.left().as_secs()), "{:?}", queued.left());
     }
 
@@ -602,10 +622,22 @@ mod tests {
     #[test]
     fn a_run_admitted_after_a_slot_wait_longer_than_the_cap_gets_its_whole_cap() {
         let ago = |s| Instant::now() - Duration::from_secs(s);
-        let admitted = Clock { start: ago(1_212 + 5), limit: Duration::ZERO, held_since: None, excused: Duration::from_secs(1_212), ledger: None };
+        let admitted = Clock { start: ago(1_212 + 5), limit: Duration::ZERO, held_since: None, holds: 0, excused: Duration::from_secs(1_212), ledger: None };
         assert!(admitted.counted() < Duration::from_secs(10), "the wait is not the run's time");
-        let queued = Clock { start: ago(1_212), limit: Duration::ZERO, held_since: Some(ago(1_212)), excused: Duration::ZERO, ledger: None };
+        let queued = Clock { start: ago(1_212), limit: Duration::ZERO, held_since: Some(ago(1_212)), holds: 1, excused: Duration::ZERO, ledger: None };
         assert!(queued.counted() < Duration::from_secs(10));
+    }
+
+    #[test_id(tp496tk)]
+    #[test]
+    fn the_clock_stays_stopped_until_the_last_of_overlapping_holds_ends() {
+        let armed = arm(Cap { secs: 9_999, source: "test" }, None);
+        let (first, second) = (hold(), hold());
+        drop(first);
+        assert!(!armed_here(), "the second waiter still waits");
+        drop(second);
+        assert!(armed_here());
+        armed.finish();
     }
 
     #[test_id(t48dljh)]
