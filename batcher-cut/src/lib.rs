@@ -164,30 +164,54 @@ pub use state_store::limits::MAX_CUT_MEMBERS;
 /// Whether a round tree declares its own testenv (`gate::own`), which certifies it with no suites.
 pub use gate::own::declares_own_testenv;
 
-/// A forge round's PR, once the base is confirmed and the head carries no foreign commits:
-/// `queue batch open` with the members' titles and the shots section, the verdict green, the
-/// round metric. The PR number, and whether auto-merge was armed.
-#[allow(clippy::too_many_arguments)]
-pub fn open_round_pr(
-    env_: &Env,
-    repo: &Repo,
-    merged: &[batcher::core::Member],
-    batch_head: &str,
-    round_start: u64,
-    attribution_seconds: Option<u64>,
-    regreen_seconds: Option<u64>,
-    deny: Option<&vm::DenySnapshot>,
-) -> Result<(String, Result<(), String>), String> {
+/// The base a forge round's PR opens on: re-confirmed, and refused when the head carries a
+/// non-member's commits.
+pub fn round_pr_base(repo: &Repo, merged: &[batcher::core::Member], batch_head: &str) -> Result<String, String> {
     let base_sha = io::confirm_base(repo, batch_head)?;
-    let base_sha = base_sha.as_str();
     let ids: Vec<String> = merged.iter().map(|m| m.id.clone()).collect();
-    let foreign = io::foreign_beads(repo, base_sha, batch_head, &ids)?;
+    let foreign = io::foreign_beads(repo, &base_sha, batch_head, &ids)?;
     if !foreign.is_empty() {
         return Err(format!(
             "round head carries commits of non-member bead(s) {} — refusing to open",
             foreign.join(", ")
         ));
     }
+    Ok(base_sha)
+}
+
+/// [`round_pr_base`], then [`open_round_pr_on`] it.
+#[allow(clippy::too_many_arguments)]
+pub fn open_round_pr(
+    env_: &Env,
+    repo: &Repo,
+    merged: &[batcher::core::Member],
+    batch_head: &str,
+    shots: &str,
+    round_start: u64,
+    attribution_seconds: Option<u64>,
+    regreen_seconds: Option<u64>,
+    deny: Option<&vm::DenySnapshot>,
+) -> Result<(String, Result<(), String>), String> {
+    let base_sha = round_pr_base(repo, merged, batch_head)?;
+    open_round_pr_on(env_, repo, merged, batch_head, &base_sha, shots, round_start, attribution_seconds, regreen_seconds, deny)
+}
+
+/// A forge round's PR on a base [`round_pr_base`] answered: `queue batch open` with the
+/// members' titles and `shots` appended, the verdict green, the round metric. The PR number,
+/// and whether auto-merge was armed.
+#[allow(clippy::too_many_arguments)]
+pub fn open_round_pr_on(
+    env_: &Env,
+    repo: &Repo,
+    merged: &[batcher::core::Member],
+    batch_head: &str,
+    base_sha: &str,
+    shots: &str,
+    round_start: u64,
+    attribution_seconds: Option<u64>,
+    regreen_seconds: Option<u64>,
+    deny: Option<&vm::DenySnapshot>,
+) -> Result<(String, Result<(), String>), String> {
     let prr = batcher::core::pr_record(merged);
     let base_branch = repo
         .base
@@ -195,16 +219,6 @@ pub fn open_round_pr(
         .next()
         .unwrap_or(&repo.base)
         .to_string();
-    let shots = io::batch_shots_section(
-        &env_.testenv_bin,
-        &env_.run,
-        spira_config::process::cfg("SPIRA_LOOM_ADDR")
-            .ok()
-            .as_deref(),
-        &repo.name,
-        base_sha,
-        batch_head,
-    );
     let body = format!(
         "Merge-queue batch: {} beads for {}, onto {}.\n\n{}\n{shots}",
         merged.len(),
@@ -251,6 +265,38 @@ pub fn open_round_pr(
     }
     io::tsd_append_round(env_, &fields);
     Ok((pr_n_out, armed))
+}
+
+#[cfg(test)]
+mod open_round_pr_tests {
+    //! Spawns git and a `queue` stub: the body under test is what `open_round_pr` pipes to
+    //! `queue batch open`, after reading the round from a real checkout.
+    use super::*;
+
+    #[test_id(tq1j0uu)]
+    #[test]
+    fn the_batch_pr_body_carries_the_shots_it_is_handed_and_captures_none() {
+        let d = testkit::TempDir::new("batcher-cut-open-shots");
+        let tree = d.path().join("tree");
+        std::fs::create_dir_all(&tree).unwrap();
+        testkit::git(&tree, &["init", "-q", "-b", "main"]);
+        testkit::git(&tree, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        testkit::git(&tree, &["checkout", "-q", "-b", "round"]);
+        testkit::git(&tree, &["commit", "-q", "--allow-empty", "-m", "sp-aaa: work"]);
+        let head = testkit::git(&tree, &["rev-parse", "HEAD"]).trim().to_string();
+        let body = d.path().join("body");
+        testkit::write_exe(d.path().join("queue"), &format!("#!/bin/sh\ncat > {}\necho pr=378\n", body.display()));
+        let env = io::lifecycle_tests_env(d.path());
+        let repo = Repo { name: "alpha".into(), path: tree, base: "main".into(), forge: PathBuf::new(), land: Land::Local };
+        let members = [batcher::core::Member { id: "sp-aaa".into(), tip: head.clone(), title: "work".into(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![], provisional: false }];
+        let shots = "\nScreenshots:\n- sp-aaa index.png: /shots/index.png\n";
+
+        let (pr, _) = open_round_pr(&env, &repo, &members, &head, shots, 0, None, None, None).unwrap();
+
+        assert_eq!(pr, "378");
+        let expected = format!("Merge-queue batch: 1 beads for alpha, onto main.\n\n{}\n{shots}", batcher::core::pr_record(&members).body);
+        assert_eq!(std::fs::read_to_string(body).unwrap(), expected);
+    }
 }
 
 #[cfg(test)]

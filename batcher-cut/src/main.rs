@@ -1887,11 +1887,17 @@ fn open_round_pr(
     regreen_seconds: Option<u64>,
     deny: Option<&vm::DenySnapshot>,
 ) -> Result<(), String> {
-    batcher_cut::open_round_pr(
+    // The capture sits between the refusals and the open, so a refused round captures nothing.
+    let base_sha = batcher_cut::round_pr_base(repo, merged, batch_head)?;
+    let loom = spira_config::process::cfg("SPIRA_LOOM_ADDR").ok();
+    let shots = io::batch_shots_section(&env_.testenv_bin, &env_.run, loom.as_deref(), &repo.name, &base_sha, batch_head);
+    batcher_cut::open_round_pr_on(
         env_,
         repo,
         merged,
         batch_head,
+        &base_sha,
+        &shots,
         round_start,
         attribution_seconds,
         regreen_seconds,

@@ -1016,6 +1016,9 @@ pub struct Leg {
     pub unit: String,
     #[serde(default)]
     pub head: String,
+    /// The opened batch PR a forge `shots` comments on.
+    #[serde(default)]
+    pub pr: String,
     /// The testenv image tag an image build or its clean is for.
     #[serde(default)]
     pub image: String,
