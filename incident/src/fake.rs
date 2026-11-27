@@ -14,6 +14,8 @@ pub(crate) struct FakeBd {
     pub(crate) reachable: bool,
     /// The lifecycle machine does not answer: every dedup pass is blind.
     pub(crate) lc_down: bool,
+    /// The store's deadline: a handed-on list narrowed by neither label nor reference is too big.
+    pub(crate) unfiltered_handed_on_times_out: bool,
     /// `spira-lc fact` refuses every write.
     pub(crate) fact_fails: bool,
     /// `bd create` refuses with this text.
@@ -41,15 +43,19 @@ impl FakeBd {
 
 impl Bd for FakeBd {
     // A row's `status` stands for its lifecycle row's state (decide::status_of_lc).
-    fn list(&self, _db: &str, scope: Scope, label: Option<&str>, closed_after: Option<&str>) -> Result<Vec<BeadRow>, String> {
+    fn list(&self, _db: &str, scope: Scope, label: Option<&str>, closed_after: Option<&str>, external_ref: Option<&str>) -> Result<Vec<BeadRow>, String> {
         if self.lc_down {
             return Err("spira-lc: down".into());
+        }
+        if self.unfiltered_handed_on_times_out && scope == Scope::HandedOn && label.is_none() && external_ref.is_none() {
+            return Err("cannot tell: deadline".into());
         }
         let rows = self.rows.borrow();
         Ok(rows
             .iter()
             .filter(|r| scope.holds(r.status) && label.map(|l| r.labels.iter().any(|x| x == l)).unwrap_or(true))
                 .filter(|r| closed_after.is_none_or(|d| r.closed_at.as_deref().is_some_and(|c| c >= d)))
+            .filter(|r| external_ref.is_none_or(|x| r.external_ref.as_deref() == Some(x)))
             .cloned()
             .collect())
     }

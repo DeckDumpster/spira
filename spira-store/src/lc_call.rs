@@ -296,10 +296,10 @@ pub fn retrying<T>(argv: &[String], target: &Path, budget: Duration, not_running
     }
 }
 
-const BOUNDING: &[&str] = &["--id", "--parent", "--updated-after", "--closed-after", "--created-after"];
+const BOUNDING: &[&str] = &["--id", "--external-ref", "--parent", "--updated-after", "--closed-after", "--created-after"];
 
 /// Whether `argv` is a `content list` of every bead there is: `--all --limit 0` with nothing
-/// that bounds it to ids, a parent or a time window (a label can match every bead). The store
+/// that bounds it to ids, one external reference, a parent or a time window (a label can match every bead). The store
 /// refuses it from a scheduler task or the cockpit collector.
 pub fn reads_whole_history<S: AsRef<str>>(argv: &[S]) -> bool {
     let a: Vec<&str> = argv.iter().map(AsRef::as_ref).collect();
@@ -978,7 +978,7 @@ mod tests {
         assert!(whole(&["--all", "--limit", "0", "--json"]));
         assert!(whole(&["--all", "-n", "0"]));
         assert!(whole(&["--all", "--limit=0", "--label-any", "x"]), "a label can match every bead");
-        for bounded in [&["--all", "--limit", "0", "--id=sp-a"][..], &["--all", "--limit", "0", "--id", "sp-a"], &["--all", "--limit", "0", "--parent", "e"], &["--all", "--limit=0", "--updated-after=2026-01-01"], &["--limit", "0"], &["--all"], &["--all", "--limit", "50"]] {
+        for bounded in [&["--all", "--limit", "0", "--id=sp-a"][..], &["--all", "--limit", "0", "--id", "sp-a"], &["--all", "--limit", "0", "--external-ref", "incident:x"], &["--all", "--limit", "0", "--parent", "e"], &["--all", "--limit=0", "--updated-after=2026-01-01"], &["--limit", "0"], &["--all"], &["--all", "--limit", "50"]] {
             assert!(!whole(bounded), "{bounded:?}");
         }
         assert!(!reads_whole_history(&["list", "--all", "--limit", "0"]) && !reads_whole_history(&["content", "show", "--all", "--limit", "0"]));
@@ -1450,6 +1450,7 @@ pub mod fake {
             let since = flag(a, "--updated-after");
             let label = flag(a, "--label");
             let closed_after = flag(a, "--closed-after");
+            let external_ref = flag(a, "--external-ref");
             let kind = flag(a, "--type").or_else(|| flag(a, "-t"));
             let limit = flag(a, "--limit").and_then(|v| v.parse::<usize>().ok()).unwrap_or(50);
             let rows: Vec<&Value> = self
@@ -1460,6 +1461,7 @@ pub mod fake {
                 .filter(|r| parent.is_none_or(|p| r["parent"].as_str() == Some(p)))
                 .filter(|r| any.as_ref().is_none_or(|any| labels(r).iter().any(|l| any.contains(l))))
                 .filter(|r| label.is_none_or(|l| labels(r).contains(&l)))
+                .filter(|r| external_ref.is_none_or(|x| r["external_ref"].as_str() == Some(x)))
                 .filter(|r| closed_after.is_none_or(|d| r["closed_at"].as_str().is_some_and(|c| c >= d)))
                 .filter(|r| since.is_none_or(|d| r["updated_at"].as_str().is_some_and(|u| u >= d)))
                 .filter(|r| kind.is_none_or(|k| r["issue_type"].as_str() == Some(k)))

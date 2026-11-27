@@ -169,7 +169,9 @@ refused the filing, or (for `drain`) at least one entry is still stuck.
   supplying only content (labels, `external_ref`, and `closed_at` for the lookback window).
   A bead with no row is in neither pass. A pass that cannot read bd **or** the machine is
   not "nothing found": the event stays spooled (law-a-control-that-cannot-check-must-refuse),
-  where the bash skipped a failed pass and filed a fresh bead.
+  where the bash skipped a failed pass and filed a fresh bead. The log line names the pass
+  and the store's error. The two `ref:`-less fallback passes read by `external_ref`, so no
+  pass asks for every bead closed in the lookback.
 - **A recurrence of a terminal incident files a fresh bead (sp-nmlna).** The machine has no
   move out of LANDED/DONE/SUPERSEDED/DROPPED, so the old "reopen in bd" left the row LANDED
   and every event inside the lookback reopened the bead again, piling notes under a row

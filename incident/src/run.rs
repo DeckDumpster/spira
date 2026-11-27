@@ -74,12 +74,10 @@ pub fn epoch_to_date(epoch: i64) -> String {
 }
 
 /// `_dedup_incident`: the four-pass scan (open label-keyed, open fallback, closed
-/// label-keyed, closed fallback). `None` means "no existing incident, and the database
-/// answered" (a real "nothing found"); `Some(Err(()))` means the database could not be
-/// reached at all — the two are distinguished by a final reachability probe, exactly as
-/// the bash does, because an empty dedup scan and an unreachable store print identically
-/// from `bd list`'s own `2>/dev/null`.
-fn dedup_incident(bd: &dyn Bd, db: &str, reference: &str, lookback_days: i64, now: i64) -> Result<Option<DedupHit>, ()> {
+/// label-keyed, closed fallback). `Ok(None)` is "no existing incident, and the store
+/// answered"; `Err` says why that could not be told. The fallbacks read by `external_ref`:
+/// an unnarrowed handed-on read outgrows the store's deadline.
+fn dedup_incident(bd: &dyn Bd, db: &str, reference: &str, lookback_days: i64, now: i64) -> Result<Option<DedupHit>, String> {
     let ref_label = format!("ref:{}", decide::ref_hash(reference));
     let since = since_date(now, lookback_days);
     // Open/closed is each bead's lifecycle row (sp-jgjvh: incident beads are work beads);
@@ -91,21 +89,25 @@ fn dedup_incident(bd: &dyn Bd, db: &str, reference: &str, lookback_days: i64, no
         (Scope::HandedOn, Some(ref_label.as_str()), Some(since.as_str()), false),
         (Scope::HandedOn, None, Some(since.as_str()), true),
     ];
-    let mut blind = false;
+    let mut blind = None;
     for (scope, label, closed_after, skip_ref_labeled) in passes {
-        match bd.list(db, scope, label, closed_after) {
+        let external_ref = skip_ref_labeled.then_some(reference);
+        match bd.list(db, scope, label, closed_after, external_ref) {
             Ok(rows) => {
                 if let Some(hit) = decide::dedup_scan(&rows, scope == Scope::Unfinished, skip_ref_labeled, reference) {
                     return Ok(Some(hit));
                 }
             }
-            Err(_) => blind = true,
+            Err(e) => {
+                let kind = if skip_ref_labeled { "ref fallback" } else { "label-keyed" };
+                blind.get_or_insert(format!("{scope:?} {kind} pass: {e}"));
+            }
         }
     }
-    if !blind && bd.reachable(db) {
-        Ok(None)
-    } else {
-        Err(())
+    match blind {
+        Some(why) => Err(why),
+        None if bd.reachable(db) => Ok(None),
+        None => Err("database unreachable".into()),
     }
 }
 
@@ -134,8 +136,8 @@ pub fn file_one(
     let bounded = decide::bound_ref(reference);
     let reference = bounded.as_str();
     let hit = match dedup_incident(bd, cfg.db, reference, cfg.dedup_lookback_days, now) {
-        Err(()) => {
-            log.push(format!("database unreachable — {reference} stays spooled"));
+        Err(why) => {
+            log.push(format!("dedup could not read ({why}) — {reference} stays spooled"));
             return FileOutcome::Unreachable;
         }
         Ok(h) => h,
@@ -191,7 +193,7 @@ pub fn alarm_owner(
     let wide = FileConfig { dedup_lookback_days: ALARM_LOOKBACK_DAYS.max(cfg.dedup_lookback_days), ..*cfg };
     let bounded = decide::bound_ref(reference);
     match dedup_incident(bd, wide.db, &bounded, wide.dedup_lookback_days, clock.now()) {
-        Ok(Some(DedupHit::Open { .. })) | Ok(None) | Err(()) => None,
+        Ok(Some(DedupHit::Open { .. })) | Ok(None) | Err(_) => None,
         Ok(Some(_)) => Some(file_one(bd, mailer, clock, &wide, reference, title, payload, labels, log)),
     }
 }
@@ -670,6 +672,58 @@ mod tests {
         let out = file_one(&bd, &mailer, &clock, &cfg(&known), "incident:x", "x failed", b"payload", "spira,incident", &mut log);
         assert!(matches!(out, FileOutcome::Unreachable));
         assert_eq!(bd.created.borrow().len(), 0);
+    }
+
+    // covers: UC-ops-detection-remediation-10
+    #[test_id(t5extjn)]
+    #[test]
+    fn a_new_reference_files_when_only_an_unfiltered_handed_on_read_would_time_out() {
+        let bd = FakeBd { unfiltered_handed_on_times_out: true, ..FakeBd::new() };
+        let mailer = FakeMailer::default();
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &cfg(&known), "incident:new", "new failed", b"payload", "spira,incident", &mut log);
+        assert!(matches!(out, FileOutcome::Filed(_)), "{log:?}");
+        assert_eq!(bd.created.borrow().len(), 1);
+    }
+
+    // covers: UC-ops-detection-remediation-10
+    #[test_id(tz1fpt2)]
+    #[test]
+    fn a_blind_dedup_logs_the_pass_and_the_stores_own_error() {
+        let bd = FakeBd { lc_down: true, ..FakeBd::new() };
+        let mailer = FakeMailer::default();
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut log = vec![];
+        file_one(&bd, &mailer, &clock, &cfg(&known), "incident:x", "x failed", b"payload", "spira,incident", &mut log);
+        assert!(log.iter().any(|l| l.contains("spira-lc: down") && l.contains("Unfinished label-keyed pass") && l.contains("incident:x stays spooled")), "{log:?}");
+        assert!(!log.iter().any(|l| l.contains("database unreachable")), "{log:?}");
+    }
+
+    // covers: UC-ops-detection-remediation-03
+    #[test_id(tyd1h6c)]
+    #[test]
+    fn the_ref_fallback_finds_only_the_unlabelled_closed_bead_holding_this_reference() {
+        let mailer = FakeMailer::default();
+        let clock = FixedClock(1_790_812_800); // 2026-10-01T00:00:00Z
+        let known = vec!["spira".to_string()];
+        let bd = FakeBd { unfiltered_handed_on_times_out: true, ..FakeBd::new() };
+        for (id, reference) in [("sp-other", "incident:other"), ("sp-mine", "incident:mine")] {
+            bd.rows.borrow_mut().push(BeadRow {
+                id: id.into(),
+                status: BeadStatus::Closed,
+                external_ref: Some(reference.into()),
+                labels: vec![],
+                closed_at: Some("2026-09-30T00:00:00Z".into()),
+            });
+        }
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &cfg(&known), "incident:mine", "t", b"p", "spira,incident", &mut log);
+        assert!(matches!(out, FileOutcome::Filed(ref id) if id == "sp-mine"), "{log:?}");
+        assert_eq!(*bd.reopened.borrow(), vec!["sp-mine".to_string()]);
+        assert!(bd.created.borrow().is_empty());
     }
 
     /// sp-nmlna: a recurrence inside the lookback that matches an incident whose lifecycle

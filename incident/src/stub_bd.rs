@@ -68,6 +68,7 @@ fn list(state: &Value, argv: &[String]) -> String {
             _ => i += 1,
         }
     }
+    let external_ref = argv.iter().position(|a| a == "--external-ref").and_then(|i| argv.get(i + 1));
     let want: Vec<&str> = label.map(|l| l.split(',').collect()).unwrap_or_default();
     let rows: Vec<Value> = state["beads"]
         .as_object()
@@ -75,6 +76,9 @@ fn list(state: &Value, argv: &[String]) -> String {
         .flat_map(|m| m.values())
         .filter(|b| {
             if !statuses.is_empty() && !statuses.contains(&str_of(b, "status")) {
+                return false;
+            }
+            if external_ref.is_some_and(|x| x != str_of(b, "external_ref")) {
                 return false;
             }
             if ids.as_ref().is_some_and(|s| !s.contains(str_of(b, "id"))) {

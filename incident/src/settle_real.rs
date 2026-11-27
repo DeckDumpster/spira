@@ -98,7 +98,7 @@ impl Settler for RealSettler<'_> {
     fn candidates(&self) -> Result<Vec<Candidate>, String> {
         let open: Vec<_> = self
             .bd
-            .list_beads(Scope::Unfinished, Some(&self.incident_label), None)?
+            .list_beads(Scope::Unfinished, Some(&self.incident_label), None, None)?
             .into_iter()
             .filter(|(r, _)| r.status == crate::decide::BeadStatus::Open)
             .map(|(r, bead)| Candidate { fixes: blocks_of(&bead), id: r.id, external_ref: r.external_ref, labels: r.labels })
