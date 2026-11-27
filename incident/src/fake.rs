@@ -24,6 +24,10 @@ pub(crate) struct FakeBd {
     pub(crate) fact_fails: bool,
     /// `bd create` refuses with this text.
     pub(crate) create_error: Option<String>,
+    /// Repos whose admitted lanes leave out `incident`.
+    pub(crate) walled_repos: Vec<String>,
+    /// `bd create` calls made, refused ones included.
+    pub(crate) creates: RefCell<usize>,
     pub(crate) created: RefCell<Vec<(String, String)>>,
     pub(crate) bodies: RefCell<HashMap<String, String>>,
     pub(crate) reopened: RefCell<Vec<String>>,
@@ -66,6 +70,10 @@ impl Bd for FakeBd {
             .collect())
     }
     fn create(&self, _db: &str, title: &str, _kind: &str, _priority: &str, labels: &str, external_ref: &str, _body: &str, _actor: Option<&str>) -> Result<String, String> {
+        *self.creates.borrow_mut() += 1;
+        if let Some(repo) = self.walled_repos.iter().find(|r| labels.split(',').any(|l| l.strip_prefix("repo:") == Some(r.as_str()))) {
+            return Err(format!("bead: repo:{repo} does not admit lane incident"));
+        }
         if let Some(e) = &self.create_error {
             return Err(e.clone());
         }
