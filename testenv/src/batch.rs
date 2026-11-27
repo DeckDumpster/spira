@@ -1075,25 +1075,35 @@ mod tests {
     #[test_id(tfgj6g3)]
     #[test]
     fn a_log_the_cap_may_have_named_is_kept_after_the_suite_is_recorded() {
-        let armed = Arc::new(Mutex::new(None));
-        let slot = armed.clone();
-        let rt = FakeRuntime::new();
-        rt.on_suite("test-a.sh", move |_| {
-            let cap = crate::cap::arm(crate::cap::Cap { secs: 0, source: "test" }, None);
-            cap.await_trip();
-            *slot.lock().unwrap() = Some(cap);
-            ExecOutcome { rc: 0, output: "ok\n".into() }
-        });
-        let dir = tmpdir("raw-tripped");
-        let s = session(&rt);
-        let c = cfg(Mode::Serial, &dir, 0);
-        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
-        let cap = armed.lock().unwrap().take().expect("armed");
-        let trip = cap.finish().expect("tripped");
-        assert!(out.records.contains_key("test-a.sh"));
-        let raw = dir.join(".test-a.sh.raw");
-        assert!(trip.report.contains(&crate::cap::log_line("test-a.sh", &raw)), "{:?}", trip.report);
-        assert!(raw.exists());
+        for mode in [Mode::Serial, Mode::Parallel] {
+            let dir = tmpdir("raw-tripped");
+            let armed = Arc::new(Mutex::new(None));
+            let (slot, under) = (armed.clone(), dir.to_path_buf());
+            let rt = FakeRuntime::new();
+            rt.on_suite("test-a.sh", move |_| {
+                // Armed off the suite's thread, as a run's cap is for a parallel suite.
+                let cap = std::thread::scope(|t| {
+                    t.spawn(|| {
+                        crate::cap::PIN_UNDER.with(|p| *p.borrow_mut() = Some(under.clone()));
+                        let cap = crate::cap::arm(crate::cap::Cap { secs: 0, source: "test" }, None);
+                        cap.await_trip();
+                        cap
+                    })
+                    .join()
+                    .unwrap()
+                });
+                *slot.lock().unwrap() = Some(cap);
+                ExecOutcome { rc: 0, output: "ok\n".into() }
+            });
+            let s = session(&rt);
+            let c = cfg(mode, &dir, 1);
+            let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
+            let trip = armed.lock().unwrap().take().expect("armed").finish().expect("tripped");
+            assert!(out.records.contains_key("test-a.sh"));
+            let raw = dir.join(".test-a.sh.raw");
+            assert!(trip.report.contains(&crate::cap::log_line("test-a.sh", &raw)), "{:?}", trip.report);
+            assert!(raw.exists());
+        }
     }
 
     /// The first exec of `test-a.sh` answers `first`, every later one a pass; returns what

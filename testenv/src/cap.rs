@@ -43,6 +43,12 @@ thread_local! {
     pub static OBSERVE_CAP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+#[cfg(test)]
+thread_local! {
+    /// A test's cap names, and so pins, only units logging under this: others run beside it.
+    pub static PIN_UNDER: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
 thread_local! {
     /// The clock of the cap armed on this thread, for [`hold`] to stop.
     static CURRENT: std::cell::RefCell<Option<Arc<Mutex<Clock>>>> = const { std::cell::RefCell::new(None) };
@@ -117,13 +123,12 @@ fn units() -> Vec<Unit> {
 }
 
 /// The units a firing cap reports, marked as named in the same step.
-fn cut_units(_armer: std::thread::ThreadId) -> Vec<Unit> {
+fn cut_units(_pin_under: Option<&Path>) -> Vec<Unit> {
     let all = {
         let mut running = RUNNING.lock().unwrap();
         for u in running.iter_mut() {
-            // A test's cap must not pin the units of tests running beside it.
             #[cfg(test)]
-            if u.owner != _armer {
+            if !_pin_under.is_some_and(|d| u.log.as_ref().is_some_and(|l| l.starts_with(d))) {
                 continue;
             }
             u.named = true;
@@ -496,7 +501,10 @@ pub fn arm(cap: Cap, ledger: Option<PathBuf>) -> Armed {
     }
     publish(&clock.lock().unwrap());
     CURRENT.with(|c| *c.borrow_mut() = Some(clock.clone()));
-    let armer = std::thread::current().id();
+    #[cfg(test)]
+    let pin_under = PIN_UNDER.with(|p| p.borrow().clone());
+    #[cfg(not(test))]
+    let pin_under: Option<PathBuf> = None;
     std::thread::spawn(move || {
         let wait = |more: &dyn Fn() -> bool| {
             while more() {
@@ -510,7 +518,7 @@ pub fn arm(cap: Cap, ledger: Option<PathBuf>) -> Armed {
         if !wait(&|| clock.lock().unwrap().counted() < limit) {
             return;
         }
-        let cut = cut_units(armer);
+        let cut = cut_units(pin_under.as_deref());
         let what = describe_units(&cut);
         let report = explain(&cut, &what, limit.as_secs(), source);
         {
@@ -762,7 +770,7 @@ mod tests {
         b.log(&late);
         let out = |p: &Path| p.with_extension("out");
         supersede_log(&early, &out(&early));
-        let cut = cut_units(std::thread::current().id());
+        let cut = cut_units(Some(dir.path()));
         supersede_log(&late, &out(&late));
         assert!(!early.exists() && late.exists());
         let named: Vec<(&str, Option<&Path>)> = cut.iter().map(|u| (u.name.as_str(), u.log.as_deref())).collect();
@@ -783,6 +791,20 @@ mod tests {
         drop(unit);
         let trip = armed.finish().expect("tripped");
         assert!(trip.report.contains(&log_line("cap-unwound", log)), "{:?}", trip.report);
+    }
+
+    #[test_id(tbg4q1f)]
+    #[test]
+    fn finishing_one_tripped_cap_leaves_another_tripped() {
+        let trip = || {
+            let armed = arm(Cap { secs: 0, source: "test" }, None);
+            armed.await_trip();
+            armed
+        };
+        let (first, second) = (trip(), trip());
+        first.finish().expect("tripped");
+        assert!(tripped_anywhere());
+        second.finish().expect("tripped");
     }
 
     #[test_id(tyzcyxi)]
