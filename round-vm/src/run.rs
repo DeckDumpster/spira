@@ -283,10 +283,10 @@ pub fn shell_quote(s: &str) -> String {
 }
 
 /// The VM side of a round for a registered repository that is not the harness: clone the round's
-/// tree and run the repository's own CI entry point (`${14}`) in its declared image (`${22}`). Its exit status is the one verdict,
+/// tree and run the repository's own CI entry point (`${14}`) in its declared image (`${21}`). Its exit status is the one verdict,
 /// written as `ci.result`, so the round covers what CI covers by construction.
 pub const FOREIGN_SCRIPT: &str = r#"set -euo pipefail
-host_addr="$1" port="$2" round_ref="${12}" round_sha="${13}" entry="${14}" image="${22}" workdir="${23:-/work}"
+host_addr="$1" port="$2" round_ref="${12}" round_sha="${13}" entry="${14}" image="${21}" workdir="${22:-/work}"
 export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 rm -rf ~/round-bins ~/round-work ~/round-setup.log ~/round-shims
 exec 2> >(tee ~/round-setup.log >&2)
@@ -359,7 +359,7 @@ pub const REMOTE_SCRIPT: &str = concat!(r#"set -Eeuo pipefail
 unset SPIRA_HOME
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" round_ref="${12}" round_sha="${13}"
 testenv_limits="${15:-}" resume_url="${16:-}" fences="${17:-}" want_tag="${18:-}"
-deny_list="${19:-}" deny_filter_line="${20:-}" only="${24:-}"
+deny_list="${19:-}" deny_filter_line="${20:-}" only="${23:-}"
 rm -rf ~/round-bins ~/round-launcher.env ~/round-setup.log ~/round-script.log ~/round-work/.runtime/spira/batch-results/round-phases
 mkdir -p ~/round-work/.runtime/spira/batch-results
 : > ~/round-runner.out
@@ -1380,7 +1380,8 @@ pub const REMOTE_EXIT_FILE: &str = "round-exit";
 /// Where ssh's diagnostics for the batch's connections are kept, in the results dir.
 pub const SSH_LOG_FILE: &str = "ssh-batch.log";
 
-pub fn remote_command(job: &BatchJob) -> String {
+/// The VM script's positional parameters, in order: [`REMOTE_SCRIPT`] and [`FOREIGN_SCRIPT`] read them by position.
+pub(crate) fn remote_args(job: &BatchJob) -> Vec<String> {
     let mut args = vec![
         job.host_addr.clone(),
         job.mirror_port.to_string(),
@@ -1407,7 +1408,11 @@ pub fn remote_command(job: &BatchJob) -> String {
     args.push(job.ci_image.clone().unwrap_or_default());
     args.push(job.ci_workdir.clone().unwrap_or_default());
     args.push(job.only.clone());
-    let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
+    args
+}
+
+pub fn remote_command(job: &BatchJob) -> String {
+    let quoted: Vec<String> = remote_args(job).iter().map(|a| shell_quote(a)).collect();
     format!("bash -c {} launcher {}", shell_quote(REMOTE_LAUNCHER), quoted.join(" "))
 }
 
@@ -4990,6 +4995,92 @@ mod tests {
         let cmd = remote_command(&sample_job());
         assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' 'opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' 'registry.example/rust:1' 'work' ''", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+
+    /// The 1-based position of each `name="$N"` / `name="${N...}"` read ahead of the script's first
+    /// function; past it, `$N` is a function's own argument.
+    fn positional_reads(script: &str) -> Vec<(&str, usize)> {
+        script
+            .lines()
+            .take_while(|l| !l.contains("() {"))
+            .flat_map(str::split_whitespace)
+            .filter_map(|word| {
+                let (name, value) = word.split_once("=\"$")?;
+                let digits: String = value.trim_start_matches('{').chars().take_while(char::is_ascii_digit).collect();
+                Some((name, digits.parse().ok()?))
+            })
+            .collect()
+    }
+
+    fn assert_reads_match(script: &str, job: &BatchJob, expected: &[(&str, String)]) {
+        let args = remote_args(job);
+        let reads = positional_reads(script);
+        for (name, want) in expected {
+            let (_, pos) = reads.iter().find(|(n, _)| n == name).unwrap_or_else(|| panic!("the script no longer reads {name}"));
+            assert_eq!(args.get(pos - 1), Some(want), "{name} reads position {pos} of {} arguments", args.len());
+        }
+        for (name, pos) in reads {
+            assert!(expected.iter().any(|(n, _)| *n == name), "{name} reads position {pos} and no field is pinned to it");
+        }
+    }
+
+    #[test_id(trwfg36)]
+    #[test]
+    fn foreign_script_reads_image_and_workdir_where_remote_args_puts_them() {
+        let job = BatchJob {
+            ci_entry: Some("entry-sentinel".into()),
+            ci_image: Some("registry.example/rust:1".into()),
+            ci_workdir: Some("work".into()),
+            ..sample_job()
+        };
+        assert_reads_match(FOREIGN_SCRIPT, &job, &[
+            ("image", "registry.example/rust:1".into()),
+            ("workdir", "work".into()),
+            ("entry", "entry-sentinel".into()),
+            ("round_ref", job.round_ref.clone()),
+            ("round_sha", job.round_sha.clone()),
+            ("host_addr", job.host_addr.clone()),
+            ("port", job.mirror_port.to_string()),
+        ]);
+    }
+
+    #[test_id(txj2leo)]
+    #[test]
+    fn remote_script_reads_every_argument_where_remote_args_puts_it() {
+        let deny_list = "disabled\ttest:t0aaaaa\tsp-1\t-\n";
+        let job = BatchJob {
+            suites: Some("test-a.sh".into()),
+            resume_url: Some("dir:resume".into()),
+            lint: true,
+            image_tag: Some("tag-sentinel".into()),
+            fences: "fence\ttrue\n".into(),
+            deny_list: deny_list.into(),
+            only: "integration-tests".into(),
+            ..sample_job()
+        };
+        let filter = spira_config::unit_tier::DenyList::parse(deny_list).unwrap().config_filter_line();
+        assert_reads_match(REMOTE_SCRIPT, &job, &[
+            ("host_addr", "10.0.0.1".into()),
+            ("port", "9430".into()),
+            ("suites", "test-a.sh".into()),
+            ("maxpar", "16".into()),
+            ("toolchain", "1.82.0".into()),
+            ("cache_home", "opt/spira/cargo".into()),
+            ("registry", "registry.example/spira".into()),
+            ("setup_alarm", "45".into()),
+            ("cap", "900".into()),
+            ("post_guard", "600".into()),
+            ("lint", "1".into()),
+            ("round_ref", "refs/rounds/7-abc".into()),
+            ("round_sha", "abc".into()),
+            ("testenv_limits", "testenv_suite_cap = 600\n".into()),
+            ("resume_url", "dir:resume".into()),
+            ("fences", "fence\ttrue\n".into()),
+            ("want_tag", "tag-sentinel".into()),
+            ("deny_list", deny_list.into()),
+            ("deny_filter_line", filter),
+            ("only", "integration-tests".into()),
+        ]);
     }
 
     #[test_id(to0fk8c)]
