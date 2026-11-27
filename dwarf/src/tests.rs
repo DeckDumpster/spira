@@ -158,6 +158,8 @@ pub(crate) mod verdict_run {
         holds: &'static [&'static str],
         rejections: &'static str,
         holder: Mutex<String>,
+        /// The session ends unsubmitted at a branch tip stuck for this many exits.
+        stuck_streak: Option<&'static str>,
         /// The row's state once it leaves WORKING, and when its ask hold was last raised.
         left: Mutex<Option<&'static str>>,
         ask_since: Mutex<i64>,
@@ -188,6 +190,11 @@ pub(crate) mod verdict_run {
             self.record(f, a);
             if f == "lc_claim_bead" {
                 *self.holder.lock().unwrap() = a[1].clone();
+            }
+            match (self.stuck_streak, f) {
+                (Some(_), "lc_bead_verified") => return Out { code: 1, ..Default::default() },
+                (Some(n), "thrash_streak_bump") => return Out::ok(n),
+                _ => {}
             }
             Out::ok("")
         }
@@ -255,6 +262,39 @@ pub(crate) mod verdict_run {
         assert_claim_kept(&store, &ledger);
         assert!(store.called(&["spira-lc", "hold"]).is_empty() && !ledger.contains("escalation-hold"), "{ledger}");
         assert!(lines.iter().any(|l| l.contains("escalation-ceiling") && l.contains("directed")), "{lines:?}");
+    }
+
+    fn manual_hold_argv(store: &Claimable) -> Vec<String> {
+        let holds: Vec<_> = store.called(&["spira-lc", "hold"]).into_iter().filter(|c| c[3] == "manual").collect();
+        assert_eq!(holds.len(), 1, "{:?}", store.calls.lock().unwrap());
+        holds[0].clone()
+    }
+
+    #[test_id(tiu3lsm)]
+    #[test]
+    fn the_escalation_ceiling_hold_is_placed_as_a_sequencing_hold() {
+        let store = Claimable { proposal: UNSTACKED, rejections: r#"{"rejections":9,"stronger_rejections":9,"history":[]}"#, ..Default::default() };
+        with_run_sink(crate::tests::complete_vars(), &CountingBd(Default::default()), Dirty(vec![]), &store, &|| 0, &store, &Mute::default(), "", |r| {
+            r.ledger = Ledger { path: PathBuf::from("nonexistent/ledger"), dry: true };
+            assert_eq!(r.escalation_gate("sp-x"), Some(0));
+        });
+        assert!(manual_hold_argv(&store).windows(2).any(|w| w == ["--purpose", "sequence"]));
+    }
+
+    #[test_id(tj7jc2h)]
+    #[test]
+    fn the_no_progress_streak_hold_is_placed_as_a_sequencing_hold() {
+        let store = Claimable { proposal: UNSTACKED, stuck_streak: Some("99"), ..Default::default() };
+        let dir = testkit::TempDir::new("dwarf-no-progress");
+        let trace = dir.path().join("log");
+        std::fs::write(&trace, "=== spira attempt 1 dwarf=eitri\n{\"type\":\"tool_use\"}\n{\"type\":\"result\",\"api_error_status\":null}\n").unwrap();
+        directed_claim_then(&store, |r| {
+            r.s.logf = Some(trace.clone());
+            r.s.session_started = true;
+            r.hb_done.store(true, std::sync::atomic::Ordering::SeqCst);
+            r.teardown(0);
+        });
+        assert!(manual_hold_argv(&store).windows(2).any(|w| w == ["--purpose", "sequence"]));
     }
 
     /// The log of a directed session on an ask-held row that ends SUBMITTED, its ask hold
@@ -890,6 +930,7 @@ pub(crate) mod verdict_run {
         assert_eq!(holds.len(), 1, "{holds:?}");
         assert_eq!(&holds[0][..3], ["hold", "sp-a", "manual"]);
         assert!(holds[0][3].contains("harness-red streak 3") && holds[0][3].contains("bd init (server) failed"), "{holds:?}");
+        assert!(holds[0].windows(2).any(|w| w == ["--purpose", "sequence"]), "{holds:?}");
         assert!(mails[0].contains("--default fix the harness fault named above, then lift the hold"), "{mails:?}");
         let body = mails[0].split(" || ").nth(1).unwrap();
         assert!(body.contains(RED_WHY) && body.contains("3 times in a row"), "{body}");

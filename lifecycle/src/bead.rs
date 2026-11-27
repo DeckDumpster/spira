@@ -374,6 +374,8 @@ pub enum BeadEventKind {
     /// split as `gate_red`'s `tip` versus its `reason`). It becomes the row's own `reason`
     /// display when given, falling back to the category's own name otherwise.
     Hold { kind: HoldKind, cause: HoldCause, #[serde(default)] detail: Option<String> },
+    /// Break-glass only for a verification hold (or one from before holds named a purpose)
+    /// on a REWORK row whose tip a round ejected red; a sequencing hold lifts bare.
     Unhold { kind: HoldKind, #[serde(default, skip_serializing_if = "BreakGlass::is_empty")] break_glass: BreakGlass },
     /// Machine-emitted (design §1), same transaction as the prerequisite's backwards move,
     /// for every dependent whose `stack` names `(prereq, tip)`. Per-state outcomes: READY
@@ -514,6 +516,18 @@ fn awaiting_reply(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifecycle
             exit: "record the operator's answer with a reply event carrying its message id (mail reply), then close".to_string(),
         },
     )
+}
+
+/// A sequencing hold laid over any other standing manual hold must not shed that hold's need
+/// for evidence at the unhold.
+fn standing_cause(row: &LifecycleRow, new: HoldCause) -> HoldCause {
+    if new != HoldCause::Sequencing || !row.holds.contains(&HoldKind::Manual) {
+        return new;
+    }
+    match row.manual_hold.as_ref().map(|h| h.cause) {
+        Some(c @ (HoldCause::Sequencing | HoldCause::Verification)) => c,
+        _ => HoldCause::ManualHold,
+    }
 }
 
 fn manual_reason_refusal(detail: Option<&str>) -> Option<Refusal> {
@@ -770,7 +784,7 @@ fn apply_transition(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow>
             if row.state.is_terminal() {
                 return terminal(row);
             }
-            if *kind == HoldKind::Manual && *cause == HoldCause::ManualHold {
+            if *kind == HoldKind::Manual && matches!(cause, HoldCause::ManualHold | HoldCause::Sequencing | HoldCause::Verification) {
                 if let Some(refusal) = manual_reason_refusal(detail.as_deref()) {
                     return Outcome::refuse(row.clone(), refusal);
                 }
@@ -781,7 +795,7 @@ fn apply_transition(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow>
                 new.ask_since = Some(ev.at.unwrap_or(0));
             }
             if *kind == HoldKind::Manual {
-                new.manual_hold = Some(ManualHold { at: ev.at, cause: *cause, detail: detail.clone() });
+                new.manual_hold = Some(ManualHold { at: ev.at, cause: standing_cause(row, *cause), detail: detail.clone() });
             }
             new.reason = Some(detail.clone().unwrap_or_else(|| cause.as_str().to_string()));
             new.version += 1;
@@ -891,7 +905,8 @@ fn apply_transition(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow>
             if *kind == HoldKind::Ask {
                 return awaiting_reply(row, &ev.kind);
             }
-            let gate_hold = *kind == HoldKind::Manual && row.state == BeadState::Rework && row.ejected_red_tip.is_some() && row.ejected_red_tip == row.tip;
+            let sequencing = row.manual_hold.as_ref().is_some_and(|h| h.cause == HoldCause::Sequencing);
+            let gate_hold = *kind == HoldKind::Manual && !sequencing && row.state == BeadState::Rework && row.ejected_red_tip.is_some() && row.ejected_red_tip == row.tip;
             if gate_hold {
                 let tip = row.tip.clone().unwrap_or_default();
                 if let Some(missing) = break_glass.gap(&ev.actor, &tip) {
@@ -2198,26 +2213,38 @@ mod tests {
         gate.tip = Some(tip.into());
         gate.ejected_red_tip = Some(tip.into());
         let unhold = |g: BreakGlass| BeadEventKind::Unhold { kind: HoldKind::Manual, break_glass: g };
+        let held_for = |cause| {
+            let mut r = gate.clone();
+            r.manual_hold = Some(ManualHold { at: None, cause, detail: None });
+            r
+        };
         let cases: [(BreakGlass, &str, &str); 4] = [
             (BreakGlass { reason: String::new(), ..bg(tip) }, "concierge", "reason"),
             (BreakGlass { evidence: " ".into(), ..bg(tip) }, "concierge", "evidence ("),
             (bg("3333333333333333333333333333333333333333"), "concierge", "evidence tip"),
             (bg(tip), "", "actor"),
         ];
-        for (g, actor, field) in &cases {
-            let mut e = ev(BeadState::Rework, 0, unhold(g.clone()));
-            e.actor = actor.to_string();
-            let out = apply(&gate, &e);
-            assert!(!out.applied && matches!(&out.refusal, Some(Refusal::BreakGlassIncomplete { missing }) if missing.contains(field)), "{field}: {:?}", out.refusal);
-        }
-        let bare = apply(&gate, &ev(BeadState::Rework, 0, unhold(BreakGlass::default())));
-        assert!(!bare.applied, "an automated unhold of a gate hold is refused");
+        for gate in [gate.clone(), held_for(HoldCause::ManualHold), held_for(HoldCause::Verification)] {
+            for (g, actor, field) in &cases {
+                let mut e = ev(BeadState::Rework, 0, unhold(g.clone()));
+                e.actor = actor.to_string();
+                let out = apply(&gate, &e);
+                assert!(!out.applied && matches!(&out.refusal, Some(Refusal::BreakGlassIncomplete { missing }) if missing.contains(field)), "{field}: {:?}", out.refusal);
+            }
+            let bare = apply(&gate, &ev(BeadState::Rework, 0, unhold(BreakGlass::default())));
+            assert!(!bare.applied, "an automated unhold of a gate hold is refused");
 
-        let out = apply(&gate, &ev(BeadState::Rework, 0, unhold(bg(tip))));
+            let out = apply(&gate, &ev(BeadState::Rework, 0, unhold(bg(tip))));
+            assert!(out.applied, "{:?}", out.refusal);
+            assert!(out.row.holds.is_empty());
+            let stamp = out.row.reason.unwrap_or_default();
+            assert!(stamp.contains("break_glass=true") && stamp.contains("npm test 101/0") && stamp.contains(tip), "{stamp}");
+        }
+
+        let out = apply(&held_for(HoldCause::Sequencing), &ev(BeadState::Rework, 0, unhold(BreakGlass::default())));
         assert!(out.applied, "{:?}", out.refusal);
-        assert!(out.row.holds.is_empty());
-        let stamp = out.row.reason.unwrap_or_default();
-        assert!(stamp.contains("break_glass=true") && stamp.contains("npm test 101/0") && stamp.contains(tip), "{stamp}");
+        assert!(out.row.holds.is_empty() && out.row.manual_hold.is_none());
+        assert!(!out.row.reason.unwrap_or_default().contains("break_glass=true"), "ending a sequencing hold bypasses no check");
 
         let mut other_tip = gate.clone();
         other_tip.ejected_red_tip = Some("3333333333333333333333333333333333333333".into());
@@ -2227,6 +2254,32 @@ mod tests {
         assert!(apply(&ready, &ev(BeadState::Ready, 0, unhold(BreakGlass::default()))).applied);
         let wire = serde_json::to_string(&unhold(BreakGlass::default())).unwrap();
         assert_eq!(wire, r#"{"Unhold":{"kind":"Manual"}}"#);
+    }
+
+    #[test_id(tfrj74s)]
+    #[test]
+    fn a_sequencing_hold_placed_over_a_standing_hold_does_not_drop_its_need_for_evidence() {
+        let tip = "2222222222222222222222222222222222222222";
+        let standing = [
+            (Some(HoldCause::Verification), HoldCause::Verification),
+            (Some(HoldCause::ManualHold), HoldCause::ManualHold),
+            (Some(HoldCause::SupersedeRequest), HoldCause::ManualHold),
+            (None, HoldCause::ManualHold),
+        ];
+        for (before, after) in standing {
+            let mut r = row(BeadState::Rework);
+            r.holds.insert(HoldKind::Manual);
+            r.tip = Some(tip.into());
+            r.ejected_red_tip = Some(tip.into());
+            r.manual_hold = before.map(|cause| ManualHold { at: None, cause, detail: None });
+            let hold = BeadEventKind::Hold { kind: HoldKind::Manual, cause: HoldCause::Sequencing, detail: Some("waits for the fix".into()) };
+            let held = apply(&r, &ev(BeadState::Rework, 0, hold));
+            assert!(held.applied, "{:?}", held.refusal);
+            assert_eq!(held.row.manual_hold.as_ref().map(|h| h.cause), Some(after), "{before:?}");
+            let bare = BeadEventKind::Unhold { kind: HoldKind::Manual, break_glass: BreakGlass::default() };
+            let out = apply(&held.row, &ev(BeadState::Rework, 1, bare));
+            assert!(matches!(out.refusal, Some(Refusal::BreakGlassIncomplete { .. })), "{before:?}: {:?}", out.refusal);
+        }
     }
 
     #[test_id(tl9pi3u)]

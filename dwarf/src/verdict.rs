@@ -53,12 +53,12 @@ impl Run<'_> {
 
     /// `spira-lc hold` unless the row is already terminal: the machine refuses a Hold from a
     /// terminal state, and the refusal is noise this caller cannot act on. `None` = skipped.
-    pub(crate) fn hold_unless_terminal(&self, id: &str, kind: &str, reason: &str, actor: &str) -> Option<crate::util::Out> {
+    pub(crate) fn hold_unless_terminal(&self, id: &str, kind: &str, reason: &str, actor: &str, flags: &[&str]) -> Option<crate::util::Out> {
         if self.lc_bead(id).is_some_and(|r| r.terminal()) {
             self.log(&format!("{}: {id} is terminal — {kind} hold skipped", self.f()));
             return None;
         }
-        Some(self.d.exec.exec("spira-lc", &s(&["hold", id, kind, reason, actor]), None, None))
+        Some(self.d.exec.exec("spira-lc", &s(&[&["hold", id, kind, reason, actor], flags].concat()), None, None))
     }
 
     fn ts_print(&self, msg: &str) {

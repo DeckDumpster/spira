@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 
 use lifecycle::bead::{BeadEvent, LifecycleRow, BeadState, HoldKind};
 use lifecycle::delivery::{DeliveryEvent, DeliveryRow, DeliveryState};
+use lifecycle::reason::HoldCause;
 use serde_json::{json, Value};
 
 use super::*;
@@ -251,10 +252,10 @@ fn a_manual_hold_with_a_bare_bead_id_or_no_reason_is_refused_and_a_snooze_is_a_w
     let mut f = Fake::default();
     f.bead("sp-m", BeadState::Ready);
     for bad in ["sp-blocker1", "snooze-until:99"] {
-        assert_ne!(go(&mut f, "hold", &["sp-m", "manual", bad, "t"]).code, APPLIED, "{bad}");
+        assert_ne!(go(&mut f, "hold", &["sp-m", "manual", bad, "t", "--purpose", "sequence"]).code, APPLIED, "{bad}");
         assert_eq!(go(&mut f, "holds", &["sp-m"]).stdout, "");
     }
-    assert_ne!(go(&mut f, "hold", &["sp-m", "manual", "", "t"]).code, APPLIED);
+    assert_ne!(go(&mut f, "hold", &["sp-m", "manual", "", "t", "--purpose", "verify"]).code, APPLIED);
     assert_eq!(go(&mut f, "hold", &["sp-m", "wait", "snooze-until:99", "t"]).code, APPLIED);
     assert_eq!(go(&mut f, "holds", &["sp-m"]).stdout, "wait");
 }
@@ -264,20 +265,64 @@ fn a_manual_hold_with_a_bare_bead_id_or_no_reason_is_refused_and_a_snooze_is_a_w
 fn a_manual_hold_carries_its_reason_and_review_date_in_the_event() {
     let mut f = Fake::default();
     f.bead("sp-r", BeadState::Ready);
-    let a = go(&mut f, "hold", &["sp-r", "manual", "operator", "--reason", "waits on tenancy", "--review-by", "2026-10-20"]);
+    let a = go(&mut f, "hold", &["sp-r", "manual", "operator", "--purpose", "sequence", "--reason", "waits on tenancy", "--review-by", "2026-10-20"]);
     assert_eq!(a.code, APPLIED, "{a:?}");
     assert!(f.events[0].5.contains(r#""detail":"review-by:2026-10-20 waits on tenancy""#), "{}", f.events[0].5);
     assert_eq!(f.events[0].4, "operator");
-    let bad = go(&mut f, "hold", &["sp-r", "manual", "--reason", "x", "--review-by", "next week"]);
+    let bad = go(&mut f, "hold", &["sp-r", "manual", "--purpose", "sequence", "--reason", "x", "--review-by", "next week"]);
     assert_eq!(bad.code, REFUSED);
     assert_eq!(f.events.len(), 1, "a malformed date sends nothing");
     for v in ["2026-11-15T22:00", "2026-11-15junk", "2026-13-01", "2026-11-99", "2026-11-15T99:00:00Z"] {
-        assert_eq!(go(&mut f, "hold", &["sp-r", "manual", "--reason", "x", "--review-by", v]).code, REFUSED, "{v}");
+        assert_eq!(go(&mut f, "hold", &["sp-r", "manual", "--purpose", "sequence", "--reason", "x", "--review-by", v]).code, REFUSED, "{v}");
     }
     assert_eq!(f.events.len(), 1, "an unreadable review-by sends nothing");
-    let ok = go(&mut f, "hold", &["sp-r", "manual", "--reason", "x", "--review-by", "2026-11-15T22:00:00Z"]);
+    let ok = go(&mut f, "hold", &["sp-r", "manual", "--purpose", "sequence", "--reason", "x", "--review-by", "2026-11-15T22:00:00Z"]);
     assert_eq!(ok.code, APPLIED, "{ok:?}");
     assert!(f.events[1].5.contains(r#""detail":"review-by:2026-11-15T22:00:00Z x""#), "{}", f.events[1].5);
+}
+
+#[test_id(tt0lga3)]
+#[test]
+fn a_manual_hold_is_refused_unheld_unless_it_names_a_known_purpose() {
+    let mut f = Fake::default();
+    f.bead("sp-p", BeadState::Ready);
+    for flags in [&[][..], &["--purpose", "later"]] {
+        let a = go(&mut f, "hold", &[&["sp-p", "manual", "waits", "t"], flags].concat());
+        assert_eq!(a.code, REFUSED, "{flags:?}: {a:?}");
+        assert!(a.stderr.contains("a manual hold needs --purpose sequence") && a.stderr.contains("--purpose verify") && a.stderr.contains("no hold was applied"), "{}", a.stderr);
+        assert!(f.beads["sp-p"].holds.is_empty() && f.events.is_empty());
+    }
+    for kind in ["wait", "poison", "ask"] {
+        let a = go(&mut f, "hold", &["sp-p", kind, "waits", "t", "--purpose", "sequence"]);
+        assert_eq!(a.code, REFUSED, "{kind}: {a:?}");
+        assert!(a.stderr.contains("no hold was applied"), "{}", a.stderr);
+        assert!(f.beads["sp-p"].holds.is_empty() && f.events.is_empty(), "{kind}");
+    }
+    for (purpose, cause) in [("sequence", HoldCause::Sequencing), ("verify", HoldCause::Verification)] {
+        let a = go(&mut f, "hold", &["sp-p", "manual", "waits", "t", "--purpose", purpose]);
+        assert_eq!(a.code, APPLIED, "{a:?}");
+        assert_eq!(f.beads["sp-p"].manual_hold.as_ref().map(|h| h.cause), Some(cause), "{purpose}");
+    }
+}
+
+#[test_id(tkjppdu)]
+#[test]
+fn only_a_verification_hold_on_a_red_rework_tip_needs_evidence_to_lift() {
+    let mut f = Fake::default();
+    let tip = "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3";
+    for (id, purpose) in [("sp-seq", "sequence"), ("sp-ver", "verify")] {
+        let r = f.bead(id, BeadState::Rework);
+        r.tip = Some(tip.into());
+        r.ejected_red_tip = Some(tip.into());
+        assert_eq!(go(&mut f, "hold", &[id, "manual", "waits", "concierge", "--purpose", purpose]).code, APPLIED);
+    }
+    let a = go(&mut f, "unhold", &["sp-seq", "manual", "concierge"]);
+    assert_eq!(a.code, APPLIED, "{}", a.stderr);
+    assert!(f.beads["sp-seq"].holds.is_empty());
+    let a = go(&mut f, "unhold", &["sp-ver", "manual", "concierge"]);
+    assert_eq!(a.code, REFUSED, "{}", a.stderr);
+    assert!(a.stderr.contains("BreakGlassIncomplete") && a.stderr.contains("verification hold"), "{}", a.stderr);
+    assert!(f.beads["sp-ver"].holds.contains(&HoldKind::Manual));
 }
 
 #[test_id(tl7etz1)]
@@ -286,7 +331,8 @@ fn hold_suspends_without_moving_state_and_unhold_restores_it() {
     let mut f = Fake::default();
     f.bead("sp-h", BeadState::Working);
     for kind in ["poison", "wait", "manual", "ask"] {
-        assert_eq!(go(&mut f, "hold", &["sp-h", kind, "held for it", "t"]).code, APPLIED, "{kind}");
+        let purpose: &[&str] = if kind == "manual" { &["--purpose", "sequence"] } else { &[] };
+        assert_eq!(go(&mut f, "hold", &[&["sp-h", kind, "held for it", "t"], purpose].concat()).code, APPLIED, "{kind}");
         assert_eq!(f.state("sp-h"), "WORKING");
         assert_eq!(go(&mut f, "holds", &["sp-h"]).stdout, kind);
         assert_eq!(go(&mut f, "held", &["sp-h", kind]).code, 0);

@@ -210,7 +210,7 @@ pub struct BatchEvent {
     pub actor: String,
 }
 
-pub const PASS_RUNNING_EXIT: &str = "wait for the pass's verdict: the attribution then makes eject legal (OPEN, ATTRIBUTING or GREEN); to keep the member out of the next cut now, `spira-lc hold <id> manual --reason '<why>; lifted by <who>'`; or to abandon the round whole, `QUEUE_ABANDON_CONSIDERED=\"<why>\" queue round abandon <batch> <repo> ...`";
+pub const PASS_RUNNING_EXIT: &str = "wait for the pass's verdict: the attribution then makes eject legal (OPEN, ATTRIBUTING or GREEN); to keep the member out of the next cut now, `spira-lc hold <id> manual --purpose sequence --reason '<why>; lifted by <who>'`; or to abandon the round whole, `QUEUE_ABANDON_CONSIDERED=\"<why>\" queue round abandon <batch> <repo> ...`";
 
 fn where_is(row: &BatchRow) -> String {
     match row.phase {
