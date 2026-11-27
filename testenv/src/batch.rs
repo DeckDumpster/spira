@@ -142,11 +142,13 @@ fn write_atomic(path: &Path, text: &str) {
 }
 
 /// `.out` (and `.tap.json`) first, `.result` last: its presence means the suite completed.
-pub fn write_suite(results: &Path, suite: &str, rec: &ResultRecord, output: &str) {
-    let _ = fs::write(
+/// Returns whether `.out` was written.
+pub fn write_suite(results: &Path, suite: &str, rec: &ResultRecord, output: &str) -> bool {
+    let wrote_out = fs::write(
         results.join(format!("{suite}.out")),
         record::normalize_output(output),
-    );
+    )
+    .is_ok();
     if rec.status.executed() {
         if let Ok(j) = serde_json::to_string(&tap::parse(output)) {
             let _ = fs::write(results.join(format!("{suite}.tap.json")), j);
@@ -157,6 +159,7 @@ pub fn write_suite(results: &Path, suite: &str, rec: &ResultRecord, output: &str
         &format!("{rec}\n"),
     );
     record_suite(results, suite, rec);
+    wrote_out
 }
 
 fn record_suite(results: &Path, suite: &str, rec: &ResultRecord) {
@@ -181,6 +184,10 @@ fn detail_lines(rec: &ResultRecord, output: &str) -> Vec<String> {
         return Vec::new();
     }
     output.lines().map(|l| format!("      {l}")).collect()
+}
+
+fn record_step(rc: i32, secs: u64) -> String {
+    format!("record, exec rc={rc} after {secs}s")
 }
 
 struct Shared<'a> {
@@ -211,7 +218,9 @@ impl Shared<'_> {
             self.cfg.producer,
             now_epoch(),
         );
-        write_suite(&self.cfg.results, suite, &rec, output);
+        if write_suite(&self.cfg.results, suite, &rec, output) {
+            self.drop_raw(suite);
+        }
         (self.hooks.line)(&record::suite_line(suite, &rec));
         self.records.lock().unwrap().insert(suite.to_string(), rec);
     }
@@ -220,7 +229,8 @@ impl Shared<'_> {
         self.cfg.results.join(format!(".{suite}.raw"))
     }
 
-    fn exec_suite(&self, n: usize, suite: &str) -> (i32, u64, String) {
+    /// The guard keeps the suite in the cap's report until the caller has written its record.
+    fn exec_suite(&self, n: usize, suite: &str) -> (i32, u64, String, crate::cap::Running) {
         let mut req = self
             .session
             .suite_request(self.cfg.mode, n, suite, self.fixtures);
@@ -234,17 +244,20 @@ impl Shared<'_> {
         req.deadline = self.deadline_at;
         let raw = self.raw_path(suite);
         req.output = Some(raw.clone());
-        let _running = crate::cap::running(suite);
-        _running.log(&raw);
-        _running.step("exec");
+        let running = crate::cap::running(suite);
+        running.log(&raw);
+        running.step("exec");
         let t0 = Instant::now();
         let out = self.session.rt.exec(&req);
         let secs = t0.elapsed().as_secs();
-        // The over-cap report names this file, and a cut suite gets no `.out`.
-        if out.rc != crate::runtime::RC_CANCELLED {
-            let _ = fs::remove_file(&raw);
-        }
-        (out.rc, secs, out.output)
+        running.step(&record_step(out.rc, secs));
+        (out.rc, secs, out.output, running)
+    }
+
+    /// Only for a suite whose `.out` was written: that file takes the raw log's place.
+    fn drop_raw(&self, suite: &str) {
+        let out = self.cfg.results.join(format!("{suite}.out"));
+        crate::cap::supersede_log(&self.raw_path(suite), &out);
     }
 
     fn finish(&self, n: usize, suite: &str, rc: i32, secs: u64, output: &str) {
@@ -259,7 +272,9 @@ impl Shared<'_> {
             now_epoch(),
         );
         let rec = rec.skip_as_red(self.cfg.quarantined.contains(suite));
-        write_suite(&self.cfg.results, suite, &rec, output);
+        if write_suite(&self.cfg.results, suite, &rec, output) {
+            self.drop_raw(suite);
+        }
         if rec.status == Status::Ok {
             if let Some(store) = &self.cfg.resume {
                 store.record(suite);
@@ -428,7 +443,7 @@ fn rerun_lost(sh: &Shared, jobs: &[Job]) {
         if sh.cfg.mode == Mode::Parallel {
             sh.session.make_home(n);
         }
-        let (rc, secs, output) = sh.exec_suite(n, &job.name);
+        let (rc, secs, output, _running) = sh.exec_suite(n, &job.name);
         if rc == crate::runtime::RC_DEADLINE {
             return;
         }
@@ -451,7 +466,7 @@ fn run_serial(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
             break;
         }
         let n = i + 1;
-        let (rc, secs, output) = sh.exec_suite(n, &job.name);
+        let (rc, secs, output, _running) = sh.exec_suite(n, &job.name);
         if rc == crate::runtime::RC_DEADLINE {
             sh.finish_deferred(&job.name, Some(secs), &output);
             outcome.deadline_hit = true;
@@ -567,7 +582,7 @@ fn run_parallel(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
             scope.spawn(move || {
                 let _done = done;
                 sh.session.make_home(n);
-                let (rc, secs, output) = sh.exec_suite(n, &name);
+                let (rc, secs, output, _running) = sh.exec_suite(n, &name);
                 if rc == crate::runtime::RC_CANCELLED && cancelled() {
                     return;
                 }
@@ -690,40 +705,6 @@ mod tests {
         let mut s = Session::new(rt, "i1", "dwarf");
         s.liveness_sleep = Duration::from_millis(1);
         s
-    }
-
-    #[test_id(thdl32c)]
-    #[test]
-    fn a_suite_cut_at_its_cap_names_its_step_and_log() {
-        crate::cap::ONLY_MY_UNITS.with(|o| o.set(true));
-        let rt = FakeRuntime::new();
-        rt.suite("test-a.sh", 0, "ok 1 - a\n");
-        let dir = tmpdir("cut-report");
-        let s = session(&rt);
-        let c = cfg(Mode::Serial, &dir, 1);
-        with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
-        let cuts = rt.cut_here.lock().unwrap();
-        let (what, report) = &cuts[0];
-        assert_eq!(what, "tier/suite test-a.sh (in exec)");
-        let log = crate::cap::log_line("test-a.sh", &dir.join(".test-a.sh.raw"));
-        assert!(report.contains(&log), "{report:?}");
-    }
-
-    #[test_id(t0t4olq)]
-    #[test]
-    fn a_cancelled_suite_keeps_its_raw_output() {
-        let rt = FakeRuntime::new();
-        rt.suite("test-a.sh", crate::runtime::RC_CANCELLED, "half done\n");
-        rt.suite("test-b.sh", 0, "ok 1 - b\n");
-        let dir = tmpdir("cut-raw");
-        let s = session(&rt);
-        let c = cfg(Mode::Serial, &dir, 1);
-        with_hooks(|h, _| {
-            run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh", "test-b.sh"]))
-        });
-        let kept = fs::read_to_string(dir.join(".test-a.sh.raw")).unwrap();
-        assert!(kept.contains("half done"), "{kept:?}");
-        assert!(!dir.join(".test-b.sh.raw").exists());
     }
 
     #[test_id(tal286u)]
@@ -985,6 +966,190 @@ mod tests {
         c.timeout = Some(Duration::from_secs(600));
         with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
         assert_eq!(rt.suite_execs()[0].timeout, Some(Duration::from_secs(600)));
+    }
+
+    fn numbered(suite: &str) -> String {
+        (1..=100).map(|n| format!("{suite} line {n}\n")).collect()
+    }
+
+    /// Answers each suite with 100 lines, limiting the cap's view to the exec's own thread.
+    fn chatty_suites(rt: &FakeRuntime, suites: &[&'static str]) {
+        for &suite in suites {
+            rt.on_suite(suite, move |_| {
+                crate::cap::ONLY_MY_UNITS.with(|o| o.set(true));
+                ExecOutcome { rc: 0, output: numbered(suite) }
+            });
+        }
+    }
+
+    fn assert_cut_names_log_and_tail(cut: &(String, Vec<String>), dir: &Path, suite: &str) {
+        let (what, report) = cut;
+        assert_eq!(what, &format!("tier/suite {suite} (in exec)"));
+        let log = crate::cap::log_line(suite, &dir.join(format!(".{suite}.raw")));
+        assert!(report.contains(&log), "{report:?}");
+        let head = format!("  last 60 lines ({suite}):");
+        let at = report.iter().position(|l| *l == head).expect("a tail");
+        let want: Vec<String> = (41..=100).map(|n| format!("    {suite} line {n}")).collect();
+        assert_eq!(report[at + 1..at + 61], want[..]);
+    }
+
+    #[test_id(twgc547)]
+    #[test]
+    fn a_suite_cut_in_its_exec_is_reported_with_its_step_log_and_tail() {
+        crate::cap::ONLY_MY_UNITS.with(|o| o.set(true));
+        let rt = FakeRuntime::new();
+        chatty_suites(&rt, &["test-a.sh"]);
+        let dir = tmpdir("cut-serial");
+        let s = session(&rt);
+        let c = cfg(Mode::Serial, &dir, 0);
+        with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
+        assert_cut_names_log_and_tail(&rt.cut_here.lock().unwrap()[0], &dir, "test-a.sh");
+    }
+
+    #[test_id(tf8b9mb)]
+    #[test]
+    fn each_parallel_suite_cut_in_its_exec_names_its_own_log() {
+        let rt = FakeRuntime::new();
+        chatty_suites(&rt, &["test-a.sh", "test-b.sh"]);
+        let dir = tmpdir("cut-par");
+        let s = session(&rt);
+        let c = cfg(Mode::Parallel, &dir, 2);
+        with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh", "test-b.sh"])));
+        let mut cuts = rt.cut_here.lock().unwrap().clone();
+        cuts.sort();
+        assert_eq!(cuts.len(), 2);
+        assert_cut_names_log_and_tail(&cuts[0], &dir, "test-a.sh");
+        assert_cut_names_log_and_tail(&cuts[1], &dir, "test-b.sh");
+    }
+
+    #[test_id(t2pjdxj)]
+    #[test]
+    fn the_raw_log_outlives_only_a_suite_that_left_no_record() {
+        let token = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        crate::runtime::LOCAL_CANCEL.with(|l| *l.borrow_mut() = Some(token.clone()));
+        let rt = FakeRuntime::new();
+        rt.on_suite("test-a.sh", move |_| {
+            token.store(true, Ordering::SeqCst);
+            ExecOutcome { rc: crate::runtime::RC_CANCELLED, output: "half a run\n".into() }
+        });
+        let dir = tmpdir("raw-cut");
+        let s = session(&rt);
+        let c = cfg(Mode::Serial, &dir, 0);
+        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
+        crate::runtime::LOCAL_CANCEL.with(|l| *l.borrow_mut() = None);
+        assert!(out.cancelled && out.records.is_empty());
+        assert_eq!(fs::read_to_string(dir.join(".test-a.sh.raw")).unwrap(), "half a run\n");
+
+        let rt = FakeRuntime::new();
+        rt.suite("test-a.sh", 0, "ok\n");
+        let dir = tmpdir("raw-done");
+        let s = session(&rt);
+        let c = cfg(Mode::Serial, &dir, 0);
+        with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
+        assert!(dir.join("test-a.sh.out").exists());
+        assert!(!dir.join(".test-a.sh.raw").exists());
+
+        let rt = FakeRuntime::new();
+        rt.suite("test-a.sh", crate::runtime::RC_DEADLINE, "partial\n");
+        let dir = tmpdir("raw-deferred");
+        let s = session(&rt);
+        let c = cfg(Mode::Serial, &dir, 0);
+        with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
+        assert!(dir.join("test-a.sh.out").exists());
+        assert!(!dir.join(".test-a.sh.raw").exists());
+    }
+
+    #[test_id(tdf90a4)]
+    #[test]
+    fn the_raw_log_stays_when_out_could_not_be_written() {
+        let rt = FakeRuntime::new();
+        rt.suite("test-a.sh", 0, "ok\n");
+        let dir = tmpdir("raw-no-out");
+        fs::create_dir(dir.join("test-a.sh.out")).unwrap();
+        let s = session(&rt);
+        let c = cfg(Mode::Serial, &dir, 0);
+        with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
+        assert_eq!(fs::read_to_string(dir.join(".test-a.sh.raw")).unwrap(), "ok\n");
+    }
+
+    #[test_id(tfgj6g3)]
+    #[test]
+    fn a_log_the_cap_may_have_named_is_kept_after_the_suite_is_recorded() {
+        for mode in [Mode::Serial, Mode::Parallel] {
+            let dir = tmpdir("raw-tripped");
+            let armed = Arc::new(Mutex::new(None));
+            let (slot, under) = (armed.clone(), dir.to_path_buf());
+            let rt = FakeRuntime::new();
+            rt.on_suite("test-a.sh", move |_| {
+                // Armed off the suite's thread, as a run's cap is for a parallel suite.
+                let cap = std::thread::scope(|t| {
+                    t.spawn(|| {
+                        crate::cap::PIN_UNDER.with(|p| *p.borrow_mut() = Some(under.clone()));
+                        let cap = crate::cap::arm(crate::cap::Cap { secs: 0, source: "test" }, None);
+                        cap.await_trip();
+                        cap
+                    })
+                    .join()
+                    .unwrap()
+                });
+                *slot.lock().unwrap() = Some(cap);
+                ExecOutcome { rc: 0, output: "ok\n".into() }
+            });
+            let s = session(&rt);
+            let c = cfg(mode, &dir, 1);
+            let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
+            let trip = armed.lock().unwrap().take().expect("armed").finish().expect("tripped");
+            assert!(out.records.contains_key("test-a.sh"));
+            let raw = dir.join(".test-a.sh.raw");
+            assert!(trip.report.contains(&crate::cap::log_line("test-a.sh", &raw)), "{:?}", trip.report);
+            assert!(raw.exists());
+        }
+    }
+
+    /// The first exec of `test-a.sh` answers `first`, every later one a pass; returns what
+    /// a cap tripping while each record was being reported would have named. Each report
+    /// must carry the log, by then `.out`, and its last line.
+    fn cut_while_recording(mode: Mode, first: (i32, &'static str)) -> Vec<String> {
+        let rt = FakeRuntime::new();
+        let calls = AtomicUsize::new(0);
+        rt.on_suite("test-a.sh", move |_| {
+            crate::cap::ONLY_MY_UNITS.with(|o| o.set(true));
+            let (rc, output) = match calls.fetch_add(1, Ordering::SeqCst) {
+                0 => first,
+                _ => (0, "ok\n"),
+            };
+            ExecOutcome { rc, output: output.into() }
+        });
+        let dir = tmpdir("cut-record");
+        let s = session(&rt);
+        let c = cfg(mode, &dir, 1);
+        let seen = Mutex::new(Vec::new());
+        let line = |l: &str| {
+            if l.trim_start().starts_with("test-a.sh") {
+                let what = crate::cap::describe();
+                let report = crate::cap::trip_report(&what, 1, "test");
+                let out = dir.join("test-a.sh.out");
+                assert!(report.contains(&crate::cap::log_line("test-a.sh", &out)), "{report:?}");
+                let last = fs::read_to_string(&out).unwrap();
+                let last = format!("    {}", last.lines().last().unwrap());
+                assert_eq!(report[report.len() - 2], last, "{report:?}");
+                seen.lock().unwrap().push(what);
+            }
+        };
+        let hooks = Hooks { log: &|_| {}, line: &line, timing: &|_, _, _, _, _| {}, psi_high: &|| false };
+        run(&s, &c, &hooks, &Fixtures::PerSuite, &jobs(&["test-a.sh"]));
+        seen.into_inner().unwrap()
+    }
+
+    #[test_id(tjwlmlx)]
+    #[test]
+    fn a_suite_stays_in_the_cap_report_while_its_record_is_written() {
+        let step = |rc: i32| format!("tier/suite test-a.sh (in record, exec rc={rc} after 0s)");
+        for mode in [Mode::Serial, Mode::Parallel] {
+            assert_eq!(cut_while_recording(mode, (0, "ok\n")), vec![step(0)]);
+            let lost = "Error: timed out waiting for file /x/userdata/y/exit/z\n";
+            assert_eq!(cut_while_recording(mode, (255, lost)), vec![step(255), step(0)]);
+        }
     }
 
     /// Suites that take `ms` each but honour the exec's deadline the way `run_bounded` does:

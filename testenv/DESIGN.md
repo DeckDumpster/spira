@@ -1172,10 +1172,14 @@ admitted after any queue gets its full cap, and its verdict line carries `slot_w
 `SPIRA_TESTENV_SLOT_WAIT` bounds only the scan's allowance below. At the cap the run cancels through the signal path, killing its
 containers, and finishes `VERDICT FAULT rc=2 reason=over-cap`, logging
 `over-cap: <tier/suite or phase> was still running at the <N>s cap`, each foreign tier with its step
-(`container`, or `warm-cache merge` with the container's rc and seconds), then each such tier's
-`log (<tier>)` path and the log's last 60 lines. A running suite is reported the same way, with step
-`exec`, its `.<suite>.raw` log in the results dir and that log's tail; a cancelled suite's raw file
-is kept, so the printed path outlives the run, and goes when its results dir is pruned;
+(`container`, or `warm-cache merge` with the container's rc and seconds) and each suite with its own
+(`exec`, or `record` with the exec's rc and seconds), then each such unit's `log (<unit>)` path
+(a suite's is its `.<suite>.raw` in the results dir) and the log's last 60 lines. Only the 4
+(`TAIL_UNITS`) longest-registered units get their lines; later ones get the path alone, and a
+closing line names them. A suite's raw log is removed once its `.out` is written, and `.out`
+becomes the suite's log. The raw log is kept if that write fails, or if a cap's snapshot has
+already named the suite (snapshot and removal share one lock). A kept log, including that of a
+suite cut with no record, lasts until the results dir is pruned;
 the verdict is recorded in `run.events`. If it has not unwound 30 s later it kills its descendants
 and exits itself, printing the same report before the VERDICT line: nothing buffered survives that
 exit.

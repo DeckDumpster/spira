@@ -10,7 +10,7 @@
 //! gets the flat slot-wait bound instead.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -20,12 +20,15 @@ pub const SETTLE: u64 = 30;
 pub const GRACE: u64 = 60;
 /// After tripping, how long the run gets to unwind before it is cut off from inside.
 const UNWIND: Duration = Duration::from_secs(30);
+/// How many cut units the report quotes; every parallel suite may be running at the cap.
+const TAIL_UNITS: usize = 4;
 
 pub const SUBCOMMANDS: &[&str] = &[
     "lint", "preflight", "status", "testdb", "wait", "container", "plan", "warm", "test-bins", "sandbox-supervise",
 ];
 
-static TRIPPED: AtomicBool = AtomicBool::new(false);
+/// Tripped caps not yet finished: a count, so one cap finishing cannot clear another's trip.
+static TRIPPED: AtomicUsize = AtomicUsize::new(0);
 static PHASE: Mutex<String> = Mutex::new(String::new());
 static RUNNING: Mutex<Vec<Unit>> = Mutex::new(Vec::new());
 static CONTAINERS: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -38,6 +41,12 @@ thread_local! {
 #[cfg(test)]
 thread_local! {
     pub static OBSERVE_CAP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A test's cap names, and so pins, only units logging under this: others run beside it.
+    pub static PIN_UNDER: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
 }
 
 thread_local! {
@@ -54,17 +63,17 @@ pub fn armed_here() -> bool {
 /// Ignores the per-thread opt-in: for a fake that stands in for a process outside the run.
 #[cfg(test)]
 pub fn tripped_anywhere() -> bool {
-    TRIPPED.load(Ordering::SeqCst)
+    TRIPPED.load(Ordering::SeqCst) > 0
 }
 
 #[cfg(not(test))]
 pub fn tripped() -> bool {
-    TRIPPED.load(Ordering::SeqCst)
+    TRIPPED.load(Ordering::SeqCst) > 0
 }
 
 #[cfg(test)]
 pub fn tripped() -> bool {
-    OBSERVE_CAP.with(|o| o.get()) && TRIPPED.load(Ordering::SeqCst)
+    OBSERVE_CAP.with(|o| o.get()) && TRIPPED.load(Ordering::SeqCst) > 0
 }
 
 /// The wall-clock cap a run carries, and where it came from.
@@ -103,12 +112,33 @@ struct Unit {
     name: String,
     step: Option<String>,
     log: Option<PathBuf>,
+    /// A cap's report names this unit, so its log must stay where it is.
+    named: bool,
     #[cfg(test)]
     owner: std::thread::ThreadId,
 }
 
 fn units() -> Vec<Unit> {
-    let all = RUNNING.lock().unwrap().clone();
+    mine(RUNNING.lock().unwrap().clone())
+}
+
+/// The units a firing cap reports, marked as named in the same step.
+fn cut_units(_pin_under: Option<&Path>) -> Vec<Unit> {
+    let all = {
+        let mut running = RUNNING.lock().unwrap();
+        for u in running.iter_mut() {
+            #[cfg(test)]
+            if !_pin_under.is_some_and(|d| u.log.as_ref().is_some_and(|l| l.starts_with(d))) {
+                continue;
+            }
+            u.named = true;
+        }
+        running.clone()
+    };
+    mine(all)
+}
+
+fn mine(all: Vec<Unit>) -> Vec<Unit> {
     // Tests run tiers in parallel in one process; an exact-text assertion must see only its own.
     #[cfg(test)]
     if ONLY_MY_UNITS.with(|o| o.get()) {
@@ -128,6 +158,7 @@ pub fn running(unit: &str) -> Running {
         name: unit.to_string(),
         step: None,
         log: None,
+        named: false,
         #[cfg(test)]
         owner: std::thread::current().id(),
     });
@@ -156,6 +187,20 @@ impl Drop for Running {
     }
 }
 
+/// Removes `old` and points its unit at `new`, unless a cap's report has named the unit.
+/// One step against [`cut_units`], so a report never names a removed file.
+pub fn supersede_log(old: &Path, new: &Path) {
+    let mut running = RUNNING.lock().unwrap();
+    let logs_it = |u: &&mut Unit| u.log.as_deref() == Some(old);
+    if running.iter_mut().filter(logs_it).any(|u| u.named) {
+        return;
+    }
+    let _ = std::fs::remove_file(old);
+    for u in running.iter_mut().filter(logs_it) {
+        u.log = Some(new.to_path_buf());
+    }
+}
+
 pub(crate) fn log_line(unit: &str, path: &Path) -> String {
     format!("  log ({unit}): {}", path.display())
 }
@@ -172,9 +217,13 @@ fn with_verdict(mut lines: Vec<String>) -> Vec<String> {
 
 fn explain(cut: &[Unit], what: &str, secs: u64, source: &str) -> Vec<String> {
     let mut out = vec![over_cap_line(what, secs, source)];
-    for u in cut {
-        let Some(path) = &u.log else { continue };
+    let mut held_back = Vec::new();
+    for (i, (u, path)) in cut.iter().filter_map(|u| Some((u, u.log.as_ref()?))).enumerate() {
         out.push(log_line(&u.name, path));
+        if i >= TAIL_UNITS {
+            held_back.push(u.name.as_str());
+            continue;
+        }
         match std::fs::read(path) {
             Ok(bytes) => {
                 out.push(format!("  last 60 lines ({}):", u.name));
@@ -183,6 +232,13 @@ fn explain(cut: &[Unit], what: &str, secs: u64, source: &str) -> Vec<String> {
             }
             Err(e) => out.push(format!("  log ({}) unreadable: {e}", u.name)),
         }
+    }
+    if !held_back.is_empty() {
+        out.push(format!(
+            "  last lines held back for {} more units (cap {TAIL_UNITS}): {}",
+            held_back.len(),
+            held_back.join(",")
+        ));
     }
     out
 }
@@ -408,9 +464,18 @@ impl Armed {
         }
         let trip = self.1.lock().unwrap().take();
         if trip.is_some() {
-            TRIPPED.store(false, Ordering::SeqCst);
+            TRIPPED.fetch_sub(1, Ordering::SeqCst);
         }
         trip
+    }
+
+    /// Waits for this cap's own trip.
+    #[cfg(test)]
+    pub(crate) fn await_trip(&self) {
+        // clock-safe: waits for the watchdog's signal, this cap's filled trip slot
+        while self.1.lock().unwrap().is_none() {
+            std::thread::yield_now();
+        }
     }
 }
 
@@ -436,6 +501,10 @@ pub fn arm(cap: Cap, ledger: Option<PathBuf>) -> Armed {
     }
     publish(&clock.lock().unwrap());
     CURRENT.with(|c| *c.borrow_mut() = Some(clock.clone()));
+    #[cfg(test)]
+    let pin_under = PIN_UNDER.with(|p| p.borrow().clone());
+    #[cfg(not(test))]
+    let pin_under: Option<PathBuf> = None;
     std::thread::spawn(move || {
         let wait = |more: &dyn Fn() -> bool| {
             while more() {
@@ -449,10 +518,15 @@ pub fn arm(cap: Cap, ledger: Option<PathBuf>) -> Armed {
         if !wait(&|| clock.lock().unwrap().counted() < limit) {
             return;
         }
-        let cut = units();
+        let cut = cut_units(pin_under.as_deref());
         let what = describe_units(&cut);
-        *slot.lock().unwrap() = Some(Tripped { report: explain(&cut, &what, limit.as_secs(), source) });
-        TRIPPED.store(true, Ordering::SeqCst);
+        let report = explain(&cut, &what, limit.as_secs(), source);
+        {
+            // Under the slot's lock, so `finish` never takes a trip that is not yet counted.
+            let mut slot = slot.lock().unwrap();
+            TRIPPED.fetch_add(1, Ordering::SeqCst);
+            *slot = Some(Tripped { report });
+        }
         // The unwind is timed on the wall clock: a hold taken after the trip must not delay it.
         let tripped = Instant::now();
         if wait(&|| tripped.elapsed() < UNWIND) {
@@ -653,6 +727,56 @@ mod tests {
         assert_eq!(got, want);
     }
 
+    #[test_id(tld4p25)]
+    #[test]
+    fn a_trip_report_tails_only_the_oldest_units_and_names_the_rest() {
+        ONLY_MY_UNITS.with(|o| o.set(true));
+        let dir = testkit::TempDir::new("testenv-cap-bound");
+        let body: String = (1..=100).map(|n| format!("line {n}\n")).collect();
+        let names: Vec<String> = (1..=6).map(|n| format!("unit-{n}")).collect();
+        let units: Vec<(Running, PathBuf)> = names
+            .iter()
+            .map(|name| {
+                let log = dir.path().join(name);
+                std::fs::write(&log, &body).unwrap();
+                let unit = running(name);
+                unit.log(&log);
+                (unit, log)
+            })
+            .collect();
+        let got = trip_report(&describe(), 600, "suite cap");
+        assert_eq!(got.iter().filter(|l| l.starts_with("    line ")).count(), 4 * 60);
+        for (name, (_, log)) in names.iter().zip(&units) {
+            assert!(got.contains(&log_line(name, log)), "{name}");
+            assert!(got[0].contains(name.as_str()), "{name}");
+        }
+        assert!(got.contains(&"  last 60 lines (unit-4):".to_string()));
+        assert_eq!(
+            got[got.len() - 2],
+            "  last lines held back for 2 more units (cap 4): unit-5,unit-6"
+        );
+    }
+
+    #[test_id(tog5uqf)]
+    #[test]
+    fn a_log_is_either_named_by_the_cut_and_kept_or_removed_and_not_named() {
+        ONLY_MY_UNITS.with(|o| o.set(true));
+        let dir = testkit::TempDir::new("testenv-cap-pin");
+        let (early, late) = (dir.path().join("early"), dir.path().join("late"));
+        std::fs::write(&early, "x\n").unwrap();
+        std::fs::write(&late, "x\n").unwrap();
+        let (a, b) = (running("cap-early"), running("cap-late"));
+        a.log(&early);
+        b.log(&late);
+        let out = |p: &Path| p.with_extension("out");
+        supersede_log(&early, &out(&early));
+        let cut = cut_units(Some(dir.path()));
+        supersede_log(&late, &out(&late));
+        assert!(!early.exists() && late.exists());
+        let named: Vec<(&str, Option<&Path>)> = cut.iter().map(|u| (u.name.as_str(), u.log.as_deref())).collect();
+        assert_eq!(named, [("cap-early", Some(out(&early).as_path())), ("cap-late", Some(late.as_path()))]);
+    }
+
     #[test_id(thjs95r)]
     #[test]
     fn a_run_that_unwinds_still_has_the_log_of_a_unit_cut_by_the_cap() {
@@ -660,13 +784,24 @@ mod tests {
         let unit = running("cap-unwound");
         unit.log(log);
         let armed = arm(Cap { secs: 0, source: "test" }, None);
-        // clock-safe: a zero cap trips on the watchdog's first look; this waits for that signal
-        while !tripped_anywhere() {
-            std::thread::yield_now();
-        }
+        armed.await_trip();
         drop(unit);
         let trip = armed.finish().expect("tripped");
         assert!(trip.report.contains(&log_line("cap-unwound", log)), "{:?}", trip.report);
+    }
+
+    #[test_id(tbg4q1f)]
+    #[test]
+    fn finishing_one_tripped_cap_leaves_another_tripped() {
+        let trip = || {
+            let armed = arm(Cap { secs: 0, source: "test" }, None);
+            armed.await_trip();
+            armed
+        };
+        let (first, second) = (trip(), trip());
+        first.finish().expect("tripped");
+        assert!(tripped_anywhere());
+        second.finish().expect("tripped");
     }
 
     #[test_id(tyzcyxi)]

@@ -1263,7 +1263,8 @@ pub mod fake {
         pub once_rc: Mutex<std::collections::HashMap<String, i32>>,
         /// Tiers that run until the run is cancelled, then answer the cancelled rc.
         pub once_hang: Mutex<std::collections::HashSet<String>>,
-        /// What a cap tripping inside each `exec`, `run_once` and `purge` would have reported.
+        /// What a cap tripping inside each `run_once`, `purge` and exec with an output file
+        /// would have reported.
         pub cut_here: Mutex<Vec<(String, Vec<String>)>>,
         /// `(from, to)` of every rename; a rename fails while `rename_fails` is set.
         pub renames: Mutex<Vec<(String, String)>>,
@@ -1299,15 +1300,20 @@ pub mod fake {
         }
         /// Answer a suite script (`bash /workspace/spira/<suite>`) with rc and output.
         pub fn suite(&self, suite: &str, rc: i32, output: &str) {
-            let path = format!("{WORKSPACE}/spira/{suite}");
             let out = output.to_string();
-            self.on(
-                move |r| r.argv.get(1).map(String::as_str) == Some(path.as_str()),
-                move |_| ExecOutcome {
-                    rc,
-                    output: out.clone(),
-                },
-            );
+            self.on_suite(suite, move |_| ExecOutcome {
+                rc,
+                output: out.clone(),
+            });
+        }
+        /// Answer a suite script with whatever `ans` does.
+        pub fn on_suite(
+            &self,
+            suite: &str,
+            ans: impl Fn(&ExecRequest) -> ExecOutcome + Send + Sync + 'static,
+        ) {
+            let path = format!("{WORKSPACE}/spira/{suite}");
+            self.on(move |r| r.argv.get(1).map(String::as_str) == Some(path.as_str()), ans);
         }
         /// Successive answers to `{{.State.Running}}`; when exhausted, "true".
         pub fn running_answers(&self, answers: &[Option<&str>]) {
@@ -1348,6 +1354,7 @@ pub mod fake {
             let out = ans.map(|a| a(req)).unwrap_or_default();
             if let Some(p) = &req.output {
                 let _ = std::fs::write(p, &out.output);
+                self.note_cut();
             }
             out
         }
@@ -1415,7 +1422,6 @@ pub mod fake {
             ExecOutcome { rc, output: String::new() }
         }
         fn exec(&self, req: &ExecRequest) -> ExecOutcome {
-            self.note_cut();
             if let Some(o) = self.exec_plan(req) {
                 return o;
             }
