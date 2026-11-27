@@ -50,8 +50,29 @@ pub fn gate(root: &Path, land: &str, release: &str) -> Result<(), String> {
         .output()
         .ok()
         .filter(|o| o.status.success());
-    refusal(out.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()), &DECLARED, release)?;
-    ::gate::fixture::against_rev(root, release, &format!("the active release {release}"))
+    let paths = refusal(out.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()), &DECLARED, release);
+    let keys = ::gate::fixture::drops_keys(root, land).and_then(|drops| match drops {
+        true => ::gate::fixture::against_rev(root, release, &format!("the active release {release}")),
+        false => Ok(()),
+    });
+    let refused: Vec<String> = [paths, keys].into_iter().filter_map(Result::err).collect();
+    if refused.is_empty() {
+        Ok(())
+    } else {
+        Err(refused.join("; "))
+    }
+}
+
+/// The commit the release directory `release` (`$SPIRA_RELEASE`) is named for, in the repository at `root`.
+pub fn release_commit(root: &Path, release: Option<&str>) -> Result<String, String> {
+    let dir = release.filter(|v| !v.is_empty()).ok_or("SPIRA_RELEASE is not set, so what the active release reads cannot be known")?;
+    let dir = std::fs::canonicalize(dir).map_err(|e| format!("SPIRA_RELEASE={dir} cannot be resolved: {e}"))?;
+    let sha = dir.file_name().ok_or_else(|| format!("the release directory {} has no name", dir.display()))?.to_string_lossy().into_owned();
+    let found = spira_config::bounded::bounded("git").arg("-C").arg(root).args(["cat-file", "-e", &format!("{sha}^{{commit}}")]).output();
+    if !found.is_ok_and(|o| o.status.success()) {
+        return Err(format!("the active release directory {} is not named for a commit of this repository: git finds no commit {sha}", dir.display()));
+    }
+    Ok(sha)
 }
 
 /// `deleted`: the paths the branch deletes against its landing ref, `None` when they cannot be read.

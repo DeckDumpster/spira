@@ -696,13 +696,9 @@ fn reads_gate() -> Result<(), String> {
         return Ok(());
     }
     let land = spira_config::repos::landref(&reg, &checkout).ok_or("the landing ref cannot be resolved, so the branch cannot be checked for removals the active release reads")?;
-    let dir = std::env::var(spira_config::RELEASE_ENV).ok().filter(|v| !v.is_empty()).ok_or("SPIRA_RELEASE is not set, so what the active release reads cannot be known")?;
-    let dir = std::fs::canonicalize(&dir).map_err(|e| format!("SPIRA_RELEASE={dir} cannot be resolved: {e}"))?;
-    let sha = dir.file_name().ok_or_else(|| format!("the release directory {} has no name", dir.display()))?.to_string_lossy().into_owned();
-    if git_line(&["cat-file", "-e", &format!("{sha}^{{commit}}")]).is_none() {
-        return Err(format!("the active release directory {} is not named for a commit of this repository: git finds no commit {sha}", dir.display()));
-    }
-    work::reads::gate(std::path::Path::new(&root), &land, &sha)
+    let root = std::path::Path::new(&root);
+    let sha = work::reads::release_commit(root, std::env::var(spira_config::RELEASE_ENV).ok().as_deref())?;
+    work::reads::gate(root, &land, &sha)
 }
 
 /// Refuses a submit to a non-home repository whose diff against its landing ref edits a contract

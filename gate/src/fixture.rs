@@ -64,6 +64,47 @@ pub fn against_rev(tree: &Path, rev: &str, what: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether the fixture at `tree` lacks a key it held where the branch left `land`.
+pub fn drops_keys(tree: &Path, land: &str) -> Result<bool, String> {
+    let git = |args: &[&str]| {
+        let o = Command::new("timeout").args(["5", "git", "-C"]).arg(tree).args(args).output().map_err(|e| format!("git {}: {e}", args.join(" ")))?;
+        match o.status.success() {
+            true => Ok(String::from_utf8_lossy(&o.stdout).into_owned()),
+            false => Err(format!("git {}: {}", args.join(" "), String::from_utf8_lossy(&o.stderr).trim())),
+        }
+    };
+    let fork = git(&["merge-base", land, "HEAD"])?.trim().to_string();
+    if git(&["ls-tree", &fork, "--", FIXTURE])?.is_empty() {
+        return Ok(false);
+    }
+    let before = keys_of(&git(&["show", &format!("{fork}:{FIXTURE}")])?)?;
+    let after = match std::fs::read_to_string(tree.join(FIXTURE)) {
+        Ok(text) => keys_of(&text)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(e) => return Err(format!("{FIXTURE}: {e}")),
+    };
+    Ok(!before.is_subset(&after))
+}
+
+fn keys_of(text: &str) -> Result<std::collections::BTreeSet<Vec<String>>, String> {
+    fn walk(table: &toml::Table, path: &mut Vec<String>, out: &mut std::collections::BTreeSet<Vec<String>>) {
+        for (name, value) in table {
+            path.push(name.clone());
+            match value.as_table() {
+                Some(inner) => walk(inner, path, out),
+                None => {
+                    out.insert(path.clone());
+                }
+            }
+            path.pop();
+        }
+    }
+    let table = text.parse::<toml::Table>().map_err(|e| format!("{FIXTURE}: {e}"))?;
+    let mut out = Default::default();
+    walk(&table, &mut Vec::new(), &mut out);
+    Ok(out)
+}
+
 /// The key a resolve refusal is about, when only the tree registers it.
 fn key_new_on_branch<'a>(refusal: &'a str, tree_conf_d: &Path, base_conf_d: &Path) -> Option<&'a str> {
     let (before, _) = refusal.split_once(spira_config::resolve::NOT_IN_REGISTRY)?;

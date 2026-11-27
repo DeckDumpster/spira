@@ -77,3 +77,58 @@ fn deleting_only_an_undeclared_file_passes() {
     commit(d.path(), "T2");
     work::reads::gate(d.path(), "L", "L").unwrap();
 }
+
+#[test_id(t8c7zor)]
+#[test]
+fn a_branch_forked_before_the_release_gained_a_key_and_dropping_none_passes() {
+    let d = fixture();
+    let (key, file) = (d.path().join("spira/conf.d/SPIRA_ARCHIVIST_EVERY"), d.path().join("spira/testlib/complete.toml"));
+    git(d.path(), &["checkout", "-q", "-b", "stale", "R"]);
+    let (registered, complete) = (std::fs::read_to_string(&key).unwrap(), std::fs::read_to_string(&file).unwrap());
+    let before: String = complete.lines().filter(|l| !l.starts_with("archivist_every ")).map(|l| format!("{l}\n")).collect();
+    std::fs::remove_file(&key).unwrap();
+    std::fs::write(&file, &before).unwrap();
+    commit(d.path(), "before-the-key");
+    std::fs::write(&key, registered).unwrap();
+    std::fs::write(&file, complete).unwrap();
+    commit(d.path(), "release-with-the-key");
+    git(d.path(), &["checkout", "-q", "-b", "forked", "before-the-key"]);
+    std::fs::write(&file, before.replacen("[spira]\n", "[spira]\nplanted_by_branch = \"1\"\n", 1)).unwrap();
+    commit(d.path(), "adds-a-key");
+    work::reads::gate(d.path(), "release-with-the-key", "release-with-the-key").unwrap();
+}
+
+#[test_id(t130aa3)]
+#[test]
+fn a_branch_deleting_an_input_and_dropping_a_required_key_is_told_of_both() {
+    let d = fixture();
+    git(d.path(), &["rm", "-q", "flake.lock"]);
+    commit(d.path(), "T2");
+    let e = work::reads::gate(d.path(), "L", "R").unwrap_err();
+    assert!(e.contains("flake.lock") && e.contains("SPIRA_ARCHIVIST_EVERY"), "{e}");
+}
+
+#[test_id(tgkud0g)]
+#[test]
+fn the_active_release_is_the_commit_its_directory_is_named_for_through_a_symlink() {
+    let d = fixture();
+    let sha = testkit::git(d.path(), &["rev-parse", "HEAD"]).trim().to_string();
+    let releases = testkit::TempDir::new("releases");
+    std::fs::create_dir(releases.path().join(&sha)).unwrap();
+    std::os::unix::fs::symlink(releases.path().join(&sha), releases.path().join("current")).unwrap();
+    let current = releases.path().join("current");
+    assert_eq!(work::reads::release_commit(d.path(), current.to_str()), Ok(sha));
+}
+
+#[test_id(te3vmzk)]
+#[test]
+fn a_release_that_cannot_be_identified_refuses_saying_why() {
+    let d = fixture();
+    let releases = testkit::TempDir::new("releases");
+    std::fs::create_dir(releases.path().join("not-a-commit")).unwrap();
+    let why = |release: Option<&str>| work::reads::release_commit(d.path(), release).unwrap_err();
+    assert!(why(None).contains("SPIRA_RELEASE is not set"));
+    assert!(why(Some("")).contains("SPIRA_RELEASE is not set"));
+    assert!(why(releases.path().join("absent").to_str()).contains("cannot be resolved"));
+    assert!(why(releases.path().join("not-a-commit").to_str()).contains("finds no commit not-a-commit"));
+}
