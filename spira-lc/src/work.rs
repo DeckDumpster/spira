@@ -2855,10 +2855,10 @@ mod tests {
 
     const AMEND: &str = "### Amend sp-x: Fix x\n\nnew evidence\n";
 
-    type Effects = std::cell::RefCell<Vec<(&'static str, String, String)>>;
+    type Effect = (&'static str, String, String);
 
-    fn amend_review(item: impl Fn(&str) -> Result<super::Item, String>, supersede: Result<(), String>) -> (Option<(i32, String)>, Vec<(&'static str, String, String)>) {
-        let effects = Effects::default();
+    fn amend_review(item: impl Fn(&str) -> Result<super::Item, String>, supersede: Result<(), String>) -> (Option<(i32, String)>, Vec<Effect>) {
+        let effects = std::cell::RefCell::new(Vec::new());
         let log = |what, a: &str, b: &str| effects.borrow_mut().push((what, a.to_string(), b.to_string()));
         let filed = ("builder".to_string(), "sp-b0".to_string());
         let out = super::apply_reviews(
@@ -2880,7 +2880,7 @@ mod tests {
         (out, effects.into_inner())
     }
 
-    fn effect(what: &'static str, a: &str, b: &str) -> (&'static str, String, String) {
+    fn effect(what: &'static str, a: &str, b: &str) -> Effect {
         (what, a.to_string(), b.to_string())
     }
 
