@@ -133,19 +133,24 @@ fn step_in(
         w.err(err);
     }
     if r.rc != 0 {
-        let lines: Vec<&str> = err
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .collect();
-        let why = if lines.is_empty() {
-            "no output".to_string()
-        } else {
-            lines.join(" | ")
-        };
-        return Err(format!("release {what} exited {}: {why}", r.rc));
+        return Err(step_failure(what, r.rc, err));
     }
     Ok((r.out, err.to_string()))
+}
+
+/// The fault text of a `release` step that exited `rc` having said `err`.
+pub(crate) fn step_failure(what: &str, rc: i32, err: &str) -> String {
+    let lines: Vec<&str> = err
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let why = if lines.is_empty() {
+        "no output".to_string()
+    } else {
+        lines.join(" | ")
+    };
+    format!("release {what} exited {rc}: {why}")
 }
 
 /// Build (from the tested binaries) and verify `head`'s release; the sha on success.
