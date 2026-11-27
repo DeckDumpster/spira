@@ -309,6 +309,11 @@ pub fn locate_home(env: &BTreeMap<String, String>, _exe: &Path) -> Result<PathBu
     Err("neither SPIRA_HOME nor SPIRA_RELEASE is set — refusing to search for the harness home".to_string())
 }
 
+/// Makes `home` the one [`locate_home`] finds for the rest of this process, and its children.
+pub fn set_home_for_process(home: &Path) {
+    std::env::set_var("SPIRA_HOME", home);
+}
+
 /// [`locate_home`] for this process.
 pub fn locate_home_for_process() -> Result<PathBuf, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();

@@ -252,6 +252,9 @@ a key; the exposure is the flip, not the deploy.
 The binary running `verify` or `activate` is the new release's, so it resolves its own config
 from the layers with the whole delta already applied (a scratch copy; the files in force are
 untouched until step 2) — otherwise its registry refuses the keys `activate` is about to write.
+It also reads its own registry, `<releases>/<sha>/spira`, with or without a delta: after a rollback
+the caller's inherited `SPIRA_HOME` names an older registry, which refuses the keys added since.
+A release with no `spira/conf.d` is refused.
 
 After a successful flip `activate` runs the new release's own `bin/unit-ensure`, which installs
 and enables the units the release adds (`switch` only rewrites units already on disk). Its

@@ -29,6 +29,11 @@ name = "pre_activate_store"
 path = "tests/pre_activate_store.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "activate_registry"
+path = "tests/activate_registry.rs"
+required-features = ["integration"]
+
 [features]
 integration = ["runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "state-store/integration", "system-paths/integration", "testkit/integration", "spira-test-id/integration", "bead/integration", "spira-pub/integration"]
 [dependencies]

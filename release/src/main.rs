@@ -129,9 +129,9 @@ fn fail_err(m: String) -> (u8, String) {
     (1, m)
 }
 
-/// [`Config::resolve`], except that `verify` and `activate` of a release resolve against the
-/// layers with that release's own config delta already applied: this binary is the new
-/// release's, its registry requires the keys the delta adds, and `activate` is what writes them.
+/// [`Config::resolve`], except that `verify` and `activate` of a release resolve against that
+/// release's registry, and the layers with its own config delta already applied: this binary is
+/// the new release's, its registry requires the keys the delta adds, and `activate` is what writes them.
 /// The real spec stays in `env`, so units are still rendered with, and the delta still applied
 /// to, the files in force.
 fn resolve_config(a: &Args, env: &config::Env, cmd: &str, rest: &[String]) -> Result<Config, String> {
@@ -143,9 +143,17 @@ fn resolve_config(a: &Args, env: &config::Env, cmd: &str, rest: &[String]) -> Re
         }
         _ => None,
     };
-    let Some((dir, spec)) = staged else { return Config::resolve(&a.flags, env) };
+    let target = match (cmd, rest.first(), env.get("SPIRA_TOML").filter(|s| !s.is_empty())) {
+        ("verify" | "activate", Some(sha), Some(spec)) => release::config_delta::releases_for_spec(spec, a.flags.releases.as_deref())?.map(|r| r.join(sha)),
+        _ => None,
+    };
+    let resolve = || match &target {
+        Some(rel) => config::resolve_as_release(&a.flags, env, rel),
+        None => Config::resolve(&a.flags, env),
+    };
+    let Some((dir, spec)) = staged else { return resolve() };
     std::env::set_var("SPIRA_TOML", &spec);
-    let cfg = Config::resolve(&a.flags, env);
+    let cfg = resolve();
     std::env::set_var("SPIRA_TOML", env.get("SPIRA_TOML").map(String::as_str).unwrap_or_default());
     let _ = std::fs::remove_dir_all(dir);
     cfg
