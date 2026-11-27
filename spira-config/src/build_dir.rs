@@ -1690,7 +1690,7 @@ mod tests {
         fill(&slot.join("debug/x"), 64);
         std::fs::write(base.join("spira/1.lock"), "").unwrap();
         let gone = evict_idle_in(std::slice::from_ref(&base), 0, &crate::build::size_of, &empty_proc(d.path()));
-        assert_eq!(gone, [slot.clone()]);
+        assert_eq!(gone, std::slice::from_ref(&slot));
         assert!(slot.is_dir() && !holds_anything(&slot), "emptied in place");
         assert!(base.join("spira/1.lock").exists());
     }
