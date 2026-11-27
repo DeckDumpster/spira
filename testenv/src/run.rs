@@ -337,7 +337,7 @@ fn publish_share(args: &RunArgs, deps: &Deps) -> i32 {
 }
 
 fn foreign_cache(s: &Settings, repo: &str) -> foreign::Cache {
-    foreign::Cache::new(&s.run.join("foreign-cache"), repo).bounded(foreign::Bound {
+    foreign::Cache::new(&spira_config::foreign_cache::root(&s.run), repo).bounded(foreign::Bound {
         max_bytes: s.foreign_target_max_gib << 30,
         idle: (s.foreign_target_idle_hours > 0).then(|| Duration::from_secs(s.foreign_target_idle_hours * 3600)),
     })
@@ -1235,7 +1235,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let decl_text = git(&repo.path, &["show", &format!("{br}:{}", foreign::DECL)]).ok();
     let share_tree = decl_text
         .as_ref()
-        .and_then(|_| foreign::share_tree(&s.run.join("foreign-cache"), &repo.name, args.share.as_ref()));
+        .and_then(|_| foreign::share_tree(&spira_config::foreign_cache::root(&s.run), &repo.name, args.share.as_ref()));
     let warm_wanted = share_tree.is_none() && args.deadline.is_some() && args.artifacts.is_none() && s.warm_slots > 0;
     let warm_wt = if warm_wanted {
         worktree::acquire_warm(&wreq, s.warm_slots, &|m| deps.log(m))

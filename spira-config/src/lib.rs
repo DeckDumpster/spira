@@ -69,6 +69,7 @@ pub mod legacy_map;
 pub mod local_pass;
 pub mod escalation;
 pub mod gate_source;
+pub mod foreign_cache;
 pub mod git_refs;
 pub mod locate;
 pub mod nonwork;

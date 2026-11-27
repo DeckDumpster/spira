@@ -10,6 +10,9 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
+use spira_config::foreign_cache::{self, CACHE_CARGO, CACHE_TARGET};
+pub use spira_config::foreign_cache::sanitise;
+
 use crate::runtime::{ContainerRuntime, Overlay, RunRequest, RC_CANCELLED, RC_DEADLINE};
 
 pub const DECL: &str = ".spira/testenv.toml";
@@ -196,8 +199,6 @@ pub enum Outcome {
     Fault(&'static str),
 }
 
-const CACHE_TARGET: &str = system_paths::guest::VAR_CACHE_SPIRA_FOREIGN_TARGET;
-const CACHE_CARGO: &str = system_paths::guest::VAR_CACHE_SPIRA_FOREIGN_CARGO;
 const LOCK_POLL: Duration = Duration::from_secs(2);
 /// A publish tries the lock once; a test process also retries briefly, because another test
 /// thread's fork holds every open descriptor, and so every lock, until its exec.
@@ -211,10 +212,12 @@ const PUBLISH_ATTEMPTS: u32 = 20;
 pub const DEFAULT_CAP: u64 = 900;
 
 /// A repository's warm build state on the host, kept between runs: cargo's target dir and
-/// registry. A run never builds in the warm target and never copies it: the target is mounted
-/// as an overlay lower layer and the run writes to its own upper layer, which is merged into
-/// the warm target only when the run passes. The lock is shared for the life of a run and
-/// exclusive to merge, so runs overlap and only a merge waits for them to finish.
+/// registry. A testenv run never builds in the warm target and never copies it: the target is
+/// mounted as an overlay lower layer and the run writes to its own upper layer, which is merged
+/// into the warm target only when the run passes. The lock is shared for the life of a run and
+/// exclusive to write the target, so runs overlap and only a writer waits for them to finish.
+/// The other writer is a round-vm host round, which builds in the target directly under the
+/// exclusive lock, so the target also holds what a red or stopped round compiled.
 pub struct Cache {
     dir: PathBuf,
     bound: Bound,
@@ -229,11 +232,6 @@ pub struct Share {
     /// Leave the share for the next call when this one passes (`--share-keep`); else this
     /// call is the last and publishes it.
     pub keep: bool,
-}
-
-/// The character set a repository or share name keeps in a path.
-pub fn sanitise(name: &str) -> String {
-    name.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' }).collect()
 }
 
 /// Where a share's checkout lives, or None when the call has no share: the choice between a
@@ -334,7 +332,7 @@ pub struct Attached {
 
 impl Cache {
     pub fn new(root: &Path, repo: &str) -> Cache {
-        Cache { dir: root.join(sanitise(repo)), bound: Bound::default(), share: None }
+        Cache { dir: foreign_cache::dir(root, repo), bound: Bound::default(), share: None }
     }
 
     pub fn shared(self, share: Option<Share>) -> Cache {
@@ -350,11 +348,7 @@ impl Cache {
     }
 
     fn prepare(&self) -> std::io::Result<()> {
-        std::fs::create_dir_all(self.dir.join("target"))?;
-        std::fs::create_dir_all(self.dir.join("runs"))?;
-        std::fs::create_dir_all(self.dir.join("cargo"))?;
-        crate::sandbox::touch(&self.dir.join("target"));
-        Ok(())
+        foreign_cache::prepare(&self.dir)
     }
 
     /// Removes the warm target of every other repository whose target has gone unused for
@@ -417,14 +411,7 @@ impl Cache {
     }
 
     fn flock(&self, op: i32) -> Option<std::fs::File> {
-        use std::os::fd::AsRawFd;
-        let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(self.dir.join("lock")).ok()?;
-        // SAFETY: flock on a descriptor we own; released when the File is dropped.
-        (unsafe { libc::flock(f.as_raw_fd(), op | libc::LOCK_NB) } == 0).then_some(f)
-    }
-
-    fn holder_path(&self) -> PathBuf {
-        self.dir.join("holder")
+        foreign_cache::try_flock(&self.dir, op)
     }
 
     /// Take the shared lock and make the run's upper layer, naming the holder of the exclusive
@@ -437,8 +424,7 @@ impl Cache {
                 break f;
             }
             if !told {
-                let holder = std::fs::read_to_string(self.holder_path()).unwrap_or_default();
-                log(&format!("{cname}: waiting for the warm cache merge held by {}", holder.trim()));
+                log(&format!("{cname}: waiting for the warm cache held by {}", foreign_cache::holder(&self.dir)));
                 told = true;
             }
             if crate::runtime::cancelled() {
@@ -491,12 +477,11 @@ impl Cache {
             if n > 0 {
                 std::thread::sleep(Duration::from_millis(10));
             }
-            self.flock(libc::LOCK_EX)
+            foreign_cache::Exclusive::try_take(&self.dir, cname)
         });
         match exclusive {
             Some(_ex) => {
                 let held = Instant::now();
-                let _ = std::fs::write(self.holder_path(), cname);
                 let upper = run.join("upper");
                 // batch-job: the merge of a finished run, bounded by the host rather than a remote
                 let _ = std::process::Command::new("find").arg(&upper).args(["-type", "c", "-delete"]).status();
@@ -506,7 +491,6 @@ impl Cache {
                     .arg(format!("{}/.", upper.display()))
                     .arg(self.dir.join("target"))
                     .output();
-                let _ = std::fs::remove_file(self.holder_path());
                 match merged {
                     Ok(o) if o.status.success() => {
                         if let Some(b) = self.enforce_cutoff() {
