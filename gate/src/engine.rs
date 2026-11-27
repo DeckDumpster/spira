@@ -1288,6 +1288,10 @@ impl<'w, W: World> Trial<'w, W> {
                     "gate: {name}'s suites trial did not fit its budget — phase `{phase}` was cut at its share of SPIRA_GATE_BUDGET={}s; it judged nothing.\ngate: command: {cmd}\n{out}",
                     ctx.var("SPIRA_GATE_BUDGET")));
             }
+            if parse::testenv_fault_reason(&out).as_deref() == Some("cache-wait") {
+                return v(NOVERDICT, "cache-wait", format!(
+                    "gate: {name}'s suites trial waited for the repository's warm cache, which a host round held past the wait's bound; it judged nothing and {br} was not judged.\ngate: the runner's output below names the holder.\ngate: command: {cmd}\n{out}"));
+            }
             return v(NOVERDICT, "harness-fault", format!(
                 "gate: {name}'s own gate reported a harness fault (exit {NOVERDICT}) — container or install failed.\ngate: command: {cmd}\n{out}"));
         }
@@ -2407,7 +2411,7 @@ impl<'w, W: World> Trial<'w, W> {
                 } else {
                     let st = vd.status.to_string();
                     let detail = match vd.reason.as_str() {
-                        "harness-fault" => parse::fault_detail(&vd.msg),
+                        "harness-fault" | "cache-wait" => parse::fault_detail(&vd.msg),
                         "deadline" | "build-stall" => parse::tail_bytes(&vd.msg, 4000),
                         _ => String::new(),
                     };

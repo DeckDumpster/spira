@@ -200,7 +200,7 @@ Reasons: PASS `syntax-only | cached | pass`; FAIL `syntax | beads-data | foreign
 branch-red`; BASE_FAIL `base-red`; NO_VERDICT `certifies-nothing | no-repo-map-file | no-repo-map | no-base |
 no-diff | conflict | merge-failed | missing-exclude | missing-skew | skew-init-fault |
 cmd-missing-file | admission-timeout | no-lockfile | lock-timeout | tree-unidentified |
-harness-fault | timeout | base-timeout | base-flake | base-untestable | lib-unavailable | died |
+harness-fault | cache-wait | timeout | base-timeout | base-flake | base-untestable | lib-unavailable | died |
 reentry-unproven | fence-silent | flip-unrecorded`, and
 `no-evidence:<reason>` when a FAIL carried no message (downgraded to NO_VERDICT).
 
@@ -327,8 +327,12 @@ DESIGN.md §11, D9). Two consequences here:
 * **A budget cut is `NO_VERDICT reason=budget`.** When the gate string exits 75 and the
   runner's last line is `VERDICT FAULT … reason=deadline-<phase>` (a setup phase cut at its
   share, or `deadline-suites`: every suite deferred), the trial judged nothing. The message
-  names the phase and the budget; there is no base trial. Any other runner fault stays
-  `harness-fault`.
+  names the phase and the budget; there is no base trial. Apart from `queue` and `cache-wait`,
+  any other runner fault stays `harness-fault`.
+* **A waited-out warm cache is `NO_VERDICT reason=cache-wait`.** The runner's `reason=cache-wait`
+  means the repository's warm cache stayed held past the wait's bound (testenv DESIGN.md, the
+  foreign-cache paragraph). There is no base trial. It is not a cap (not in `is_cap_reason`),
+  and the landing pass treats it as host-wide.
 * **A red before the suites step is judged on the base's fences only.** When the branch trial
   failed and its output shows the suites step never started (no runner `VERDICT` line, no
   suite line — a fence or the selector failed first), the base trial runs as composition
