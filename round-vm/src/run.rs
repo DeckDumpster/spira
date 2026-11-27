@@ -284,9 +284,10 @@ pub fn shell_quote(s: &str) -> String {
 
 /// The VM side of a round for a registered repository that is not the harness: clone the round's
 /// tree and run the repository's own CI entry point (`${14}`) in its declared image (`${21}`). Its exit status is the one verdict,
-/// written as `ci.result`, so the round covers what CI covers by construction.
-pub const FOREIGN_SCRIPT: &str = r#"set -euo pipefail
-host_addr="$1" port="$2" round_ref="${12}" round_sha="${13}" entry="${14}" image="${21}" workdir="${22:-/work}"
+/// written as `ci.result`, so the round covers what CI covers by construction. A non-empty `$6`
+/// is the repository's warm cache on this host ([`spira_config::foreign_cache`]).
+pub const FOREIGN_SCRIPT: &str = concat!(r#"set -euo pipefail
+host_addr="$1" port="$2" cache_home="$6" round_ref="${12}" round_sha="${13}" entry="${14}" image="${21}" workdir="${22:-/work}"
 export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 rm -rf ~/round-bins ~/round-work ~/round-setup.log ~/round-shims
 exec 2> >(tee ~/round-setup.log >&2)
@@ -308,9 +309,14 @@ if ! podman pull --quiet "$image" >&2; then
 fi
 mkdir -p "$res"
 printf 'tree=%s\n' "$(git rev-parse 'HEAD^{tree}')" > "$res/batch.meta"
+cache=()
+if [ -n "$cache_home" ]; then
+    cache=(-v "$cache_home/target:"#, system_paths::foreign_cache_target!(), r#"" -v "$cache_home/cargo:"#, system_paths::foreign_cache_cargo!(), r#""
+        -e CARGO_TARGET_DIR="#, system_paths::foreign_cache_target!(), r#" -e CARGO_HOME="#, system_paths::foreign_cache_cargo!(), r#" -e CARGO_INCREMENTAL=0)
+fi
 t0=$(date +%s)
 rc=0
-podman run --rm -v "$HOME/round-work:$workdir:Z" -w "$workdir" "$image" bash -c "$entry" 2>&1 | tee "$res/ci.out" || rc=${PIPESTATUS[0]}
+podman run --rm -v "$HOME/round-work:$workdir:Z" -w "$workdir" "${cache[@]}" "$image" bash -c "$entry" 2>&1 | tee "$res/ci.out" || rc=${PIPESTATUS[0]}
 if [ "$rc" -eq 125 ]; then
     echo "round-vm: podman run $image failed before the entry ran" >&2
     exit 3
@@ -319,7 +325,7 @@ if [ "$rc" -eq 0 ]; then status=ok; else status=red; fi
 printf 'round-vm: ci_entry exited %s\n' "$rc" | tee -a "$res/ci.out"
 printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res/ci.result"
 [ "$rc" -eq 0 ]
-"#;
+"#);
 
 /// The round's cargo environment, spliced into the round's phases and the attribution probes
 /// alike so a probe cannot lack a tool the phase it re-runs has.
@@ -2575,7 +2581,7 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
             return 2;
         }
     };
-    let image_missing = image_missing(env, args, &commit_sha);
+    let image_missing = args.ci_entry.is_none() && image_missing(env, args, &commit_sha);
     let ordered;
     let args = if args.suites.is_none() && args.ci_entry.is_none() {
         match lpt_suites(env.host, &args.tree_dir) {
@@ -2717,7 +2723,10 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
     let decided = match (&decision, image_missing && !on_host) {
         (_, true) => Decision { why: "the local template does not hold the round's image".into(), load: decision.as_ref().map(|d| d.load).unwrap_or_default() },
         (Some(d), false) => d.clone(),
-        (None, false) => Decision { why: "the round was not offered to the host".into(), load: Default::default() },
+        (None, false) => {
+            let why = if args.ci_entry.is_some() { "the host is off" } else { "the round was not offered to the host" };
+            Decision { why: why.into(), load: Default::default() }
+        }
     };
     write_runner_place(&results_dir, place_of(&vm.handle), &decided);
     progress.placement(&results_dir, placement_record(spill_setting.as_deref(), spill_reason.as_deref(), Some(place_of(&vm.handle)), &pool_history(&env.pool.state_file(), &vm.handle), None, Some(&decided)));
@@ -2757,7 +2766,17 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
     };
     let keep = AtomicBool::new(false);
     if let (Some(_slot), Some(plan)) = (&host_slot, env.host_plan) {
-        let henv = RunEnv { remote: plan.remote.as_ref(), ..*env };
+        let remote = if args.ci_entry.is_some() { &plan.foreign_remote } else { &plan.remote };
+        let henv = RunEnv { remote: remote.as_ref(), ..*env };
+        let _cache = match hold_foreign_cache(env, args, &mut progress, &results_dir) {
+            Ok(held) => held,
+            Err(why) => {
+                eprintln!("round-vm run: {why}");
+                record_incomplete(env, args, &why);
+                progress.finish(&results_dir, 2);
+                return 2;
+            }
+        };
         crate::host::reclaim(&plan.home);
         let code = on_vm(&henv, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, &round_ref, progress, results_dir, &keep, facts);
         crate::host::reclaim(&plan.home);
@@ -2911,6 +2930,47 @@ fn write_runner_place(results_dir: &Path, place: &str, d: &Decision) {
     }
 }
 
+/// The warm cache a foreign round builds in on this host: the gate's own, so it needs the
+/// repository's name. `None` for a harness round.
+fn foreign_cache_dir(cfg: &Config, args: &RunArgs) -> Option<PathBuf> {
+    args.ci_entry.as_ref()?;
+    let repo = args.round_repo.as_deref()?;
+    Some(spira_config::foreign_cache::dir(&spira_config::foreign_cache::root(&cfg.run_dir), repo))
+}
+
+/// The cache's exclusive lock for a host round's whole entry, which writes the target a gate
+/// reads under the shared lock. Waited for within the run's wall.
+fn hold_foreign_cache(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress::Progress, results_dir: &Path) -> Result<Option<spira_config::foreign_cache::Exclusive>, String> {
+    use spira_config::foreign_cache::{holder, prepare, Exclusive};
+    let Some(dir) = foreign_cache_dir(env.cfg, args) else {
+        if args.ci_entry.is_some() {
+            eprintln!("round-vm run: no --round-repo names a warm cache; the entry builds cold");
+        }
+        return Ok(None);
+    };
+    prepare(&dir).map_err(|e| format!("the warm cache {} cannot be made: {e}", dir.display()))?;
+    let who = format!("round-vm {}", run_label(args));
+    let wall = Duration::from_secs(env.cfg.cap_secs);
+    let waited = Instant::now();
+    let mut told = false;
+    loop {
+        if let Some(held) = Exclusive::try_take(&dir, &who) {
+            return Ok(Some(held));
+        }
+        if waited.elapsed() >= wall {
+            return Err(format!("the warm cache {} stayed locked for the run's {}s wall (last exclusive holder: {:?}; a gate holds it shared)", dir.display(), wall.as_secs(), holder(&dir)));
+        }
+        if !told {
+            eprintln!("round-vm run: waiting for the warm cache {}", dir.display());
+            progress.detail(results_dir, "waiting for the warm cache".into());
+            told = true;
+        } else {
+            progress.tick(results_dir);
+        }
+        std::thread::sleep(env.pool.wait_poll.max(Duration::from_millis(100)));
+    }
+}
+
 enum HostPlacement {
     Host(crate::host::HostSlot, Decision),
     Spill(String, Decision),
@@ -2918,7 +2978,7 @@ enum HostPlacement {
     Refused(String),
 }
 
-/// Offers a harness round to this host: it runs here only with the host slot free and the host
+/// Offers a round to this host: it runs here only with the host slot free and the host
 /// under both pressure thresholds. A slot that cannot be read is a refusal, never a free slot.
 fn place_on_host(env: &RunEnv, args: &RunArgs, commit: &str) -> HostPlacement {
     use crate::spill::{decide_host, HostPlace};
@@ -2926,7 +2986,7 @@ fn place_on_host(env: &RunEnv, args: &RunArgs, commit: &str) -> HostPlacement {
     if args.pin_host {
         return pin_to_host(env, args, absent);
     }
-    let Some(plan) = env.host_plan.filter(|_| args.ci_entry.is_none()) else { return HostPlacement::NotOffered };
+    let Some(plan) = env.host_plan else { return HostPlacement::NotOffered };
     if absent.is_some() {
         return HostPlacement::NotOffered;
     }
@@ -2953,9 +3013,13 @@ pub fn image_check(host: &dyn Host, tree: &Path, commit: &str) -> Result<String,
     Ok(if host.image_present(&tag) { "present".to_string() } else { format!("absent {tag}") })
 }
 
-/// The tag the host's store lacks. A tree whose tag cannot be computed is not judged here: the
+/// The harness image tag the host's store lacks; a foreign round runs its declared image,
+/// which its script pulls. A tree whose tag cannot be computed is not judged here: the
 /// round's own preflight refuses it, and no round builds.
 fn host_lacks_image(env: &RunEnv, args: &RunArgs, commit: &str) -> Option<String> {
+    if args.ci_entry.is_some() {
+        return None;
+    }
     let tag = env.host.image_tag(&args.tree_dir, commit).ok()?;
     (!env.host.image_present(&tag)).then_some(tag)
 }
@@ -2968,8 +3032,8 @@ fn pin_to_host(env: &RunEnv, args: &RunArgs, absent: Option<String>) -> HostPlac
     if let Some(tag) = absent {
         return refuse(format!("the host's container store does not hold localhost/spira-testenv:{tag}, and a round never builds an image"));
     }
-    let Some(plan) = env.host_plan.filter(|_| args.ci_entry.is_none()) else {
-        return refuse("this run cannot be placed on the host (the host is off, or the run is a foreign repository's CI)".into());
+    let Some(plan) = env.host_plan else {
+        return refuse("this run cannot be placed on the host (the host is off)".into());
     };
     let wall = Duration::from_secs(env.cfg.cap_secs);
     let waited = Instant::now();
@@ -3032,7 +3096,11 @@ fn on_vm_run(
         suites: args.suites.clone(),
         maxpar,
         toolchain: args.toolchain.clone().or_else(|| crate::recipe::tree_channel(&args.tree_dir)),
-        cache_home: job_cache_home(crate::ec2::is_ec2_handle(&vm.handle), vm.handle == crate::host::HOST_HANDLE, cfg.cache_home.as_deref(), cfg.cargo_home.as_deref()),
+        cache_home: if args.ci_entry.is_some() {
+            foreign_cache_dir(cfg, args).filter(|_| vm.handle == crate::host::HOST_HANDLE).map(|d| d.display().to_string())
+        } else {
+            job_cache_home(crate::ec2::is_ec2_handle(&vm.handle), vm.handle == crate::host::HOST_HANDLE, cfg.cache_home.as_deref(), cfg.cargo_home.as_deref())
+        },
         testenv_registry: cfg.testenv_registry.clone(),
         setup_alarm_secs: cfg.setup_alarm_secs,
         cap_secs: cfg.cap_secs,
@@ -5034,6 +5102,7 @@ mod tests {
             ..sample_job()
         };
         assert_reads_match(FOREIGN_SCRIPT, &job, &[
+            ("cache_home", "opt/spira/cargo".into()),
             ("image", "registry.example/rust:1".into()),
             ("workdir", "work".into()),
             ("entry", "entry-sentinel".into()),
@@ -5083,6 +5152,23 @@ mod tests {
         ]);
     }
 
+    #[test_id(ts05wap)]
+    #[test]
+    fn the_foreign_script_mounts_the_warm_cache_only_when_it_is_sent_one() {
+        let (_, rest) = FOREIGN_SCRIPT.split_once(r#"if [ -n "$cache_home" ]; then"#).expect("conditional on $6");
+        let (mounts, _) = rest.split_once("\nfi\n").expect("closed");
+        for want in [
+            format!(r#"-v "$cache_home/target:{}""#, spira_config::foreign_cache::CACHE_TARGET),
+            format!(r#"-v "$cache_home/cargo:{}""#, spira_config::foreign_cache::CACHE_CARGO),
+            format!("-e CARGO_TARGET_DIR={}", spira_config::foreign_cache::CACHE_TARGET),
+            format!("-e CARGO_HOME={}", spira_config::foreign_cache::CACHE_CARGO),
+            "-e CARGO_INCREMENTAL=0".to_string(),
+        ] {
+            assert!(mounts.contains(&want), "{want} missing from {mounts}");
+        }
+        assert!(FOREIGN_SCRIPT.contains("cache=()\n"));
+    }
+
     #[test_id(to0fk8c)]
     #[test]
     fn a_ci_entry_needs_its_image_and_takes_a_workdir() {
@@ -5096,7 +5182,7 @@ mod tests {
     #[test_id(t536igw)]
     #[test]
     fn the_foreign_script_runs_the_entry_only_inside_the_declared_image() {
-        assert!(FOREIGN_SCRIPT.contains(r#"podman run --rm -v "$HOME/round-work:$workdir:Z" -w "$workdir" "$image" bash -c "$entry" 2>&1"#));
+        assert!(FOREIGN_SCRIPT.contains(r#"podman run --rm -v "$HOME/round-work:$workdir:Z" -w "$workdir" "${cache[@]}" "$image" bash -c "$entry" 2>&1"#));
         assert!(!FOREIGN_SCRIPT.lines().any(|l| l.starts_with(r#"bash -c "$entry" 2>&1"#)));
         assert!(FOREIGN_SCRIPT.contains("round-vm: podman pull $image failed"));
     }
@@ -6221,6 +6307,7 @@ mod tests {
             home: PathBuf::from("unused"),
             load: Box::new(move || load),
             remote: Box::new(remote),
+            foreign_remote: Box::new(FakeRemote::green()),
         }
     }
 
@@ -6439,14 +6526,127 @@ mod tests {
         assert_eq!(placed["io_full_avg300"], "55.0");
     }
 
-    #[test_id(t86o93j)]
+    #[test_id(tqiad2d)]
     #[test]
-    fn a_foreign_repos_ci_round_is_never_offered_to_the_host() {
+    fn a_foreign_repos_ci_round_runs_on_the_host_when_the_slot_is_free() {
         let fx = fixture();
         let plan = host_plan(FakeRemote::green(), CALM);
-        let a = RunArgs { ci_entry: Some("deploy/ci.sh".into()), ..round_args(&fx) };
+        go_with_host(&fx, &FakeRemote::green(), &plan, &foreign_args(&fx));
+        assert_eq!(recorded_where(&fx), "host");
+        assert_eq!(fx.fp.count("clone"), 0, "no VM is leased for a host round");
+    }
+
+    #[test_id(t2e5hps)]
+    #[test]
+    fn a_foreign_round_with_the_host_slot_taken_spills_and_says_the_slot_is_why() {
+        let fx = fixture();
+        let plan = host_plan(FakeRemote::green(), CALM);
+        let _taken = crate::host::HostSlot::try_take(&fx.cfg.state_dir).unwrap().expect("the slot was free");
+        go_with_host(&fx, &FakeRemote::green(), &plan, &foreign_args(&fx));
+        assert_eq!(fx.fp.count("clone"), 1, "the round went to a VM");
+        let why = &runner_place(&fx)["why"];
+        assert!(why.contains("slot is taken"), "{why}");
+    }
+
+    #[test_id(t9lyvlv)]
+    #[test]
+    fn a_foreign_round_with_the_host_off_says_so() {
+        let fx = fixture();
+        go(&fx, &FakeRemote::green(), &foreign_args(&fx));
+        let why = &runner_place(&fx)["why"];
+        assert!(why.contains("the host is off"), "{why}");
+    }
+
+    #[test_id(t2hp3ij)]
+    #[test]
+    fn a_foreign_round_is_offered_the_host_though_the_harness_image_is_absent() {
+        let fx = fixture();
+        let plan = host_plan(FakeRemote::green(), CALM);
+        let a = RunArgs { tree_dir: fx.d.path().join("newer-image"), base: Some("main".into()), ..foreign_args(&fx) };
         go_with_host(&fx, &FakeRemote::green(), &plan, &a);
-        assert_eq!(fx.fp.count("clone"), 1);
+        assert_eq!(recorded_where(&fx), "host");
+    }
+
+    #[test_id(thu2lu5)]
+    #[test]
+    fn a_pinned_foreign_round_runs_on_the_host() {
+        let fx = fixture();
+        let plan = host_plan(FakeRemote::green(), CALM);
+        let a = RunArgs { pin_host: true, ..foreign_args(&fx) };
+        go_with_host(&fx, &FakeRemote::green(), &plan, &a);
+        assert_eq!(recorded_where(&fx), "host");
+        assert_eq!(fx.fp.count("clone"), 0);
+    }
+
+    fn foreign_args(fx: &Fixture) -> RunArgs {
+        RunArgs { ci_entry: Some("deploy/ci.sh".into()), ci_image: Some("registry.example/rust:1".into()), ..round_args(fx) }
+    }
+
+    /// Records, while the batch runs, whether a gate could take the cache's shared lock.
+    struct CacheProbe {
+        inner: std::sync::Arc<FakeRemote>,
+        cache: PathBuf,
+        gate_could_attach: std::sync::Arc<Mutex<Vec<bool>>>,
+    }
+    impl Remote for CacheProbe {
+        fn reachable(&self, a: &str) -> bool { self.inner.reachable(a) }
+        fn run_batch(&self, a: &str, j: &BatchJob) -> Result<i32, String> {
+            let free = spira_config::foreign_cache::try_flock(&self.cache, libc::LOCK_SH).is_some();
+            self.gate_could_attach.lock().unwrap().push(free);
+            self.inner.run_batch(a, j)
+        }
+        fn round_started(&self, a: &str) -> bool { self.inner.round_started(a) }
+        fn boot_log_tail(&self, a: &str) -> Result<String, String> { self.inner.boot_log_tail(a) }
+        fn pull(&self, a: &str, r: &str, l: &Path) -> Result<(), PullError> { self.inner.pull(a, r, l) }
+        fn push(&self, a: &str, l: &Path, r: &str) -> Result<(), String> { self.inner.push(a, l, r) }
+        fn await_exit(&self, a: &str, w: Duration, s: &Path) -> Result<Option<i32>, String> { self.inner.await_exit(a, w, s) }
+        fn run_attr(&self, a: &str, j: &crate::spool::AttrJob) -> Result<i32, String> { self.inner.run_attr(a, j) }
+        fn clear_results(&self, a: &str) -> Result<(), String> { self.inner.clear_results(a) }
+    }
+
+    #[test_id(t7731vu)]
+    #[test]
+    fn a_host_foreign_round_builds_in_the_gates_cache_and_holds_its_lock_for_the_entry() {
+        let fx = fixture();
+        let cache = fx.cfg.run_dir.join("foreign-cache/sp");
+        let ran = std::sync::Arc::new(FakeRemote::green());
+        let seen = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let mut plan = host_plan(FakeRemote::green(), CALM);
+        plan.foreign_remote = Box::new(CacheProbe { inner: ran.clone(), cache: cache.clone(), gate_could_attach: seen.clone() });
+        go_with_host(&fx, &FakeRemote::green(), &plan, &foreign_args(&fx));
+        let jobs = ran.jobs.lock().unwrap();
+        assert!(jobs.iter().any(|j| j.contains(&format!("'{}'", cache.display()))), "{jobs:?}");
+        assert_eq!(*seen.lock().unwrap(), vec![false], "a gate cannot attach while the entry runs");
+        assert!(cache.join("target").is_dir() && cache.join("cargo").is_dir(), "podman refuses a missing mount source");
+        assert!(spira_config::foreign_cache::try_flock(&cache, libc::LOCK_EX).is_some(), "freed when the round ends");
+    }
+
+    #[test_id(tw2ktzs)]
+    #[test]
+    fn a_foreign_round_whose_cache_a_gate_never_frees_does_not_run_the_entry() {
+        let mut fx = fixture();
+        fx.cfg.cap_secs = 0;
+        let cache = fx.cfg.run_dir.join("foreign-cache/sp");
+        spira_config::foreign_cache::prepare(&cache).unwrap();
+        let _gate = spira_config::foreign_cache::try_flock(&cache, libc::LOCK_SH).expect("a gate attaches");
+        let ran = std::sync::Arc::new(FakeRemote::green());
+        let mut plan = host_plan(FakeRemote::green(), CALM);
+        plan.foreign_remote = Box::new(SharedRemote(ran.clone()));
+        assert_eq!(go_with_host(&fx, &FakeRemote::green(), &plan, &foreign_args(&fx)), 2);
+        assert!(ran.jobs.lock().unwrap().is_empty());
+    }
+
+    #[test_id(t0r7boe)]
+    #[test]
+    fn a_spilled_foreign_round_is_sent_no_cache_home() {
+        let fx = fixture();
+        let vm_remote = FakeRemote::green();
+        let plan = host_plan(FakeRemote::green(), CALM);
+        let _taken = crate::host::HostSlot::try_take(&fx.cfg.state_dir).unwrap().expect("the slot was free");
+        go_with_host(&fx, &vm_remote, &plan, &foreign_args(&fx));
+        let jobs = vm_remote.jobs.lock().unwrap();
+        let template = fx.cfg.cache_home.clone().expect("the fixture names a template cache home");
+        assert!(!jobs.is_empty() && jobs.iter().all(|j| !j.contains(&template) && !j.contains("foreign-cache")), "{jobs:?}");
     }
 
     fn pinned(fx: &Fixture) -> RunArgs {

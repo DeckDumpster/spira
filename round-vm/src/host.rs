@@ -21,11 +21,19 @@ pub fn round_home(run_dir: &Path) -> PathBuf {
     run_dir.join("host-round")
 }
 
+/// A foreign round's home: [`FOREIGN_SCRIPT`] removes `~/round-work`, which under [`round_home`]
+/// holds the harness round's warm build target.
+pub fn foreign_home(run_dir: &Path) -> PathBuf {
+    run_dir.join("host-round-foreign")
+}
+
 pub struct HostPlan {
     pub rule: HostRule,
     pub home: PathBuf,
     pub load: Box<dyn Fn() -> HostLoad + Sync>,
     pub remote: Box<dyn Remote>,
+    /// [`Remote`] over [`foreign_home`].
+    pub foreign_remote: Box<dyn Remote>,
 }
 
 impl HostPlan {
@@ -46,6 +54,7 @@ impl HostPlan {
             rule: HostRule { io_full_5m_tm90: num("SPIRA_ROUND_VM_HOST_IO_FULL_5M_TM90", 50.0)?, cpu_some_5m_tm90: num("SPIRA_ROUND_VM_HOST_CPU_SOME_5M_TM90", 60.0)? },
             home: round_home(run_dir),
             remote: Box::new(LocalRemote { home: round_home(run_dir) }),
+            foreign_remote: Box::new(LocalRemote { home: foreign_home(run_dir) }),
             load: Box::new(crate::spill::host_load),
         }))
     }
@@ -249,6 +258,9 @@ impl Remote for LocalRemote {
 
     fn pull(&self, _addr: &str, remote_path: &str, local: &Path) -> Result<(), crate::run::PullError> {
         let from = self.at(remote_path);
+        if !from.exists() {
+            return Err(crate::run::PullError::Missing(format!("{}: no such file or directory", from.display())));
+        }
         if from.is_dir() {
             Ok(Self::copy_dir(&from, local)?)
         } else {
@@ -434,6 +446,22 @@ mod tests {
         assert!(!r.round_started("x"));
         fs::write(home.join(crate::vm_fault::SCRIPT_LOG_FILE), "x").unwrap();
         assert!(r.round_started("x"));
+    }
+
+    #[test_id(tmpfjev)]
+    #[test]
+    fn a_foreign_round_never_shares_the_harness_rounds_home() {
+        assert_ne!(foreign_home(Path::new("r")), round_home(Path::new("r")));
+        assert!(!foreign_home(Path::new("r")).starts_with(round_home(Path::new("r"))));
+    }
+
+    #[test_id(tyibcfb)]
+    #[test]
+    fn a_pull_of_a_folder_the_round_never_made_is_settled_not_retried() {
+        let d = dir("pull-missing");
+        let r = LocalRemote { home: d.path().to_path_buf() };
+        let got = r.pull("", "round-bins/", &d.path().join("to"));
+        assert!(matches!(got, Err(crate::run::PullError::Missing(_))), "{got:?}");
     }
 
     #[test_id(t0zfyai)]
