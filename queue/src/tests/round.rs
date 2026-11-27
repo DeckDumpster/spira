@@ -11737,8 +11737,7 @@ fn a_detached_activation_whose_unit_state_cannot_be_read_but_whose_release_is_cu
     assert!(!mails.iter().any(|(s, b)| s.starts_with("local landing") && b.contains("DEPLOY FAULT")), "{mails:?}");
     let log = t.landing_log();
     let line = log.lines().find(|l| l.starts_with("QUEUE LANDED ")).unwrap_or_else(|| panic!("{log}"));
-    let activated = &t.scripts.detached_keys.borrow()[0];
-    assert!(line.contains(&format!(" release={activated}")), "{line}");
+    assert!(line.split(' ').any(|f| f == "release=merged-tb"), "{line}");
     assert!(t.err().contains("so release") && t.err().contains("is in effect"), "{}", t.err());
 }
 
