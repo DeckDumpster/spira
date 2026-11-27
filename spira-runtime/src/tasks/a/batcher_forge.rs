@@ -410,16 +410,16 @@ impl Machine<'_> {
         self.rc = RepoCarry { state: kept.state, held: kept.held, base_moved: kept.base_moved, conflict_streaks: kept.conflict_streaks, held_keys: kept.held_keys, left_noted: kept.left_noted, ..RepoCarry::default() };
     }
 
-    /// The round's batch is recorded with no PR yet.
-    fn awaits_pr(&self, repo: &Repo) -> bool {
-        repo.open_batch.as_ref().is_some_and(|b| b.pr == 0 && same_members(&self.rc.members, b.members.iter().map(String::as_str)))
+    /// The open batch holding this round's members; its `pr` is 0 until it has one.
+    fn recorded<'r>(&self, repo: &'r Repo) -> Option<&'r Batch> {
+        repo.open_batch.as_ref().filter(|b| same_members(&self.rc.members, b.members.iter().map(String::as_str)))
     }
 
     /// The effect the state waits on, when the scheduler says it holds none in flight for the repo.
     fn unsent(&self, repo: &Repo) -> Option<&'static str> {
         let effect = match self.rc.state {
             State::Assembling => ASSEMBLE,
-            State::Opening if !self.awaits_pr(repo) => BATCH_OPEN,
+            State::Opening if self.recorded(repo).is_none_or(|b| b.pr != 0) => BATCH_OPEN,
             _ => return None,
         };
         repo.in_flight.as_ref().filter(|f| !f.iter().any(|e| e == effect)).map(|_| effect)
@@ -428,7 +428,7 @@ impl Machine<'_> {
     fn observe(&mut self, policy: &Policy, enabled: bool, repo: &Repo) {
         // Ahead of `unsent`: a PR opened just before a restart is adopted, not cut again.
         // A record with no PR is an open cut short, not one to adopt.
-        if self.rc.state == State::Opening && repo.open_batch.as_ref().is_some_and(|b| b.pr != 0 && same_members(&self.rc.members, b.members.iter().map(String::as_str))) {
+        if self.rc.state == State::Opening && self.recorded(repo).is_some_and(|b| b.pr != 0) {
             self.go(Trigger::BatchOpened);
         }
         // Ahead of the disabled gate: a forgotten round must not be cut again under the hold.
