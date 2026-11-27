@@ -1173,7 +1173,9 @@ admitted after any queue gets its full cap, and its verdict line carries `slot_w
 containers, and finishes `VERDICT FAULT rc=2 reason=over-cap`, logging
 `over-cap: <tier/suite or phase> was still running at the <N>s cap`, each foreign tier with its step
 (`container`, or `warm-cache merge` with the container's rc and seconds), then each such tier's
-`log (<tier>)` path and the log's last 60 lines;
+`log (<tier>)` path and the log's last 60 lines. A running suite is reported the same way, with step
+`exec`, its `.<suite>.raw` log in the results dir and that log's tail; a cancelled suite's raw file
+is kept, so the printed path outlives the run, and goes when its results dir is pruned;
 the verdict is recorded in `run.events`. If it has not unwound 30 s later it kills its descendants
 and exits itself, printing the same report before the VERDICT line: nothing buffered survives that
 exit.
