@@ -160,6 +160,7 @@ pub fn dispatch(w: &World, cmd: &Cmd) -> i32 {
             by,
             reason,
         } => simple::forced_suites(w, id, repo.as_deref(), *clear, by, reason),
+        Cmd::Regate { id, repo, by, reason } => simple::regate(w, id, repo.as_deref(), by, reason),
         Cmd::LandLocal {
             repo,
             head,

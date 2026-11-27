@@ -47,11 +47,15 @@ impl DeferredRecord {
 
 pub struct Files {
     pub run: PathBuf,
+    release: String,
 }
 
 impl Files {
     pub fn new(run: &Path) -> Files {
-        Files { run: run.to_path_buf() }
+        Files::with_release(run, &crate::gateq::release_id())
+    }
+    pub fn with_release(run: &Path, release: &str) -> Files {
+        Files { run: run.to_path_buf(), release: release.to_string() }
     }
     pub fn status(&self) -> PathBuf {
         self.run.join("landing.status")
@@ -117,7 +121,7 @@ impl Files {
     /// Note that the gate could not judge `branch` at `tip` for want of the host's room.
     pub fn back_off(&self, branch: &str, tip: &str, until: u64) {
         let _ = fs::create_dir_all(self.run.join("gate-backoff"));
-        let _ = atomic_write(&self.backoff_file(branch), &format!("{tip}\n{until}\n"));
+        let _ = atomic_write(&self.backoff_file(branch), &format!("{tip}\n{until}\nrelease={}\n", self.release));
     }
 
     fn marked_file(&self, branch: &str) -> PathBuf {
@@ -304,10 +308,32 @@ impl Files {
         let _ = fs::remove_file(self.dead_file(branch));
     }
 
-    /// True while `now` is before the `until` that [`Files::back_off`] recorded for this very tip.
+    pub fn backoff(&self, branch: &str) -> Option<(String, u64)> {
+        parse_backoff(&fs::read_to_string(self.backoff_file(branch)).ok()?)
+    }
+
+    /// True while `now` is before the `until` that [`Files::back_off`] recorded for this very tip,
+    /// and this release wrote it: another release's verdict does not bind this one.
     pub fn backing_off(&self, branch: &str, tip: &str, now: u64) -> bool {
-        let Ok(t) = fs::read_to_string(self.backoff_file(branch)) else { return false };
-        parse_backoff(&t).is_some_and(|(was, until)| was == tip && now < until)
+        self.unexpired_backoff(branch, tip, now).is_some_and(|t| self.wrote(&t))
+    }
+
+    /// Removes a back-off that only its release keeps [`Files::backing_off`] from honouring; true if one was there.
+    pub fn take_foreign_backoff(&self, branch: &str, tip: &str, now: u64) -> bool {
+        let foreign = self.unexpired_backoff(branch, tip, now).is_some_and(|t| !self.wrote(&t));
+        if foreign {
+            self.clear_backoff(branch);
+        }
+        foreign
+    }
+
+    fn unexpired_backoff(&self, branch: &str, tip: &str, now: u64) -> Option<String> {
+        let t = fs::read_to_string(self.backoff_file(branch)).ok()?;
+        parse_backoff(&t).is_some_and(|(was, until)| was == tip && now < until).then_some(t)
+    }
+
+    fn wrote(&self, backoff: &str) -> bool {
+        backoff.lines().nth(2).and_then(|l| l.strip_prefix("release=")) == Some(self.release.as_str())
     }
 
     pub fn write_status(&self, st: &StatusFile) {
@@ -447,6 +473,30 @@ mod tests {
         assert!(!f.backing_off("spira/sp-a", "t2", 150));
         f.clear_noverdict("spira/sp-a");
         assert!(!f.backing_off("spira/sp-a", "t1", 150));
+    }
+
+    #[test_id(t8o0wpt)]
+    #[test]
+    fn a_back_off_holds_only_for_the_release_that_wrote_it() {
+        let d = crate::testutil::tmpdir("backoff-release");
+        let a = Files::with_release(&d, "r/a");
+        let b = Files::with_release(&d, "r/b");
+        a.back_off("spira/sp-a", "t1", 400);
+        assert!(a.backing_off("spira/sp-a", "t1", 100));
+        assert!(!b.backing_off("spira/sp-a", "t1", 100));
+        fs::write(d.join("gate-backoff").join(branch_key("spira/sp-a")), "t1\n400\n").unwrap();
+        assert!(!a.backing_off("spira/sp-a", "t1", 100), "a back-off naming no release is nobody's");
+    }
+
+    #[test_id(t253qz3)]
+    #[test]
+    fn the_readers_of_a_back_off_tolerate_the_release_line() {
+        let d = crate::testutil::tmpdir("backoff-readers");
+        let f = Files::with_release(&d, "r/a");
+        assert_eq!(f.backoff("spira/sp-a"), None);
+        f.back_off("spira/sp-a", "t1", 400);
+        assert_eq!(gate_backoffs(&d), vec![("t1".to_string(), 400)]);
+        assert_eq!(f.backoff("spira/sp-a"), Some(("t1".to_string(), 400)));
     }
 
     #[test_id(tajlzqy)]

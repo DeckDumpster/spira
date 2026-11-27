@@ -19,6 +19,7 @@ pub const OPERATIONS: &[&str] = &[
     "absolve",
     "rework",
     "forced-suites",
+    "regate",
     "land-local",
     "publish",
     "publish-settle",
@@ -115,6 +116,12 @@ mod tests {
             got.iter().any(|c| c.name == metrics::RUN_DURATION),
             "run seconds pushed"
         );
+    }
+
+    #[test_id(tfrinc4)]
+    #[test]
+    fn a_regate_run_is_counted_under_its_own_name() {
+        assert_eq!(operation(Some("regate")), "regate");
     }
 
     #[test_id(tj7w628)]

@@ -644,12 +644,19 @@ impl<'a> Pass<'a> {
         if self.s.gate_worker {
             return self.certify_queued(w, br, id, bead, &tip);
         }
+        self.drop_foreign_backoff(br, id, &tip);
         if self.files.backing_off(br, &tip, self.clock.now()) {
             self.log(&format!("CHECK6 {id}: {br} at {tip} found no room for a gate lately — not gated again yet"));
             return Flow::Next;
         }
         let g = self.run_gate(&w.repo.name, br, id);
         self.certify_judge(w, br, id, bead, &tip, g, &Cell::new(false))
+    }
+
+    fn drop_foreign_backoff(&self, br: &str, id: &str, tip: &str) {
+        if self.files.take_foreign_backoff(br, tip, self.clock.now()) {
+            self.log(&format!("CHECK6 {id}: {br} at {tip} carries a back-off from another release — gating it again"));
+        }
     }
 
     /// The row's holds once an expired timed wait is lifted; a refused lift is logged and the hold stays.
@@ -729,6 +736,7 @@ impl<'a> Pass<'a> {
                 return flow;
             }
         }
+        self.drop_foreign_backoff(br, id, tip);
         if self.files.backing_off(br, tip, self.clock.now()) {
             self.log(&format!("CHECK6 {id}: {br} at {tip} found no room for a gate lately — not queued again yet"));
             return Flow::Next;

@@ -702,6 +702,39 @@ fn clearing_forced_suites_removes_the_proof_and_the_sidecar_and_is_gated_on_who_
     );
 }
 
+#[test_id(t7fi7fu)]
+#[test]
+fn regate_clears_a_gate_back_off_and_records_who_and_why_three_ways() {
+    let t = round_world();
+    let files = landing_pass::records::Files::new(&t.s().run);
+    let file = t.s().run.join("gate-backoff/spira-sp-a");
+
+    assert_eq!(t.run(&["regate", "sp-a"]), crate::ops::USAGE);
+    assert!(t.err().contains("--bead"), "{}", t.err());
+
+    assert_eq!(t.run(&["regate", "--bead", "sp-a", "--by", "concierge", "--reason", "x"]), 0, "{}", t.err());
+    assert!(t.out().contains("sp-a has no gate back-off"), "{}", t.out());
+
+    files.back_off("spira/sp-a", "ta", 400);
+    assert_eq!(t.run(&["regate", "--bead", "sp-a", "--by", "dwarf", "--reason", "x"]), 1);
+    assert!(file.exists(), "a refused regate changes nothing");
+    assert_eq!(t.run(&["regate", "--bead", "sp-a", "--by", "concierge", "--reason", " "]), crate::ops::USAGE);
+    assert!(file.exists(), "a regate with no reason changes nothing");
+
+    assert_eq!(t.run(&["regate", "--bead", "sp-a", "--by", "concierge", "--reason", "stale back-off"]), 0, "{}", t.err());
+    assert!(!file.exists());
+    assert!(t.out().contains("cleared sp-a's gate back-off at ta"), "{}", t.out());
+    let calls = t.lib.calls.borrow().clone();
+    for prefix in ["comment sp-a ", "event gate.backoff-cleared "] {
+        let line = calls.iter().find(|c| c.starts_with(prefix)).unwrap_or_else(|| panic!("no {prefix}: {calls:?}"));
+        assert!(line.contains("concierge") && line.contains("stale back-off"), "{line}");
+    }
+    let log = t.landing_log();
+    let line = log.lines().find(|l| l.starts_with("QUEUE REGATE ")).unwrap_or_else(|| panic!("{log}"));
+    assert!(line.contains("branch=spira/sp-a by=concierge tip=ta until=400"), "{line}");
+    assert!(line.contains("stale back-off"), "{line}");
+}
+
 fn certified_round() -> (T, String) {
     let mut t = round_world();
     t.lib.s.home_repo = "spira".into();

@@ -2700,6 +2700,64 @@ fn under_queue_forge_a_certifies_nothing_verdict_is_recorded_on_the_row_and_neve
     gated_again_at_a_new_tip(&h);
 }
 
+fn write_backoff(h: &H, text: &str) {
+    let dir = h.s.run.join("gate-backoff");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(spira_config::branch_key::branch_key("spira/sp-a")), text).unwrap();
+}
+
+#[test_id(tyyjw5e)]
+#[test]
+fn a_back_off_from_another_release_is_gated_once_and_the_fresh_one_is_honoured() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    write_backoff(&h, &format!("t1\n{}\nrelease=/elsewhere\n", h.clock.t.get() + 86_400));
+    h.run();
+    assert_eq!(q.queued().iter().map(|j| j.tip.as_str()).collect::<Vec<_>>(), ["t1"], "{:?}", h.out.lines());
+    assert!(h.logged("carries a back-off from another release"), "{:?}", h.out.lines());
+    h.run();
+    let said = h.out.lines().iter().filter(|l| l.contains("carries a back-off from another release")).count();
+    assert_eq!(said, 1, "{:?}", h.out.lines());
+
+    let word = spira_config::gate_source::CERTIFIES_NOTHING;
+    file_verdict(&h, "sp-a", "t1", 75, &format!("gate: VERDICT=NO_VERDICT reason={word} branch=b repo=spira suite=- (x)\n"));
+    h.run();
+    set_row_reason(&h, "sp-a", Some("gate-certifies-nothing"));
+    h.run();
+    assert!(q.queued().is_empty(), "{:?}", h.out.lines());
+}
+
+#[test_id(tjzjq8a)]
+#[test]
+fn an_inline_gate_runs_past_a_back_off_from_another_release() {
+    let mut h = H::new(LandMode::Queue);
+    h.s.gate_worker = false;
+    h.closed("sp-a", "t1");
+    write_backoff(&h, &format!("t1\n{}\n", h.clock.t.get() + 86_400));
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, "gate: VERDICT=NO_VERDICT reason=deadline branch=b repo=spira suite=-\n".into()));
+    h.run();
+    assert_eq!(h.tools.gate_calls.borrow().len(), 1, "{:?}", h.out.lines());
+    assert!(h.logged("carries a back-off from another release"), "{:?}", h.out.lines());
+    h.run();
+    assert_eq!(h.tools.gate_calls.borrow().len(), 1, "{:?}", h.out.lines());
+}
+
+#[test_id(t8a4s61)]
+#[test]
+fn a_cleared_back_off_is_queued_on_the_next_pass() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    let files = Files::new(&h.s.run);
+    files.back_off("spira/sp-a", "t1", h.clock.t.get() + 86_400);
+    h.run();
+    assert!(q.queued().is_empty(), "{:?}", h.out.lines());
+    files.clear_backoff("spira/sp-a");
+    h.run();
+    assert_eq!(q.queued().len(), 1, "{:?}", h.out.lines());
+}
+
 #[test_id(ti3iym5)]
 #[test]
 fn under_queue_local_a_certifies_nothing_verdict_records_nothing() {
