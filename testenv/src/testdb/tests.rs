@@ -400,6 +400,36 @@ fn a_greeting_socket_is_ready() {
     srv.join().unwrap();
 }
 
+#[test_id(toe19ob)]
+#[test]
+fn a_greeting_from_a_socket_another_process_holds_is_not_ready() {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    let srv = std::thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut c, _) = l.accept().unwrap();
+            c.write_all(&[5, 0, 0, 0, 0x0a, b'8', b'.', b'0', 0]).unwrap();
+        }
+    });
+    let other = std::os::unix::process::parent_id();
+    assert!(pid_alive(other), "the other process must be alive for its refusal to mean anything");
+    assert!(server_ready(std::process::id(), &addr), "the process holding the socket is ready");
+    assert!(!server_ready(other, &addr), "a live process that does not hold the socket is not");
+    srv.join().unwrap();
+}
+
+#[test_id(t3u0l2h)]
+#[test]
+fn a_listening_socket_is_read_from_the_tcp_table_by_port() {
+    let table = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n\
+   0: 0100007F:A1C1 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 4242 1 0 100 0 0 10 0\n\
+   1: 0100007F:A1C1 0100007F:9C40 01 00000000:00000000 00:00000000 00000000  1000        0 4343 1 0 20 4 30 10 -1\n\
+   2: 0100007F:0CEA 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 4444 1 0 100 0 0 10 0\n";
+    assert_eq!(listening_inodes(table, 0xA1C1), vec![4242], "an established connection on the port is not a listener");
+    assert_eq!(listening_inodes(table, 3306), vec![4444]);
+    assert_eq!(listening_inodes(table, 3307), Vec::<u64>::new());
+}
+
 #[test_id(t7vapim)]
 #[test]
 fn nothing_listening_is_not_ready() {
