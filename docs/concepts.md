@@ -102,7 +102,7 @@ carries a set of them, and the claim selector (`spira-claim`) offers only `READY
 | `poison` | the bead failed enough attempts that retrying stops | a rule-bound unpoison (`groomer` / `spira-claim`), or the operator |
 | `ask` | a dwarf asked the operator a question | only a `Reply` event carrying the reply's message id, or an ask withdrawal. A close, drop, supersede or `Unhold` on an asking row is refused: an escalation closes on the reply, never on marker text |
 | `wait` | blocked on an unlanded dependency, a timed snooze (`snooze-until:<epoch>`), or a withdrawn base | the graph (when the blocker lands) or the clock |
-| `manual` | a hand-placed hold; it must name a purpose (`--purpose sequence`: waits for other work; `--purpose verify`: vouches for the tip) and carry a reason saying who lifts it and how. A bare bead id (that is a dependency edge) or a snooze (that is a `wait`) is refused | whoever the reason names. A sequencing hold lifts with no evidence; a verification hold on a red-ejected `REWORK` tip is a break-glass move |
+| `manual` | a hand-placed hold; it must name a purpose (`--purpose sequence`: waits for other work; `--purpose verify`: vouches for the tip) and carry a reason saying who lifts it and how. A bare bead id (that is a dependency edge) or a snooze (that is a `wait`) is refused | whoever the reason names. A sequencing hold lifts with no evidence (one laid over a standing verification or pre-purpose hold does not weaken it); a verification hold on a red-ejected `REWORK` tip is a break-glass move |
 
 After a bead is rejected twice, its next claim runs on the persona's `escalation_model` (if
 configured) with the rejection history in the brief; a third rejection on that model holds it

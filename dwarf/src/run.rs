@@ -387,7 +387,7 @@ impl<'a> Run<'a> {
 
     /// A bead rejected twice claims on the persona's stronger model; at the ceiling it is
     /// released and held for the Concierge, unless the claim was directed.
-    fn escalation_gate(&mut self, id: &str) -> Option<i32> {
+    pub(crate) fn escalation_gate(&mut self, id: &str) -> Option<i32> {
         use spira_config::escalation::{self, Tier};
         let o = self.d.exec.exec("spira-claim", &s(&["rejections", id]), None, None);
         let st: escalation::Standing = o.success().then(|| serde_json::from_str(o.stdout.trim()).ok()).flatten()?;
