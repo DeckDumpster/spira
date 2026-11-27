@@ -812,24 +812,50 @@ impl Beads for RealBeads {
 
 pub struct RealGit;
 
+use spira_config::git_refs;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Whether `refs/heads/<branch>` exists, from the ref files; None when git must be asked.
+fn branch_in_files(repo: &Path, branch: &str) -> Option<bool> {
+    let tips = git_refs::branch_tips(repo, &format!("refs/heads/{branch}"))?;
+    Some(tips.iter().any(|(name, _)| name == branch))
+}
+
 fn git(repo: &Path) -> std::process::Command {
     let mut c = command("git");
     c.arg("-C").arg(repo).stdin(Stdio::null());
     c
 }
 
+/// Git calls that gave no exit status, or a `--merged` read that failed.
+static UNANSWERED: AtomicU64 = AtomicU64::new(0);
+
+fn unanswered() {
+    UNANSWERED.fetch_add(1, Ordering::SeqCst);
+}
+
 fn git_ok(mut c: std::process::Command) -> bool {
     c.stdout(Stdio::null()).stderr(Stdio::null());
-    c.status().map(|s| s.success()).unwrap_or(false)
+    let status = c.status().ok().and_then(|s| s.code());
+    if status.is_none() {
+        unanswered();
+    }
+    status == Some(0)
 }
 
 fn git_out(c: std::process::Command) -> Option<String> {
     let (rc, so, _) = run_capture(c);
+    if rc == -1 {
+        unanswered();
+    }
     if rc == 0 { Some(String::from_utf8_lossy(&so).trim_end_matches('\n').to_string()) } else { None }
 }
 
 impl Git for RealGit {
     fn spira_refs(&self, repo: &Path) -> Vec<(String, String)> {
+        if let Some(tips) = git_refs::branch_tips(repo, "refs/heads/spira/") {
+            return tips;
+        }
         let mut c = git(repo);
         c.args(["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/spira/*"]);
         git_out(c)
@@ -842,14 +868,27 @@ impl Git for RealGit {
     fn merged_spira_refs(&self, repo: &Path, base: &str) -> std::collections::HashSet<String> {
         let mut c = git(repo);
         c.args(["for-each-ref", "--merged", base, "--format=%(refname:short)", "refs/heads/spira/*"]);
-        git_out(c).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(String::from).collect()
+        let Some(out) = git_out(c) else {
+            unanswered();
+            return Default::default();
+        };
+        out.lines().filter(|l| !l.is_empty()).map(String::from).collect()
+    }
+    fn unanswered(&self) -> u64 {
+        UNANSWERED.load(Ordering::SeqCst)
     }
     fn branch_exists(&self, repo: &Path, branch: &str) -> bool {
+        if let Some(exists) = branch_in_files(repo, branch) {
+            return exists;
+        }
         let mut c = git(repo);
         c.args(["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")]);
         git_ok(c)
     }
     fn rev_parse(&self, repo: &Path, rev: &str) -> Option<String> {
+        if let Some(sha) = git_refs::sha_of(repo, rev) {
+            return Some(sha);
+        }
         let mut c = git(repo);
         c.args(["rev-parse", "--verify", "-q", rev]);
         git_out(c).filter(|s| !s.is_empty())
@@ -1314,6 +1353,45 @@ impl Clock for RealClock {
     }
     fn sleep(&self, secs: u64) {
         std::thread::sleep(std::time::Duration::from_secs(secs));
+    }
+}
+
+#[cfg(test)]
+mod ref_read_tests {
+    use super::*;
+
+    #[test_id(tuum97b)]
+    #[test]
+    fn tips_existence_and_a_ref_name_are_answered_from_the_ref_files() {
+        let t = testkit::TempDir::new("landing-pass-ref-files");
+        let (tip, base) = ("a".repeat(40), "b".repeat(40));
+        let dotgit = t.path().join(".git");
+        for (name, sha) in [("refs/heads/spira/sp-a", &tip), ("refs/remotes/origin/main", &base)] {
+            fs::create_dir_all(dotgit.join(name).parent().unwrap()).unwrap();
+            fs::write(dotgit.join(name), format!("{sha}\n")).unwrap();
+        }
+        fs::write(dotgit.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        assert_eq!(RealGit.spira_refs(t.path()), vec![("spira/sp-a".to_string(), tip)]);
+        assert!(RealGit.branch_exists(t.path(), "spira/sp-a"));
+        assert!(!RealGit.branch_exists(t.path(), "spira/sp-b"));
+        assert_eq!(branch_in_files(t.path(), "spira/sp-b"), Some(false), "absence needs no git");
+        assert_eq!(branch_in_files(t.path(), "spira/sp"), Some(false), "a prefix of a branch is not that branch");
+        assert_eq!(RealGit.rev_parse(t.path(), "refs/remotes/origin/main"), Some(base));
+    }
+}
+
+#[cfg(test)]
+mod unanswered_tests {
+    use super::*;
+
+    #[test_id(trapo0t)]
+    #[test]
+    fn a_git_that_never_ran_is_counted_as_unanswered() {
+        let before = RealGit.unanswered();
+        let missing = || std::process::Command::new(system_paths::NONEXISTENT);
+        assert!(!git_ok(missing()));
+        assert_eq!(git_out(missing()), None);
+        assert!(RealGit.unanswered() >= before + 2);
     }
 }
 

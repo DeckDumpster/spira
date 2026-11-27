@@ -147,6 +147,7 @@ All paths under `$SPIRA_RUN` unless absolute. Formats unchanged (§3).
 | `landing.run` | `halt` | `land` at each phase (atomic); removed on exit |
 | `landing.containers` | `halt` | truncated at start; appended by testenv (via `SPIRA_LANDING_CONTAINERS`); removed on exit |
 | `landing.cursor` | `land` (rotation) | on a budget cut: the repo name |
+| `landing-graph/<repo>` | `land`, pr pass | line 1 the base commit, then `<tip> ancestor\|content <0\|1>`; only the answers consulted that pass, renamed into place, the file removed when none was; read as empty when the base commit differs; an answer git never gave is not kept; `land` removes files of unmapped repos |
 | `landing.deferred/<br with / → _>` | `land` | per-branch deferral count; removed when visited |
 | `landing.interrupted` | operators | `halt` (atomic) |
 | `landing.lock` (new) | — | `land` flock (§8 D7) |

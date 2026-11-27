@@ -26,6 +26,8 @@ pub trait Beads {
     fn context(&self, id: &str, now: i64) -> String;
 }
 
+/// `RealGit` answers `spira_refs`, `branch_exists` and `rev_parse` from the ref files, starting
+/// git only when they cannot tell.
 pub trait Git {
     /// `for-each-ref refs/heads/spira/*` → (short name, tip).
     fn spira_refs(&self, repo: &Path) -> Vec<(String, String)>;
@@ -40,6 +42,11 @@ pub trait Git {
     /// `rev-list --count <range>`; None when it cannot be taken.
     fn count(&self, repo: &Path, range: &str) -> Option<u64>;
     fn fetch(&self, repo: &Path, remote: &str);
+    /// How many questions so far git never answered. A "no" given while this grew is a
+    /// failure, not an answer, and is not remembered.
+    fn unanswered(&self) -> u64 {
+        0
+    }
     /// A private landing worktree (push mode): exists?
     fn tree_ok(&self, tree: &Path) -> bool;
     fn tree_add_detached(&self, repo: &Path, tree: &Path, at: &str);
