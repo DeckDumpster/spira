@@ -367,24 +367,63 @@ fn discard(dir: &Path, held: SlotLock) -> bool {
     };
     let Some((base, repo, n)) = parts() else { return false };
     let reap = base.join(REAP_DIR);
-    let to = reap.join(format!("{repo}.{n}.{}", epoch_nanos()));
     if std::fs::create_dir_all(&reap).is_err() {
         return false;
     }
-    match std::fs::rename(dir, &to) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+    let to = match arrive(base, dir, &format!("{repo}.{n}"), &epoch_nanos) {
+        Ok(to) => to,
         Err(e) => {
             eprintln!("cannot delete idle build directory {}: {e}", dir.display());
             return false;
         }
-    }
+    };
     for ext in ["json", "gate"] {
         let _ = std::fs::rename(side(dir, ext), side(&to, ext));
     }
     let _ = std::fs::remove_file(side(dir, "lock"));
     drop(held);
     true
+}
+
+/// Held while an arrival is stamped and renamed in, while a reap takes its start and lists, and
+/// while its record is written: so a reap that began after a stamp has seen that entry.
+const REAP_LOCK: &str = ".reap.done.lock";
+
+fn reap_lock(base: &Path) -> std::io::Result<crate::admission::Mutex> {
+    crate::admission::Mutex::lock(base, REAP_LOCK)
+}
+
+/// Rename `dir` into `base`'s [`REAP_DIR`] as `<name>.<arrival>`. A `dir` already gone is no error.
+fn arrive(base: &Path, dir: &Path, name: &str, clock: &dyn Fn() -> u128) -> std::io::Result<PathBuf> {
+    let _held = reap_lock(base)?;
+    let to = base.join(REAP_DIR).join(format!("{name}.{}", clock()));
+    match std::fs::rename(dir, &to) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(to),
+    }
+}
+
+/// One base's part in a reap: when it began there and what it will try to remove.
+struct Reaping {
+    base: PathBuf,
+    started: u128,
+    waiting: Vec<PathBuf>,
+}
+
+/// None for a base that is not there, or whose lock cannot be taken: nothing is removed there.
+fn begin_reap(base: &Path, clock: &dyn Fn() -> u128) -> Option<Reaping> {
+    if !base.is_dir() {
+        return None;
+    }
+    let _held = reap_lock(base).map_err(|e| eprintln!("cannot reap under {}: {e}", base.display())).ok()?;
+    Some(Reaping { base: base.to_path_buf(), started: clock(), waiting: children(&base.join(REAP_DIR)) })
+}
+
+impl Reaping {
+    fn finish(self) {
+        self.waiting.iter().for_each(|c| remove_any(c));
+        record_reap(&self.base, self.started);
+    }
 }
 
 /// Everything waiting in the bases' [`REAP_DIR`]s.
@@ -416,10 +455,11 @@ fn reaped_through(base: &Path) -> Option<u128> {
 
 /// Record that a reap begun at `started` has finished under `base`. The record only moves forward.
 fn record_reap(base: &Path, started: u128) {
+    // The lock would make the directory again.
     if !base.is_dir() {
         return;
     }
-    let written = crate::admission::Mutex::lock(base, ".reap.done.lock").and_then(|_held| match reaped_through(base) {
+    let written = reap_lock(base).and_then(|_held| match reaped_through(base) {
         Some(later) if later >= started => Ok(()),
         _ => crate::write_atomic(&base.join(REAP_DONE), &started.to_string()),
     });
@@ -428,24 +468,16 @@ fn record_reap(base: &Path, started: u128) {
     }
 }
 
-fn reap_base(base: &Path, waiting: &[PathBuf], started: u128) {
-    waiting.iter().for_each(|c| remove_any(c));
-    record_reap(base, started);
-}
-
 /// Remove everything waiting to be reaped.
 pub fn reap(bases: &[PathBuf]) {
-    let started = epoch_nanos();
-    bases.iter().for_each(|b| reap_base(b, &children(&b.join(REAP_DIR)), started));
+    bases.iter().filter_map(|b| begin_reap(b, &epoch_nanos)).for_each(Reaping::finish);
 }
 
 /// Remove what is waiting now, on a thread the callers do not join: what the process does not
 /// finish, a later lease's does. Every lease starts one.
 pub fn reap_in_background(bases: &[PathBuf]) -> Option<std::thread::JoinHandle<()>> {
-    // Before the listing: an entry that arrives after it is never tried, so must not read as left.
-    let started = epoch_nanos();
-    let waiting: Vec<(PathBuf, Vec<PathBuf>)> = bases.iter().map(|b| (b.clone(), children(&b.join(REAP_DIR)))).filter(|(_, w)| !w.is_empty()).collect();
-    (!waiting.is_empty()).then(|| std::thread::spawn(move || waiting.iter().for_each(|(b, w)| reap_base(b, w, started))))
+    let reaping: Vec<Reaping> = bases.iter().filter_map(|b| begin_reap(b, &epoch_nanos)).filter(|r| !r.waiting.is_empty()).collect();
+    (!reaping.is_empty()).then(|| std::thread::spawn(move || reaping.into_iter().for_each(Reaping::finish)))
 }
 
 /// What a lease's folder held for it when it started.
@@ -2869,6 +2901,29 @@ mod tests {
         assert_eq!(gone, [Deleted { dir: u[0].clone(), repo: Some("U".into()), why: Why::Unregistered }]);
         assert_eq!(refused, None);
         assert!(a.iter().all(|d| d.join("x").exists()));
+    }
+
+    #[test_id(tpqq1c1)]
+    #[test]
+    fn an_arrival_and_a_reaps_start_are_both_stamped_under_the_bases_reap_lock() {
+        let d = testkit::TempDir::new("bdir-reap-lock");
+        let base = d.path().join("base");
+        std::fs::create_dir_all(base.join(".reap")).unwrap();
+        fill(&base.join("A/1/x"), 1);
+        let free = || {
+            let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(base.join(REAP_LOCK)).unwrap();
+            // SAFETY: flock on a descriptor we own; closing it releases what was taken.
+            unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
+        };
+        assert!(free(), "positive control");
+        let stamp = || {
+            assert!(!free(), "stamped outside the lock");
+            7
+        };
+        let to = arrive(&base, &base.join("A/1"), "A.1", &stamp).unwrap();
+        assert!(to.join("x").exists());
+        assert_eq!(begin_reap(&base, &stamp).unwrap().waiting, [to]);
+        assert!(free(), "and let go before anything is removed");
     }
 
     #[test_id(tojme4t)]
