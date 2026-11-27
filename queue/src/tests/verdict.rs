@@ -1657,6 +1657,43 @@ fn a_pytest_failure_with_no_annotations_is_a_test_red_not_a_setup_red() {
     assert!(t.out().contains("called judgement (sp-j3)"), "{}", t.out());
 }
 
+#[test_id(tsogawz)]
+#[test]
+fn a_nextest_failure_with_no_annotations_is_a_test_red_not_a_setup_red() {
+    for status in ["FAIL", "TIMEOUT"] {
+        let mut t = T::new(LandMode::Queue);
+        batch(&t);
+        t.lib.s.batcher_bin = Some(PathBuf::from("batcher"));
+        *t.scripts.judgement.borrow_mut() = RunOut {
+            rc: 0,
+            out: "id=sp-j3\n".into(),
+            err: String::new(),
+        };
+        *t.forge.run.borrow_mut() = Some("77".into());
+        let red = format!("step-log:         {status} [   0.412s] (957/957) dumpstar-cli::rust_cache a_lost_server_under_on_is_said_once_and_the_run_goes_on_cold\n");
+        t.forge.status.borrow_mut().push(Some(format!(
+            "red\nfailed-step: gate / Run tests\n{red}step-log:      Summary [ 60.0s] 957 tests run: 956 passed, 1 failed, 0 skipped\n{red}"
+        )));
+        assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+        assert!(
+            has_call(
+                &t.scripts.calls,
+                "judgement-ci batcher spira dumpstar-cli::rust_cache "
+            ),
+            "{status}: {:?} / {}",
+            t.scripts.calls,
+            t.out()
+        );
+        assert!(!t
+            .forge
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("workflow-rerun")));
+        assert!(!t.lc.has("eject-member"), "{:?}", t.lc.calls.borrow());
+    }
+}
+
 #[test_id(tp27xdf)]
 #[test]
 fn a_provision_failure_log_stays_setup_red_and_an_unparseable_one_still_raises_an_incident() {
