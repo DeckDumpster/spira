@@ -296,12 +296,14 @@ pub fn eject(
 
     // The PR is closed and no rebuilt one is opened: the batch row must not outlive it, or its
     // members stay IN_DELIVERY behind a PR that is gone, or an emptied batch stays OPEN.
+    let mut abandoned = false;
     if !batch_id.is_empty() {
         let r = bounded_text(&format!(
             "{id} ejected; the batch PR is closed and not rebuilt"
         ));
         match lc_abandon(w, &batch_id, "queue.sh", &r) {
             Ok(()) => {
+                abandoned = true;
                 w.out(format!(
                     "queue.sh eject: {batch_id} abandoned on spira-lc (survivors requeued)"
                 ));
@@ -315,7 +317,7 @@ pub fn eject(
     }
     let requeued: Vec<String> = survivors
         .iter()
-        .map(|m| report_requeued(w, "eject", &m.id, ""))
+        .map(|m| report_requeued(w, "eject", &m.id, "", abandoned))
         .collect();
     if failed {
         converge_orphans(w);
@@ -350,7 +352,12 @@ pub fn eject(
     if !reason.is_empty() {
         body.push_str(&format!(" Reason: {reason}"));
     }
-    body.push_str(&format!("\nSurvivors requeued: {surv}"));
+    let heading = if abandoned || requeued.is_empty() {
+        "Survivors requeued"
+    } else {
+        "Survivors not requeued (abandon-batch did not complete)"
+    };
+    body.push_str(&format!("\n{heading}: {surv}"));
     w.lib.notify(
         &c.s.mailbox,
         &c.r.name,
@@ -440,10 +447,18 @@ pub fn abandon(w: &World, repo: Option<&str>, reason: &Text, dry_run: bool) -> i
 
 /// Reports where a member's row stands now that its batch let it go, and returns its
 /// `id:STATE` token. The state is read, never assumed: a requeue has more than one target.
-fn report_requeued(w: &World, verb: &str, id: &str, colon: &str) -> String {
+/// Only an `applied` abandon may be said to have moved the row.
+fn report_requeued(w: &World, verb: &str, id: &str, colon: &str, applied: bool) -> String {
     match w.lc.bead_row(id) {
         Some(r) => {
-            w.out(format!("queue.sh {verb}: {id}{colon} returned to {}", r.state));
+            w.out(if applied {
+                format!("queue.sh {verb}: {id}{colon} returned to {}", r.state)
+            } else {
+                format!(
+                    "queue.sh {verb}: {id}{colon} reads {} (abandon-batch did not complete)",
+                    r.state
+                )
+            });
             format!("{id}:{}", r.state)
         }
         None => {
@@ -555,10 +570,12 @@ fn abandon_locked(
     // Read before the abandon: afterwards a REWORK may be the requeue's own doing.
     let left: Vec<Option<String>> = members.iter().map(|m| kept(&m.id)).collect();
 
+    let mut abandoned = false;
     if !batch_id.is_empty() {
         let r = bounded_text(reason);
         match lc_abandon(w, &batch_id, "queue.sh", &r) {
             Ok(()) => {
+                abandoned = true;
                 w.out(format!(
                     "queue.sh {label}: {batch_id} abandoned on spira-lc"
                 ));
@@ -588,7 +605,7 @@ fn abandon_locked(
                 w.out(format!("queue.sh {label}: {}: left as {st}", m.id));
                 audit.push(format!("{}:{st}", m.id));
             }
-            None => audit.push(report_requeued(w, label, &m.id, ":")),
+            None => audit.push(report_requeued(w, label, &m.id, ":", abandoned)),
         }
     }
     let audit = if audit.is_empty() {
