@@ -530,6 +530,8 @@ struct FScripts {
     caller_unit: RefCell<Option<String>>,
     /// A rolled-back activation: exits 0 and leaves `<releases>/current` where it was.
     leave_current: Cell<bool>,
+    /// A detached run whose unit state cannot be read once it has run.
+    detached_unread: Cell<bool>,
     detached_keys: RefCell<Vec<String>>,
     /// `ActiveState` answers in order (the last repeats; empty reads `active`), and the units asked about.
     unit_states: RefCell<std::collections::VecDeque<String>>,
@@ -923,9 +925,13 @@ impl Scripts for FScripts {
     fn own_unit_restarted_by(&self, _rel: &Path) -> Option<String> {
         self.caller_unit.borrow().clone()
     }
-    fn release_detached(&self, key: &str, bin: &Path, args: &[String], db: &str, _log: &Path) -> RunOut {
+    fn release_detached(&self, key: &str, bin: &Path, args: &[String], db: &str, _log: &Path) -> Detached {
         self.detached_keys.borrow_mut().push(key.to_string());
-        self.release(bin, args, db)
+        let ran = self.release(bin, args, db);
+        if self.detached_unread.get() {
+            return Detached::Unread("cannot read the state of spira-run-release_2dactivate-x.service: systemd: LoadUnit: no reply within 5s, 24 reads in a row".into());
+        }
+        Detached::Ended(ran)
     }
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut {
         self.release_calls.borrow_mut().push((
