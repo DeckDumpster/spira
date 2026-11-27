@@ -57,7 +57,11 @@ impl Rig {
             .spawn()
             .unwrap();
         use std::io::Write;
-        child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+        // BrokenPipe means the shell already exited; its status is the result.
+        match child.stdin.take().unwrap().write_all(stdin.as_bytes()) {
+            Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => panic!("writing the command's stdin: {e}"),
+            _ => {}
+        }
         child.wait_with_output().unwrap()
     }
 }
@@ -98,4 +102,12 @@ fn the_registered_command_fails_where_the_release_has_no_meter_binary() {
     let out = rig.as_client(&rig.paths().meter_command(), METER_IN);
     assert_ne!(out.status.code(), Some(0), "{}", text(&out));
     assert!(out.stdout.is_empty(), "{}", text(&out));
+}
+
+#[test_id(t50ce2x)]
+#[test]
+fn as_client_returns_the_status_of_a_command_that_exits_without_reading_stdin() {
+    let rig = Rig::new();
+    let out = rig.as_client("exit 3", &"x".repeat(1 << 20));
+    assert_eq!(out.status.code(), Some(3), "{}", text(&out));
 }
