@@ -16,12 +16,23 @@ use lifecycle::{batch, bead};
 
 pub(crate) const REFUSED: i32 = 3;
 
-/// A lifecycle key: `sp-` then a non-empty tail of alphanumerics, `.`, `-` or `_` — prose and bare prefixes are not.
-pub fn is_row_key(x: &str) -> bool {
-    x.len() > 3
-        && x[..3].eq_ignore_ascii_case("sp-")
-        && x[3..].chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
-        && x.chars().last().is_some_and(|c| c != '-')
+/// A lifecycle key: `prefix`, `-`, then a non-empty tail of alphanumerics, `.`, `-` or `_` not ending in `-`.
+pub fn is_row_key(prefix: &str, x: &str) -> bool {
+    let tail = x.split_at_checked(prefix.len()).filter(|(head, _)| head.eq_ignore_ascii_case(prefix)).and_then(|(_, rest)| rest.strip_prefix('-'));
+    tail.is_some_and(|t| !t.is_empty() && !t.ends_with('-') && t.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')))
+}
+
+/// This installation's bead id prefix, pinned at the first successful read; a refusal is not kept.
+pub fn row_prefix() -> Result<String, String> {
+    static PREFIX: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    if let Some(kept) = PREFIX.get() {
+        return Ok(kept.clone());
+    }
+    let read = spira_config::process::cfg("SPIRA_ID_PREFIX")?;
+    if read.is_empty() {
+        return Err("SPIRA_ID_PREFIX is empty: spira.id_prefix names the prefix of this installation's bead ids — refusing".into());
+    }
+    Ok(PREFIX.get_or_init(|| read).clone())
 }
 
 /// The planning reader `create-bead` asks for a bead's type: `plan items` rows of the ids given.
@@ -31,8 +42,8 @@ pub type PlanReader<'a> = dyn FnMut(&[&str]) -> Result<Vec<serde_json::Value>, S
 /// …), named; `None` lets the create go ahead. The type is the planning plane's, read through
 /// `read`; a bead the planning plane cannot answer for is created, so a filing is never stranded
 /// rowless by a planning read that failed.
-pub fn refuse_no_record_type(args: &[String], read: &mut PlanReader) -> Option<(i32, String)> {
-    let id = args.first().filter(|i| is_row_key(i))?;
+pub fn refuse_no_record_type(prefix: &str, args: &[String], read: &mut PlanReader) -> Option<(i32, String)> {
+    let id = args.first().filter(|i| is_row_key(prefix, i))?;
     let items = read(&[id.as_str()]).ok()?;
     let kind = items.iter().find(|i| i.get("id").and_then(serde_json::Value::as_str) == Some(id.as_str()))?.get("issue_type")?.as_str()?;
     (!spira_config::nonwork::is_work_type(Some(kind))).then(|| {
@@ -139,6 +150,33 @@ pub(crate) fn stacked_dependents_from(
         }
     }
     dependents
+}
+
+#[cfg(test)]
+mod row_key_tests {
+    use super::is_row_key;
+
+    #[test_id(toa98dq)]
+    #[test]
+    fn only_an_id_carrying_the_given_prefix_and_its_hyphen_is_a_key() {
+        for key in ["zz-abc", "zz-a.1"] {
+            assert!(is_row_key("zz", key), "{key}");
+        }
+        for not in ["sp-abc", "zz-", "zzz-a", "zz-a-", "zz"] {
+            assert!(!is_row_key("zz", not), "{not}");
+        }
+    }
+
+    #[test_id(txz9fca)]
+    #[test]
+    fn under_the_sp_prefix_the_tail_and_case_rules_hold() {
+        for key in ["sp-a", "SP-a", "Sp-A1", "sp-a.1", "sp-a-b", "sp-a_b", "sp-a.", "sp-_", "sp--a"] {
+            assert!(is_row_key("sp", key), "{key}");
+        }
+        for not in ["", "sp", "sp-", "spa", "sp-a b", "sp-a-", "-x", "s\u{e9}-a", "sp-\u{e9}", "see sp-a"] {
+            assert!(!is_row_key("sp", not), "{not:?}");
+        }
+    }
 }
 
 #[cfg(test)]

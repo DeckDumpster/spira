@@ -66,6 +66,9 @@ impl crate::composed::Content for Content {
     fn delete(&self, _: &[String]) -> Result<(), String> {
         Ok(())
     }
+    fn row_prefix(&self) -> Result<String, String> {
+        Ok("sp".into())
+    }
     fn ask_label(&self) -> Result<String, String> {
         // literal-ok: test fixture label
         Ok("needs-ryan".into())

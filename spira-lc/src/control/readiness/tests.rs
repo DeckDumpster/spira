@@ -652,6 +652,10 @@ struct Fixed {
 }
 
 impl crate::control::claimable::Inputs for Fixed {
+    fn row_prefix(&self) -> Result<String, String> {
+        Ok("sp".into())
+    }
+
     fn config(&self) -> Result<crate::control::claimable::Config, String> {
         if self.fail {
             return Err("SPIRA_STACK_MAX_DEPTH is unreadable".into());

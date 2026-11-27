@@ -386,7 +386,11 @@ fn name_cli_call(args: &[String]) {
 pub fn dispatch(args: &[String]) -> (i32, String) {
     slow::set_verb(args.first().map(|s| s.as_str()).unwrap_or("-"));
     if args.first().map(String::as_str) == Some("create-bead") {
-        if let Some(refused) = cutover::refuse_no_record_type(&args[1..], &mut |ids| plan::fetch(ids)) {
+        let prefix = match cutover::row_prefix() {
+            Ok(p) => p,
+            Err(e) => return (CANNOT_TELL, format!("cannot tell: create-bead: {e}")),
+        };
+        if let Some(refused) = cutover::refuse_no_record_type(&prefix, &args[1..], &mut |ids| plan::fetch(ids)) {
             return refused;
         }
     }

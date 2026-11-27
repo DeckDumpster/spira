@@ -317,6 +317,9 @@ mod pinned {
     }
 
     impl Inputs for Counting<'_> {
+        fn row_prefix(&self) -> Result<String, String> {
+            FIXED.row_prefix()
+        }
         fn config(&self) -> Result<Config, String> {
             self.configs.fetch_add(1, Ordering::SeqCst);
             if self.fail_config.get() {
@@ -458,6 +461,9 @@ mod shipped_runes {
     struct Discovered<'a>(&'a Path);
 
     impl Inputs for Discovered<'_> {
+        fn row_prefix(&self) -> Result<String, String> {
+            FIXED.row_prefix()
+        }
         fn config(&self) -> Result<Config, String> {
             FIXED.config()
         }
