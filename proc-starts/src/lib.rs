@@ -37,6 +37,9 @@ mod object_tests {
             assert!(fields.insert(key, value).is_none(), "bpf/proc_starts.bpf.manifest: duplicate key {key}");
         }
         let recorded = |key: &str| *fields.get(key).unwrap_or_else(|| panic!("{key} missing from bpf/proc_starts.bpf.manifest: run proc-starts/bpf/regen.sh"));
+        for key in ["clang", "flags"] {
+            assert!(!recorded(key).is_empty(), "{key} empty in bpf/proc_starts.bpf.manifest: run proc-starts/bpf/regen.sh");
+        }
         let sha256 = |bytes: &[u8]| Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect::<String>();
         assert_eq!(sha256(include_bytes!("../bpf/proc_starts.bpf.c")), recorded("source_sha256"), "bpf/proc_starts.bpf.c changed without its object: run proc-starts/bpf/regen.sh and commit both");
         assert_eq!(sha256(include_bytes!("../bpf/proc_starts.bpf.o")), recorded("object_sha256"), "bpf/proc_starts.bpf.o was changed outside proc-starts/bpf/regen.sh: run proc-starts/bpf/regen.sh and commit the object with its manifest");
