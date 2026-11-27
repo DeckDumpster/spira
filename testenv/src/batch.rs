@@ -142,11 +142,13 @@ fn write_atomic(path: &Path, text: &str) {
 }
 
 /// `.out` (and `.tap.json`) first, `.result` last: its presence means the suite completed.
-pub fn write_suite(results: &Path, suite: &str, rec: &ResultRecord, output: &str) {
-    let _ = fs::write(
+/// Returns whether `.out` was written.
+pub fn write_suite(results: &Path, suite: &str, rec: &ResultRecord, output: &str) -> bool {
+    let wrote_out = fs::write(
         results.join(format!("{suite}.out")),
         record::normalize_output(output),
-    );
+    )
+    .is_ok();
     if rec.status.executed() {
         if let Ok(j) = serde_json::to_string(&tap::parse(output)) {
             let _ = fs::write(results.join(format!("{suite}.tap.json")), j);
@@ -157,6 +159,7 @@ pub fn write_suite(results: &Path, suite: &str, rec: &ResultRecord, output: &str
         &format!("{rec}\n"),
     );
     record_suite(results, suite, rec);
+    wrote_out
 }
 
 fn record_suite(results: &Path, suite: &str, rec: &ResultRecord) {
@@ -215,8 +218,9 @@ impl Shared<'_> {
             self.cfg.producer,
             now_epoch(),
         );
-        write_suite(&self.cfg.results, suite, &rec, output);
-        self.drop_raw(suite);
+        if write_suite(&self.cfg.results, suite, &rec, output) {
+            self.drop_raw(suite);
+        }
         (self.hooks.line)(&record::suite_line(suite, &rec));
         self.records.lock().unwrap().insert(suite.to_string(), rec);
     }
@@ -250,9 +254,11 @@ impl Shared<'_> {
         (out.rc, secs, out.output, running)
     }
 
-    /// Only once `.out` holds the output: a suite left with no record has nothing else.
+    /// A tripped cap's report may name this file and is printed, or re-read, later.
     fn drop_raw(&self, suite: &str) {
-        let _ = fs::remove_file(self.raw_path(suite));
+        if !crate::cap::tripped() {
+            let _ = fs::remove_file(self.raw_path(suite));
+        }
     }
 
     fn finish(&self, n: usize, suite: &str, rc: i32, secs: u64, output: &str) {
@@ -267,8 +273,9 @@ impl Shared<'_> {
             now_epoch(),
         );
         let rec = rec.skip_as_red(self.cfg.quarantined.contains(suite));
-        write_suite(&self.cfg.results, suite, &rec, output);
-        self.drop_raw(suite);
+        if write_suite(&self.cfg.results, suite, &rec, output) {
+            self.drop_raw(suite);
+        }
         if rec.status == Status::Ok {
             if let Some(store) = &self.cfg.resume {
                 store.record(suite);
@@ -1050,6 +1057,91 @@ mod tests {
         with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
         assert!(dir.join("test-a.sh.out").exists());
         assert!(!dir.join(".test-a.sh.raw").exists());
+
+        let rt = FakeRuntime::new();
+        rt.suite("test-a.sh", crate::runtime::RC_DEADLINE, "partial\n");
+        let dir = tmpdir("raw-deferred");
+        let s = session(&rt);
+        let c = cfg(Mode::Serial, &dir, 0);
+        with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
+        assert!(dir.join("test-a.sh.out").exists());
+        assert!(!dir.join(".test-a.sh.raw").exists());
+    }
+
+    #[test_id(tdf90a4)]
+    #[test]
+    fn the_raw_log_stays_when_out_could_not_be_written() {
+        let rt = FakeRuntime::new();
+        rt.suite("test-a.sh", 0, "ok\n");
+        let dir = tmpdir("raw-no-out");
+        fs::create_dir(dir.join("test-a.sh.out")).unwrap();
+        let s = session(&rt);
+        let c = cfg(Mode::Serial, &dir, 0);
+        with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
+        assert_eq!(fs::read_to_string(dir.join(".test-a.sh.raw")).unwrap(), "ok\n");
+    }
+
+    #[test_id(tfgj6g3)]
+    #[test]
+    fn a_log_the_cap_may_have_named_is_kept_after_the_suite_is_recorded() {
+        let rt = FakeRuntime::new();
+        let path = format!("{}/spira/test-a.sh", crate::fixture::WORKSPACE);
+        rt.on(
+            move |r| r.argv.get(1) == Some(&path),
+            |_| {
+                crate::cap::TRIPPED_HERE.with(|t| t.set(true));
+                ExecOutcome { rc: 0, output: "ok\n".into() }
+            },
+        );
+        let dir = tmpdir("raw-tripped");
+        let s = session(&rt);
+        let c = cfg(Mode::Serial, &dir, 0);
+        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
+        crate::cap::TRIPPED_HERE.with(|t| t.set(false));
+        assert!(out.records.contains_key("test-a.sh"));
+        assert!(dir.join(".test-a.sh.raw").exists());
+    }
+
+    /// The first exec of `test-a.sh` answers `first`, every later one a pass; returns what
+    /// a cap tripping while each record was being reported would have named.
+    fn cut_while_recording(mode: Mode, first: (i32, &'static str)) -> Vec<String> {
+        let rt = FakeRuntime::new();
+        let path = format!("{}/spira/test-a.sh", crate::fixture::WORKSPACE);
+        let calls = AtomicUsize::new(0);
+        rt.on(
+            move |r| r.argv.get(1) == Some(&path),
+            move |_| {
+                crate::cap::ONLY_MY_UNITS.with(|o| o.set(true));
+                let (rc, output) = match calls.fetch_add(1, Ordering::SeqCst) {
+                    0 => first,
+                    _ => (0, "ok\n"),
+                };
+                ExecOutcome { rc, output: output.into() }
+            },
+        );
+        let dir = tmpdir("cut-record");
+        let s = session(&rt);
+        let c = cfg(mode, &dir, 1);
+        let seen = Mutex::new(Vec::new());
+        let line = |l: &str| {
+            if l.trim_start().starts_with("test-a.sh") {
+                seen.lock().unwrap().push(crate::cap::describe());
+            }
+        };
+        let hooks = Hooks { log: &|_| {}, line: &line, timing: &|_, _, _, _, _| {}, psi_high: &|| false };
+        run(&s, &c, &hooks, &Fixtures::PerSuite, &jobs(&["test-a.sh"]));
+        seen.into_inner().unwrap()
+    }
+
+    #[test_id(tjwlmlx)]
+    #[test]
+    fn a_suite_stays_in_the_cap_report_while_its_record_is_written() {
+        let step = |rc: i32| format!("tier/suite test-a.sh (in record, exec rc={rc} after 0s)");
+        for mode in [Mode::Serial, Mode::Parallel] {
+            assert_eq!(cut_while_recording(mode, (0, "ok\n")), vec![step(0)]);
+            let lost = "Error: timed out waiting for file /x/userdata/y/exit/z\n";
+            assert_eq!(cut_while_recording(mode, (255, lost)), vec![step(255), step(0)]);
+        }
     }
 
     /// Suites that take `ms` each but honour the exec's deadline the way `run_bounded` does:

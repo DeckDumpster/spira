@@ -53,6 +53,12 @@ pub fn armed_here() -> bool {
     CURRENT.with(|c| c.borrow().as_ref().is_some_and(|k| k.lock().unwrap().counting()))
 }
 
+#[cfg(test)]
+thread_local! {
+    /// A trip only this thread sees: a real one is process-wide and any `finish` clears it.
+    pub static TRIPPED_HERE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Ignores the per-thread opt-in: for a fake that stands in for a process outside the run.
 #[cfg(test)]
 pub fn tripped_anywhere() -> bool {
@@ -66,7 +72,7 @@ pub fn tripped() -> bool {
 
 #[cfg(test)]
 pub fn tripped() -> bool {
-    OBSERVE_CAP.with(|o| o.get()) && TRIPPED.load(Ordering::SeqCst)
+    TRIPPED_HERE.with(|t| t.get()) || (OBSERVE_CAP.with(|o| o.get()) && TRIPPED.load(Ordering::SeqCst))
 }
 
 /// The wall-clock cap a run carries, and where it came from.
