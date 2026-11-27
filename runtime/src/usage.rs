@@ -495,6 +495,7 @@ pub fn unit_class(name: &str) -> (String, String) {
             units::DWARF_TASK => units::dwarf_rune(name).unwrap_or(task),
             "sentinel-pass" => format!("pass-{key}"),
             "batcher" => "round".into(),
+            "batcher.local" if key.contains(".image-") => "image-build".into(),
             t if t.starts_with("batcher.") => "round".into(),
             "gate.worker" => "gate-worker".into(),
             _ => task,

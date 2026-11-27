@@ -210,30 +210,33 @@ mod tests {
         std::fs::create_dir_all(&a).unwrap();
         let m1 = vec![(a.clone(), vec!["m1".to_string()])];
         // A look that answers within the first poll was delivered, not dropped: try again.
-        let mut w = (0..100)
-            .find_map(|_| {
-                let _ = std::fs::remove_file(a.join("m1"));
-                let mut w = ListingWatch::default();
-                w.add(&a).unwrap();
-                std::fs::write(a.join("m1"), "x").unwrap();
-                let (tx, woken) = std::sync::mpsc::channel();
-                let waker = std::task::Waker::from(Arc::new(Woken(tx)));
-                let mut wait = w.changed();
-                match wait.as_mut().poll(&mut std::task::Context::from_waker(&waker)) {
-                    std::task::Poll::Ready(got) => {
-                        assert_eq!(got, Ok(m1.clone()));
-                        None
-                    }
-                    std::task::Poll::Pending => {
-                        woken.recv().expect("the finished look wakes the wait");
-                        drop(wait);
-                        Some(w)
-                    }
+        let mut dropped = None;
+        for _ in 0..100 {
+            let _ = std::fs::remove_file(a.join("m1"));
+            let mut w = ListingWatch::default();
+            w.add(&a).unwrap();
+            std::fs::write(a.join("m1"), "x").unwrap();
+            let (tx, woken) = std::sync::mpsc::channel();
+            let waker = std::task::Waker::from(Arc::new(Woken(tx)));
+            let spilled = runtime::offload::spilled_total("mail.listing");
+            let mut wait = w.changed();
+            match wait.as_mut().poll(&mut std::task::Context::from_waker(&waker)) {
+                std::task::Poll::Ready(got) => assert_eq!(got, Ok(m1.clone())),
+                // A refused look waits on this runtime's timer: blocking for its wake would hang.
+                std::task::Poll::Pending if runtime::offload::spilled_total("mail.listing") > spilled => {
+                    assert_eq!(wait.await, Ok(m1.clone()));
                 }
-            })
-            .expect("every look finished within its first poll");
-        let got = tokio::time::timeout(Duration::from_secs(5), w.changed()).await;
-        assert_eq!(got.expect("the dropped wait swallowed the file"), Ok(m1));
+                std::task::Poll::Pending => {
+                    woken.recv().expect("the finished look wakes the wait");
+                    drop(wait);
+                    dropped = Some(w);
+                    break;
+                }
+            }
+        }
+        let w = dropped.expect("every look finished within its first poll");
+        assert!(!w.dirs[&a].contains("m1"), "the dropped wait recorded a file it never delivered");
+        assert_eq!(look(&w.dirs).0, m1);
     }
 
     #[cfg(target_os = "linux")]

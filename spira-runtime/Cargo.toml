@@ -215,6 +215,11 @@ lifecycle = { path = "../lifecycle" }
 state-store = { path = "../state-store" }
 
 [[test]]
+name = "batcher_image_build"
+path = "tests/batcher_image_build.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "sift_reads"
 path = "tests/sift_reads.rs"
 required-features = ["integration"]

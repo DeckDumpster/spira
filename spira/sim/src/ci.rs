@@ -250,7 +250,7 @@ fn write_exe(p: &Path, body: &str) -> Result<(), String> {
     std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())
 }
 
-/// `cargo build -p gate --bin gate`, as `work checks` runs it for a fence row: the world's release
+/// `cargo build -p gate --bin gate` (one-shot), as `work checks` runs it for a fence row: the world's release
 /// `gate` is linked where the build would have put it.
 fn gate_build(cwd: &Path, env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
     let release = env("SPIRA_RELEASE").filter(|v| !v.is_empty()).ok_or("SPIRA_RELEASE is not set: the sim cargo builds gate only inside a world")?;
@@ -265,7 +265,7 @@ fn gate_build(cwd: &Path, env: &dyn Fn(&str) -> Option<String>) -> Result<(), St
 /// `cargo build [--release] [--locked] -p spira-config`, answered by copying the world's release
 /// binary into `./target/release`. A hosted runner builds; a world has no toolchain and no minutes.
 pub fn cargo_shim(args: &[String], cwd: &Path, env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
-    if args == ["build", "-p", "gate", "--bin", "gate"] {
+    if args.strip_suffix(&spira_config::build::one_shot("dev")).is_some_and(|a| a == ["build", "-p", "gate", "--bin", "gate"]) {
         return gate_build(cwd, env);
     }
     let mut it = args.iter();
@@ -299,7 +299,7 @@ pub fn cargo_shim(args: &[String], cwd: &Path, env: &dyn Fn(&str) -> Option<Stri
 mod gate_build_tests {
     use super::*;
 
-    #[test_id(t60vh2k)]
+    #[test_id(tnopr8a)]
     #[test]
     fn a_worlds_gate_build_puts_the_releases_gate_where_cargo_would() {
         let tmp = testkit::TempDir::new("sim-gate-build");
@@ -311,7 +311,7 @@ mod gate_build_tests {
             "CARGO_TARGET_DIR" => Some(d.join("tgt").display().to_string()),
             _ => None,
         };
-        let args: Vec<String> = ["build", "-p", "gate", "--bin", "gate"].iter().map(|s| s.to_string()).collect();
+        let args: Vec<String> = ["build", "-p", "gate", "--bin", "gate"].iter().map(|s| s.to_string()).chain(spira_config::build::one_shot("dev")).collect();
         cargo_shim(&args, &d, &env).unwrap();
         assert_eq!(std::fs::read_to_string(d.join("tgt/debug/gate")).unwrap(), "g");
     }

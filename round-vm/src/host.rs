@@ -12,6 +12,11 @@ use crate::procs::{command, feed_script, FileLock};
 use crate::run::{remote_command, BatchJob, Remote, FOREIGN_SCRIPT, REMOTE_EXIT_FILE, REMOTE_SCRIPT};
 use crate::spill::{HostLoad, HostRule};
 
+/// The `podman` arguments that ask whether a store holds the testenv image `tag`.
+pub fn image_exists_args(tag: &str) -> [String; 3] {
+    ["image".into(), "exists".into(), format!("localhost/spira-testenv:{tag}")]
+}
+
 pub const HOST_HANDLE: &str = "host";
 pub const SLOT_FILE: &str = "host-round.lock";
 pub const PASS_GROUP_FILE: &str = "round-pass.group";
