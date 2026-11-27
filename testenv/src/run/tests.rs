@@ -882,3 +882,20 @@ fn a_sandbox_run_stopped_from_outside_names_its_sender_in_the_red_verdict_and_a_
     assert_eq!(sandbox_metrics(&plain, 320), "sandbox-metrics runner=sandbox secs=424 compiled=320 rc=143 timed_out=false");
     assert_eq!(sandbox_red("unit-tests.sh", &plain).verdict_line(), "VERDICT RED ran=1 red=1 first=unit-tests.sh: exit 143");
 }
+
+#[test_id(tbvge1g)]
+#[test]
+fn a_unit_runs_clean_report_is_pushed_under_mode_unit_tests_and_its_copy_removed() {
+    let d = testkit::TempDir::new("unit-clean-push");
+    let copy = d.path().join(crate::unit::CLEAN_REPORT_REL);
+    fs::create_dir_all(copy.parent().unwrap()).unwrap();
+    fs::write(&copy, r#"{"at":"2026-09-29T19:18:40.000000000Z","rc":0,"acts":[{"branch":"whole-workspace","cause":"missing-record","inputs":[],"crates":[],"bytes":9,"files":1}]}"#).unwrap();
+    let (addr, h) = spira_otel::metrics::run::fixture_sink();
+    let sink = spira_otel::metrics::MetricsSink::new(Some(&addr), "build-dir", std::time::Duration::from_secs(2));
+    crate::unit::push_clean_report(d.path(), "unit-volume", "spira/some-branch", "spira", &sink);
+    let body = h.join().unwrap();
+    for want in ["build_dir_clean_bytes", "mode", "unit-tests", "unit-volume", "spira/some-branch"] {
+        assert!(body.contains(want), "{want} missing from the push");
+    }
+    assert!(!copy.exists(), "a read copy is removed, so no later run pushes it again");
+}

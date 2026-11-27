@@ -9,6 +9,8 @@ use std::process::{Command, Stdio};
 pub const NAME: &str = "unit-tests";
 pub const SCRIPT: &str = "unit-tests.sh";
 pub const CRATES_REL: &str = "target/unit-tests.crates";
+/// The script's copy of its clean's report: the host cannot read the container's target volume.
+pub const CLEAN_REPORT_REL: &str = "target/unit-tests.clean.json";
 pub const BINS_REL: &str = "target/unit-tests.bins";
 pub const BUILD_REL: &str = "target/unit-tests.build";
 pub const FILTER_REL: &str = "target/unit-tests.filter";
@@ -32,6 +34,30 @@ pub fn crates_path(tree: &Path) -> PathBuf {
 
 pub fn bins_path(tree: &Path) -> PathBuf {
     tree.join(BINS_REL)
+}
+
+/// Leaves an empty copy file for the script, in place of any an earlier run left. The
+/// container's user cannot create a file in the checkout, only rewrite one its mode lets it.
+pub fn prepare_clean_report(tree: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let path = tree.join(CLEAN_REPORT_REL);
+    let _ = std::fs::remove_file(&path);
+    std::fs::create_dir_all(path.parent().unwrap_or(tree))
+        .and_then(|_| std::fs::write(&path, ""))
+        // Set after the write: the umask narrows a mode given at creation.
+        .and_then(|_| std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)))
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))
+}
+
+/// Pushes the report the unit run's clean left, in the lease's and release's series, and removes
+/// the copy. It records only: no report and a failed push change nothing.
+pub fn push_clean_report(tree: &Path, target: &str, item: &str, repo: &str, sink: &spira_otel::metrics::MetricsSink) {
+    let path = tree.join(CLEAN_REPORT_REL);
+    if let Some(report) = spira_config::build_dir::clean_report_at(&path) {
+        let series = spira_config::build_dir::clean_series(&report, Path::new(target), "unit-tests", item, Some(repo));
+        let _ = sink.try_push_series(&series);
+    }
+    let _ = std::fs::remove_file(path);
 }
 
 /// Leaves `--tests`' names for the script, one per line, or removes a filter an earlier run

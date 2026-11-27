@@ -1502,6 +1502,9 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             r.target = Some("branch".into());
         }
         unit_selection = Some(verdict::UnitSelection { base: diff_base, crates });
+        if let Err(e) = crate::unit::prepare_clean_report(&wt.path) {
+            deps.log(&format!("unit-tests: this run's clean will not be recorded: {e}"));
+        }
         if let Err(e) = crate::unit::write_filter(&wt.path, args.tests.as_deref()) {
             stderr(&format!("batch: unit-tests: {e}"));
             return Finish::fault(2, "unit-filter", 0);
@@ -1787,7 +1790,8 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             .ok()
             .and_then(|r| r.strip_prefix("refs/heads/").map(str::to_string));
         let volume = crate::container::unit_target_volume(branch.as_deref(), &tree);
-        return run_sandboxed(args, deps, &s, &wt.path, &volume, &results, rec);
+        let item = branch.unwrap_or_else(|| tree.clone());
+        return run_sandboxed(args, deps, &s, &wt.path, &volume, (&item, &repo.name), &results, rec);
     }
     // ---- build in place (or stage the prebuilt set: D8) -----------------------------
     let (pdir, artifacts) = match &prebuilt {
@@ -1863,12 +1867,16 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     session.setup_deadline = setup_cutoff.get();
     session.testdb_cache = crate::fixture::host_testdb_cache(&s.run);
     let unit_batch = crate::unit::selected(&active);
+    // The target volume and the item its clean is recorded under.
+    let mut unit_clean: Option<(String, String)> = None;
     if unit_batch {
         // A branch name keys the volume; a SHA (or any rev that is no local branch) its tree.
         let branch = git(&repo.path, &["rev-parse", "--symbolic-full-name", named])
             .ok()
             .and_then(|r| r.strip_prefix("refs/heads/").map(str::to_string));
-        session.cargo_target_volume = Some(crate::container::unit_target_volume(branch.as_deref(), &tree));
+        let volume = crate::container::unit_target_volume(branch.as_deref(), &tree);
+        session.cargo_target_volume = Some(volume.clone());
+        unit_clean = Some((volume, branch.unwrap_or_else(|| tree.clone())));
     }
     // A container slot may eat at most half of what is left of setup: past that the trial
     // judged nothing and says `queue`, rather than being cut mid-wait as `deadline-up`.
@@ -2419,6 +2427,9 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         }
         _ => batch::run(&session, &cfg, &hooks, &fixtures, &jobs),
     };
+    if let Some((volume, item)) = &unit_clean {
+        crate::unit::push_clean_report(&wt.path, volume, item, &repo.name, &clean_sink());
+    }
     if let Some(line) = sim_session.as_ref().and_then(|x| x.pids_peak_line()) {
         deps.log(&format!("sim container: {line}"));
     }
@@ -2983,7 +2994,7 @@ fn sweep_scratch(deps: &Deps) {
 /// A filtered unit run in the sandbox (sp-yx0yu9): `spira/unit-tests.sh` under bwrap in this
 /// run's worktree, its cargo target kept per branch under `testenv.sandbox_target_root`. The
 /// same `.out`/`.result` files and verdict as the container path; no image, volume or test DB.
-fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume: &str, results: &Path, rec: &std::cell::RefCell<gate::unitrecord::UnitRecord>) -> Finish {
+fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume: &str, (item, repo): (&str, &str), results: &Path, rec: &std::cell::RefCell<gate::unitrecord::UnitRecord>) -> Finish {
     let script = crate::unit::SCRIPT;
     // THE SESSION'S ONE TARGET (sp-ke0uk8): a dwarf session's owned build directory, else the
     // branch's own under the sandbox root.
@@ -3020,6 +3031,7 @@ fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume:
             return Finish::fault(2, "sandbox-start", 0);
         }
     };
+    crate::unit::push_clean_report(tree, &target.display().to_string(), item, repo, &clean_sink());
     let pruned = if !is_owned && !root.is_empty() { crate::sandbox::prune_targets(Path::new(root), &target, s.sandbox_target_keep) } else { Vec::new() };
     for gone in pruned {
         deps.log(&format!("unit-tests: pruned the least recently used sandbox target {}", gone.display()));
@@ -3068,6 +3080,10 @@ fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume:
             sandbox_red(script, &ran)
         }
     }
+}
+
+fn clean_sink() -> spira_otel::metrics::MetricsSink {
+    spira_config::process::metrics_sink("build-dir")
 }
 
 fn sandbox_metrics(ran: &crate::sandbox::Ran, compiled: usize) -> String {

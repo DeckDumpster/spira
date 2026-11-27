@@ -4,6 +4,7 @@
 
 #[macro_use]
 extern crate spira_test_id;
+use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
 #[test_id(tkp9rdl)]
@@ -18,7 +19,19 @@ fn a_red_run_exits_with_cargo_tests_status_and_still_keeps_its_units() {
     two_runs_keep_the_unit(101);
 }
 
+/// In the container the script's user can neither create nor remove a file in the checkout's
+/// `target/`: it can only rewrite the copy testenv left there.
+#[test_id(tsvwqv5)]
+#[test]
+fn a_run_that_cannot_write_target_still_rewrites_the_copy_testenv_left() {
+    two_runs(0, true);
+}
+
 fn two_runs_keep_the_unit(test_exit: i32) {
+    two_runs(test_exit, false);
+}
+
+fn two_runs(test_exit: i32, locked_target: bool) {
     let d = testkit::TempDir::new("unit-tests-script");
     let tree = d.path().join("tree");
     std::fs::create_dir_all(tree.join("a/src")).unwrap();
@@ -43,6 +56,14 @@ fn two_runs_keep_the_unit(test_exit: i32) {
     // The sandbox entry needs bwrap; this stand-in only runs what follows `--around`.
     std::fs::create_dir_all(tree.join("tools/test-sandbox")).unwrap();
     testkit::write_exe(tree.join("tools/test-sandbox/runner"), "#!/bin/sh\nshift\nexec \"$@\"\n");
+    let copy = tree.join("target/unit-tests.clean.json");
+    let lock = |mode| std::fs::set_permissions(tree.join("target"), std::fs::Permissions::from_mode(mode)).unwrap();
+    if locked_target {
+        testenv::unit::prepare_clean_report(&tree).unwrap();
+        assert_eq!(std::fs::metadata(&copy).unwrap().permissions().mode() & 0o777, 0o666, "another uid can rewrite it");
+        lock(0o555);
+    }
+    let report = || spira_config::build_dir::clean_report_at(&copy);
     let target = d.path().join("cargo-target");
     let unit = target.join("debug/.fingerprint/crate-a-0123456789abcdef");
     let bin = d.path().join("bin");
@@ -69,9 +90,17 @@ fn two_runs_keep_the_unit(test_exit: i32) {
     };
     run();
     assert!(unit.exists(), "the stub built a unit");
+    assert!(copy.exists(), "the run leaves a copy of its clean's report");
+    let first = report().expect("the copy parses");
+    let acts: Vec<(&str, &str)> = first.acts.iter().map(|a| (a.branch.as_str(), a.cause.as_str())).collect();
+    assert_eq!(acts, [("whole-workspace", "missing-record")]);
     // The stub's `test` would recreate a dropped unit, so the message and a marker tell.
     std::fs::write(unit.join("marker"), "first run").unwrap();
     let said = run();
     assert!(unit.join("marker").exists(), "the second run keeps the unit: {said}");
     assert!(!said.contains("built since"), "{said}");
+    assert_eq!(report().expect("the second copy parses").acts, [], "{said}");
+    if locked_target {
+        lock(0o755);
+    }
 }
