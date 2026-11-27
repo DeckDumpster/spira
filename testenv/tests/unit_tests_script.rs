@@ -71,12 +71,40 @@ fn failed_clean(clean: &str, report_rc: Option<i32>) {
     }
 }
 
+#[test_id(txl9uww)]
+#[test]
+fn a_run_whose_build_step_fails_records_no_build_seconds() {
+    let f = fixture("unit-tests-script-red-build", "false\n");
+    let out = f.run(&f.d.path().join("cargo-target"));
+    assert_eq!(out.status.code(), Some(1), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!f.d.path().join("cargo-target/debug/.lease-first-build-secs").exists());
+}
+
+/// A tree's own target whose `debug/` links into a leased folder.
+#[test_id(tvlus2z)]
+#[test]
+fn a_run_through_a_linked_debug_directory_records_the_seconds_in_the_leased_one() {
+    let f = fixture("unit-tests-script-linked", "true\n");
+    let leased = f.d.path().join("lease/debug");
+    std::fs::create_dir_all(&leased).unwrap();
+    std::os::unix::fs::symlink(&leased, f.tree.join("target/debug")).unwrap();
+    let out = f.run(&f.tree.join("target"));
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(f.d.path().join("lease/debug/.lease-first-build-secs").is_file());
+}
+
 fn two_runs_keep_the_unit(test_exit: i32) {
     two_runs(test_exit, false);
 }
 
-fn two_runs(test_exit: i32, locked_target: bool) {
-    let d = testkit::TempDir::new("unit-tests-script");
+struct Fixture {
+    d: testkit::TempDir,
+    tree: std::path::PathBuf,
+}
+
+/// A one-crate tree holding the scripts under test, with `build` as its build step.
+fn fixture(name: &str, build: &str) -> Fixture {
+    let d = testkit::TempDir::new(name);
     let tree = d.path().join("tree");
     std::fs::create_dir_all(tree.join("a/src")).unwrap();
     std::fs::create_dir_all(tree.join("target")).unwrap();
@@ -87,7 +115,7 @@ fn two_runs(test_exit: i32, locked_target: bool) {
         ("a/src/lib.rs", "pub fn f() {}\n"),
         ("target/unit-tests.crates", "crate-a\n"),
         ("target/unit-tests.bins", ""),
-        ("target/unit-tests.build", "true\n"),
+        ("target/unit-tests.build", build),
     ] {
         std::fs::write(tree.join(f), body).unwrap();
     }
@@ -100,39 +128,55 @@ fn two_runs(test_exit: i32, locked_target: bool) {
     // The sandbox entry needs bwrap; this stand-in only runs what follows `--around`.
     std::fs::create_dir_all(tree.join("tools/test-sandbox")).unwrap();
     testkit::write_exe(tree.join("tools/test-sandbox/runner"), "#!/bin/sh\nshift\nexec \"$@\"\n");
+    std::fs::create_dir_all(d.path().join("bin")).unwrap();
+    testkit::write_exe(d.path().join("bin/cargo"), "#!/bin/sh\nexit 0\n");
+    Fixture { d, tree }
+}
+
+impl Fixture {
+    fn run(&self, target: &std::path::Path) -> std::process::Output {
+        let path = format!("{}:{}", self.d.path().join("bin").display(), std::env::var("PATH").unwrap_or_default());
+        Command::new("bash")
+            .arg(self.tree.join("spira/unit-tests.sh"))
+            .env_clear()
+            .env("PATH", path)
+            .env("CARGO_TARGET_DIR", target)
+            .output()
+            .expect("unit-tests.sh runs")
+    }
+}
+
+fn two_runs(test_exit: i32, locked_target: bool) {
+    let f = fixture("unit-tests-script", "true\n");
+    let (d, tree) = (&f.d, &f.tree);
     let copy = tree.join("target/unit-tests.clean.json");
     let lock = |mode| std::fs::set_permissions(tree.join("target"), std::fs::Permissions::from_mode(mode)).unwrap();
     if locked_target {
-        testenv::unit::prepare_clean_report(&tree).unwrap();
+        testenv::unit::prepare_clean_report(tree).unwrap();
         assert_eq!(std::fs::metadata(&copy).unwrap().permissions().mode() & 0o777, 0o666, "another uid can rewrite it");
         lock(0o555);
     }
     let report = || spira_config::build_dir::clean_report_at(&copy);
     let target = d.path().join("cargo-target");
     let unit = target.join("debug/.fingerprint/crate-a-0123456789abcdef");
-    let bin = d.path().join("bin");
-    std::fs::create_dir_all(&bin).unwrap();
     testkit::write_exe(
-        bin.join("cargo"),
+        d.path().join("bin/cargo"),
         &format!(
             "#!/bin/sh\n[ \"$1\" = test ] || exit 0\nmkdir -p {0} && touch {0}/invoked.timestamp\nexit {test_exit}\n",
             unit.display()
         ),
     );
-    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
     let run = || {
-        let out = Command::new("bash")
-            .arg(tree.join("spira/unit-tests.sh"))
-            .env_clear()
-            .env("PATH", &path)
-            .env("CARGO_TARGET_DIR", &target)
-            .output()
-            .expect("unit-tests.sh runs");
+        let out = f.run(&target);
         let said = String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(test_exit), "{said}");
         said
     };
     run();
+    let noted = target.join("debug/.lease-first-build-secs");
+    let secs = std::fs::read_to_string(&noted).expect("the first run records its build's seconds");
+    assert!(secs.trim().parse::<u64>().is_ok(), "{secs:?}");
+    std::fs::write(&noted, "999\n").unwrap();
     assert!(unit.exists(), "the stub built a unit");
     assert!(copy.exists(), "the run leaves a copy of its clean's report");
     let first = report().expect("the copy parses");
@@ -141,6 +185,7 @@ fn two_runs(test_exit: i32, locked_target: bool) {
     // The stub's `test` would recreate a dropped unit, so the message and a marker tell.
     std::fs::write(unit.join("marker"), "first run").unwrap();
     let said = run();
+    assert_eq!(std::fs::read_to_string(&noted).unwrap(), "999\n", "the first build wins");
     assert!(unit.join("marker").exists(), "the second run keeps the unit: {said}");
     assert!(!said.contains("built since"), "{said}");
     assert_eq!(report().expect("the second copy parses").acts, [], "{said}");

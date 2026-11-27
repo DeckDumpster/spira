@@ -66,10 +66,22 @@ pub const CEILING_ENV: &str = "SPIRA_DWARF_BUILD_FOLDERS_PER_REPO";
 /// The shared selective clean (`spira/target-clean.sh`): the one copy of the logic, called by
 /// `spira/unit-tests.sh` and by the lease path.
 pub const CLEAN_SCRIPT: &str = "target-clean.sh";
-/// What [`CLEAN_SCRIPT`] `--stamp` creates in a folder at the first build it marks.
-const FIRST_BUILT: &str = ".lease-first-built";
+/// In a profile directory: the whole seconds the lease's first build there took.
+/// `spira/unit-tests.sh` writes the one in `debug/`.
+pub const FIRST_BUILD: &str = ".lease-first-build-secs";
+/// The profile directories that may hold a [`FIRST_BUILD`], in the order a report reads them.
+const TIMED_PROFILES: [&str; 2] = ["debug", "release"];
 /// The selective clean's deadline, in seconds as `timeout` takes them.
 pub const CLEAN_DEADLINE_SECS: &str = "900";
+
+/// Record `took` as the first build in `profile_dir`, unless one is already recorded. Best
+/// effort: a lost measurement must not fail a build.
+pub fn note_first_build(profile_dir: &Path, took: std::time::Duration) {
+    let _ = std::fs::create_dir_all(profile_dir);
+    if let Ok(mut f) = std::fs::OpenOptions::new().write(true).create_new(true).open(profile_dir.join(FIRST_BUILD)) {
+        let _ = std::io::Write::write_all(&mut f, took.as_secs().to_string().as_bytes());
+    }
+}
 
 /// A held slot lock: the lock file, released by `LOCK_UN` when dropped.
 struct SlotLock(std::fs::File);
@@ -147,17 +159,16 @@ impl Lease {
     }
 
     /// What this lease reports for `item`. Read it before releasing: the next lease removes the
-    /// first-build marker.
+    /// first-build record.
     pub fn report(&self, item: &str) -> LeaseReport {
         let unclean = if self.reused { LeaseState::Warm } else { LeaseState::New };
-        let first_built = std::fs::metadata(self.dir.join(FIRST_BUILT)).and_then(|m| m.modified()).ok();
+        let first_build_secs = TIMED_PROFILES.iter().find_map(|p| std::fs::read_to_string(self.dir.join(p).join(FIRST_BUILD)).ok()?.trim().parse().ok());
         LeaseReport {
             item: item.to_string(),
             repo: self.repo.clone(),
             folder: self.dir.clone(),
             state: self.cleaned.clone().unwrap_or(unclean),
-            // A file time is coarser than the clock `started` is read from, so it can fall just before it.
-            first_build_secs: first_built.map(|at| at.duration_since(self.started).unwrap_or_default().as_secs()),
+            first_build_secs,
         }
     }
 
@@ -514,7 +525,7 @@ pub struct LeaseReport {
     pub repo: String,
     pub folder: PathBuf,
     pub state: LeaseState,
-    /// Seconds from the lease to its first stamped build; None when none was stamped.
+    /// Cargo's time for the lease's first unit-test or release build; None when neither ran.
     pub first_build_secs: Option<u64>,
 }
 
@@ -882,7 +893,9 @@ fn take(bases: &[PathBuf], dir: PathBuf, repo: &str, lock: SlotLock) -> std::io:
     reap_in_background(bases);
     std::fs::create_dir_all(&dir)?;
     let _ = std::fs::remove_file(side(&dir, "gate"));
-    let _ = std::fs::remove_file(dir.join(FIRST_BUILT));
+    for profile in TIMED_PROFILES {
+        let _ = std::fs::remove_file(dir.join(profile).join(FIRST_BUILD));
+    }
     let trusted = read_record(&dir).and_then(|r| match r.repository == repo {
         true => Ok(()),
         false => Err(format!("{}: names repository {:?}, not {repo:?}", side(&dir, "json").display(), r.repository)),
@@ -1405,7 +1418,7 @@ pub const PANEL_CLEAN_GB_BY_MODE: &str = "sum by (mode) (sum_over_time(build_dir
 pub const PANEL_LEASES_BY_REPO_STATE: &str = "sum by (repo, state) (sum_over_time(build_dir_lease[1d]))";
 /// Leases per day that started on a wiped folder, by repository and cause.
 pub const PANEL_WIPES_BY_CAUSE: &str = "sum by (repo, cause) (sum_over_time(build_dir_lease{state=\"wiped\"}[1d]))";
-/// The median seconds a lease's first build took, by repository.
+/// The median of cargo's time for the lease's first unit-test or release build, by repository.
 pub const PANEL_FIRST_BUILD_BY_REPO: &str = "max by (repo) (quantile_over_time(0.5, build_dir_first_build_seconds[1d]))";
 
 /// One run of the clean script: `at` is its own clock at exit.
@@ -2116,21 +2129,28 @@ mod tests {
         assert_eq!(l.report("sp-a").state, LeaseState::Wiped { cause: "clean failed".into() });
     }
 
-    #[test_id(tk50klw)]
+    #[test_id(t3vcu7b)]
     #[test]
-    fn first_build_seconds_run_from_the_lease_to_the_first_stamp_and_are_none_without_one() {
-        let d = testkit::TempDir::new("bdir-first-built");
+    fn first_build_seconds_are_the_first_noted_build_of_this_lease_and_none_without_one() {
+        let d = testkit::TempDir::new("bdir-first-build");
         let base = d.path().join("base");
         let first = lease(std::slice::from_ref(&base), "sp-a").unwrap();
         let dir = first.dir().to_path_buf();
         assert_eq!(first.report("sp-a").first_build_secs, None);
-        std::fs::write(dir.join(FIRST_BUILT), "").unwrap();
-        let stamp = std::fs::File::options().write(true).open(dir.join(FIRST_BUILT)).unwrap();
-        stamp.set_modified(first.started() + Duration::from_secs(90)).unwrap();
-        assert_eq!(first.report("sp-a").first_build_secs, Some(90));
+        note_first_build(&dir.join("debug"), Duration::from_secs(12));
+        let noted = std::fs::File::options().write(true).open(dir.join("debug").join(FIRST_BUILD)).unwrap();
+        noted.set_modified(first.started() + Duration::from_secs(300)).unwrap();
+        assert_eq!(first.report("sp-a").first_build_secs, Some(12), "the file's content, not its time");
+        note_first_build(&dir.join("debug"), Duration::from_secs(40));
+        assert_eq!(first.report("sp-a").first_build_secs, Some(12), "the first build wins");
         first.release();
         let next = lease(std::slice::from_ref(&base), "sp-b").unwrap();
-        assert_eq!(next.report("sp-b").first_build_secs, None, "an earlier lease's stamp is not this one's");
+        assert_eq!(next.report("sp-b").first_build_secs, None, "an earlier lease's build is not this one's");
+        note_first_build(&dir.join("release"), Duration::from_secs(7));
+        assert_eq!(next.report("sp-b").first_build_secs, Some(7));
+        next.release();
+        let last = lease(std::slice::from_ref(&base), "sp-c").unwrap();
+        assert_eq!(last.report("sp-c").first_build_secs, None, "release/ is cleared too");
     }
 
     fn wiped_report(first_build_secs: Option<u64>) -> LeaseReport {
@@ -2177,7 +2197,7 @@ mod tests {
         for (title, expr) in [
             ("build folders: leases per day by repository and state", PANEL_LEASES_BY_REPO_STATE),
             ("build folders: wipes per day by repository and cause", PANEL_WIPES_BY_CAUSE),
-            ("build folders: median first-build seconds by repository", PANEL_FIRST_BUILD_BY_REPO),
+            ("build folders: median first unit-test or release build seconds by repository", PANEL_FIRST_BUILD_BY_REPO),
         ] {
             let panel = dash["panels"].as_array().unwrap().iter().find(|p| p["title"] == title).expect(title);
             assert_eq!(panel["targets"][0]["expr"], expr, "{title}");
