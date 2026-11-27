@@ -35,9 +35,6 @@ impl Steps for Fake {
         self.lifecycles.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
-    fn bd(&self) -> Result<PathBuf, String> {
-        Ok(PathBuf::from("fake/bin/bd"))
-    }
     fn db_down(&self, _: &str) -> Result<(), String> {
         self.downs.fetch_add(1, Ordering::SeqCst);
         self.calls.lock().unwrap().push("db_down".into());
