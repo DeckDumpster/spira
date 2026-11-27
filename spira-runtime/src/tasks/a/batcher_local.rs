@@ -2583,6 +2583,8 @@ impl Machine<'_> {
                 self.assembled(a, leg);
             }
             (State::Opened, ROUND_OPEN) if !ok && body == runtime::engine::LOST_AT_RESTART => eprintln!("{NAME} {}: round open's outcome was lost at a restart — the next tick adopts the open round", self.repo),
+            // Whether it ran is unknown, so it is no refusal: the ticks read what it did.
+            _ if !ok && body == runtime::engine::LOST_AT_RESTART => {}
             (State::Opened, ROUND_OPEN) => {
                 let o: Opened = if ok { serde_json::from_str(body).unwrap_or_default() } else { Opened::default() };
                 if o.batch.is_empty() && !o.refused.is_empty() {

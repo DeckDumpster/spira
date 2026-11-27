@@ -555,6 +555,10 @@ pub fn on_outcome(carry: &Carry, effect: &str, input: &str, ok: bool, body: &str
     let mut next = carry.clone();
     let mut acts = vec![];
     let Ok(leg) = serde_json::from_str::<Leg>(input) else { return (next, acts) };
+    // Whether the step ran is unknown: the next observe drives it again.
+    if !ok && body == runtime::engine::LOST_AT_RESTART {
+        return (next, acts);
+    }
     let Some(c) = next.branches.get_mut(&leg.br) else { return (next, acts) };
     let trigger = match (c.state, effect, ok) {
         (State::Rebasing, REBASE, true) => match serde_json::from_str::<RebaseOutcome>(body) {
@@ -995,4 +999,16 @@ mod tests {
         assert_eq!(std::fs::read_dir(root.join("mail/concierge/new")).unwrap().count(), 1);
         assert!(!root.join("mail/operator/new").exists());
     }
+
+    #[test_id(t3sb2wz)]
+    #[test]
+    fn a_step_lost_at_a_restart_neither_arms_nor_ends_its_branch() {
+        for (state, effect) in [(State::PrOpen, PR_CREATE), (State::PrOpen, PR_AUTOMERGE), (State::Pushing, FORCE_PUSH)] {
+            let leg = Leg { br: "spira/pd-b".into(), ..Leg::default() };
+            let carry = Carry { branches: [(leg.br.clone(), BranchCarry { state, ..BranchCarry::default() })].into(), ..Carry::default() };
+            let (next, acts) = on_outcome(&carry, effect, &serde_json::to_string(&leg).unwrap(), false, runtime::engine::LOST_AT_RESTART);
+            assert_eq!((next, acts), (carry, vec![]), "{effect}");
+        }
+    }
 }
+

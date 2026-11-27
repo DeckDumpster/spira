@@ -270,3 +270,17 @@ fn a_gate_leg_with_output_but_no_status_goes_on_to_the_claim() {
     let (_d, input) = leg_filing("gw-out", None, Some("killed mid-run"));
     assert!(complete(&spira_runtime::Effects::default(), &input).unwrap_err().contains("does not hold"));
 }
+
+#[test_id(t6w9vfd)]
+#[test]
+fn a_leg_start_lost_at_a_restart_is_not_filed_as_a_gate_that_did_not_start() {
+    let mut r = TaskRig::new(1, registration()).unwrap().hanging(runtime::units::UNIT_START).double(OBSERVE, |_| Ok(serde_json::to_string(&busy()).unwrap())).double(TIP, |_| Ok("a-tip".into()));
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, TIP].contains(e)) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    assert!(r.requested().iter().any(|q| q.name == runtime::units::UNIT_START), "{:?}", r.requested());
+    r.reopen(registration()).unwrap();
+    r.run_until_idle().unwrap();
+    assert!(!r.requested().iter().any(|q| q.name == RETAIN_OUTPUT || q.name == COMPLETE), "{:?}", r.requested());
+}

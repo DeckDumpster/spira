@@ -683,3 +683,14 @@ fn a_gone_pr_with_a_round_open_is_retired_and_pushed_at_once() {
     assert_eq!(effects(&acts), [RETIRE, PUSH_BRANCH], "{acts:?}");
     assert_eq!(carry.repos["spira"].state, State::Opening);
 }
+
+#[test_id(tadvdb6)]
+#[test]
+fn a_push_lost_at_a_restart_is_not_reported_as_a_failed_publish() {
+    let world = lost_world(with(landing(true)));
+    let mut r = lost_rig(&world, registration, PUSH_BRANCH);
+    tick(&mut r);
+    r.reopen(registration()).unwrap();
+    r.run_until_idle().unwrap();
+    assert_eq!(asked(&r, NOTIFY), 0, "{:?}", r.requested());
+}

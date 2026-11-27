@@ -61,9 +61,13 @@
 //! | Corpus | `unit.ran` green | Opening |
 //! | Opening | moved members (`main.rs:1032`) or foreign commits (`main.rs:1126`) | Idle (verdict red) |
 //! | Opening | `batch_open` ok | Open (verdict green, metric) |
+//! | Opening | observe: open batch with a PR, holding the round's members | Open (adopted: no second `batch_open`) |
+//! | Assembling / Opening | `assemble` / `batch_open` lost at restart | unchanged (the same leg is asked again) |
 //! | Open | `batch.settled` | Idle |
 //!
-//! `Opening → Open` is where `shots` is requested, for the PR just opened; its outcome moves no state.
+//! `shots` is requested on `batch_open`'s answer, for the PR just opened, also when `observe` adopted
+//! that PR first; its outcome moves no state. An adoption with no such answer asks for no shots.
+//! Adopting writes no verdict or round metric, and leaves an unarmed auto-merge to the reconciler.
 //!
 //! Illegal: a second `batch_open` while the projection shows one open is refused naming `Open`.
 //!
@@ -105,7 +109,7 @@
 //! remains the operator hold in both.
 //!
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use batcher::core;
 use runtime::event::*;
@@ -413,6 +417,11 @@ impl Machine<'_> {
     }
 
     fn observe(&mut self, policy: &Policy, enabled: bool, repo: &Repo) {
+        // Ahead of `unsent`: a PR opened just before a restart is adopted, not cut again.
+        // A record with no PR is an open cut short, not one to adopt.
+        if self.rc.state == State::Opening && repo.open_batch.as_ref().is_some_and(|b| b.pr != 0 && same_members(&self.rc.members, b.members.iter().map(String::as_str))) {
+            self.go(Trigger::BatchOpened);
+        }
         // Ahead of the disabled gate: a forgotten round must not be cut again under the hold.
         if let Some(effect) = self.unsent(repo) {
             eprintln!("{NAME} {}: forgetting its {:?} round {:?}: its {effect} was never answered and none is in flight", self.repo, self.rc.state, self.rc.round_key);
@@ -520,7 +529,11 @@ impl Machine<'_> {
     }
 
     fn outcome(&mut self, effect: &str, ok: bool, body: &str, leg: &Leg) {
+        let lost = !ok && body == runtime::engine::LOST_AT_RESTART;
         match (self.rc.state, effect) {
+            (State::Assembling, ASSEMBLE) | (State::Opening, BATCH_OPEN) if lost => self.acts.push(leg.clone().act(effect)),
+            // Whether it ran is unknown, so it is no refusal: a leg's end is read through `unit.facts`.
+            _ if lost => {}
             (State::Assembling, ASSEMBLE) => {
                 let a: Assembled = if ok { serde_json::from_str(body).unwrap_or_default() } else { Assembled::default() };
                 self.assembled(a, leg, ok);
@@ -534,6 +547,13 @@ impl Machine<'_> {
                     self.reset();
                 } else {
                     self.go(Trigger::BatchOpened);
+                    self.shots(o);
+                }
+            }
+            // `observe` adopted the PR before this answer came: its shots are still to ask for.
+            (State::Open, BATCH_OPEN) if ok => {
+                let o: Opened = serde_json::from_str(body).unwrap_or_default();
+                if !o.pr.is_empty() {
                     self.shots(o);
                 }
             }
@@ -578,6 +598,11 @@ impl Machine<'_> {
             self.open();
         }
     }
+}
+
+/// Whether a batch holding the ids `held` is the round of `members`.
+fn same_members<'a>(members: &'a [(String, String)], held: impl Iterator<Item = &'a str>) -> bool {
+    !members.is_empty() && members.iter().map(|(id, _)| id.as_str()).collect::<BTreeSet<_>>() == held.collect()
 }
 
 fn store(carry: &mut Carry, repo: &str, rc: RepoCarry) {
@@ -775,14 +800,29 @@ pub mod edge {
         Ok(section)
     }
 
-    /// The batch PR (`open_round_pr`): refused when a member moved since the round was built or
-    /// the head carries a non-member's commits.
-    pub fn batch_open(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
-        let (env, leg) = (env()?, leg(spec)?);
-        json(&open_pr(&env, &batcher_cut::find_repo(&env, &leg.repo)?, &leg)?)
+    /// The PR of the open batch that holds exactly `members`, once it has one.
+    pub fn already_open(open: Option<&io::OpenBatch>, members: &[(String, String)]) -> Option<String> {
+        open.filter(|o| !o.pr.is_empty() && super::same_members(members, o.members.iter().map(|(id, _)| id.as_str()))).map(|o| o.pr.trim_start_matches('#').to_string())
     }
 
-    /// [`batch_open`] on a resolved repo.
+    /// The batch PR (`open_round_pr`), or the one already open for these members, since an open
+    /// asked again after a restart may have succeeded. Refused when a member moved since the
+    /// round was built or the head carries a non-member's commits.
+    pub fn batch_open(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        let repo = batcher_cut::find_repo(&env, &leg.repo)?;
+        json(&open_or_adopt(&env, &repo, &leg, io::read_open_batch(&env, &leg.repo)?.as_ref())?)
+    }
+
+    /// [`batch_open`] on a resolved repo whose open batch is `open`.
+    pub fn open_or_adopt(env: &io::Env, repo: &io::Repo, leg: &Leg, open: Option<&io::OpenBatch>) -> Result<Opened, String> {
+        match already_open(open, &leg.members) {
+            Some(pr) => Ok(Opened { pr, head: io::head_of(std::path::Path::new(&leg.wt))? }),
+            None => open_pr(env, repo, leg),
+        }
+    }
+
+    /// [`batch_open`] on a resolved repo, with no batch open for it yet.
     pub fn open_pr(env: &io::Env, repo: &io::Repo, leg: &Leg) -> Result<Opened, String> {
         let members: Vec<batcher::core::Member> = leg.members.iter().map(|(id, tip)| batcher::core::Member { id: id.clone(), tip: tip.clone(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![], provisional: false }).collect();
         let moved = io::moved_members(repo, &leg.base, &members);

@@ -563,7 +563,8 @@ impl Handler for Sift {
             let handoff = Act::new(kit::WORK_SUBMITTED, format!("{}:{}", w.id, w.tip)).with_input(serde_json::json!({ "id": w.id, "tip": w.tip }).to_string());
             return kit::commands(&SHAPE, ACTS, EMITS, &carry, &carry, vec![handoff]);
         }
-        let answered = crate::watchers::answered_spec(view, ev).filter(|s| s.name == NOTE || s.name == SEND_BACK);
+        // A write lost at a restart may have landed: it is not reported as refused.
+        let answered = crate::watchers::answered_spec(view, ev).filter(|s| (s.name == NOTE || s.name == SEND_BACK) && !crate::watchers::lost_at_restart(ev));
         if let Some(spec) = answered {
             let Ok(w) = serde_json::from_str::<Write>(&spec.input) else { return vec![] };
             let ok = ev.kind.tag == EFFECT_SUCCEEDED;

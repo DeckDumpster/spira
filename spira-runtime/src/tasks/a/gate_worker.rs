@@ -502,6 +502,10 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
 pub fn on_outcome(carry: &Carry, effect: &str, input: &str, ok: bool, body: &str, pins: &Snapshot) -> (Carry, Vec<Act>) {
     let mut next = carry.clone();
     let mut acts = vec![];
+    // Not a refused start or write: the slot's watchdog recovers it.
+    if !ok && body == runtime::engine::LOST_AT_RESTART {
+        return (next, acts);
+    }
     if effect == UNIT_START {
         let Ok(spec) = serde_json::from_str::<runtime::units::UnitSpec>(input) else { return (next, acts) };
         let Some(i) = slot_of_leg(&spec.key) else { return (next, acts) };

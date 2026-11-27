@@ -529,7 +529,7 @@ impl Engine {
         e.restore_keyed(legacy, keyed)?;
         let lost: Vec<String> = boot.effects.iter().map(|r| r.request_id.clone()).collect();
         for row in boot.effects {
-            e.restore_effect(row);
+            e.restore_effect(row)?;
         }
         for key in lost {
             e.complete(&key, Outcome::Lost)?;
@@ -593,14 +593,20 @@ impl Engine {
         Ok(())
     }
 
-    fn restore_effect(&mut self, row: EffectRow) {
+    fn restore_effect(&mut self, row: EffectRow) -> Result<()> {
         let class = self.class_of(&row.spec);
         self.refusals.entry(class).or_insert(0);
         self.owners.insert(row.request_id.clone(), row.task.clone());
         self.requesters.insert(row.request_id.clone(), row.task.clone());
         self.committed.insert(row.request_id.clone());
         let correlation = CorrelationId(row.request_id.clone());
+        // A handler learns which effect an outcome answers by reading its request from the view.
+        let body = RequestBody { spec: row.spec.clone(), deadline_at: row.deadline_at, task: Some(row.task.clone()) };
+        let body = serde_json::to_string(&body).map_err(|e| RuntimeError::new(format!("kept effect {} of {} does not encode: {e}", row.request_id, row.task)))?;
+        let kind = EventKind::new(EFFECT_REQUESTED, &body);
+        self.projection.push(&Event { id: EventId(row.request_id.clone()), stream: row.stream.clone(), kind, at: row.requested_at, cause: None, correlation: correlation.clone() });
         self.pending.insert(row.request_id.clone(), PendingEffect { key: row.request_id, task: row.task, stream: row.stream, spec: row.spec, deadline_at: row.deadline_at, requested_at: row.requested_at, correlation });
+        Ok(())
     }
 
     /// Names the effector class of an effect, for `status`.

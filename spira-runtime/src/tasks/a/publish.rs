@@ -682,6 +682,8 @@ impl Machine<'_> {
             self.result_titled(p.pr, "closed", p.title.clone());
         }
         match (self.rc.state, effect, ok) {
+            // Not a failed act: the next observe finds it gone from flight and drives it again.
+            _ if !ok && body == runtime::engine::LOST_AT_RESTART => {}
             (State::Adopting, RECORD, true) => {
                 // The adopted PR may already be green (PR #989 was, for 16 h): settle it now.
                 self.go(Trigger::SettleGreen);
