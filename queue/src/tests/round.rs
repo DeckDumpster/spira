@@ -8036,8 +8036,15 @@ fn a_ci_entry_cut_at_its_own_cap_takes_the_over_cap_path_whatever_the_run_exit()
     );
 }
 
-/// A one-member own-testenv round whose CI entry never ran, certified twice. The landing ref
-/// declares what the round does; `vary` departs from that before the first certify.
+fn base_declaration_key(t: &T) -> String {
+    format!("{}:.spira/testenv.toml", kv_of(t, "round")["base"])
+}
+
+const OTHER_DECLARATION: &str =
+    "ci_entry = \"deploy/ci.sh all\"\nimage = \"docker.io/library/rust:landed\"\n";
+
+/// A one-member own-testenv round whose CI entry never ran, certified twice. The round's
+/// recorded base declares what the round does; `vary` departs from that before the first certify.
 fn two_passes_whose_ci_entry_never_ran(vary: impl FnOnce(&T)) -> T {
     let t = round_world();
     *t.scripts.repo_testenv.borrow_mut() = RunOut {
@@ -8056,7 +8063,7 @@ fn two_passes_whose_ci_entry_never_ran(vary: impl FnOnce(&T)) -> T {
     let batch = batch_of(&t);
     declare_own_testenv(&t);
     t.git.files.borrow_mut().insert(
-        "local/main:.spira/testenv.toml".into(),
+        base_declaration_key(&t),
         format!("ci_entry = \"deploy/ci.sh all\"\nimage = \"{OWN_IMAGE}\"\n"),
     );
     vary(&t);
@@ -8081,19 +8088,33 @@ fn a_one_member_round_whose_ci_entry_never_ran_twice_ejects_nobody_and_pages_the
     assert_eq!(paged, 1, "{calls:?}");
 }
 
+#[test_id(t1xgd80)]
+#[test]
+fn a_declaration_landed_after_the_rounds_base_ejects_no_one_whose_ci_entry_never_ran() {
+    let t = two_passes_whose_ci_entry_never_ran(|t| {
+        t.git.files.borrow_mut().insert("local/main:.spira/testenv.toml".into(), OTHER_DECLARATION.into());
+    });
+    assert!(t.out().contains("fault=infra-fault"), "{}{}", t.out(), t.err());
+    assert!(!t.lib.has("bead_reopen sp-a"), "{:?}", t.lib.calls.borrow());
+    assert!(kv_of(&t, "round")["members"].contains("sp-a"));
+    let calls = t.lib.calls.borrow();
+    let paged = calls
+        .iter()
+        .filter(|c| c.starts_with("notify") && c.contains("cannot be placed"))
+        .count();
+    assert_eq!(paged, 1, "{calls:?}");
+}
+
 #[test_id(t1bn5r8)]
 #[test]
 fn a_one_member_round_whose_changed_declaration_stops_the_entry_twice_ejects_the_member() {
     let t = two_passes_whose_ci_entry_never_ran(|t| {
-        t.git.files.borrow_mut().insert(
-            "local/main:.spira/testenv.toml".into(),
-            "ci_entry = \"deploy/ci.sh all\"\nimage = \"docker.io/library/rust:landed\"\n".into(),
-        );
+        t.git.files.borrow_mut().insert(base_declaration_key(t), OTHER_DECLARATION.into());
     });
     assert!(t.lib.has("bead_reopen sp-a eject-red"), "{:?}", t.lib.calls.borrow());
     assert!(!t.out().contains("fault=infra-fault"), "{}", t.out());
     assert!(
-        t.err().contains(".spira/testenv.toml differs from the landing ref"),
+        t.err().contains(".spira/testenv.toml differs from the round's base"),
         "{}",
         t.err()
     );
@@ -8116,10 +8137,16 @@ fn a_run_that_faulted_twice_after_writing_a_ci_result_is_still_a_faulted_pass() 
     assert!(!t.out().contains("fault=infra-fault"), "{}", t.out());
 }
 
-#[test_id(tncoyp8)]
+#[test_id(tjhzwz3)]
 #[test]
-fn a_ci_entry_that_never_ran_with_no_landing_ref_to_compare_ejects_nobody() {
-    let t = two_passes_whose_ci_entry_never_ran(|t| t.lib.r.borrow_mut().landref = None);
+fn a_ci_entry_that_never_ran_with_no_recorded_base_to_compare_ejects_nobody() {
+    let t = two_passes_whose_ci_entry_never_ran(|t| {
+        let batch = batch_of(t);
+        let mut kv = round_record(t, &batch);
+        kv.remove("base");
+        kv.push("base", "");
+        save_round_record(t, &kv);
+    });
     assert!(t.out().contains("fault=infra-fault"), "{}", t.out());
     assert!(!t.lib.has("bead_reopen sp-a"), "{:?}", t.lib.calls.borrow());
 }
