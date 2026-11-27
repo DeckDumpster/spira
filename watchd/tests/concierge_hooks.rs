@@ -316,12 +316,47 @@ fn session_start(env: &[(&str, &str)]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-#[test_id(tlds18c)]
+#[test_id(t616ksq)]
 #[test]
-fn the_concierges_session_start_names_the_event_stream_and_its_commands_beside_the_waiter() {
+fn the_concierges_session_start_names_the_event_stream_and_no_one_shot_waiter() {
     let out = session_start(&[("SPIRA_CONCIERGE", "1")]);
-    for want in ["spira-sub follow --as concierge", "spira-sub add|drop|list", "watchd next concierge-inbox"] {
+    for want in ["spira-sub follow --as concierge", "spira-sub add|drop|list"] {
         assert!(out.contains(want), "{want}: {out}");
     }
+    assert!(!out.contains("watchd next"), "{out}");
     assert!(!session_start(&[]).contains("spira-sub"), "another session is told nothing of it");
+}
+
+/// One `event script` line per hook `concierge.sh`'s `session_settings` gives the session.
+fn session_hooks() -> Vec<String> {
+    const RUN: &str = r#"eval "$(sed -n '/^session_settings() {$/,/^}$/p' "$1")"
+session_settings | python3 -c '
+import json, sys
+for event, groups in json.load(sys.stdin)["hooks"].items():
+    for group in groups:
+        for hook in group["hooks"]:
+            print(event, hook["command"].removeprefix("/h/hooks/"))
+'"#;
+    let out = Command::new("bash")
+        .args(["-c", RUN, "bash"])
+        .arg(testkit::manifest_dir().join("../concierge.sh"))
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap())
+        .env("SPIRA_HOME", "/h")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let mut lines: Vec<String> = String::from_utf8_lossy(&out.stdout).lines().map(String::from).collect();
+    lines.sort();
+    lines
+}
+
+// covers: UC-operator-channel-49
+#[test_id(txibqk0)]
+#[test]
+fn the_concierge_session_is_given_no_stop_hook_beside_its_failed_turn_and_bash_hooks() {
+    let hooks = session_hooks();
+    let stop: Vec<&String> = hooks.iter().filter(|h| h.starts_with("Stop ")).collect();
+    assert!(stop.is_empty(), "{stop:?}");
+    assert_eq!(hooks, ["PreToolUse concierge-raw-pr-fence.sh", "PreToolUse statute-check-hook.sh", "StopFailure concierge-turn-failed.sh"]);
 }
