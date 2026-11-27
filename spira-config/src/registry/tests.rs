@@ -219,13 +219,8 @@
         if std::env::var_os(CHILD).is_none() {
             // Only a process that has loaded no registry takes the first-load path.
             let name = std::thread::current().name().unwrap().to_string();
-            let out = {
-                let _g = testkit::env(&[(CHILD, Some("1"))]);
-                let mut c = std::process::Command::new(std::env::current_exe().unwrap());
-                c.args([name.as_str(), "--exact"]);
-                c.stdout(std::process::Stdio::piped()).spawn().unwrap()
-            };
-            let out = out.wait_with_output().unwrap();
+            let _env = testkit::env_read();
+            let out = std::process::Command::new(std::env::current_exe().unwrap()).arg(&name).arg("--exact").env(CHILD, "1").output().unwrap();
             let text = String::from_utf8_lossy(&out.stdout);
             assert!(out.status.success() && text.contains("1 passed"), "{text}");
             return;
