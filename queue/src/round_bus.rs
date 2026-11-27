@@ -1,5 +1,6 @@
 //! The retained `round/<repo>/<batch>` topic: each open round's current event, kept under
-//! `run/rounds/<batch>.event` so any process that connects can republish it.
+//! `run/rounds/<batch>.event` so any process that connects can republish it. A round's ending
+//! is published and then cleared from the broker, so only open rounds stay retained there.
 
 use serde_json::{json, Value};
 use spira_pub::{PubError, Publisher};
@@ -136,10 +137,14 @@ impl RoundBus {
         let _ = fs::remove_file(kept_path(run, batch));
         forget_ended(run, open);
         let now = Kept { repo: repo.into(), batch: batch.into(), event };
+        let ended = ENDING.contains(&kind);
         if let Some(p) = self.publisher(run) {
             let _ = p.publish(&now.topic(), &now.event);
+            if ended {
+                let _ = p.clear(&now.topic());
+            }
         }
-        if !ENDING.contains(&kind) {
+        if !ended {
             keep(run, &now);
         }
     }
