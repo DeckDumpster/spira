@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use inbox_rules::Bus;
 use spira_runtime::tasks::e::watch_throughput::{decide, Carry, Config, Snapshot};
 use spira_runtime::world::World;
 
@@ -17,7 +18,7 @@ fn flusher(dir: &Path) -> (PathBuf, PathBuf) {
 }
 
 fn world(dir: &Path, exe: PathBuf) -> World {
-    World { inbox: dir.join("inbox.log"), push_wake: "concierge.sh wake".into(), push_pattern: r"\bP0\b|RED on".into(), inbox_flusher: exe, ..World::default() }
+    World { inbox_bus: Bus::Off, inbox: dir.join("inbox.log"), push_wake: "concierge.sh wake".into(), push_pattern: r"\bP0\b|RED on".into(), inbox_flusher: exe, ..World::default() }
 }
 
 /// The throughput watcher's BLIND page, as the watcher itself builds the effect's input.
@@ -87,4 +88,23 @@ fn several_lines_in_one_input_are_each_recorded_and_any_push_answers_pushed() {
     let input = "2026-11-07T00:00:00Z [watch:x] plain\n2026-11-07T00:00:01Z [watch:x] P0 loud\n";
     assert_eq!(w.inbox_append(input).unwrap(), "appended, pushed");
     assert_eq!(std::fs::read_to_string(d.join("inbox.log")).unwrap(), input, "both lines, one each");
+}
+
+#[test_id(t209z08)]
+#[test]
+fn an_append_is_announced_once_past_watchds_cursor_as_spira_runtime() {
+    let broker = testkit::broker::Broker::up();
+    let d = testkit::TempDir::new("world-inbox-announce");
+    let cursor = inbox_rules::concierge_cursor(d.path().to_str().unwrap());
+    std::fs::create_dir_all(cursor.parent().unwrap()).unwrap();
+    std::fs::write(d.join("inbox.log"), "t0 read already\n").unwrap();
+    std::fs::write(&cursor, "1\n").unwrap();
+    let w = World { run_dir: d.path().to_path_buf(), push_wake: String::new(), inbox_bus: Bus::At(broker.socket().to_path_buf()), ..world(d.path(), PathBuf::new()) };
+
+    w.inbox_append("t1 one\nt2 two").unwrap();
+
+    let held = broker.retained("concierge/inbox");
+    let [(_, value)] = held.as_slice() else { panic!("one retained value: {held:?}") };
+    assert_eq!(serde_json::from_str::<serde_json::Value>(value).unwrap(), serde_json::json!({"unread": 2, "oldest": "t1 one"}));
+    assert_eq!(broker.retained("publisher/spira-runtime").len(), 1, "named for the writer");
 }

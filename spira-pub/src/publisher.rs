@@ -1,19 +1,20 @@
 //! One publisher, one connection, one thread that owns it.
 
-use std::io::{ErrorKind, Read, Write};
+use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ports::{Clock, Rng, SeededRng, VirtualClock, WallClock};
-use rumqttc::{Client, Connection, ConnectionError, Event, LastWill, MqttOptions, NetworkOptions, Outgoing, Packet, QoS, Transport};
+use rumqttc::{Client, Connection, Event, Outgoing, Packet, QoS};
 use serde_json::{json, Value};
 use spira_otel::metrics::MetricsSink;
 
+use crate::link::{gone, sleep_until_readable, Dial};
 use crate::socket_watch::SocketWatch;
 use crate::telemetry::{Sample, Telemetry};
 use crate::topics::{self, Class};
@@ -28,9 +29,6 @@ const QUEUE: usize = 1024;
 /// The client's channel: the queue, plus room for everything an `on_connect` hook republishes.
 const CHANNEL: usize = 1 << 16;
 pub const MAX_PAYLOAD: usize = 256 << 10;
-const MAX_PACKET: usize = MAX_PAYLOAD + (4 << 10);
-/// Between connects while a broker that has just made its socket is not yet listening on it.
-const LISTEN_PAUSE: Duration = Duration::from_millis(5);
 
 pub type Log = Arc<dyn Fn(&str) + Send + Sync>;
 type Hook = Arc<dyn Fn(&mut Republish) + Send + Sync>;
@@ -335,10 +333,6 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn gone() -> Value {
-    json!({"state": "gone"})
-}
-
 /// Hands `m` to the client without blocking. The lock is held, so the order of these calls is
 /// the order the broker sees.
 fn enqueue(shared: &mut Shared, m: Message) -> Result<(), PubError> {
@@ -357,19 +351,6 @@ fn delivery(class: Class) -> (QoS, bool) {
     match class {
         Class::State => (QoS::AtLeastOnce, true),
         Class::Chatter => (QoS::AtMostOnce, false),
-    }
-}
-
-/// Why a connection ended: the failure's text, and whether nothing was listening.
-struct Lost {
-    why: String,
-    refused: bool,
-}
-
-impl Lost {
-    fn from(e: ConnectionError) -> Lost {
-        let refused = matches!(&e, ConnectionError::Io(io) if matches!(io.kind(), ErrorKind::ConnectionRefused | ErrorKind::NotFound));
-        Lost { why: e.to_string(), refused }
     }
 }
 
@@ -404,7 +385,9 @@ impl Inner {
             } else if watch.drain() && wanted {
                 self.session(&mut watch, true);
             } else {
-                sleep_until_readable(&woken, watch.fd());
+                sleep_until_readable([Some(woken.as_raw_fd()), watch.fd()], None);
+                let mut buf = [0u8; 64];
+                while matches!((&woken).read(&mut buf), Ok(n) if n > 0) {}
             }
         }
         lock(&self.shared).stopped = true;
@@ -415,27 +398,23 @@ impl Inner {
     /// just appeared, so a refusal is waited out until the deadline.
     fn session(&self, watch: &mut SocketWatch, announced: bool) {
         lock(&self.shared).phase = Phase::Connecting;
-        // Real time, not the injected clock: this bounds socket I/O, which virtual time never ends.
-        let started = Instant::now();
-        let (client, mut connection) = loop {
-            if let Err(why) = watch.arm() {
-                self.say(&format!("{why}; a restarted broker is reconnected to at the next publish"));
-            }
-            watch.drain();
-            match self.open(CONNECT_DEADLINE.saturating_sub(started.elapsed())) {
-                Ok(open) => break open,
-                Err(lost) if announced && lost.refused && started.elapsed() < CONNECT_DEADLINE => std::thread::sleep(LISTEN_PAUSE),
-                Err(lost) => {
-                    if announced {
-                        self.say(&format!("reconnect failed: {}", lost.why));
-                    }
-                    let mut s = lock(&self.shared);
-                    s.phase = Phase::Down;
-                    s.failure = lost.why;
-                    s.attempts += 1;
-                    self.changed.notify_all();
-                    return;
+        if let Err(why) = watch.arm() {
+            self.say(&format!("{why}; a restarted broker is reconnected to at the next publish"));
+        }
+        watch.drain();
+        let dial = Dial { client_id: &self.client_id, socket: &self.socket, will_topic: format!("publisher/{}", self.name), capacity: CHANNEL };
+        let (client, mut connection) = match dial.connect(announced) {
+            Ok(open) => open,
+            Err(lost) => {
+                if announced {
+                    self.say(&format!("reconnect failed: {}", lost.why));
                 }
+                let mut s = lock(&self.shared);
+                s.phase = Phase::Down;
+                s.failure = lost.why;
+                s.attempts += 1;
+                self.changed.notify_all();
+                return;
             }
         };
         let greeting = self.greeting();
@@ -469,26 +448,6 @@ impl Inner {
             self.telemetry.record(Sample::Failed { reason: PubError::Undelivered(dropped).reason(), count: dropped });
         }
         self.changed.notify_all();
-    }
-
-    fn open(&self, within: Duration) -> Result<(Client, Connection), Lost> {
-        let mut options = MqttOptions::new(&self.client_id, socket_str(&self.socket)?, 0);
-        options.set_transport(Transport::Unix);
-        // Liveness is the socket: a dead client's closes, and the broker publishes its will.
-        options.set_keep_alive(Duration::ZERO);
-        options.set_max_packet_size(MAX_PACKET, MAX_PACKET);
-        let will = gone().to_string();
-        options.set_last_will(LastWill::new(format!("publisher/{}", self.name), will, QoS::AtLeastOnce, true));
-        let (client, mut connection) = Client::new(options, CHANNEL);
-        let mut network = NetworkOptions::new();
-        network.set_connection_timeout(CONNECT_DEADLINE.as_secs());
-        connection.eventloop.set_network_options(network);
-        match connection.recv_timeout(within) {
-            Ok(Ok(Event::Incoming(Packet::ConnAck(_)))) => Ok((client, connection)),
-            Ok(Ok(other)) => Err(Lost { why: format!("expected CONNACK, got {other:?}"), refused: false }),
-            Ok(Err(e)) => Err(Lost::from(e)),
-            Err(e) => Err(Lost { why: format!("no CONNACK: {e:?}"), refused: false }),
-        }
     }
 
     /// `publisher/<name>` = up, then whatever the hook republishes.
@@ -526,21 +485,6 @@ impl Inner {
             }
         }
     }
-}
-
-fn socket_str(socket: &Path) -> Result<&str, Lost> {
-    socket.to_str().ok_or_else(|| Lost { why: format!("socket path {} is not UTF-8", socket.display()), refused: false })
-}
-
-fn sleep_until_readable(woken: &UnixStream, watch: Option<std::os::fd::RawFd>) {
-    let pollfd = |fd| libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
-    // poll(2) ignores a negative descriptor.
-    let mut fds = [pollfd(woken.as_raw_fd()), pollfd(watch.unwrap_or(-1))];
-    // SAFETY: `fds` is a live array of the length passed. An interrupted or failed call only
-    // returns early, and the caller looks at its state again.
-    unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
-    let mut buf = [0u8; 64];
-    while matches!((&*woken).read(&mut buf), Ok(n) if n > 0) {}
 }
 
 #[cfg(test)]

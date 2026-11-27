@@ -96,6 +96,7 @@ pub mod scoped_stop;
 pub mod scratch;
 pub mod session;
 pub mod stack_conflict;
+pub mod sub;
 pub mod target;
 pub mod ticked;
 pub mod unit;

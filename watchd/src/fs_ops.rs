@@ -3,7 +3,6 @@
 //! `.unhealthy`). No trait here — this is deterministic, real-filesystem behaviour, tested
 //! directly against `testkit::TempDir` rather than faked.
 
-use crate::cursor;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -13,7 +12,7 @@ use std::path::Path;
 /// is harmless: the next write always ends in `\n`, so it self-corrects on the next line.
 pub fn total_lines(path: &Path) -> u64 {
     let Ok(bytes) = fs::read(path) else { return 0 };
-    bytes.iter().filter(|&&b| b == b'\n').count() as u64
+    inbox_rules::count_lines(&bytes)
 }
 
 pub fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
@@ -25,10 +24,7 @@ pub fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
     f.write_all(format!("{line}\n").as_bytes())
 }
 
-pub fn read_pos(cursor_file: &Path, total: u64) -> u64 {
-    let raw = fs::read_to_string(cursor_file).ok().and_then(|s| cursor::parse_cursor(&s));
-    cursor::clamp_pos(raw, total)
-}
+pub use inbox_rules::read_pos;
 
 pub fn write_pos(cursor_file: &Path, pos: u64) -> std::io::Result<()> {
     if let Some(dir) = cursor_file.parent() {

@@ -34,6 +34,21 @@ pub fn local_stamp(epoch: i64) -> String {
     strftime(epoch, "%Y-%m-%d %H:%M:%S %Z", false)
 }
 
+/// An age in its coarsest non-zero unit, whitespace-free for a whitespace-delimited table. A
+/// negative one (a clock that moved backwards, a file from the future) reads as zero.
+pub fn format_age(seconds: i64) -> String {
+    let s = seconds.max(0);
+    if s < 60 {
+        format!("{s}s")
+    } else if s < 3600 {
+        format!("{}m", s / 60)
+    } else if s < 86400 {
+        format!("{}h", s / 3600)
+    } else {
+        format!("{}d", s / 86400)
+    }
+}
+
 /// Seconds since the epoch, now.
 pub fn now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
