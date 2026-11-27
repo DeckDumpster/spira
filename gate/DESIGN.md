@@ -327,8 +327,8 @@ DESIGN.md §11, D9). Two consequences here:
 * **A budget cut is `NO_VERDICT reason=budget`.** When the gate string exits 75 and the
   runner's last line is `VERDICT FAULT … reason=deadline-<phase>` (a setup phase cut at its
   share, or `deadline-suites`: every suite deferred), the trial judged nothing. The message
-  names the phase and the budget; there is no base trial. Any other runner fault stays
-  `harness-fault`.
+  names the phase and the budget; there is no base trial. Apart from `queue` and `cache-wait`,
+  any other runner fault stays `harness-fault`.
 * **A waited-out warm cache is `NO_VERDICT reason=cache-wait`.** The runner's `reason=cache-wait`
   means the repository's warm cache stayed held past the wait's bound (testenv DESIGN.md, the
   foreign-cache paragraph). There is no base trial. It is not a cap (not in `is_cap_reason`),
