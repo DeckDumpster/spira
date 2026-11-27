@@ -145,4 +145,3 @@ fn a_pass_whose_entry_never_began_leaves_no_marker() {
         assert_eq!(p.result("ci.started"), None, "{}", p.said);
     }
 }
-}
