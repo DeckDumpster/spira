@@ -81,7 +81,7 @@ path = "src/main.rs"
 
 [package.metadata.spira]
 # plan_conformance files through the real bead.
-test-bins = ["bead", "spira-config", "spira-lc", "testenv"]
+test-bins = ["bead", "mail", "spira-config", "spira-lc", "testenv"]
 
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
