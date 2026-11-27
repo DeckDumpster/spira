@@ -168,7 +168,7 @@ pub struct Real {
     tree_lock: RefCell<Option<(File, PathBuf)>>,
     cancel: RefCell<Option<PathBuf>>,
     /// The pool directory each gate tree builds in, held until the tree is released.
-    leases: RefCell<std::collections::HashMap<PathBuf, (spira_config::build_dir::Lease, String)>>,
+    leases: RefCell<std::collections::HashMap<PathBuf, (spira_config::build_dir::Lease, String, String)>>,
 }
 
 impl Real {
@@ -318,7 +318,7 @@ impl Real {
             Err(bd::Refused::NotASlot) => return Err((BuilderMiss::Gone, "it is not a pool directory".into())),
         };
         let linked = (|| -> Result<(), String> {
-            bd::clean(&self.home.join(bd::CLEAN_SCRIPT), tree, lease.dir(), &b.path, false)?;
+            bd::clean(&self.home.join(bd::CLEAN_SCRIPT), tree, lease.dir(), &b.path, false, &b.bead, None)?;
             crate::warm::normalize_mtimes(tree, &b.tip)?;
             let (link, debug) = (tree.join("target").join("debug"), lease.dir().join("debug"));
             fs::create_dir_all(&debug).map_err(|e| format!("{}: {e}", debug.display()))?;
@@ -340,7 +340,7 @@ impl Real {
             return Err((BuilderMiss::Unusable, e));
         }
         let line = format!("{}{} (leased from {}'s builder at {})", crate::warm::BUILDER_IN, lease.dir().display(), b.bead, b.tip);
-        self.leases.borrow_mut().insert(tree.to_path_buf(), (lease, b.path.clone()));
+        self.leases.borrow_mut().insert(tree.to_path_buf(), (lease, b.path.clone(), b.bead.clone()));
         Ok(line)
     }
 
@@ -1138,8 +1138,8 @@ impl World for Real {
             }
         }
         crate::target::release_tree(tree, keep_release);
-        if let Some((lease, path)) = self.leases.borrow_mut().remove(tree) {
-            if let Err(e) = spira_config::build_dir::clean(&self.home.join(spira_config::build_dir::CLEAN_SCRIPT), tree, lease.dir(), &path, true) {
+        if let Some((lease, path, bead)) = self.leases.borrow_mut().remove(tree) {
+            if let Err(e) = spira_config::build_dir::clean(&self.home.join(spira_config::build_dir::CLEAN_SCRIPT), tree, lease.dir(), &path, true, &bead, Some(repo)) {
                 self.eprint(&format!("gate: could not record the tree {} holds ({e}) — the next lease cleans its workspace crates", lease.dir().display()));
             }
             lease.release();

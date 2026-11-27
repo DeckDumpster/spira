@@ -2,8 +2,6 @@
 //! `cut_pool` is all a cut does with it: take what already has a pass at its current tip, before the round is selected from it.
 
 use std::collections::BTreeMap;
-use std::fs::OpenOptions;
-use std::io::Write;
 
 use batcher::core::Member;
 use sift::{Acts, Candidate, FileStore, GitProbe};
@@ -45,22 +43,16 @@ impl Acts for Live<'_> {
         io::rebase_stale(self.env, &self.repo.name, id)
     }
     fn tell(&mut self, msg: &str) {
-        println!("batcher: {msg}");
-        let line = format!(
-            "{} [watch:sift] {msg}\n",
-            io::utc_stamp(spira_config::vtime::now_epoch())
-        );
-        let wrote = cfg("SPIRA_CONCIERGE_INBOX").and_then(|p| {
-            OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(p)
-                .and_then(|mut f| f.write_all(line.as_bytes()))
-                .map_err(|e| e.to_string())
-        });
-        if let Err(e) = wrote {
-            eprintln!("batcher: sift: concierge not told ({e}): {msg}");
-        }
+        tell_concierge(inbox_rules::Sink::configured("batcher"), msg, spira_config::vtime::now_epoch());
+    }
+}
+
+/// What the screen did, said on stdout and in the Concierge inbox.
+pub fn tell_concierge(sink: Result<inbox_rules::Sink, String>, msg: &str, now: u64) {
+    println!("batcher: {msg}");
+    let line = format!("{} [watch:sift] {msg}", io::utc_stamp(now));
+    if let Err(e) = sink.and_then(|sink| sink.record(&line)) {
+        eprintln!("batcher: sift: concierge not told ({e}): {msg}");
     }
 }
 

@@ -39,6 +39,7 @@ struct path_val { char path[PATH_MAX_BYTES]; };
 struct { __uint(type, MAP_HASH); __uint(max_entries, 65536); __type(key, __u32); __type(value, struct pending_val); } pending SEC(".maps");
 struct { __uint(type, MAP_HASH); __uint(max_entries, 16384); __type(key, struct start_key); __type(value, __u64); } starts SEC(".maps");
 struct { __uint(type, MAP_HASH); __uint(max_entries, 16384); __type(key, __u64); __type(value, __u64); } threads SEC(".maps");
+struct { __uint(type, MAP_HASH); __uint(max_entries, 16384); __type(key, __u64); __type(value, __u64); } execs SEC(".maps");
 struct { __uint(type, MAP_LRU_HASH); __uint(max_entries, 4096); __type(key, __u64); __type(value, struct path_val); } names SEC(".maps");
 struct { __uint(type, MAP_ARRAY); __uint(max_entries, 2); __type(key, __u32); __type(value, __u64); } dropped SEC(".maps");
 struct { __uint(type, MAP_PERCPU_ARRAY); __uint(max_entries, 4); __type(key, __u32); __type(value, struct cost_val); } cost SEC(".maps");
@@ -126,6 +127,8 @@ int on_exec(__u64 *ctx)
 {
 	__u64 t0 = bpf_ktime_get_ns();
 	struct task_struct *p = (struct task_struct *)ctx[0];
+	__u64 cgroup = bpf_get_current_cgroup_id();
+	bump(&execs, &cgroup);
 	char comm[16] = {};
 	bpf_get_current_comm(comm, 16);
 	count_start(p->pid, comm);

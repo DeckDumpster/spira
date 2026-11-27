@@ -34,6 +34,7 @@
 #[macro_use]
 extern crate spira_test_id;
 use batcher::drive;
+use inbox_rules::Sink;
 use batcher_cut::judge::{self, failed_attribution};
 #[cfg(test)]
 use batcher_cut::judge::{blocks_attribution, named_suites};
@@ -1285,7 +1286,8 @@ fn finish_local_round(
     let refuse = |msg: String| {
         println!("{msg}");
         io::round_abandon(env_, repo, batch, &msg, "refused");
-        stop_on_repeat(env_, &repo.name, batch, &msg);
+        let at = now();
+        pace::stop_on_repeat(&env_.run, concierge().as_ref(), &repo.name, batch, &msg, at, &utc_stamp(at));
         io::write_local_verdict(env_, &repo.name, "red", &msg);
         append_round(
             env_,
@@ -1547,29 +1549,6 @@ fn finish_local_round(
     };
     io::round_stage_test_done(repo, bg);
     Ok(io::round_promote(env_, repo))
-}
-
-fn stop_on_repeat(env_: &Env, repo: &str, batch: &str, msg: &str) {
-    if pace::is_stale_image(msg) {
-        return;
-    }
-    let files = pace::Files::new(&env_.run, repo);
-    match files.record_refusal(repo, &pace::refusal_key(msg, batch), now()) {
-        Ok(Some(page)) => {
-            println!("batcher {repo}: {page}");
-            if let Ok(inbox) = cfg("SPIRA_CONCIERGE_INBOX") {
-                use std::io::Write;
-                let line = format!("{} [watch:rounds] {page}\n", utc_stamp(now()));
-                let _ = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&inbox)
-                    .and_then(|mut f| f.write_all(line.as_bytes()));
-            }
-        }
-        Ok(None) => {}
-        Err(e) => println!("batcher {repo}: could not record the refusal: {e}"),
-    }
 }
 
 fn cut_new_round(
@@ -1997,10 +1976,9 @@ fn drive_pass(
 /// Every registered repo's pause that has outlived one round's wall-clock bound with work waiting
 /// is paged to the Concierge, whatever the repo's land mode.
 fn page_stale_pauses(env_: &Env, repos: &[(String, String)]) {
-    let Ok(inbox) = cfg("SPIRA_CONCIERGE_INBOX") else {
+    let Some(inbox) = concierge() else {
         return;
     };
-    let inbox = PathBuf::from(inbox);
     let stamp = utc_stamp;
     for (name, _) in repos {
         let sm = pace::Seams {
@@ -2030,8 +2008,14 @@ fn page_stale_pauses(env_: &Env, repos: &[(String, String)]) {
     }
 }
 
-/// A held forge repo with CERTIFIED work says so in the Concierge inbox, once per change of the
-/// waiting set, so a hold nobody remembers cannot sit on landable work in silence.
+/// The Concierge inbox as the batcher writes it; a config that cannot name it is said, and
+/// costs the page rather than the pass.
+fn concierge() -> Option<Sink> {
+    Sink::configured("batcher")
+        .map_err(|e| eprintln!("batcher: the concierge inbox cannot be written: {e}"))
+        .ok()
+}
+
 fn page_held(env_: &Env, name: &str) {
     let Ok(repo) = find_repo(env_, name) else {
         return;
@@ -2039,32 +2023,8 @@ fn page_held(env_: &Env, name: &str) {
     let Ok(pool) = io::certified_pool(env_, &repo) else {
         return;
     };
-    let marker = env_.run.join("rounds-held").join(name);
-    if pool.is_empty() {
-        let _ = std::fs::remove_file(&marker);
-        return;
-    }
-    let ids = pool
-        .iter()
-        .map(|m| m.id.as_str())
-        .collect::<Vec<_>>()
-        .join(",");
-    if std::fs::read_to_string(&marker).ok().as_deref() == Some(ids.as_str()) {
-        return;
-    }
-    let Ok(inbox) = cfg("SPIRA_CONCIERGE_INBOX") else {
-        return;
-    };
-    let line = format!("{} [watch:rounds] BATCHES HELD {name}: SPIRA_BATCHER_FORGE_ENABLE=0 with CERTIFIED work waiting: {ids}\n", utc_stamp(now()));
-    use std::io::Write;
-    let wrote = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&inbox)
-        .and_then(|mut f| f.write_all(line.as_bytes()));
-    if wrote.is_ok() && std::fs::create_dir_all(marker.parent().unwrap()).is_ok() {
-        let _ = std::fs::write(&marker, &ids);
-    }
+    let ids: Vec<&str> = pool.iter().map(|m| m.id.as_str()).collect();
+    pace::page_held(&env_.run, concierge().as_ref(), name, &ids, &utc_stamp(now()));
 }
 
 fn settle_batch(env_: &Env, name: &str) -> Result<(), String> {
@@ -2105,7 +2065,7 @@ fn utc_stamp(at: u64) -> String {
 
 fn paced_cut(env_: &Env, name: &str, one: &Opts) -> Result<(), pace::CutError> {
     let repo = find_repo(env_, name)?;
-    let inbox = PathBuf::from(cfg("SPIRA_CONCIERGE_INBOX")?);
+    let inbox = Sink::configured("batcher")?;
     let stamp = utc_stamp;
     let sm = pace::Seams {
         repo: name,

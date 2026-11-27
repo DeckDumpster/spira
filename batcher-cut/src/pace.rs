@@ -550,7 +550,7 @@ impl Files {
 pub struct Seams<'a> {
     pub repo: &'a str,
     pub now: u64,
-    pub inbox: &'a Path,
+    pub inbox: &'a inbox_rules::Sink,
     pub stamp: &'a dyn Fn(u64) -> String,
     pub redrive_after: u64,
     pub pause_lift_after: u64,
@@ -559,13 +559,48 @@ pub struct Seams<'a> {
 }
 
 fn page(sm: &Seams, text: &str) -> Result<(), String> {
-    let mut f = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(sm.inbox)
-        .map_err(|e| format!("{}: {e}", sm.inbox.display()))?;
-    writeln!(f, "{} [watch:rounds] {text}", (sm.stamp)(sm.now))
-        .map_err(|e| format!("{}: {e}", sm.inbox.display()))
+    sm.inbox.record(&format!("{} [watch:rounds] {text}", (sm.stamp)(sm.now))).map(|_| ())
+}
+
+/// A round refused the same way again is paged once. `inbox` is absent when it is not configured.
+pub fn stop_on_repeat(run: &Path, inbox: Option<&inbox_rules::Sink>, repo: &str, batch: &str, msg: &str, now: u64, stamp: &str) {
+    if is_stale_image(msg) {
+        return;
+    }
+    let files = Files::new(run, repo);
+    match files.record_refusal(repo, &refusal_key(msg, batch), now) {
+        Ok(Some(page)) => {
+            println!("batcher {repo}: {page}");
+            if let Some(inbox) = inbox {
+                if let Err(e) = inbox.record(&format!("{stamp} [watch:rounds] {page}")) {
+                    eprintln!("batcher {repo}: the concierge inbox: {e}");
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(e) => println!("batcher {repo}: could not record the refusal: {e}"),
+    }
+}
+
+/// A held forge repo with CERTIFIED work says so in the Concierge inbox, once per change of the
+/// waiting set, so a hold nobody remembers cannot sit on landable work in silence.
+pub fn page_held(run: &Path, inbox: Option<&inbox_rules::Sink>, repo: &str, waiting: &[&str], stamp: &str) {
+    let marker = run.join("rounds-held").join(repo);
+    if waiting.is_empty() {
+        let _ = fs::remove_file(&marker);
+        return;
+    }
+    let ids = waiting.join(",");
+    if fs::read_to_string(&marker).ok().as_deref() == Some(ids.as_str()) {
+        return;
+    }
+    let Some(inbox) = inbox else {
+        return;
+    };
+    let wrote = inbox.record(&format!("{stamp} [watch:rounds] BATCHES HELD {repo}: SPIRA_BATCHER_FORGE_ENABLE=0 with CERTIFIED work waiting: {ids}"));
+    if wrote.is_ok() && marker.parent().is_some_and(|d| fs::create_dir_all(d).is_ok()) {
+        let _ = fs::write(&marker, &ids);
+    }
 }
 
 /// Pages the Concierge once per pause that has outlived `bound` seconds while the repo has work
@@ -759,7 +794,7 @@ mod tests {
         res: Result<(), CutError>,
         landing_head: Option<&str>,
     ) -> bool {
-        let inbox = d.join("inbox.log");
+        let inbox = quiet_sink(d);
         let sm = Seams {
             repo,
             now,
@@ -791,12 +826,22 @@ mod tests {
         let _ = r;
         cut_ran.get()
     }
+    fn quiet_sink(d: &Path) -> inbox_rules::Sink {
+        inbox_rules::Sink {
+            inbox: d.join("inbox.log"),
+            cursor: d.join("inbox.cursor"),
+            bus: inbox_rules::Bus::Off,
+            wake: String::new(),
+            pattern: String::new(),
+            name: "batcher".into(),
+        }
+    }
     fn inbox(d: &Path) -> String {
         fs::read_to_string(d.join("inbox.log")).unwrap_or_default()
     }
 
     fn stale_page(d: &Path, repo: &str, now: u64, work: bool) -> String {
-        let log = d.join("inbox.log");
+        let log = quiet_sink(d);
         let sm = Seams {
             repo,
             now,
@@ -1319,7 +1364,7 @@ mod tests {
         calls: &Calls,
         opened: bool,
     ) -> bool {
-        let inbox_p = d.join("inbox.log");
+        let inbox_p = quiet_sink(d);
         let sm = Seams {
             repo: "a",
             now,

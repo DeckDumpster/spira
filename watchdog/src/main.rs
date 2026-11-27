@@ -4,28 +4,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use inbox_rules::Sink;
 use runtime::ports::{Clock, WallClock};
 use runtime::units::Units;
 use watchdog::render::{render, Platform, TimerSpec};
-use watchdog::{pass, Config, Deps, FileMarkerAge, Pager, SocketStatus};
-
-/// The page is one line appended to the Concierge's durable inbox
-/// (law-concierge-signals-ride-watchd-rows): a file append, so it needs neither the store nor
-/// the scheduler, which is what is down when it is sent.
-struct InboxPager(PathBuf);
-
-impl Pager for InboxPager {
-    fn page(&self, subject: &str, body: &str) -> Result<(), String> {
-        use std::io::Write;
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-        let line = inbox_rules::line(&tsd::iso_utc(now), &format!("{subject}: {body}"));
-        if let Some(dir) = self.0.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        }
-        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&self.0).map_err(|e| format!("{}: {e}", self.0.display()))?;
-        writeln!(f, "{line}").map_err(|e| format!("{}: {e}", self.0.display()))
-    }
-}
+use watchdog::{pass, Config, Deps, FileMarkerAge, InboxPager, SocketStatus};
 
 #[cfg(target_os = "linux")]
 fn units(clock: Arc<dyn Clock>) -> Result<Box<dyn Units>, String> {
@@ -40,10 +23,10 @@ fn units(_clock: Arc<dyn Clock>) -> Result<Box<dyn Units>, String> {
 /// The pass's line and whether the scheduler is down (an open incident).
 fn run_pass() -> Result<(String, bool), String> {
     let cfg = Config::from_lookup(spira_config::process::cfg, std::env::var("XDG_RUNTIME_DIR").ok())?;
-    let inbox = PathBuf::from(spira_config::process::cfg("SPIRA_CONCIERGE_INBOX")?);
+    let pager = InboxPager(Sink::configured("spira-watchdog")?);
     let clock: Arc<dyn Clock> = Arc::new(WallClock);
     let units = units(clock.clone())?;
-    let deps = Deps { clock: &*clock, units: &*units, status: &SocketStatus(cfg.socket.clone()), marker: &FileMarkerAge(cfg.marker.clone()), pager: &InboxPager(inbox) };
+    let deps = Deps { clock: &*clock, units: &*units, status: &SocketStatus(cfg.socket.clone()), marker: &FileMarkerAge(cfg.marker.clone()), pager: &pager };
     pass(&cfg, &deps).map(|o| (o.to_string(), o.scheduler_down()))
 }
 

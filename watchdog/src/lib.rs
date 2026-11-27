@@ -18,6 +18,19 @@ use runtime::ports::Clock;
 use runtime::units::{UnitFacts, UnitHandle, UnitState, Units};
 use serde::{Deserialize, Serialize};
 
+/// The page is one line appended to the Concierge's durable inbox
+/// (law-concierge-signals-ride-watchd-rows): a file append and a bounded publish, so it needs
+/// neither the store nor the scheduler, which is what is down when it is sent.
+pub struct InboxPager(pub inbox_rules::Sink);
+
+impl Pager for InboxPager {
+    fn page(&self, subject: &str, body: &str) -> Result<(), String> {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let line = inbox_rules::line(&tsd::iso_utc(now), &format!("{subject}: {body}"));
+        self.0.record(&line).map(|_| ())
+    }
+}
+
 pub const KEY_BOUND: &str = "SPIRA_WATCHDOG_BOUND_SECS";
 pub const KEY_SOCKET: &str = "SPIRA_RUNTIME_SOCKET";
 pub const KEY_UNIT: &str = "SPIRA_WATCHDOG_UNIT";
