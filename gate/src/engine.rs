@@ -1901,10 +1901,9 @@ impl<'w, W: World> Trial<'w, W> {
     }
 
     fn fences_key(&self, tree: &str, deny: &spira_config::unit_tier::DenyList) -> Option<crate::fencecache::Key> {
-        let owns_a_row = deny.test_rows().iter().any(|(_, _, owner)| *owner == self.s.bead);
-        let exempt = if owns_a_row { self.s.bead.clone() } else { String::new() };
+        let deny = crate::fencecache::deny_id(deny, &self.s.bead);
         crate::fencecache::path(&self.s.verdict_dir, &self.s.repo_name, tree)
-            .map(|path| crate::fencecache::Key { path, harness: self.s.harness_h.clone(), exempt })
+            .map(|path| crate::fencecache::Key { path, harness: self.s.harness_h.clone(), deny })
     }
 
     /// `gate_at`: through the port, which proves HEAD == want.
@@ -2954,7 +2953,7 @@ pub fn run_composed<W: World>(
     let mut fences_rc = 0;
     let proved = fences
         .filter(|_| comp.suites_off())
-        .and_then(|k| w.read(&k.path).and_then(|e| crate::fencecache::fresh(&e, &k.harness, &k.exempt, &cmd)));
+        .and_then(|k| w.read(&k.path).and_then(|e| crate::fencecache::fresh(&e, &k.harness, &cmd, &k.deny)));
     let declared = build_phase.is_some();
     let share_key: String = tree
         .file_name()
@@ -2999,7 +2998,7 @@ pub fn run_composed<W: World>(
                 if fence::silent(&fence::expected(cmd), &out).is_empty() {
                     if let (Some(dir), Some(name)) = (k.path.parent(), k.path.file_name().and_then(|n| n.to_str())) {
                         w.mkdir_p(dir);
-                        w.write_atomic(dir, name, &crate::fencecache::render(&k.harness, &k.exempt, cmd, &out));
+                        w.write_atomic(dir, name, &crate::fencecache::render(&k.harness, cmd, &k.deny, &out));
                     }
                 }
             }
