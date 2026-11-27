@@ -16,7 +16,7 @@ use serde_json::Value;
 use crate::config::{Config, PveEnv};
 use crate::template::Record;
 use crate::pool::{Deps, Pool};
-use crate::procs::{command, FileLock};
+use crate::procs::{command, command_within, FileLock};
 use crate::schema::{AcquireMode, Manifest, ProcId, Vm};
 use crate::spool::{linger, stream_into, Server, Spool};
 
@@ -1498,17 +1498,8 @@ impl SshRemote {
 }
 
 impl SshRemote {
-    /// The pull's rsync; with `within`, under `timeout`, which takes seconds rounded up and never 0 (no limit).
     fn pull_command(&self, addr: &str, remote_path: &str, local: &Path, within: Option<Duration>) -> std::process::Command {
-        let mut cmd = match within {
-            Some(within) => {
-                let secs = within.as_secs() + u64::from(within.subsec_nanos() > 0);
-                let mut cmd = command("timeout");
-                cmd.args(["-k", "1", &secs.max(1).to_string(), "rsync"]);
-                cmd
-            }
-            None => command("rsync"),
-        };
+        let mut cmd = command_within("rsync", within);
         cmd.arg("-a")
             .arg("-e")
             .arg(format!("ssh {}", self.ssh_opts().join(" ")))
@@ -6415,6 +6406,39 @@ mod tests {
         assert_eq!(salvage_results(Arc::new(waits), "addr", &dest, &fx.cfg.state_dir.join(".salvage-slow-test"), Duration::from_secs(90)), Some(2));
     }
 
+    /// Answers only the time-limited pull: a salvage that calls `pull` gets nothing.
+    struct BoundedPullsOnly(FakeRemote, Duration);
+    impl Remote for BoundedPullsOnly {
+        fn round_started(&self, a: &str) -> bool { self.0.round_started(a) }
+        fn boot_log_tail(&self, a: &str) -> Result<String, String> { self.0.boot_log_tail(a) }
+        fn reachable(&self, a: &str) -> bool { self.0.reachable(a) }
+        fn run_batch(&self, a: &str, j: &BatchJob) -> Result<i32, String> { self.0.run_batch(a, j) }
+        fn push(&self, a: &str, l: &Path, r: &str) -> Result<(), String> { self.0.push(a, l, r) }
+        fn await_exit(&self, a: &str, w: Duration, s: &Path) -> Result<Option<i32>, String> { self.0.await_exit(a, w, s) }
+        fn run_attr(&self, a: &str, j: &crate::spool::AttrJob) -> Result<i32, String> { self.0.run_attr(a, j) }
+        fn clear_results(&self, a: &str) -> Result<(), String> { self.0.clear_results(a) }
+        fn pull(&self, _: &str, r: &str, _: &Path) -> Result<(), PullError> { Err(format!("{r}: pulled with no time limit").into()) }
+        fn pull_within(&self, a: &str, r: &str, l: &Path, within: Duration) -> Result<(), PullError> {
+            if within != self.1 {
+                return Err(format!("{r}: limited to {within:?}").into());
+            }
+            self.0.pull(a, r, l)
+        }
+    }
+
+    #[test_id(t7ybvwd)]
+    #[test]
+    fn every_salvage_pull_carries_the_salvages_time_limit() {
+        let fx = fixture();
+        let mut remote = FakeRemote::green();
+        remote.files.insert("round-batch.out", vec![("round-batch.out", "out\n")]);
+        let dest = fx.cfg.run_dir.join("bounded");
+        let within = Duration::from_secs(90);
+        let bounded = Arc::new(BoundedPullsOnly(remote, within));
+        assert_eq!(salvage_results(bounded, "addr", &dest, &fx.cfg.state_dir.join(".salvage-bounded-test"), within), Some(2));
+        assert!(dest.join(crate::vm_fault::LAUNCHER_OUT_FILE).is_file());
+    }
+
     /// Every pull blocks until the test releases it: the VM that is hung at the signal.
     struct HungPulls(FakeRemote, std::sync::Arc<(Mutex<bool>, std::sync::Condvar)>);
     impl Remote for HungPulls {
@@ -6454,13 +6478,13 @@ mod tests {
     #[test_id(tl6im3h)]
     #[test]
     fn a_salvage_pulls_rsync_is_ended_by_timeout_at_the_deadline() {
-        let ssh = SshRemote { user: "root".into(), port: 2222, key: PathBuf::from("/k") };
+        let ssh = SshRemote { user: "root".into(), port: 2222, key: PathBuf::from("k") };
         let argv = |within| {
-            let cmd = ssh.pull_command("vm", "dir/", Path::new("/to"), within);
+            let cmd = ssh.pull_command("vm", "dir/", Path::new("to"), within);
             std::iter::once(cmd.get_program()).chain(cmd.get_args()).map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>()
         };
         let shell = format!("ssh {}", ssh.ssh_opts().join(" "));
-        let plain = ["rsync", "-a", "-e", &shell, "root@vm:dir/", "/to/"];
+        let plain = ["rsync", "-a", "-e", &shell, "root@vm:dir/", "to/"];
         assert_eq!(argv(None), plain);
         assert_eq!(argv(Some(Duration::from_secs(3))), [["timeout", "-k", "1", "3"].as_slice(), &plain].concat());
         assert_eq!(argv(Some(Duration::from_millis(2900)))[3], "3", "a part second is not cut off the budget");

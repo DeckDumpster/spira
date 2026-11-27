@@ -8,7 +8,7 @@ use std::os::unix::process::CommandExt;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use crate::procs::{command, feed_script, FileLock};
+use crate::procs::{command, command_within, feed_script, FileLock};
 use crate::run::{remote_command, BatchJob, Remote, FOREIGN_SCRIPT, REMOTE_EXIT_FILE, REMOTE_SCRIPT};
 use crate::spill::{HostLoad, HostRule};
 
@@ -257,9 +257,23 @@ impl LocalRemote {
         Ok(child)
     }
 
-    fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
+    fn pull_from(&self, remote_path: &str, local: &Path, within: Option<Duration>) -> Result<(), crate::run::PullError> {
+        let from = self.at(remote_path);
+        if !from.exists() {
+            return Err(crate::run::PullError::Missing(format!("{}: no such file or directory", from.display())));
+        }
+        if from.is_dir() {
+            Ok(Self::copy_dir(&from, local, within)?)
+        } else {
+            fs::create_dir_all(local).map_err(|e| format!("{}: {e}", local.display()))?;
+            let to = local.join(from.file_name().ok_or_else(|| format!("{remote_path}: no file name"))?);
+            Ok(fs::copy(&from, &to).map(|_| ()).map_err(|e| format!("{}: {e}", from.display()))?)
+        }
+    }
+
+    fn copy_dir(from: &Path, to: &Path, within: Option<Duration>) -> Result<(), String> {
         fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
-        let st = command("cp").arg("-a").arg(format!("{}/.", from.display())).arg(to).stdin(Stdio::null()).output().map_err(|e| format!("cp: {e}"))?;
+        let st = command_within("cp", within).arg("-a").arg(format!("{}/.", from.display())).arg(to).stdin(Stdio::null()).output().map_err(|e| format!("cp: {e}"))?;
         if st.status.success() {
             Ok(())
         } else {
@@ -310,21 +324,15 @@ impl Remote for LocalRemote {
     }
 
     fn pull(&self, _addr: &str, remote_path: &str, local: &Path) -> Result<(), crate::run::PullError> {
-        let from = self.at(remote_path);
-        if !from.exists() {
-            return Err(crate::run::PullError::Missing(format!("{}: no such file or directory", from.display())));
-        }
-        if from.is_dir() {
-            Ok(Self::copy_dir(&from, local)?)
-        } else {
-            fs::create_dir_all(local).map_err(|e| format!("{}: {e}", local.display()))?;
-            let to = local.join(from.file_name().ok_or_else(|| format!("{remote_path}: no file name"))?);
-            Ok(fs::copy(&from, &to).map(|_| ()).map_err(|e| format!("{}: {e}", from.display()))?)
-        }
+        self.pull_from(remote_path, local, None)
+    }
+
+    fn pull_within(&self, _addr: &str, remote_path: &str, local: &Path, within: Duration) -> Result<(), crate::run::PullError> {
+        self.pull_from(remote_path, local, Some(within))
     }
 
     fn push(&self, _addr: &str, local: &Path, remote_path: &str) -> Result<(), String> {
-        Self::copy_dir(local, &self.at(remote_path))
+        Self::copy_dir(local, &self.at(remote_path), None)
     }
 
     fn await_exit(&self, _addr: &str, within: Duration, _ssh_log: &Path) -> Result<Option<i32>, String> {
