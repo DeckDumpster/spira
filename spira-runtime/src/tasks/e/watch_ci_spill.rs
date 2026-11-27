@@ -23,7 +23,7 @@
 //!
 //! ## Decide
 //!
-//! - Pure scan: the awk in `_csg_file` becomes a Rust function `violations(path, text) -> Vec<String>` — a `uses: …/provision@…` step whose `spill:` is absent or not `ec2-only`. The same function serves `ci-spill-guard.sh --gate` (gate fence, `gate.steps`) once the gate moves; until then both exist (parity test pins them equal).
+//! - Pure scan: the awk in `_csg_file` becomes a Rust function `violations(path, text) -> Vec<String>` — a `uses: …/provision@…` step whose `spill:` is absent or not `ec2-only`. The same function serves `ci-spill-guard.sh --gate` (gate fence, `gate.steps`) once the gate moves; until then both exist.
 //! - Carry `watch.ci_spill.state` = `{ said: BTreeSet<String>, seen: BTreeMap<repo, sha> }` — the deleted loop kept `run/watchd/ci-spill-guard.said` (append-only, never cleared) and `run/watchd/ci-spill-guard.refs/<repo>`.
 //! - For each repo with a new sha: every violation line not in `said` → one inbox line; then `seen[repo] = sha`. A repo with no ref → key `noref-<repo>` once.
 //! - Note (from code): `said` is never pruned today, so a violation fixed and later reintroduced is not said again. Kept for parity; flagged for Ryan.

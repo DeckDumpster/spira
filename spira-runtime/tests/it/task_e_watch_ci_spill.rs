@@ -114,6 +114,7 @@ fn t7_the_shell_loop_it_replaced_is_gone() {
     for gone in ["watch)", "pass)", "health)"] {
         assert!(!arm(gone), "the {gone} arm is still dispatched");
     }
+    assert!(script.contains(r#"*) echo "usage: ci-spill-guard.sh scan <tree> | --gate <tree>" >&2; exit 2 ;;"#), "any other mode must get the usage line and exit 2");
 }
 
 fn registration() -> runtime::event::Registration {
