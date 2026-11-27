@@ -73,7 +73,6 @@ set -uo pipefail
 # layer that names no file), and carrying on from there left every subcommand to die on
 # whichever unbound variable came first (sp-p35wed).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/spira" && pwd -P)/lib.sh" || exit 1
-HARNESS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SESSION="${CONCIERGE_SESSION:-concierge}"
 SOCKET="${CONCIERGE_SOCKET:-concierge}"
 BRAIN="${SPIRA_WIKI:-$SPIRA_REPO}"
@@ -102,6 +101,11 @@ TM="tmux -L $SOCKET"
 # is the exact session this file exists to stop shipping: it looks identical to a working one
 # from outside, and the way anybody finds out is the next violated statute.
 compose_brief() {
+    # Written verbatim, never resolved: the link follows each activation, the directory behind it does not.
+    [ -n "${SPIRA_RELEASE:-}" ] || {
+        echo "concierge: SPIRA_RELEASE is not set — start it from concierge.service, whose unit sets it" >&2
+        return 1
+    }
     local md="$SPIRA_HOME/runes/$RUNE.md" out statutes n
     local bead_tool="bead.sh"
     local wiki_clause=""
@@ -128,7 +132,7 @@ compose_brief() {
         ,*) core_merged="$core_local" ;;
         *) core_merged="$core_persona,$core_local" ;;
     esac
-    statutes="$(render_memories \
+    statutes="$(SPIRA_REPO="$SPIRA_RELEASE" render_memories \
         "$(rune_get "$RUNE" RUNE_MEMORY_PREFIXES law-)" "" \
         "$core_merged")" || statutes=""
     if [ -z "$statutes" ]; then
@@ -141,7 +145,7 @@ compose_brief() {
             return 1
         fi
         echo "concierge: the statute book rendered empty — refusing to start without it" >&2
-        echo "  check: $HARNESS/rule.sh list" >&2
+        echo "  check: $SPIRA_RELEASE/rule.sh list" >&2
         return 1
     fi
     n="$(grep -c '^## ' <<<"$statutes" 2>/dev/null || printf 0)"
@@ -150,10 +154,10 @@ compose_brief() {
     mkdir -p "$SPIRA_RUN" 2>/dev/null
     {
         sed -e "s|{{CWD}}|$BRAIN|g" \
-            -e "s|{{SPIRA_HOME}}|$SPIRA_HOME|g" \
+            -e "s|{{SPIRA_HOME}}|$SPIRA_RELEASE/spira|g" \
             -e "s|{{COCKPIT}}|$SPIRA_COCKPIT|g" \
             -e "s|{{ASK}}|mail|g" \
-            -e "s|{{RULE}}|$HARNESS/rule.sh|g" \
+            -e "s|{{RULE}}|$SPIRA_RELEASE/rule.sh|g" \
             -e "s|{{DB}}|$SPIRA_DB|g" \
             -e "s|{{STATUTE_COUNT}}|$n|g" \
             -e "s|{{DEADLINE}}||g" \
@@ -174,7 +178,7 @@ compose_brief() {
     if [ -n "$core_merged" ] && ! grep -q '^## law-' "$out"; then
         echo "concierge: a core statute (RUNE_STATUTE_CORE or SPIRA_STATUTE_CORE_LOCAL) is declared but no statute rendered in full" >&2
         echo "  every slug in it was demoted to the index — check them against:" >&2
-        echo "  $HARNESS/rule.sh list" >&2
+        echo "  $SPIRA_RELEASE/rule.sh list" >&2
         return 1
     fi
 
@@ -304,7 +308,7 @@ import json, sys
 h = lambda p, t: [{"hooks": [{"type": "command", "command": p, "timeout": t}]}]
 print(json.dumps({"hooks": {
     "PreToolUse": [{"matcher": "Bash", "hooks": h(sys.argv[1] + "/concierge-raw-pr-fence.sh", 30)[0]["hooks"] + h(sys.argv[1] + "/statute-check-hook.sh", 30)[0]["hooks"]}]}}))' \
-        "$SPIRA_HOME/hooks"
+        "$SPIRA_RELEASE/spira/hooks"
 }
 
 write_tmux_shim() {
@@ -693,6 +697,7 @@ stop)    $TM kill-session -t "$SESSION" 2>/dev/null && echo "concierge: stopped"
 
 _resume-id)      concierge_resume_id ;;      # internal: used by test suite
 _live-pid)       concierge_live_pid "${2:-}" ;;      # internal: used by test suite
+_settings)       session_settings ;;  # internal: used by test suite
 _stray-holders)  concierge_stray_holders ;;  # internal: used by test suite and doctor.sh
 _write-tmux-shim) write_tmux_shim ;;         # internal: used by test suite
 
