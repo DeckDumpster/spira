@@ -129,6 +129,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("intake.gh_closeout", &["intake.gh_closeout.observe", "intake.gh_closeout.drain"]),
     ("trigger.warden", &["trigger.warden.observe", "trigger.warden.file"]),
     ("trigger.mimir", &["trigger.mimir.observe", "trigger.mimir.file"]),
+    ("incident.drain", &["incident.drain.observe", "incident.drain.drain"]),
     ("persona.ops", &["persona.ops.observe", "persona.ops.intake_install", "persona.ops.incident_drain", "persona.ops.brief", "unit.start", "unit.stop", "persona.ops.ledger", "persona.ops.cleanup", "inbox.append"]),
     ("persona.archivist", &["persona.archivist.observe", "persona.archivist.brief", "unit.start", "unit.stop", "persona.archivist.commit", "persona.archivist.settle", "persona.archivist.digest_send", "persona.archivist.mark", "persona.archivist.forget"]),
     ("intake.filings", &["intake.filings.observe", "intake.filings.file", "intake.filings.append", "intake.filings.ack", "inbox.append"]),

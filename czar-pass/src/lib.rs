@@ -182,10 +182,10 @@ pub fn file(f: &Filing) -> Result<String, String> {
     let entry = incident::spool::SpoolEntry { reference: f.reference.clone(), title: f.subject.clone(), unit: env.unit.clone(), incident_path: env.path.clone(), cause: env.cause.clone(), repo: env.repo.clone(), body: f.body.clone().into_bytes() };
     std::fs::create_dir_all(&env.spool_dir).map_err(|e| format!("{}: {e}", env.spool_dir.display()))?;
     let path = incident::spool::entry_path(&env.spool_dir, &incident::intake::spool_stamp(), &f.reference, std::process::id());
-    std::fs::write(&path, incident::spool::format_entry(&entry)).map_err(|e| format!("{}: {e}", path.display()))?;
+    incident::spool::write_entry(&path, &entry).map_err(|e| format!("{}: {e}", path.display()))?;
     match incident::intake::drain_one(&env, &bd, &incident::real::RealMailer, &incident::real::RealClock, &path) {
         Ok(id) => Ok(id.unwrap_or_else(|| f.reference.clone())),
-        Err(()) => Err(format!("{} not filed; it stays spooled at {}", f.reference, path.display())),
+        Err(why) => Err(format!("{} not filed; it stays spooled at {}: {why}", f.reference, path.display())),
     }
 }
 
