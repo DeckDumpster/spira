@@ -840,5 +840,6 @@ cr_size_unit_lines
 dolt_unit
 broker_socket
 session_linger_secs
+sub_control_dir
 pressure_cpu_avg300
 pressure_io_avg300

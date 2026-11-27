@@ -192,7 +192,8 @@ oneshot mid-run, and a dwarf's tools stay on disk in its release. So there is no
 
 A completed activation publishes the retained topic `release/active` with `{sha, at, restarted}`
 and flushes it before the process exits. A publish that fails is logged and never fails the
-activation. A failed activation publishes nothing, and neither does `rollback`.
+activation. A failed activation publishes nothing. A rollback publishes the restored sha once it
+is switched and recorded, including when it then reports units not up or a late config error.
 
 ### config delta
 

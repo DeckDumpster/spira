@@ -253,6 +253,12 @@ pub fn psi_full_avg300(text: &str) -> Option<f64> {
     line.split_whitespace().find_map(|w| w.strip_prefix("avg300="))?.parse().ok()
 }
 
+/// The `some avg300` of a `/proc/pressure/<resource>` file.
+pub fn psi_some_avg300(text: &str) -> Option<f64> {
+    let line = text.lines().find(|l| l.starts_with("some "))?;
+    line.split_whitespace().find_map(|w| w.strip_prefix("avg300="))?.parse().ok()
+}
+
 fn cond(key: &str, title: String, body: String, sustain: i64) -> Cond {
     Cond { key: key.into(), reference: format!("incident:pressure-{key}"), title, body, priority: 1, sustain_secs: sustain }
 }
@@ -1022,6 +1028,14 @@ mod tests {
         assert_eq!(psi_full_avg300(both), Some(52.5), "the full line's avg300, not some's");
         assert_eq!(psi_full_avg300("some avg300=9.0\n"), None);
         assert_eq!(psi_full_avg300("full avg10=1.0 avg60=2.0\n"), None);
+    }
+
+    #[test_id(t5sb3n8)]
+    #[test]
+    fn psi_some_avg300_reads_the_some_line() {
+        let both = "some avg10=1.00 avg60=2.00 avg300=3.00 total=4\nfull avg10=5.00 avg60=6.00 avg300=52.50 total=7\n";
+        assert_eq!(psi_some_avg300(both), Some(3.0));
+        assert_eq!(psi_some_avg300("full avg300=9.0\n"), None);
     }
 
     fn cfg(dir: &Path) -> Cfg {

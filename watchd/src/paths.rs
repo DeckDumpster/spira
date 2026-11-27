@@ -20,9 +20,7 @@ pub fn logfile(run: &str, name: &str, kind: Kind, target: &str) -> Option<PathBu
     }
 }
 
-pub fn cursorfile(run: &str, name: &str) -> PathBuf {
-    watchd_dir(run).join(format!("{name}.cursor"))
-}
+pub use inbox_rules::cursorfile;
 
 pub fn deliveredfile(run: &str, name: &str) -> PathBuf {
     watchd_dir(run).join(format!("{name}.delivered"))

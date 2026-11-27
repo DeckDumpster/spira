@@ -88,7 +88,6 @@ spira-test-id = { path = "../spira-test-id" }
 inotify = { version = "0.11", default-features = false }
 opentelemetry-proto = { version = "0.30", default-features = false, features = ["trace", "gen-tonic-messages", "with-serde"] }
 testkit = { path = "../testkit" }
-rumqttc = { version = "0.25.1", default-features = false }
 rusqlite = { version = "0.37", features = ["bundled"] }
 reconciler-engine = { path = "../reconciler-engine" }
 incident = { path = "../incident" }
