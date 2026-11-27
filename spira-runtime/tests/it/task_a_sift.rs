@@ -260,3 +260,17 @@ fn an_attempt_is_forgotten_once_its_bead_leaves_the_pool() {
     assert!(carry.sent.is_empty(), "{:?}", carry.sent);
     assert!(acts.is_empty());
 }
+
+#[test_id(tfxhmh0)]
+#[test]
+fn a_send_back_lost_at_a_restart_is_not_reported_as_refused() {
+    let mut r = TaskRig::new(1, registration()).unwrap().hanging(SEND_BACK).double(OBSERVE, |_| Ok(serde_json::to_string(&certified_conflict()).unwrap()));
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE].contains(e)) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    assert_eq!(asked(&r, SEND_BACK).len(), 1, "{:?}", r.requested());
+    r.reopen(registration()).unwrap();
+    r.run_until_idle().unwrap();
+    assert!(told(&r, "could not send").is_empty(), "{:?}", r.requested());
+}

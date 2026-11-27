@@ -529,3 +529,29 @@ fn a_corpus_start_lost_at_a_restart_does_not_judge_the_leg() {
     let (next, acts) = on_outcome(&carry, CORPUS, false, runtime::engine::LOST_AT_RESTART, &leg, NOW);
     assert_eq!((next, acts), (carry, vec![]));
 }
+
+#[test_id(t8frzr3)]
+#[test]
+fn an_opening_round_whose_batch_record_has_no_pr_is_not_adopted() {
+    let rc = RepoCarry { state: State::Opening, round_key: Some("dd-a:t1".into()), members: vec![("dd-a".into(), "t1".into())], ..RepoCarry::default() };
+    let carry = Carry { repos: [("deckdumpster".to_string(), rc)].into() };
+    let mut s = busy();
+    let repo = s.repos.get_mut("deckdumpster").unwrap();
+    repo.open_batch = Some(Batch { pr: 0, head: String::new(), members: vec!["dd-a".into()] });
+    repo.in_flight = Some(vec![BATCH_OPEN.to_string()]);
+    let (next, _) = decide(&carry, &s);
+    assert_eq!(next.repos["deckdumpster"].state, State::Opening);
+}
+
+#[test_id(t20vgzv)]
+#[test]
+fn the_batch_open_runner_answers_the_pr_already_open_for_its_members() {
+    use batcher_cut::io::OpenBatch;
+    let ids = |v: &[&str]| v.iter().map(|id| (id.to_string(), "t1".to_string())).collect::<Vec<_>>();
+    let open = |pr: &str, members: &[&str]| OpenBatch { pr: pr.into(), members: ids(members) };
+    let asked = ids(&["dd-a", "dd-b"]);
+    assert_eq!(edge::already_open(Some(&open("12", &["dd-b", "dd-a"])), &asked), Some("12".to_string()));
+    assert_eq!(edge::already_open(Some(&open("", &["dd-a", "dd-b"])), &asked), None, "a record with no PR is no PR");
+    assert_eq!(edge::already_open(Some(&open("12", &["dd-a"])), &asked), None);
+    assert_eq!(edge::already_open(None, &asked), None);
+}

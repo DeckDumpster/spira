@@ -61,7 +61,7 @@
 //! | Corpus | `unit.ran` green | Opening |
 //! | Opening | moved members (`main.rs:1032`) or foreign commits (`main.rs:1126`) | Idle (verdict red) |
 //! | Opening | `batch_open` ok | Open (verdict green, metric) |
-//! | Opening | observe: open batch PR holding the round's members | Open (adopted: no second `batch_open`) |
+//! | Opening | observe: open batch with a PR, holding the round's members | Open (adopted: no second `batch_open`) |
 //! | Assembling / Opening | `assemble` / `batch_open` lost at restart | unchanged (the same leg is asked again) |
 //! | Open | `batch.settled` | Idle |
 //!
@@ -412,7 +412,8 @@ impl Machine<'_> {
 
     fn observe(&mut self, policy: &Policy, enabled: bool, repo: &Repo) {
         // Ahead of `unsent`: a PR opened just before a restart is adopted, not cut again.
-        if self.rc.state == State::Opening && repo.open_batch.as_ref().is_some_and(|b| self.is_round(b)) {
+        // A record with no PR is an open cut short, not one to adopt.
+        if self.rc.state == State::Opening && repo.open_batch.as_ref().is_some_and(|b| b.pr != 0 && self.is_round(b)) {
             self.go(Trigger::BatchOpened);
         }
         // Ahead of the disabled gate: a forgotten round must not be cut again under the hold.
@@ -771,11 +772,21 @@ pub mod edge {
         Ok(io::batch_shots_section(&env.testenv_bin, &env.run, loom.as_deref(), &leg.repo, &leg.base, &leg.head))
     }
 
-    /// The batch PR (`open_round_pr`): refused when a member moved since the round was built or
+    /// The PR of the open batch that holds exactly `members`, once it has one.
+    pub fn already_open(open: Option<&io::OpenBatch>, members: &[(String, String)]) -> Option<String> {
+        let ids = |m: &[(String, String)]| m.iter().map(|(id, _)| id.clone()).collect::<std::collections::BTreeSet<_>>();
+        open.filter(|o| !o.pr.is_empty() && ids(&o.members) == ids(members)).map(|o| o.pr.clone())
+    }
+
+    /// The batch PR (`open_round_pr`), or the one already open for these members, since an open
+    /// asked again after a restart may have succeeded: refused when a member moved since the round was built or
     /// the head carries a non-member's commits.
     pub fn batch_open(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
         let repo = batcher_cut::find_repo(&env, &leg.repo)?;
+        if let Some(pr) = already_open(io::read_open_batch(&env, &leg.repo)?.as_ref(), &leg.members) {
+            return json(&Opened { pr });
+        }
         let members: Vec<batcher::core::Member> = leg.members.iter().map(|(id, tip)| batcher::core::Member { id: id.clone(), tip: tip.clone(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![], provisional: false }).collect();
         let moved = io::moved_members(&repo, &leg.base, &members);
         if !moved.is_empty() {
