@@ -25,6 +25,7 @@
     fn an_undeclared_key_is_refused_by_name_even_when_the_environment_sets_it() {
         let ws = testkit::TempDir::new("spira-config-resolve-undeclared");
         let (home, repo) = fixture_home_repo(&ws);
+        std::fs::write(home.join("conf.d/SPIRA_RUN"), "TYPE=string\nGROUP=runtime\nDOC=the run directory\n").unwrap();
         let doc = crate::unset_path(&crate::fixture_doc(&BTreeMap::new()), "spira.run").unwrap();
         let e = env(&[("HOME", "h"), ("SPIRA_RUN", "from/the/environment")]);
         let err = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&doc), conf_d: &home.join("conf.d") })
@@ -32,6 +33,33 @@
         let msg = err.to_string();
         assert!(msg.contains("SPIRA_RUN") && msg.contains("spira.run"), "{msg}");
         assert!(!msg.contains("from/the/environment"), "the environment must not be read: {msg}");
+    }
+
+    #[test_id(t6d7gli)]
+    #[test]
+    fn a_hand_written_step_for_a_key_the_registry_lacks_is_named_and_a_declared_keys_omission_is_not() {
+        let ws = testkit::TempDir::new("spira-config-resolve-hand-step");
+        let conf_d = ws.path().join("conf.d");
+        std::fs::create_dir_all(&conf_d).unwrap();
+        for e in std::fs::read_dir(shipped_conf_d()).unwrap() {
+            let e = e.unwrap();
+            std::fs::copy(e.path(), conf_d.join(e.file_name())).unwrap();
+        }
+        let home = crate::process::fixture_home();
+        let repo = home.parent().unwrap().to_path_buf();
+        let e = env(&[("HOME", "h")]);
+        let doc = crate::unset_path(&crate::fixture_doc(&BTreeMap::new()), "spira.czar_outcome_mins").unwrap();
+        let refusal = || resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&doc), conf_d: &conf_d }).unwrap_err().to_string();
+
+        assert_eq!(
+            refusal(),
+            "SPIRA_CZAR_OUTCOME_MINS is not declared: spira.toml has no spira.czar_outcome_mins — every key is required; refusing"
+        );
+        std::fs::remove_file(conf_d.join("SPIRA_CZAR_OUTCOME_MINS")).unwrap();
+        assert_eq!(
+            refusal(),
+            "SPIRA_CZAR_OUTCOME_MINS is not in the registry being resolved against, yet resolve's hand-written step for SPIRA_CZAR_OUTCOME_MINS (spira-config/src/resolve.rs) asks for it unconditionally"
+        );
     }
 
     #[test_id(tqogl9u)]
