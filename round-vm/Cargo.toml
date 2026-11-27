@@ -42,6 +42,11 @@ name = "deny_list_real"
 path = "tests/deny_list_real.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "foreign_script_real"
+path = "tests/foreign_script_real.rs"
+required-features = ["integration"]
+
 [features]
 integration = ["runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "tsd/integration", "spira-desired-state/integration", "reconciler-engine/integration", "test-registry/integration", "gate/integration", "batcher/integration", "batcher-cut/integration", "system-paths/integration", "spira-test-id/integration"]
 [dependencies]

@@ -3497,43 +3497,47 @@ fn results_present(dir: &Path) -> usize {
 }
 
 /// A run cut by a signal still holds the verdicts and the log its VM produced: pulls them into
-/// `results_dir` (results already there are kept) before the VM is released. Bounded by
-/// `within`, because the caller's kill-after is seconds away. Returns how many results were new, or `None` when the results pull itself failed or timed out.
+/// `results_dir` (results already there are kept) before the VM is released. `within` is how long
+/// the results pull may take to count, because the caller's kill-after is seconds away. Returns how many results were new, or `None` when the results pull itself failed or timed out.
 pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scratch: &Path, within: Duration) -> Option<usize> {
     let _ = fs::remove_dir_all(scratch);
     let corpus = scratch.join("results");
+    let stamps = [crate::vm_fault::PHASE_FILE, PHASE_TIMES].map(|f| (format!("{REMOTE_RESULTS}{f}"), f));
+    let logs = LAUNCHER_FILES.map(|(remote_name, kept)| (remote_name.to_string(), kept));
     let pulled = std::thread::scope(|sc| {
+        // Each lands as its own pull returns: the kill may arrive while the corpus is still coming.
+        for (remote_path, kept) in logs.into_iter().chain(stamps) {
+            let to = scratch.join(kept);
+            sc.spawn(move || salvage_file(remote, addr, &remote_path, &to, &results_dir.join(kept)));
+        }
         let (tx, rx) = std::sync::mpsc::channel();
         let corpus = &corpus;
         sc.spawn(move || {
             let _ = tx.send(remote.pull(addr, REMOTE_RESULTS, corpus).is_ok());
         });
-        // Beside the results, not after them: a slow corpus must not spend the log's share of the bound.
-        for (remote_name, _) in LAUNCHER_FILES {
-            let to = scratch.join(remote_name);
-            sc.spawn(move || {
-                if remote.pull(addr, remote_name, &to).is_err() {
-                    eprintln!("round-vm run: the VM's {remote_name} could not be pulled");
-                }
-            });
-        }
         rx.recv_timeout(within).unwrap_or(false)
     });
-    for (remote_name, kept) in LAUNCHER_FILES {
-        let from = scratch.join(remote_name).join(remote_name);
-        if from.is_file() {
-            if let Err(e) = fs::create_dir_all(results_dir).and_then(|_| fs::copy(&from, results_dir.join(kept))) {
-                eprintln!("round-vm run: {kept}: {e}");
-            }
-        }
-    }
     let n = pulled.then(|| {
-        // A cut round may have no result at all, so its phase stamps are carried by name.
+        // A cut round may have no result at all, so its top files are carried by name.
         keep_top_files(&corpus, results_dir);
         stream_into(&corpus, results_dir).unwrap_or(0)
     });
     let _ = fs::remove_dir_all(scratch);
     n
+}
+
+/// Pulls the one file `remote_path` through `scratch` to `kept`; a pull that brings nothing leaves `kept` as it was.
+fn salvage_file(remote: &dyn Remote, addr: &str, remote_path: &str, scratch: &Path, kept: &Path) {
+    let Some(name) = Path::new(remote_path).file_name() else { return };
+    if let Err(e) = remote.pull(addr, remote_path, scratch) {
+        eprintln!("round-vm run: the VM's {remote_path} could not be pulled: {e:?}");
+        return;
+    }
+    let from = scratch.join(name);
+    let to_dir = kept.parent().unwrap_or(Path::new("."));
+    if let Err(e) = fs::create_dir_all(to_dir).and_then(|_| fs::copy(&from, kept)) {
+        eprintln!("round-vm run: {}: {e}", kept.display());
+    }
 }
 
 /// Where the VM's runner writes its time-series rows.
@@ -6241,6 +6245,39 @@ mod tests {
         assert!(read(PHASE_TIMES).ends_with("entry 2 - -\n"));
         assert_eq!(read(crate::vm_fault::PHASE_FILE), "phase=entry rc=-\n");
         assert!(!scratch.exists(), "scratch is removed");
+    }
+
+    /// Holds the corpus pull until the log and the phase stamps are already in the results dir, as
+    /// they must be when the caller's kill-after lands on a pull that never returns.
+    struct CorpusWaits(FakeRemote, PathBuf);
+    impl Remote for CorpusWaits {
+        fn round_started(&self, a: &str) -> bool { self.0.round_started(a) }
+        fn boot_log_tail(&self, a: &str) -> Result<String, String> { self.0.boot_log_tail(a) }
+        fn reachable(&self, a: &str) -> bool { self.0.reachable(a) }
+        fn run_batch(&self, a: &str, j: &BatchJob) -> Result<i32, String> { self.0.run_batch(a, j) }
+        fn push(&self, a: &str, l: &Path, r: &str) -> Result<(), String> { self.0.push(a, l, r) }
+        fn await_exit(&self, a: &str, w: Duration, s: &Path) -> Result<Option<i32>, String> { self.0.await_exit(a, w, s) }
+        fn run_attr(&self, a: &str, j: &crate::spool::AttrJob) -> Result<i32, String> { self.0.run_attr(a, j) }
+        fn clear_results(&self, a: &str) -> Result<(), String> { self.0.clear_results(a) }
+        fn pull(&self, a: &str, r: &str, l: &Path) -> Result<(), PullError> {
+            if r == REMOTE_RESULTS {
+                wait_until(|| [crate::vm_fault::LAUNCHER_OUT_FILE, crate::vm_fault::LAUNCHER_ERR_FILE, PHASE_TIMES].iter().all(|f| self.1.join(f).is_file()));
+            }
+            self.0.pull(a, r, l)
+        }
+    }
+
+    #[test_id(tjb0qe5)]
+    #[test]
+    fn a_signalled_run_has_the_log_and_phase_stamps_in_the_results_while_the_corpus_pull_is_still_running() {
+        let fx = fixture();
+        let mut remote = FakeRemote::green();
+        remote.files.insert("round-work/.runtime/spira/batch-results/round-phases", vec![(PHASE_TIMES, "entry 2 - -\n")]);
+        remote.files.insert("round-batch.out", vec![("round-batch.out", "out\n")]);
+        remote.files.insert("round-batch.err", vec![("round-batch.err", "err\n")]);
+        let dest = fx.cfg.run_dir.join("slow");
+        let waits = CorpusWaits(remote, dest.clone());
+        assert_eq!(salvage_results(&waits, "addr", &dest, &fx.cfg.state_dir.join(".salvage-slow-test"), Duration::from_secs(90)), Some(2));
     }
 
     #[test_id(t2pn393)]

@@ -7957,6 +7957,7 @@ fn an_own_testenv_repo_with_no_ci_entry_is_not_judged_and_runs_nothing() {
     fs::write(wt.join(".spira").join("testenv.toml"), "").unwrap();
     assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
     assert!(t.err().contains("declares no ci_entry"), "{}", t.err());
+    assert!(t.out().lines().any(|l| l.starts_with("fault=FAULT ") && l.contains("declares no ci_entry")), "{}", t.out());
     let calls = t.scripts.calls.borrow().clone();
     assert!(!calls.iter().any(|c| c.contains("round-vm")), "{calls:?}");
 }
@@ -7972,6 +7973,7 @@ fn an_own_testenv_repo_with_a_ci_entry_and_no_image_is_not_judged_and_runs_nothi
     fs::write(wt.join(".spira").join("testenv.toml"), "ci_entry = \"deploy/ci.sh all\"\n").unwrap();
     assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
     assert!(t.err().contains("declares a ci_entry but no image"), "{}", t.err());
+    assert!(t.out().lines().any(|l| l.starts_with("fault=FAULT ") && l.contains("declares a ci_entry but no image")), "{}", t.out());
     let calls = t.scripts.calls.borrow().clone();
     assert!(!calls.iter().any(|c| c.contains("round-vm")), "{calls:?}");
 }
@@ -9340,6 +9342,23 @@ fn a_round_vm_lost_mid_pass_exits_75_incomplete_and_never_counts_against_a_membe
         t.lib.calls.borrow()
     );
     assert!(!t.out().contains("red-output="), "never named a red");
+}
+
+#[test_id(tkt7yz5)]
+#[test]
+fn a_ci_entry_whose_vm_was_lost_says_so_on_stdout() {
+    let t = round_world();
+    *t.scripts.repo_testenv.borrow_mut() = RunOut {
+        rc: 75,
+        out: String::new(),
+        err: "round-vm run: INCOMPLETE reason=vm-lost\n".into(),
+    };
+    t.scripts.repo_no_ci_result.set(true);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    declare_own_testenv(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 75, "{}", t.err());
+    assert!(t.out().lines().any(|l| l.starts_with("fault=FAULT vm-lost")), "{}", t.out());
 }
 
 fn no_output_next_pass(t: &T) {
