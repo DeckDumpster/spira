@@ -451,7 +451,7 @@ mod tests {
     impl spira_store::lc_call::Transport for DoorWithRows {
         fn exchange(&self, argv: &[String], body: Option<&str>, t: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             let mut reply = self.0.exchange(argv, body, t)?;
-            if argv.get(..2) == Some(&["list".to_string(), "--ids".to_string()][..]) {
+            if argv.get(..2) == Some(&["list".to_string(), "--ids".to_string()][..]) { // BDQ_READ_CONSIDERED="a test of the store door against its fake, not a bd read"
                 reply.out = serde_json::Value::Array(self.0.live.clone()).to_string();
             }
             Ok(reply)
@@ -470,8 +470,8 @@ mod tests {
             assert_eq!(found.len(), 1, "{scope:?}");
             let seen = door.0.requests();
             assert_eq!(seen[0], ["content", "list", "--all", "--limit", "0", "--json", "--external-ref", "incident:x"], "{seen:?}");
-            assert!(seen.iter().all(|r| r != &["list", "--live"]), "{seen:?}");
-            assert!(seen.iter().any(|r| r.starts_with(&["list".to_string(), "--ids".to_string(), "sp-1".to_string()])), "{seen:?}");
+            assert!(seen.iter().all(|r| r != &["list", "--live"]), "{seen:?}"); // BDQ_READ_CONSIDERED="a test of the store door against its fake, not a bd read"
+            assert!(seen.iter().any(|r| r.starts_with(&["list".to_string(), "--ids".to_string(), "sp-1".to_string()])), "{seen:?}"); // BDQ_READ_CONSIDERED="a test of the store door against its fake, not a bd read"
         }
     }
 
