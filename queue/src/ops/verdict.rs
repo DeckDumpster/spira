@@ -1865,6 +1865,25 @@ fn lc_land(w: &World, b: &Batch) -> bool {
     }
 }
 
+/// The base whose rebuild the deny-list variable last stopped: the operator is mailed once per base.
+const DENY_ALERT: &str = "deny_variable_alerted";
+
+fn rebuild_refused(w: &World, c: &Ctx, b: &Batch, base: &str, why: &str) -> i32 {
+    let (name, pr) = (b.name, &b.pr);
+    w.err(format!("verdict {name}: PR {pr} not rebuilt on {base}: {why} — nothing pushed; the next pass retries"));
+    if b.kv.get(DENY_ALERT) != Some(base)
+        && rewrite(w, c, b, &[DENY_ALERT], &[(DENY_ALERT, base)]).is_ok()
+    {
+        w.lib.notify(
+            &c.s.mailbox,
+            name,
+            &format!("PR {pr} cannot be rebuilt: deny-list variable not written"),
+            &format!("PR {pr} for {name} is green on a base that moved to {base}, and was not rebuilt: {why}\nNothing was pushed; the batch stays open and each verdict pass retries, so no other batch can be cut. Fix the cause (the App's write access to repository variables, the registry, or the list's size), or release the repository with `queue abandon {name} --reason \"<why>\"`. This mail is sent once per moved base."),
+        );
+    }
+    FAIL
+}
+
 fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<String>) -> i32 {
     let (name, pr) = (b.name, &b.pr);
     // A tip already in the new base means the batch merged some other way: no rebuild.
@@ -1899,6 +1918,9 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
             };
             w.git.worktree_remove(b.path, &wt);
             if let Some(h) = new_head {
+                if let Err(e) = super::batch::write_deny_list_variable(w, c, b.path, &h) {
+                    return rebuild_refused(w, c, b, cur, &e);
+                }
                 if w.lib
                     .push(b.path, remote, &format!("+{h}:refs/heads/{}", b.branch))
                 {
@@ -1909,6 +1931,7 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
                         b,
                         &[
                             "head",
+                            DENY_ALERT,
                             "members",
                             "retries",
                             "base",

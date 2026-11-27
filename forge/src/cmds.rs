@@ -2040,6 +2040,22 @@ fn passthrough(r: &GhOut) -> Vec<String> {
     }
 }
 
+// ── variable-set ─────────────────────────────────────────────────────────────────────────
+
+/// Creates or replaces the repository variable `name`; `gh` reads the value from stdin.
+pub fn variable_set(gh: &dyn Gh, repo: &Path, name: &str, value: &[u8]) -> Out {
+    if name.is_empty() || value.is_empty() {
+        warn!("forge: variable-set: name and a value on stdin are required");
+        return fail(vec![]);
+    }
+    let r = gh.call_merged(Some(repo), &["variable", "set", name], Some(value));
+    if !r.ok() {
+        warn!("forge: variable-set {name}: gh exited {}: {}", r.code, r.text().trim());
+        return fail(vec![]);
+    }
+    ok(vec![])
+}
+
 // ── fail-lines ───────────────────────────────────────────────────────────────────────────
 
 pub fn fail_lines(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, run_id: &str, suites: &str) -> Out {

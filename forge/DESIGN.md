@@ -38,7 +38,8 @@ bash used to launch, with the same argv shape. Nothing about *who Spira is on Gi
 
 `forge <verb> <repo-dir> [args...]`, exactly forge.sh's argv shape. `repo-dir` is a path;
 most verbs run `gh` with that as the working directory (a `cd "$repo" && gh ...` in bash
-terms). Body payloads that were `stdin` in bash (`pr-create`) stay stdin.
+terms). Body payloads that were `stdin` in bash (`pr-create`) stay stdin, and so is
+`variable-set`'s value.
 
 | verb | args | prints |
 |---|---|---|
@@ -67,6 +68,7 @@ terms). Body payloads that were `stdin` in bash (`pr-create`) stay stdin.
 | `ami-dispatch` | `<ref> [force]` | triggers the Round AMI workflow on `ref`; `force` sends `-f force=true`, so it builds even when an image carries the recipe; silent |
 | `ami-log` | `<run-id> [<lines>]` | the last lines (default 40) of the run's failed-step log; `?` when unreadable |
 | `fail-lines` | `<run-id> <suites-space-sep>` | `fail-line: <suite>: <text>` |
+| `variable-set` | `<name>`, value on stdin | creates or replaces the repository variable; silent. Exit 1, with `gh`'s own words on stderr, when it was not written or the name or value is empty |
 | `pr-close` | `<pr-number>` | silent |
 | `pr-comment` | `<pr-number> <body>` | silent |
 | `branch-protect` | `<base-branch>` | GitHub's response (stdout+stderr merged, as bash did) |

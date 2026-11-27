@@ -110,7 +110,7 @@ nothing changed), then effects in order.
 | `step <repo>` | any queued | none | the verdict pass in process (DESIGN-verdict.md); the flush pair; under queue.local then `publish <repo>` (its stderr folded into stdout, as `2>&1` did). Exit is the last step's. |
 | `eject <id>` | any | queue lock (non-blocking) | member of the open batch: owner check; `land_mark RED <tip> <reason|ejected>`; then **switch OFF**: `bead_reopen <id> <cause> "" <suites>`; **switch ON**: cause event (§8 D1), the spira-lc walk `Deliver` (only while the row is CERTIFIED) then `Returned{batch-ejected}` (-> REWORK), `release_claim`, spira-lc `eject-member` when the record has `batch_id` (§10); bead comment; survivors `land_mark CERTIFIED`; `forge pr-close`; remove `open`; concierge mail. Not a member but CERTIFIED: `bead_reopen <id> <cause> "" <suites>` (WITHDRAWN), the same spira-lc walk on switch ON, + comment. Otherwise refuse, naming the members. `--dry-run` prints the plan, checks the bead resolves. |
 | `abandon` | any | queue lock | `--reason` required (exit 2). No open batch: refuse. Owner check. spira-lc `abandon-batch` when `batch_id` **and the switch is ON** (§10); cancel branch runs; PR comment + close; members not RED/EJECTED → `land_mark CERTIFIED`; append `reason=`/`actor=` to the record, rename it `closed-pr<n>-<stamp>`; `QUEUE ABANDON` line; `queue.abandoned` event; mail. |
-| `open-batch` | queue | queue lock | refuse if a batch is open. Candidates from `--members`, or ranked CERTIFIED (`queue_sort_rows`) then, ranked after them, SUBMITTED rows marked as certifying nothing; admission (CERTIFIED, or so marked at the candidate tip); assemble in `$SPIRA_RUN/worktree/.open-batch-<repo>-<pid>` with `land_subject` merges; `format_batch`; branch `spira/queue/<stamp>`; pre-flight gate unless `--skip-pregate` or a member certifies nothing at its tip, where the PR's CI is the check (wall 124 → open anyway); push; `pr-create` (body on stdin); open record (naming such members as `provisional=`); **switch ON only**: spira-lc cut → `batch_id`/`version` (§10); members `BATCHED`; clear `queue-stuck-<repo>`; `QUEUE BATCH … source=open-batch`. |
+| `open-batch` | queue | queue lock | refuse if a batch is open. Candidates from `--members`, or ranked CERTIFIED (`queue_sort_rows`) then, ranked after them, SUBMITTED rows marked as certifying nothing; admission (CERTIFIED, or so marked at the candidate tip); assemble in `$SPIRA_RUN/worktree/.open-batch-<repo>-<pid>` with `land_subject` merges; `format_batch`; branch `spira/queue/<stamp>`; pre-flight gate unless `--skip-pregate` or a member certifies nothing at its tip, where the PR's CI is the check (wall 124 → open anyway); **the deny-list variable** (below); push; `pr-create` (body on stdin); open record (naming such members as `provisional=`); **switch ON only**: spira-lc cut → `batch_id`/`version` (§10); members `BATCHED`; clear `queue-stuck-<repo>`; `QUEUE BATCH … source=open-batch`. |
 | `claim` | any | queue lock | `--reason` required (exit 2); open batch required; already concierge-owned without `--force` → refuse. Rewrite record: `owner=concierge`, `pre_claim_owner=<prev>`, `claim_reason=<one line>`. Mail. |
 | `release` | any | queue lock | open batch, owned by concierge, else refuse. `owner=<pre_claim_owner>`, drop claim keys. |
 | `regate` | any | none | `--reason` required (exit 2); `--by` outside the three refuses. No `$SPIRA_RUN/gate-backoff/<branch>`: says so, exit 0. Otherwise remove it, bead comment, `QUEUE REGATE` line, `gate.backoff-cleared` event, each naming the actor and reason; the next landing walk gates the branch. |
@@ -124,6 +124,35 @@ nothing changed), then effects in order.
 
 The czar fence (`SPIRA_RUNE=czar` with `SPIRA_CZAR_CLASS`) runs `czar-fence.sh <class>`
 first on eject, abandon, open-batch, land-local, publish and rollback-local, as before.
+
+#### The deny-list variable
+
+A repository whose CI reads the flip deny list takes it from the repository variable
+`SPIRA_TEST_DENY_LIST`. A repository reads it when a `.yml`/`.yaml` file under `.github/` in the
+batch head holds `vars.SPIRA_TEST_DENY_LIST` on a line that is not a comment; no config names it, so the batch that introduces the
+reader is already served. Before that head is pushed (`open-batch`, and the verdict's rebuild
+of a batch on a moved base) the queue sets the variable to `test-registry deny-list --at <now>`
+through `forge variable-set`. If git cannot say whether the head reads it, the list cannot be
+read, or the forge does not write it, the queue names the cause and pushes nothing:
+`open-batch` leaves no record and no branch, and the rebuild keeps the open batch for the next
+pass, mailing the operator once per moved base with `queue abandon` as the way through. A push that fails after the write leaves the newer snapshot in the variable.
+
+The variable is one value shared by every run of the repository; a run is not pinned to the
+snapshot of its cut. GitHub's documentation does not say when `vars` is resolved, so assume any
+run, queued or re-run, may read the latest value written. For the open batch that is its own:
+a repository has one open batch, `open-batch` refuses while it is open, and only its own
+rebuild writes again, for its new head. The next batch is cut only after the earlier one has
+ended, and `abandon` (so also `--replace`) cancels its runs. A run of an ended batch that is
+still queued (a cancel that failed), or any other run of the repository (another PR, a push to
+its main branch), may see a later snapshot than the one it was started beside: tests disabled
+since are skipped, and tests cleared or expired since run again. The queue reads no verdict
+from an ended batch's run.
+
+Only `queue.forge` batches are served. `queue.local`'s publish PRs do not write the variable,
+so a reader repository in that mode sees whatever was last written, or nothing.
+
+The App token `gh` runs as needs write access to the repository's variables. GitHub limits one
+variable's size (48 KB); a larger list is refused by the forge and so pushes nothing.
 
 ### 2.3 Callers
 

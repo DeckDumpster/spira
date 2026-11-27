@@ -1154,6 +1154,11 @@ fn publish(
             }
         },
     };
+    if let Err(e) = write_deny_list_variable(w, c, path, head) {
+        w.err(format!("queue.sh open-batch: {e} — nothing pushed"));
+        w.git.branch_delete(path, &batch_br);
+        return FAIL;
+    }
     let lc_id = a
         .name
         .map_or_else(|| format!("{name}-{stamp}"), str::to_string);
@@ -1212,6 +1217,36 @@ fn publish(
     } else {
         FAIL
     }
+}
+
+/// What a workflow or action says to read the flip deny list.
+const DENY_LIST_READ: &str = "vars.SPIRA_TEST_DENY_LIST";
+
+/// Whether a YAML file under `.github` at `head` reads the list outside a comment line.
+fn reads_deny_list(w: &World, path: &std::path::Path, head: &str) -> Result<bool, String> {
+    for file in w.git.grep_files(path, head, DENY_LIST_READ, ".github/**/*.y*ml")? {
+        let text = w.git.read_at(path, head, &file)?.unwrap_or_default();
+        if text.lines().any(|l| !l.trim_start().starts_with('#') && l.contains(DENY_LIST_READ)) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Run before any push of a batch head: when `head`'s workflows read the deny list, the
+/// repository variable they read is set to the snapshot as of now. Err: nothing may be pushed.
+/// DESIGN.md "The deny-list variable".
+pub(super) fn write_deny_list_variable(w: &World, c: &super::Ctx, path: &std::path::Path, head: &str) -> Result<(), String> {
+    let name = spira_config::unit_tier::DENY_LIST_ENV;
+    let failed = |e: String| format!("could not write repository variable {name} for {}: {e}", c.r.name);
+    if !reads_deny_list(w, path, head).map_err(failed)? {
+        return Ok(());
+    }
+    let at = w.clock.now();
+    let list = w.scripts.deny_list(at).map_err(failed)?;
+    w.forge.variable_set(&c.s.forge, path, name, &list).map_err(failed)?;
+    w.out(format!("queue.sh: wrote repository variable {name} for {} (deny-list --at {at})", c.r.name));
+    Ok(())
 }
 
 /// The batch PR `batch open` asks the forge for.

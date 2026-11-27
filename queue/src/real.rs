@@ -291,21 +291,18 @@ impl Git for RealGit {
             (_, why) => Err(format!("git merge-base {a} {b}: no merge base {why}")),
         }
     }
-    fn grep_files(&self, repo: &Path, rev: &str, needle: &str, glob: &str) -> Vec<String> {
-        stdout_of(git(repo).args([
-            "grep",
-            "-l",
-            "-F",
-            "-e",
-            needle,
-            rev,
-            "--",
-            &format!(":(glob){glob}"),
-        ]))
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|l| l.strip_prefix(&format!("{rev}:")).map(String::from))
-        .collect()
+    fn grep_files(&self, repo: &Path, rev: &str, needle: &str, glob: &str) -> Result<Vec<String>, String> {
+        let out = git(repo)
+            .args(["grep", "-l", "-F", "-e", needle, rev, "--", &format!(":(glob){glob}")])
+            .output()
+            .map_err(|e| format!("git grep at {rev}: {e}"))?;
+        match out.status.code() {
+            Some(0 | 1) => Ok(String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter_map(|l| l.strip_prefix(&format!("{rev}:")).map(String::from))
+                .collect()),
+            _ => Err(format!("git grep at {rev}: {}", String::from_utf8_lossy(&out.stderr).trim())),
+        }
     }
     fn branch_set(&self, repo: &Path, name: &str, sha: &str, force: bool) -> bool {
         let mut c = git(repo);
@@ -1931,6 +1928,13 @@ impl Forge for RealForge {
         )))
         .ok()
     }
+    fn variable_set(&self, forge: &Path, repo: &Path, name: &str, value: &str) -> Result<(), String> {
+        let r = forge_call(forge, "variable-set", repo, &[name], Some(value.as_bytes()));
+        if r.ok() {
+            return Ok(());
+        }
+        Err(forge_refusal(&r, true))
+    }
     fn pr_state(&self, forge: &Path, repo: &Path, pr: &str) -> Option<String> {
         forge_call(forge, "pr-state", repo, &[pr], None)
             .stdout()
@@ -3151,6 +3155,24 @@ mod tests {
         assert!(git.ancestry(repo, &missing, &base).is_err());
         assert_eq!(git.fork_point(repo, &base, &next), Ok(base.clone()));
         assert!(git.fork_point(repo, &missing, &base).is_err());
+    }
+
+    #[test_id(thmcx0z)]
+    #[test]
+    fn a_grep_under_github_tells_a_match_from_no_match_from_a_git_that_cannot_say() {
+        let dir = testkit::TempDir::new("queue-grep-files");
+        let repo = dir.path();
+        testkit::git(repo, &["init", "-q", "-b", "main"]);
+        std::fs::create_dir_all(repo.join(".github/workflows")).unwrap();
+        std::fs::write(repo.join(".github/workflows/ci.yml"), "v: ${{ vars.WANTED }}\n").unwrap();
+        std::fs::write(repo.join("README"), "vars.ELSEWHERE\n").unwrap();
+        testkit::git(repo, &["add", "."]);
+        testkit::git(repo, &["commit", "-q", "-m", "base"]);
+        let base = testkit::git(repo, &["rev-parse", "HEAD"]);
+        let git = RealGit;
+        assert_eq!(git.grep_files(repo, &base, "vars.WANTED", ".github/**"), Ok(vec![".github/workflows/ci.yml".to_string()]));
+        assert_eq!(git.grep_files(repo, &base, "vars.ELSEWHERE", ".github/**"), Ok(vec![]));
+        assert!(git.grep_files(repo, &"0".repeat(40), "vars.WANTED", ".github/**").is_err());
     }
 
     #[test_id(tu0q60g)]

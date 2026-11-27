@@ -15,6 +15,8 @@ type Canned = (Vec<String>, i32, Vec<u8>);
 struct FakeGh {
     answers: RefCell<Vec<Canned>>,
     calls: RefCell<Vec<Vec<String>>>,
+    /// The stdin of each `call_merged`.
+    inputs: RefCell<Vec<Option<Vec<u8>>>>,
     /// Answers consumed in order for one argv, ahead of `answers`.
     sequence: RefCell<Vec<(Vec<String>, std::collections::VecDeque<String>)>>,
 }
@@ -61,7 +63,8 @@ impl Gh for FakeGh {
             stdout: Vec::new(),
         }
     }
-    fn call_merged(&self, repo: Option<&Path>, args: &[&str], _input: Option<&[u8]>) -> GhOut {
+    fn call_merged(&self, repo: Option<&Path>, args: &[&str], input: Option<&[u8]>) -> GhOut {
+        self.inputs.borrow_mut().push(input.map(<[u8]>::to_vec));
         self.call(repo, args)
     }
 }
@@ -2198,4 +2201,51 @@ fn pr_list_mine_says_none_by_success_and_unreadable_by_exit_one() {
     let garbled = FakeGh::default();
     garbled.on(LIST_MINE, 0, "not json");
     assert_eq!(pr_list_mine(&garbled, repo()).code, 1);
+}
+
+#[test_id(tq6oa7k)]
+#[test]
+fn variable_set_hands_gh_the_value_on_stdin_and_never_in_argv() {
+    let gh = FakeGh::default();
+    gh.on(&["variable", "set", "NAME"], 0, "");
+    let out = variable_set(&gh, repo(), "NAME", b"line one\nline two\n");
+    assert_eq!(out.code, 0);
+    assert_eq!(*gh.calls.borrow(), [vec!["variable", "set", "NAME"]]);
+    assert_eq!(*gh.inputs.borrow(), [Some(b"line one\nline two\n".to_vec())]);
+}
+
+#[test_id(tx8h1w1)]
+#[test]
+fn a_failed_variable_set_exits_non_zero_with_what_gh_said() {
+    let gh = FakeGh::default();
+    gh.on(&["variable", "set", "NAME"], 1, "HTTP 403: Resource not accessible by integration\n");
+    let _ = crate::diag::take();
+    let out = variable_set(&gh, repo(), "NAME", b"v");
+    assert_eq!(out.code, 1);
+    let said = crate::diag::take().join("\n");
+    assert!(said.contains("NAME") && said.contains("HTTP 403"), "{said}");
+}
+
+#[test_id(t9c17z0)]
+#[test]
+fn variable_set_refuses_an_empty_name_or_value_without_calling_gh() {
+    let gh = FakeGh::default();
+    assert_eq!(variable_set(&gh, repo(), "", b"v").code, 1);
+    assert_eq!(variable_set(&gh, repo(), "NAME", b"").code, 1);
+    assert!(gh.calls.borrow().is_empty());
+}
+
+#[test_id(tkmuev8)]
+#[test]
+fn the_verb_table_routes_variable_set_with_its_stdin() {
+    let dir = testkit::TempDir::new("forge-variable-set-dispatch");
+    let mut env = spira_config::process::fixture_metrics_env(dir.path(), "", &[]);
+    env.retain(|(k, _)| matches!(*k, "SPIRA_TOML" | "SPIRA_HOME"));
+    let edits: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, Some(v.as_str()))).collect();
+    let _env = testkit::env(&edits);
+    let gh = FakeGh::default();
+    gh.on(&["variable", "set", "NAME"], 0, "");
+    let out = crate::client::dispatch(&gh, &NoProc, "variable-set", repo(), &["NAME".to_string()], Some(b"v\n"));
+    assert_eq!(out.code, 0, "{:?}", crate::diag::take());
+    assert_eq!(*gh.inputs.borrow(), [Some(b"v\n".to_vec())]);
 }
