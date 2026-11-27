@@ -129,6 +129,8 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("incident.alarms.retry", Store),
     ("incident.probe.observe", Host),
     ("incident.probe.send", Store),
+    ("incident.drain.drain", Store),
+    ("incident.drain.observe", Host),
     ("incident.settle.close", Store),
     ("incident.settle.label", Store),
     ("incident.settle.log", Host),

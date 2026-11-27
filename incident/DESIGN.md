@@ -30,7 +30,7 @@ incident systemd <unit>           file an incident for a failed systemd user uni
 incident file <title> [-|<file>]  file one from an arbitrary payload
 incident alarm <title> [-]        note a detector's condition in the Concierge inbox: one line per
                                   reference, one reminder per day, never a bead
-incident drain                    file everything the spool is holding
+incident drain                    one pass over the spool, one filing per reference
 incident list                     open incidents
 ```
 
@@ -46,10 +46,27 @@ falls through to bd's own auto-discovery), `SPIRA_RUN`, `SPIRA_SPOOL`, `SPIRA_IN
 
 Stdout contract unchanged: `systemd`/`file`/`drain` print the filed/bumped bead id on the
 last non-empty line (callers already grep for this — batcher-cut, sentinel, landing-pass);
-`drain` also prints `drained N, still spooled M`, always both numbers.
+`drain` also prints `drained N, still spooled M`, always both numbers: N counts every entry the
+pass settled, M every entry it left, held back or stuck.
 
 Exit codes unchanged: `0` filed or deduped; `1` the database is unreachable, the guards
-refused the filing, or (for `drain`) at least one entry is still stuck.
+refused the filing, or (for `drain`) at least one entry is still stuck (a reference only held
+back by the batch is not).
+
+## Draining
+
+`drain_spool` is the one drain: the CLI, `persona.ops` and the `incident.drain` task (every
+`SPIRA_RUNTIME_INCIDENT_DRAIN_SECS`) all call it. It groups entries by bounded reference, oldest
+group first, and files each of the first `SPIRA_INCIDENT_DRAIN_BATCH` groups once, from its newest
+event, whose body then opens with the group's count and stamp range. That filing settles the whole
+group: an outage's backlog is one item per cause, not a recurrence per event. A failed group keeps
+every entry. Every filer looks for the entry, files it and removes what the filing settles under
+one hold of the incident lock, so concurrent drains file it once. Entries are renamed into place
+(`spool::write_entry`), so a drain never reads a half-written one; a partial older than five
+minutes lost its writer and is drained as it stands. A scheduler halt holds the task's drain, a
+store write, until the resume. The task notes an entry stuck for more than two cadences as
+`incident:spool-stuck` through `alarm::note`: one inbox line a day, with no store needed. A
+lane-refused entry stays by design and so is such a condition.
 
 ## Retired (rule one: retire rather than port)
 
