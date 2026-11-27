@@ -265,7 +265,6 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("sentinel-call.preempt", Unit),
     ("sentinel-call.unit_start", Unit),
     ("sentinel-pass.ask", Store),
-    ("sentinel-pass.content_close", Store),
     ("sentinel-pass.content_label", Store),
     ("sentinel-pass.content_note", Store),
     ("sentinel-pass.incident_event", Store),

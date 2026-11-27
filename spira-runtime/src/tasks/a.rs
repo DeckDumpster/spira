@@ -58,7 +58,6 @@ pub static TASKS: &[Task] = &[
             (sentinel_pass::LC_CLOSE, |e, _, s| sentinel_pass::lc_close(e, s)),
             (sentinel_pass::CONTENT_LABEL, |e, _, s| sentinel_pass::content_label(e, s)),
             (sentinel_pass::CONTENT_NOTE, |e, _, s| sentinel_pass::content_note(e, s)),
-            (sentinel_pass::CONTENT_CLOSE, |e, _, s| sentinel_pass::content_close(e, s)),
             (sentinel_pass::RECOMPUTE_BLOCKED, |_, _, s| sentinel_pass::recompute_blocked(s)),
             (sentinel_pass::STOP_HOLDER, |e, _, s| sentinel_pass::stop_holder(e, s)),
             (sentinel_pass::STOP_DOOMED, |e, _, s| sentinel_pass::stop_doomed(e, s)),
