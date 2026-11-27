@@ -1,7 +1,7 @@
 # Keys this release adds to the one source (release/src/config_delta.rs), applied at activation.
 # A change adds its own file under config-delta.d/ rather than editing this one; the release tool folds them in.
-removed_tasks = ["watch.perf_happy", "watch.spill_key", "watch.statute_audit", "sweep.repo_contract", "reconcile.continuity", "cert.full", "cert.sample", "watch.warm_full", "sweep.nix_gc", "cr-comments"]
-removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_label", "spira.round_marker_max_age", "spira.liveness_model", "spira.tier_budget_window", "spira.attribute_maxpar", "spira.batch_bins_ttl", "spira.gate_select_cap", "spira.preflight_suite_max_secs", "spira.queue_repro_ci_maxsec", "spira.queue_repro_ci_pollsec", "spira.queue_stuck_age", "spira.reconciler_label", "spira.round_vm_provider", "spira.suites_budget", "spira.suite_times_log", "spira.tier_allowlist", "spira.tier_area_allowlist", "spira.reviewer_diff_limit", "spira.reviewer_model", "spira.reviewer_timeout", "spira.reviewer_verdicts", "spira.mirror", "spira.qa_depth", "spira.self_test", "spira.prefix_map", "spira.check5_max_resolve", "spira.delivers_check_timeout", "spira.cert_prices", "spira.dolt_maintenance_units", "spira.testdb_data", "spira.testdb_port", "spira.lc_testdb_data", "spira.lc_testdb_port", "spira.release_rust_toolchain", "spira.sift_mend_hold_secs", "spira.maechen_label", "spira.maechen_landing_interval", "spira.maechen_max_beads", "spira.maechen_max_gap_seconds", "spira.maechen_remedy_label", "spira.auron_restarts", "spira.auron_restart_window", "spira.chamber", "spira.chamber_overlay", "spira.fayths", "spira.lanes_reserve", "spira.unit_test_slow_secs", "spira.unit_test_terminate_after", "spira.solo_max_skips", "spira.throughput_floor_per_day", "spira.throughput_restop_after", "spira.lc_live_check_secs", "spira.runtime_repo_events_secs", "spira.lc_snapshot", "spira.lc_snapshot_secs", "spira.round_vm_ec2_key_warn_days", "spira.round_vm_ec2_launch_window", "spira.round_vm_ec2_probe_deadline", "spira.round_vm_spill_io_full_avg60", "spira.round_vm_host_io_full_avg60", "spira.round_vm_host_cpu_some_avg60", "spira.compile_par", "spira.compile_stall_mins", "spira.gh_ask_grace_secs", "spira.round_fault_backoff_secs", "spira.round_fault_retries", "spira.round_runner_slots_ec2", "spira.gate_build_lease_wait_secs", "spira.mender_max", "spira.lanes", "spira.lanes_max_live", "spira.suite_state_file", "spira.quarantine_max_age", "spira.runtime_sweep_repo_contract_calendar", "spira.runtime_sweep_repo_contract_jitter_secs", "spira.runtime_reconcile_continuity_secs", "spira.dwarf_warm_base", "spira.dwarf_warm_cap_mib", "spira.runtime_sweep_nix_gc_calendar", "spira.runtime_sweep_nix_gc_jitter_secs", "spira.nix_env_link", "spira.flake_quarantine_at", "spira.flake_window", "spira.reclaim_globs", "spira.reclaim_require", "spira.reclaim_lease_dir", "spira.reclaim_idle_days", "spira.reclaim_min_free_gib", "spira.reclaim_target_free_gib", "spira.reclaim_podman", "spira.reclaim_podman_dir", "spira.reclaim_podman_cap_gib", "spira.self_window", "spira.cr_oversize_pages", "spira.lc_slow_verb_deadlines", "spira.cr_repo_owner", "spira.cr_repo_name", "spira.runtime_cr_comments_hot_secs", "spira.runtime_cr_comments_cold_secs", "spira.runtime_cr_comments_window_secs", "spira.cr_page_lines", "spira.gate_suites", "spira.suites_priority", "spira.suites_stale", "spira.suites_state", "spira.certify_suites", "spira.certify_always_covers", "spira.bdi_capped", "spira.bdi_max_ratio", "spira.bdi_sysfs"] # ffx-ok
+removed_tasks = ["watch.perf_happy", "watch.spill_key", "watch.statute_audit", "sweep.repo_contract", "reconcile.continuity", "cert.full", "cert.sample", "watch.warm_full", "sweep.nix_gc", "cr-comments", "inbox-keeper", "asks.ideas"]
+removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_label", "spira.round_marker_max_age", "spira.liveness_model", "spira.tier_budget_window", "spira.attribute_maxpar", "spira.batch_bins_ttl", "spira.gate_select_cap", "spira.preflight_suite_max_secs", "spira.queue_repro_ci_maxsec", "spira.queue_repro_ci_pollsec", "spira.queue_stuck_age", "spira.reconciler_label", "spira.round_vm_provider", "spira.suites_budget", "spira.suite_times_log", "spira.tier_allowlist", "spira.tier_area_allowlist", "spira.reviewer_diff_limit", "spira.reviewer_model", "spira.reviewer_timeout", "spira.reviewer_verdicts", "spira.mirror", "spira.qa_depth", "spira.self_test", "spira.prefix_map", "spira.check5_max_resolve", "spira.delivers_check_timeout", "spira.cert_prices", "spira.dolt_maintenance_units", "spira.testdb_data", "spira.testdb_port", "spira.lc_testdb_data", "spira.lc_testdb_port", "spira.release_rust_toolchain", "spira.sift_mend_hold_secs", "spira.maechen_label", "spira.maechen_landing_interval", "spira.maechen_max_beads", "spira.maechen_max_gap_seconds", "spira.maechen_remedy_label", "spira.auron_restarts", "spira.auron_restart_window", "spira.chamber", "spira.chamber_overlay", "spira.fayths", "spira.lanes_reserve", "spira.unit_test_slow_secs", "spira.unit_test_terminate_after", "spira.solo_max_skips", "spira.throughput_floor_per_day", "spira.throughput_restop_after", "spira.lc_live_check_secs", "spira.runtime_repo_events_secs", "spira.lc_snapshot", "spira.lc_snapshot_secs", "spira.round_vm_ec2_key_warn_days", "spira.round_vm_ec2_launch_window", "spira.round_vm_ec2_probe_deadline", "spira.round_vm_spill_io_full_avg60", "spira.round_vm_host_io_full_avg60", "spira.round_vm_host_cpu_some_avg60", "spira.compile_par", "spira.compile_stall_mins", "spira.gh_ask_grace_secs", "spira.round_fault_backoff_secs", "spira.round_fault_retries", "spira.round_runner_slots_ec2", "spira.gate_build_lease_wait_secs", "spira.mender_max", "spira.lanes", "spira.lanes_max_live", "spira.suite_state_file", "spira.quarantine_max_age", "spira.runtime_sweep_repo_contract_calendar", "spira.runtime_sweep_repo_contract_jitter_secs", "spira.runtime_reconcile_continuity_secs", "spira.dwarf_warm_base", "spira.dwarf_warm_cap_mib", "spira.runtime_sweep_nix_gc_calendar", "spira.runtime_sweep_nix_gc_jitter_secs", "spira.nix_env_link", "spira.flake_quarantine_at", "spira.flake_window", "spira.reclaim_globs", "spira.reclaim_require", "spira.reclaim_lease_dir", "spira.reclaim_idle_days", "spira.reclaim_min_free_gib", "spira.reclaim_target_free_gib", "spira.reclaim_podman", "spira.reclaim_podman_dir", "spira.reclaim_podman_cap_gib", "spira.self_window", "spira.cr_oversize_pages", "spira.lc_slow_verb_deadlines", "spira.cr_repo_owner", "spira.cr_repo_name", "spira.runtime_cr_comments_hot_secs", "spira.runtime_cr_comments_cold_secs", "spira.runtime_cr_comments_window_secs", "spira.cr_page_lines", "spira.gate_suites", "spira.suites_priority", "spira.suites_stale", "spira.suites_state", "spira.certify_suites", "spira.certify_always_covers", "spira.bdi_capped", "spira.bdi_max_ratio", "spira.bdi_sysfs", "spira.bd_pin", "spira.runtime_inbox_keeper_secs", "spira.concierge_inbox_stall", "spira.concierge_inbox_backoff", "spira.concierge_wake_tries", "spira.bd", "spira.bd_tag", "spira.runtime_asks_ideas_secs", "spira.ideas_idle_secs", "spira.ideas_wake_from", "spira.ideas_wake_until", "spira.ideas_tz", "spira.ideas_min_gap_secs"] # ffx-ok
 [spira]
 heimdall_restarts = "5"
 heimdall_restart_window = "3600"
@@ -214,7 +214,6 @@ runtime_log_debug = 0
 runtime_log_cap_mb = 32
 runtime_log_keep = 4
 runtime_round_duty_secs = 15
-runtime_inbox_keeper_secs = 60
 sccache_dav_artifact_days = 7
 round_vm_resume_url = ""
 round_vm_resume_credentials = ""
@@ -280,11 +279,6 @@ heimdall_pass_stale = 600
 heimdall_refresh = 3600
 heimdall_starve_passes = 5
 heimdall_strands = ""
-ideas_idle_secs = 1800
-ideas_min_gap_secs = 86400
-ideas_tz = "America/Los_Angeles"
-ideas_wake_from = 7
-ideas_wake_until = 22
 incident_log = ""
 kit_persona = "builder"
 mail_bin = ""
@@ -302,7 +296,6 @@ reaplog = ""
 reclaim_cache_cap_gib = 40
 reclaim_cache_dir = ""
 release = ""
-runtime_asks_ideas_secs = 300
 runtime_asks_moot_secs = 900
 runtime_asks_verify_secs = 900
 runtime_cockpit_tier_5s_secs = 5
@@ -422,9 +415,8 @@ margin_url = ""
 margin_token_file = ""
 landing_log_cap_mb = 32
 landing_log_keep = 8
-concierge_wake_tries = 5
 cr_size_unit_lines = 60
-heimdall_still_secs = 180
+heimdall_still_secs = 900
 transitions_pr_bound = 900
 metrics_flush_minutes = 60
 otel_day_max_mb = 2048
@@ -434,6 +426,13 @@ dolt_unit = "dolt-beads.service"
 gate_target_cap_mib = 81920
 integration_test_deadline_secs = 60
 integration_test_deadline_periods = 2
+session_linger_secs = 300
+pilgrim_mcp_servers = ""
+sub_control_dir = "sub"
+broker_socket = "broker.sock"
+pressure_cpu_avg300 = "60.0"
+pressure_io_avg300 = "10.0"
+dwarf_build_folders_per_repo = 7
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok
