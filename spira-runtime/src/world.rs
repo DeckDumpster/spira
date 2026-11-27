@@ -104,17 +104,27 @@ const DEPLOY_DECLARATION: &str = ".spira/deploy.toml";
 
 fn declared_deploy(repo: &Path, sha: &str, blob: &Blob) -> Option<String> {
     let table: toml::Table = blob(repo, &format!("{sha}:{DEPLOY_DECLARATION}"))?.parse().ok()?;
-    table.get("after_landing")?.as_str().map(str::to_string)
+    table.get("after_landing")?.as_str().filter(|s| !s.trim().is_empty()).map(str::to_string)
+}
+
+/// Where a `queue.local` repo's landings are published, and that remote's commit as the checkout
+/// holds it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Published {
+    remote: String,
+    tip: Option<String>,
 }
 
 /// The mapped checkouts the forge can answer for, and every `queue.local` one whether or not it can.
-fn pr_targets(rows: Vec<MapRow>, home_repo: &str, tip_of: &dyn Fn(&MapRow) -> Option<String>) -> Vec<PrTarget> {
+fn pr_targets(rows: Vec<MapRow>, home_repo: &str, published: &dyn Fn(&MapRow) -> Option<Published>) -> Vec<PrTarget> {
     rows.into_iter()
         .filter(|r| Path::new(&r.path).join(".git").is_dir())
         .filter_map(|r| {
             let path = PathBuf::from(&r.path);
             let (local, home) = (r.land == "queue.local", r.name == home_repo);
-            let (slug, origin) = match local.then(|| forge::origin_url(&path)).flatten() {
+            let published = (local && !home).then(|| published(&r)).flatten();
+            let url = published.as_ref().and_then(|p| forge::remote_url(&path, &p.remote)).or_else(|| forge::origin_url(&path));
+            let (slug, origin) = match url.filter(|_| local) {
                 Some(url) => match forge::github_slug_of(&url) {
                     Some(slug) => (Some(slug), String::new()),
                     None => (None, forge::without_login(&url)),
@@ -124,16 +134,27 @@ fn pr_targets(rows: Vec<MapRow>, home_repo: &str, tip_of: &dyn Fn(&MapRow) -> Op
             if slug.is_none() && (home || origin.is_empty()) {
                 return None;
             }
-            let tip = (local && !home).then(|| tip_of(&r)).flatten();
+            let tip = published.and_then(|p| p.tip);
             Some(PrTarget { name: r.name, slug, origin, path, land: r.land, base: r.base, tip, home })
         })
         .collect()
 }
 
-/// The publish ref's commit as the checkout holds it; nothing is fetched.
-fn forge_tip(reg: &spira_config::repos::Registry, git: &Path, r: &MapRow) -> Option<String> {
-    let (remote, branch) = spira_config::repos::publish_forge(reg, &r.name, &BTreeMap::new())?;
-    crate::unpublished::rev(git, Path::new(&r.path), &format!("refs/remotes/{remote}/{branch}")).ok()
+/// `None` for a repo that publishes nowhere. Nothing is fetched; a ref that cannot be read is
+/// reported, because its landings get no verdict until it can.
+fn published_to(reg: &spira_config::repos::Registry, git: &Path, r: &MapRow) -> Option<Published> {
+    let env = BTreeMap::new();
+    if spira_config::repos::publishes_nowhere(reg, &r.name, &env) {
+        return None;
+    }
+    let Some((remote, branch)) = spira_config::repos::publish_forge(reg, &r.name, &env) else {
+        eprintln!("pr-notify: {}: no publish target resolves, so no forge tip is read", r.name);
+        return None;
+    };
+    let tip = crate::unpublished::rev(git, Path::new(&r.path), &format!("refs/remotes/{remote}/{branch}"))
+        .inspect_err(|e| eprintln!("pr-notify: {}: no forge tip is read: {e}", r.name))
+        .ok();
+    Some(Published { remote, tip })
 }
 
 /// A repo absent from the map has no recorded PR; one mapped to `Err` could not be read.
@@ -558,7 +579,8 @@ impl World {
             Some(bin) => r.with_git(bin.clone()),
             None => r,
         });
-        let targets = pr_targets(rows, &self.home_repo, &|r| reg.as_ref().and_then(|reg| forge_tip(reg, git, r)));
+        let home = reg.as_ref().map_or(self.home_repo.as_str(), |reg| reg.home_repo());
+        let targets = pr_targets(rows, home, &|r| reg.as_ref().and_then(|reg| published_to(reg, git, r)));
         let records = self.recorded_prs(&targets);
         pr_snapshot_from(&records, &targets, forge, &carry, &|repo, spec| git_ok_with(git, repo, &["cat-file", "blob", spec]).ok().map(|out| String::from_utf8_lossy(&out).into_owned()))
     }
@@ -1743,6 +1765,10 @@ mod pr_snapshot_tests {
         MapRow { name: name.into(), path: dir.display().to_string(), land: "queue.local".into(), base: "local/main".into() }
     }
 
+    fn published(remote: &str, tip: Option<&str>) -> Option<Published> {
+        Some(Published { remote: remote.into(), tip: tip.map(str::to_string) })
+    }
+
     fn at_tip(name: &str, tip: &str) -> Carry {
         Carry { repos: BTreeMap::from([(name.to_string(), RepoCarry { tip: tip.into(), ..Default::default() })]) }
     }
@@ -1755,7 +1781,7 @@ mod pr_snapshot_tests {
     #[test]
     fn a_repo_whose_origin_is_not_github_is_not_live_and_quotes_its_declared_deploy() {
         let tmp = testkit::TempDir::new("pr-gitea");
-        let targets = pr_targets(vec![checkout(tmp.path(), "pipeline", GITEA)], "spira", &|_| Some(NEW.into()));
+        let targets = pr_targets(vec![checkout(tmp.path(), "pipeline", GITEA)], "spira", &|_| published("origin", Some(NEW)));
         let (api, seen) = stub(vec![]);
         let carry = at_tip("pipeline", OLD);
         let declared = "on the host, install.sh --pipeline builds it; ## probe $(x)";
@@ -1783,8 +1809,39 @@ mod pr_snapshot_tests {
     fn a_queue_local_repo_on_github_is_asked_by_its_slug() {
         let tmp = testkit::TempDir::new("pr-github");
         let rows = vec![checkout(tmp.path(), "cubby", "git@github.com:acme/cubby.git")];
-        let targets = pr_targets(rows, "spira", &|_| Some(NEW.into()));
+        let targets = pr_targets(rows, "spira", &|_| published("origin", Some(NEW)));
         assert_eq!((targets[0].slug.as_deref(), targets[0].tip.as_deref()), (Some("acme/cubby"), Some(NEW)));
+    }
+
+    #[test_id(toz2tsl)]
+    #[test]
+    fn the_publish_remote_not_origin_says_which_repository_is_observed() {
+        let tmp = testkit::TempDir::new("pr-two-remotes");
+        let row = checkout(tmp.path(), "pipeline", "git@github.com:acme/mirror.git");
+        let config = Path::new(&row.path).join(".git/config");
+        fs::write(&config, format!("{}[remote \"prod\"]\n\turl = {GITEA}\n", fs::read_to_string(&config).unwrap())).unwrap();
+        let targets = pr_targets(vec![row], "spira", &|_| published("prod", Some(NEW)));
+        assert_eq!((targets[0].slug.as_deref(), targets[0].origin.as_str()), (None, GITEA));
+    }
+
+    #[test_id(tmdzn8z)]
+    #[test]
+    fn the_forge_tip_is_the_configured_publish_ref_and_an_unread_one_is_no_tip() {
+        let tmp = testkit::TempDir::new("pr-tip");
+        let row = checkout(tmp.path(), "pipeline", GITEA);
+        let git_dir = Path::new(&row.path).join(".git");
+        for (name, sha) in [("refs/heads/local/main", "a"), ("refs/remotes/prod/trunk", "b")] {
+            fs::create_dir_all(git_dir.join(name).parent().unwrap()).unwrap();
+            fs::write(git_dir.join(name), format!("{}\n", sha.repeat(40))).unwrap();
+        }
+        let map = format!("pipeline|{}|queue.local|local/main||\n", row.path);
+        let reading = |branch: &str| {
+            let section = spira_config::PublishSection { remote: Some("prod".into()), branch: Some(branch.into()), ..Default::default() };
+            let reg = spira_config::repos::Registry::new(Some(&map), &BTreeMap::new(), tmp.path()).with_publish(BTreeMap::from([("pipeline".to_string(), section)]));
+            published_to(&reg, &tmp.path().join("no-such-git"), &row)
+        };
+        assert_eq!(reading("trunk"), published("prod", Some(&"b".repeat(40))));
+        assert_eq!(reading("absent"), published("prod", None));
     }
 
     #[test_id(tolpjwq)]
@@ -1792,7 +1849,7 @@ mod pr_snapshot_tests {
     fn the_home_repo_gets_no_deploy_verdict() {
         let tmp = testkit::TempDir::new("pr-home");
         let rows = vec![checkout(tmp.path(), "spira", "git@github.com:acme/spira.git")];
-        let targets = pr_targets(rows, "spira", &|_| Some(NEW.into()));
+        let targets = pr_targets(rows, "spira", &|_| published("origin", Some(NEW)));
         let (api, seen) = stub(vec![]);
         let mut carry = at_tip("spira", OLD);
         carry.repos.get_mut("spira").unwrap().deploys.push(Deploy { sha: OLD.into(), n: 7, at: 1000, ..Default::default() });
@@ -1802,7 +1859,7 @@ mod pr_snapshot_tests {
         assert_eq!((said, waiting.repos["spira"].deploys.len()), (Said::default(), 1), "the PR's merged topic is carried as before");
         let (after, said) = judge(&waiting, &out, 5000);
         assert_eq!((said, after.repos["spira"].deploys.len()), (Said::default(), 0));
-        let gitea = pr_targets(vec![checkout(tmp.path(), "spira", GITEA)], "spira", &|_| Some(NEW.into()));
+        let gitea = pr_targets(vec![checkout(tmp.path(), "spira", GITEA)], "spira", &|_| published("origin", Some(NEW)));
         assert!(gitea.is_empty());
     }
 

@@ -282,6 +282,12 @@ fn merged(repo: &str, n: u64, title: &str, f: &Final, now: u64, rc: &mut RepoCar
     }
 }
 
+/// Whether every PR that could have moved the tip is accounted for. A tip judged ahead of its
+/// merge would leave the verdict without its PR.
+fn prs_settled(obs: &RepoObs, rc: &RepoCarry) -> bool {
+    obs.origin.is_some() || obs.open.as_ref().is_some_and(|open| rc.prs.keys().all(|n| open.iter().any(|p| p.number == *n)))
+}
+
 /// Queues the deploy of a forge tip no merged PR brought: a direct push or a hand landing.
 fn follow_tip(obs: &RepoObs, now: u64, rc: &mut RepoCarry) {
     let Some(tip) = &obs.tip else { return };
@@ -450,7 +456,9 @@ pub fn decide(cfg: &PrNotify, carry: &Carry, snap: &Snapshot, now: u64) -> (Carr
         if let Some(open) = &obs.open {
             transitions(repo, open, obs, now, &mut rc, &mut say);
         }
-        follow_tip(obs, now, &mut rc);
+        if prs_settled(obs, &rc) {
+            follow_tip(obs, now, &mut rc);
+        }
         deploys(repo, obs, now, cfg.deploy_giveup_secs, &mut rc, &mut say);
         if let Some(found) = &obs.strays {
             for b in found.iter().filter(|b| !rc.strays.contains(b)) {
@@ -704,22 +712,34 @@ mod tests {
         gone
     }
 
-    #[test_id(tykk8i6)]
+    #[test_id(twqkd50)]
     #[test]
-    fn a_merge_seen_after_its_tips_verdict_is_not_judged_again() {
+    fn a_tip_that_arrives_after_its_merges_verdict_is_not_judged_again() {
         let (c, _) = decide(&cfg(), &Carry::default(), &at_tip(OLD, open(vec![pr(7, "green", "")])), 1000);
-        let (c, _) = decide(&cfg(), &c, &at_tip(NEW, RepoObs::default()), 1090);
-        let (c, say) = decide(&cfg(), &c, &at_tip(NEW, RepoObs { runs: answered(NEW, completed("success", 1)).runs, ..RepoObs::default() }), 1180);
+        let (c, _) = decide(&cfg(), &c, &at_tip(OLD, merged_at(NEW)), 1090);
+        let (c, say) = decide(&cfg(), &c, &at_tip(OLD, answered(NEW, completed("success", 1))), 1180);
         assert_eq!(say.notes.len(), 1);
-        let (c, say) = decide(&cfg(), &c, &at_tip(NEW, merged_at(NEW)), 1270);
-        assert_eq!((say.notes.len(), c.repos["r"].deploys.len()), (1, 0), "only the MERGED note");
+        let (c, say) = decide(&cfg(), &c, &at_tip(NEW, open(vec![])), 1270);
+        assert_eq!((say, c.repos["r"].deploys.len()), (Said::default(), 0));
+    }
+
+    #[test_id(tplcwkg)]
+    #[test]
+    fn a_tip_waits_while_a_pr_that_may_have_moved_it_is_unaccounted_for() {
+        let (c, _) = decide(&cfg(), &Carry::default(), &at_tip(OLD, open(vec![pr(7, "green", "")])), 1000);
+        for unsettled in [RepoObs::default(), open(vec![])] {
+            let (held, _) = decide(&cfg(), &c, &at_tip(NEW, unsettled), 1090);
+            assert_eq!((held.repos["r"].tip.as_str(), held.repos["r"].deploys.len()), (OLD, 0));
+        }
+        let (c, _) = decide(&cfg(), &c, &at_tip(NEW, merged_at(NEW)), 1180);
+        assert_eq!(c.repos["r"].deploys.iter().map(|d| d.n).collect::<Vec<_>>(), [7]);
     }
 
     #[test_id(t039pa0)]
     #[test]
     fn a_merge_seen_while_its_tips_deploy_waits_gives_it_the_pr() {
         let (c, _) = decide(&cfg(), &Carry::default(), &at_tip(OLD, open(vec![pr(7, "green", "")])), 1000);
-        let (c, _) = decide(&cfg(), &c, &at_tip(NEW, RepoObs::default()), 1090);
+        let (c, _) = decide(&cfg(), &c, &at_tip(NEW, open(vec![pr(7, "green", "")])), 1090);
         let (c, _) = decide(&cfg(), &c, &at_tip(NEW, merged_at(NEW)), 1180);
         assert_eq!(c.repos["r"].deploys.iter().map(|d| (d.n, d.at)).collect::<Vec<_>>(), [(7, 1090)]);
     }

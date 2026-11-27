@@ -65,6 +65,11 @@ pub fn origin_url(repo_dir: &Path) -> Option<String> {
     Some(url.clone())
 }
 
+/// The URL of the named remote.
+pub fn remote_url(repo_dir: &Path, remote: &str) -> Option<String> {
+    remotes(repo_dir).into_iter().find(|(n, _)| n == remote).map(|(_, url)| url)
+}
+
 /// `owner/repo` of [`origin_url`], on whatever host it is.
 pub fn slug(repo_dir: &Path) -> Option<String> {
     slug_of(&origin_url(repo_dir)?)
@@ -72,7 +77,7 @@ pub fn slug(repo_dir: &Path) -> Option<String> {
 
 /// `owner/repo` of a URL, only when it is on github.com.
 pub fn github_slug_of(url: &str) -> Option<String> {
-    host_of(url).eq_ignore_ascii_case("github.com").then(|| slug_of(url)).flatten()
+    ["github.com", "ssh.github.com"].iter().any(|h| host_of(url).eq_ignore_ascii_case(h)).then(|| slug_of(url)).flatten()
 }
 
 /// `url` fit to show a reader: a `scheme://` URL loses its user and password.
@@ -84,8 +89,7 @@ pub fn without_login(url: &str) -> String {
 
 /// `owner/repo` of the named remote, only when that remote is on github.com.
 pub fn github_slug(repo_dir: &Path, remote: &str) -> Option<String> {
-    let url = remotes(repo_dir).into_iter().find(|(n, _)| n == remote)?.1;
-    github_slug_of(&url)
+    github_slug_of(&remote_url(repo_dir, remote)?)
 }
 
 fn host_of(url: &str) -> &str {
@@ -422,6 +426,7 @@ pub(crate) mod tests {
             ("https://github.com/acme/widgets.git", true),
                         ("https://USERINFO/github.com/acme/widgets", true),
             ("ssh://git@github.com:22/acme/widgets.git", true),
+            ("ssh://git@ssh.github.com:443/acme/widgets.git", true),
             ("git@github.com:acme/widgets.git", true),
             ("git@gitea.example:acme/widgets.git", false),
             ("https://gitea.example/github.com/widgets.git", false),
