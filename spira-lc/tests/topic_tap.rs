@@ -10,7 +10,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::{json, Value};
 use state_store_sqlite::{Options, SqliteBackend};
@@ -117,16 +117,20 @@ impl Server {
         serde_json::from_str(&out).unwrap()
     }
 
-    /// Reads the list until `enough` holds of it: the tap writes at most once per flush.
+    /// The list once `enough` holds of it, read again at each write the store's own `watch`
+    /// reports under `topics/`.
     fn listed(&self, enough: impl Fn(&[Value]) -> bool) -> Vec<Value> {
-        let deadline = Instant::now() + FAILSAFE;
+        let mut from = 0;
         loop {
             let rows = self.topics(&[])["topics"].as_array().unwrap().clone();
             if enough(&rows) {
                 return rows;
             }
-            assert!(Instant::now() < deadline, "the list never held what was waited for: {rows:?}");
-            std::thread::sleep(Duration::from_millis(50));
+            let wait = FAILSAFE.as_millis().to_string();
+            let (code, out) = self.call(&["watch", "topics/", "--from-rev", &from.to_string(), "--wait-ms", &wait]);
+            assert_eq!(code, 0, "{out}");
+            let woke: Value = serde_json::from_str(&out).unwrap();
+            from = woke["through"].as_u64().unwrap_or_else(|| panic!("no write brought what was waited for ({out}): {rows:?}"));
         }
     }
 }
