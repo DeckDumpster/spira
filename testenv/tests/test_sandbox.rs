@@ -441,6 +441,23 @@ fn a_held_run_keeps_the_identity_an_enclosing_sandbox_handed_in_when_run_is_unwr
     assert!(String::from_utf8_lossy(&out.stdout).lines().any(|l| l == seen), "{}", String::from_utf8_lossy(&out.stdout));
 }
 
+/// A test already runs inside the sandbox, so the runner it spawns finds itself held; the shared
+/// mount namespace proves it ran in place. An outer bwrap cannot nest everywhere.
+#[test_id(tbn3djw)]
+#[test]
+fn a_held_run_sees_an_empty_rustc_wrapper_whatever_wrapper_its_caller_names() {
+    let out = std::process::Command::new(workspace().join("tools/test-sandbox/runner"))
+        .args(["--around", system_paths::BIN_SH, "-c", "readlink /proc/self/ns/mnt && env"]) // not a path: a script
+        .env("RUSTC_WRAPPER", "sccache")
+        .output()
+        .expect("the runner spawns");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let env = String::from_utf8_lossy(&out.stdout);
+    let own = fs::read_link(Path::new(system_paths::PROC_SELF).join("ns/mnt")).unwrap();
+    assert_eq!(env.lines().next(), own.to_str(), "the runner made a new sandbox instead of running held: {env}");
+    assert!(env.lines().any(|l| l == "RUSTC_WRAPPER="), "{env}");
+}
+
 fn conf_default(key: &str) -> u64 {
     let text = fs::read_to_string(workspace().join("spira/conf.d.defaults.generated.sh")).unwrap();
     let marker = format!("${{{key}:=");
