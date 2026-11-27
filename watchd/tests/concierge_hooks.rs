@@ -197,9 +197,6 @@ for event, groups in json.load(sys.stdin)["hooks"].items():
 // covers: UC-operator-channel-49
 #[test_id(txibqk0)]
 #[test]
-fn the_concierge_session_is_given_no_stop_hook_beside_its_failed_turn_and_bash_hooks() {
-    let hooks = session_hooks();
-    let stop: Vec<&String> = hooks.iter().filter(|h| h.starts_with("Stop ")).collect();
-    assert!(stop.is_empty(), "{stop:?}");
-    assert_eq!(hooks, ["PreToolUse concierge-raw-pr-fence.sh", "PreToolUse statute-check-hook.sh", "StopFailure concierge-turn-failed.sh"]);
+fn the_concierge_session_is_given_only_its_two_bash_hooks() {
+    assert_eq!(session_hooks(), ["PreToolUse concierge-raw-pr-fence.sh", "PreToolUse statute-check-hook.sh"]);
 }

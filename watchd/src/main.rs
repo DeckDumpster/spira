@@ -39,7 +39,16 @@ fn main() {
     let sub = args.get(1).map(|s| s.as_str()).unwrap_or("status");
     let rest = &args[args.len().min(2)..];
 
-    let code = match sub {
+    let code = dispatch(sub, rest).unwrap_or_else(|| {
+        eprintln!("{}", usage());
+        2
+    });
+    std::process::exit(code);
+}
+
+/// `None` is an unknown verb.
+fn dispatch(sub: &str, rest: &[String]) -> Option<i32> {
+    Some(match sub {
         "manifest" => {
             let ctx = load_context();
             let rows = need_rows(&ctx);
@@ -257,12 +266,8 @@ fn main() {
             let ctx = load_context();
             commands::cmd_health_ids(&ctx, file)
         }
-        _ => {
-            eprintln!("{}", usage());
-            2
-        }
-    };
-    std::process::exit(code);
+        _ => return None,
+    })
 }
 
 struct ReaderArgs {
@@ -372,6 +377,15 @@ mod tests {
     #[test]
     fn from_start_with_peek_is_refused() {
         assert!(parse_reader_args(&a(&["--from-start"]), true).is_err());
+    }
+
+    #[test_id(tke4dzx)]
+    #[test]
+    fn the_retired_verbs_are_refused_as_unknown() {
+        assert_eq!(dispatch("keys", &[]), Some(0), "control: a known verb is dispatched");
+        for verb in ["next", "undeliver", "page"] {
+            assert_eq!(dispatch(verb, &[]), None, "{verb}");
+        }
     }
 
     #[test_id(t9f73hp)]
