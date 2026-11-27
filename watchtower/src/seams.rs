@@ -1,14 +1,10 @@
 //! What the sweep asks of libraries it does not own (DESIGN.md §3), all in process.
 
-/// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave 4.13"),
-/// resolved once, in-process — no `bash -c '. lib.sh; repo_root ...'` subprocess, and no
-/// one-shot snapshot subprocess either: `from_env` resolves
-/// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`/`SPIRA_REPO_MAP` the same way
-/// conf.sh does, in-process, when this (bare, unit-launched) process's own environment
-/// lacks them (sp-z3eyk). `spira_home` is `lib_sh_dir()`'s own output (the directory
-/// holding lib.sh), matching every other caller here.
-pub fn registry(spira_home: &str) -> spira_config::repos::Registry {
-    spira_config::repos::Registry::from_env(std::env::vars().collect(), std::path::Path::new(spira_home))
+/// The repo registry, resolved in-process from the home this process locates
+/// (`SPIRA_HOME`, else `$SPIRA_RELEASE/spira`). `lib.sh`'s directory is not that home.
+pub fn registry() -> Result<spira_config::repos::Registry, String> {
+    let home = spira_config::resolve::locate_home_for_process()?;
+    Ok(spira_config::repos::Registry::from_env(std::env::vars().collect(), &home))
 }
 
 pub struct PipelineProbe {
@@ -61,6 +57,33 @@ pub fn probe_from(roster: &str, count: &dyn Fn(&str) -> u32, ready: Option<&str>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(tjd5304)]
+    #[test]
+    fn the_registry_reads_the_located_home_with_no_lib_sh_on_path() {
+        let d = testkit::TempDir::new("wt-registry");
+        let home = spira_config::process::fixture_registry_home(d.path());
+        let map = d.path().join("fixture.repos");
+        std::fs::write(&map, format!("spira | {} | queue.local | local/main |  |\n", d.path().join("spira").display())).unwrap();
+        let toml = spira_config::process::fixture_toml(d.path(), &[("SPIRA_REPO_MAP", map.to_str().unwrap())]);
+        // The fixture's own repo blocks would answer for an unread map.
+        let mut doc = spira_config::load(&toml).unwrap();
+        doc.repo.clear();
+        spira_config::serialize_and_write(&toml, &doc).unwrap();
+        let no_tools = d.path().join("empty-path");
+        std::fs::create_dir(&no_tools).unwrap();
+        let _env = testkit::env(&[
+            ("SPIRA_HOME", home.to_str()),
+            ("SPIRA_TOML", toml.to_str()),
+            ("SPIRA_REPO_MAP", None),
+            ("SPIRA_HOME_REPO", None),
+            ("PATH", no_tools.to_str()),
+        ]);
+
+        let reg = registry().expect("SPIRA_HOME locates the home");
+
+        assert_eq!(reg.base("spira").as_deref(), Some("local/main"));
+    }
 
     #[test_id(tp3pfac)]
     #[test]

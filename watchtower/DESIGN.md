@@ -115,9 +115,8 @@ duplication is exactly what let a timer added after a hand list was written esca
 - Writes: an `incident.sh` bead (red-check / auto-merge-off), `rm` the landstate record
   (CONFLICTING), or `gh pr merge --auto --squash` (otherwise).
 - Env seams: `SPIRA_PR_STALL_MINS` (60), `SPIRA_GH` (gh), `GH_TIMEOUT` (120),
-  `SPIRA_INCIDENT_SH`, `SPIRA_DB` — plus whatever `seams::repo_root` needs to resolve the
-  repo (`SPIRA_REPO_MAP`, etc.); it sources lib.sh from `main::lib_sh_dir` (§6), never from
-  `$SPIRA_HOME`.
+  `SPIRA_INCIDENT_SH`, `SPIRA_DB` — plus whatever `seams::registry` needs to resolve the
+  repo, from the located home (§6).
 
 ### `--disabled-timer-check`
 - Reads: `world.sh`'s `TIMER_PRIORITY` and `ctrl.sh`'s suspension map (via the seam, §3);
@@ -162,8 +161,9 @@ runs `cockpit/moot-sweep.sh --apply`.
   `$PATH`. The bash always had lib.sh's functions by sourcing it relative to `$0`
   (`. "$(dirname "$0")/lib.sh"`) at the top of watchtower.sh, regardless of what
   `$SPIRA_HOME` was set to — a compiled binary has no `$0` directory to be relative to, so
-  this is the equivalent self-location. Every seam that needs lib.sh's code uses it:
-  `git::spira_landref`, `seams::repo_root`, `seams::pipeline_probe`. `spira_home` is
+  this is the equivalent self-location. The repo registry does not use it:
+  `seams::registry` (and so `git::spira_landref`) reads the located home (`$SPIRA_HOME`,
+  else `$SPIRA_RELEASE/spira`) and refuses when there is none. `spira_home` is
   `$SPIRA_HOME` the environment variable (falling back to `lib_sh_dir` only when unset),
   used only by `seams::timer_priority_and_suspended` — the bash reached world.sh/ctrl.sh
   via a literal `"${SPIRA_HOME}/world.sh"`, genuinely `SPIRA_HOME`-driven, not `$0`-relative.
