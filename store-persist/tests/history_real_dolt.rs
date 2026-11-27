@@ -37,8 +37,12 @@ impl Sql for Repo {
             cmd.args(["-r", "csv"]);
         }
         let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().expect("dolt must be on PATH for this test");
-        std::io::Write::write_all(&mut child.stdin.take().unwrap(), script.as_bytes()).unwrap();
+        // Fed from a thread: dolt answers as it reads, so a script and its output that each
+        // outgrow a pipe deadlock if the script is written before the output is drained.
+        let (mut stdin, script) = (child.stdin.take().unwrap(), script.to_owned());
+        let feed = std::thread::spawn(move || std::io::Write::write_all(&mut stdin, script.as_bytes()));
         let out = child.wait_with_output().unwrap();
+        feed.join().unwrap().unwrap();
         if out.status.success() {
             Ok(String::from_utf8_lossy(&out.stdout).into_owned())
         } else {
@@ -145,6 +149,17 @@ fn an_interrupted_rewrite_is_cleared_before_the_next_one_starts() {
     history::abandon(&r).unwrap();
     assert_eq!(r.run("SELECT name FROM dolt_branches;\n", true).unwrap().trim(), "name\nmain");
     history::squash(&r, KEEP).unwrap();
+}
+
+#[test_id(tb0v44o)]
+#[test]
+fn a_script_and_its_output_both_larger_than_a_pipe_do_not_deadlock() {
+    need_dolt!();
+    let tmp = TempDir::new("store-persist-history-pipe");
+    let r = fixture_of(tmp.path(), "db", 1);
+    let script = "SELECT id, body FROM t;\n".repeat(8000);
+    let out = r.run(&script, true).unwrap();
+    assert!(out.len() > 1 << 20, "output of {} B", out.len());
 }
 
 #[test_id(tb3qkql)]
