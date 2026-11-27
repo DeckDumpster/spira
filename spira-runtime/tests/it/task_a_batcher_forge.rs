@@ -55,7 +55,8 @@ fn t3_batch_open_in_open_is_refused_naming_open() {
 #[test]
 fn t3_the_recorded_carry_is_the_carry_read() {
     let mut r = rig(1, busy());
-    r.advance(CADENCE_MS).unwrap();
+    // The first held tick notes its round, changing the carry after that probe was asked.
+    r.advance(2 * CADENCE_MS).unwrap();
     kit::assert_unpoisoned(&r, STREAM);
     kit::assert_read_equals_record::<Carry>(&r, STATE, OBSERVE);
 }
@@ -220,4 +221,98 @@ fn a_tick_reads_every_leg_in_flight_through_unit_facts() {
         assert!(asked.contains(&UNIT_FACTS), "{state:?}: {asked:?}");
         assert!(asked.iter().any(|n| *n != UNIT_FACTS && *n != OBSERVE), "{state:?}: the exit read from facts moved the machine: {asked:?}");
     }
+}
+
+fn read(id: &str, provisional: bool) -> batcher::core::Member {
+    batcher::core::Member { id: id.into(), tip: "t1".into(), title: format!("{id} work"), priority: Some(2), express: false, base_fix: false, certified_at: 5, stack: BTreeMap::new(), blocked_by: vec![], provisional }
+}
+
+/// A snapshot of one repo as the probe builds it from the pool read.
+fn observed(certified: Vec<batcher::core::Member>, left_out: Vec<batcher_cut::io::LeftOut>) -> Snapshot {
+    Snapshot { repos: [("deckdumpster".to_string(), observed_repo(certified, left_out, None, "b1".into()))].into(), ..idle() }
+}
+
+#[test_id(toqrq04)]
+#[test]
+fn the_probe_keeps_a_provisional_member_submitted_and_a_certified_one_certified() {
+    let states: Vec<(String, String)> = observed_repo(vec![read("dd-a", true), read("dd-b", false)], vec![], None, "b1".into()).pool.into_iter().map(|m| (m.id, m.state)).collect();
+    assert_eq!(states, [("dd-a".to_string(), "SUBMITTED".to_string()), ("dd-b".to_string(), "CERTIFIED".to_string())]);
+}
+
+#[test_id(tr2iwn8)]
+#[test]
+fn a_lone_marked_submitted_member_is_cut() {
+    let (_, acts) = decide(&Carry::default(), &observed(vec![read("dd-a", true)], vec![]));
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [FETCH, ASSEMBLE], "{acts:?}");
+    let leg: spira_runtime::tasks::a::batcher_local::Leg = serde_json::from_str(&acts[1].input).unwrap();
+    assert_eq!(leg.members, [("dd-a".to_string(), "t1".to_string())]);
+}
+
+fn uncertified(id: &str) -> batcher_cut::io::LeftOut {
+    batcher_cut::io::LeftOut { id: id.into(), tip: "t1".into(), cause: batcher_cut::io::Cause::Uncertified }
+}
+
+fn named(acts: &[Act]) -> Vec<Vec<batcher_cut::io::LeftOut>> {
+    acts.iter().filter(|a| a.effect == NOTE_LEFT_OUT).map(|a| serde_json::from_str(&serde_json::from_str::<spira_runtime::tasks::a::batcher_local::Leg>(&a.input).unwrap().why).unwrap()).collect()
+}
+
+#[test_id(thcg3kg)]
+#[test]
+fn a_row_the_cut_leaves_out_is_noted_once_per_change_of_the_set() {
+    let snap = observed(vec![], vec![uncertified("dd-a")]);
+    let (carry, acts) = decide(&Carry::default(), &snap);
+    assert_eq!(named(&acts), [vec![uncertified("dd-a")]], "{acts:?}");
+    let (_, again) = decide(&carry, &snap);
+    assert!(again.is_empty(), "the same set is not noted twice: {again:?}");
+}
+
+#[test_id(tec6msh)]
+#[test]
+fn a_member_the_selection_sets_aside_is_noted_with_its_cause() {
+    let blocked = batcher::core::Member { blocked_by: vec!["dd-base".into()], ..read("dd-a", true) };
+    let mut snap = observed(vec![blocked], vec![]);
+    snap.repos.get_mut("deckdumpster").unwrap().blockers = vec!["dd-base".into()];
+    let (_, acts) = decide(&Carry::default(), &snap);
+    let causes: Vec<_> = named(&acts).concat().into_iter().map(|l| (l.id, l.cause)).collect();
+    assert_eq!(causes, [("dd-a".to_string(), batcher_cut::io::Cause::Blocked { dep: "dd-base".into() })], "{acts:?}");
+}
+
+#[test_id(tuqc8le)]
+#[test]
+fn a_failed_note_is_asked_again_on_the_next_tick() {
+    let snap = observed(vec![], vec![uncertified("dd-a")]);
+    let (carry, acts) = decide(&Carry::default(), &snap);
+    let leg = serde_json::from_str(&acts[0].input).unwrap();
+    let (carry, _) = on_outcome(&carry, NOTE_LEFT_OUT, false, "store down", &leg, NOW);
+    assert_eq!(named(&decide(&carry, &snap).1).len(), 1);
+}
+
+#[test_id(t82hhoi)]
+#[test]
+fn an_open_batch_notes_nothing() {
+    let mut snap = observed(vec![], vec![uncertified("dd-a")]);
+    snap.repos.get_mut("deckdumpster").unwrap().open_batch = Some(Batch { pr: 12, head: "h1".into(), members: vec![] });
+    let (_, acts) = decide(&Carry::default(), &snap);
+    assert!(named(&acts).is_empty(), "{acts:?}");
+}
+
+#[test_id(tz74dm7)]
+#[test]
+fn a_disabled_repo_pages_marked_work_that_waits() {
+    let (_, acts) = decide(&Carry::default(), &Snapshot { enabled: false, ..observed(vec![read("dd-a", true)], vec![]) });
+    assert!(acts.iter().any(|a| a.effect == INBOX_APPEND && a.input.contains("dd-a")), "{acts:?}");
+}
+
+#[test_id(tz0gzx7)]
+#[test]
+fn a_member_whose_round_is_held_is_noted_with_that_cause() {
+    let snap = observed(vec![read("dd-a", true)], vec![]);
+    let (carry, acts) = decide(&Carry::default(), &snap);
+    let leg = serde_json::from_str(&acts[1].input).unwrap();
+    let (carry, _) = on_outcome(&carry, ASSEMBLE, true, r#"{"merged":[]}"#, &leg, NOW);
+    let (carry, acts) = decide(&carry, &snap);
+    assert!(acts.iter().all(|a| a.effect != ASSEMBLE), "a held round is not cut again: {acts:?}");
+    let noted: Vec<_> = named(&acts).concat().into_iter().map(|l| (l.id.clone(), l.tag())).collect();
+    assert_eq!(noted, [("dd-a".to_string(), "round-held".to_string())], "{acts:?}");
+    assert!(named(&decide(&carry, &snap).1).is_empty(), "once per change");
 }

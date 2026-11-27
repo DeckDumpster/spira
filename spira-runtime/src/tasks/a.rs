@@ -123,7 +123,7 @@ pub static TASKS: &[Task] = &[
         effects: batcher_forge::EFFECTS,
         runners: {
             use batcher_forge::{edge as x, *};
-            &[(OBSERVE, x::observe), (ARM, x::arm), (FETCH, x::fetch), (ASSEMBLE, x::assemble), (CORPUS, x::corpus), (WITHDRAW, x::withdraw), (SHOTS, x::shots), (BATCH_OPEN, x::batch_open), (FILE, x::file), (VERDICT_WRITE, x::verdict_write)]
+            &[(OBSERVE, x::observe), (ARM, x::arm), (FETCH, x::fetch), (ASSEMBLE, x::assemble), (CORPUS, x::corpus), (WITHDRAW, x::withdraw), (SHOTS, x::shots), (BATCH_OPEN, x::batch_open), (FILE, x::file), (VERDICT_WRITE, x::verdict_write), (NOTE_LEFT_OUT, x::note_left_out)]
         },
         keys: &[batcher_forge::KEYS],
         build: |s| batcher_forge::BatcherForge::from_settings(s).registration(),
