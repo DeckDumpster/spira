@@ -3555,13 +3555,12 @@ fn settings_refused(
     FAULT
 }
 
-/// Whether the round's CI declaration is the landing ref's, so no member's diff chose what the
-/// round VM was asked to run. An unresolved landing ref counts against no member.
-fn declaration_unchanged(w: &World, c: &Ctx, path: &Path, wt: &Path) -> bool {
-    c.r.landref.as_deref().is_none_or(|base| {
-        fs::read_to_string(wt.join(gate::own::DECL)).ok()
+/// Whether the round's CI declaration is the round's base's, so no member's diff chose what the
+/// round VM was asked to run. An unrecorded base counts against no member.
+fn declaration_unchanged(w: &World, base: &str, path: &Path, wt: &Path) -> bool {
+    base.is_empty()
+        || fs::read_to_string(wt.join(gate::own::DECL)).ok()
             == w.git.file_at(path, base, gate::own::DECL)
-    })
 }
 
 /// Whether `text` holds `key` as a whole word: `FOO_X` is not named by `FOO_X_ROOT`.
@@ -4090,7 +4089,7 @@ fn certify_pass(
         return FAIL;
     }
 
-    let (head, wt, run_id, pass, rerun) = {
+    let (head, wt, run_id, pass, rerun, base) = {
         let _g = match lock(w, label, c) {
             Ok(g) => g,
             // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
@@ -4214,7 +4213,8 @@ fn certify_pass(
         }
         mark_running(c, batch);
         let pass = w.lc.batch_pass(batch).map(|(n, _)| n);
-        (head, wt, run_id, pass, rerun)
+        let base = kv.get("base").unwrap_or("").to_string();
+        (head, wt, run_id, pass, rerun, base)
     };
 
     let mut reds: Vec<String> = Vec::new();
@@ -4309,11 +4309,11 @@ fn certify_pass(
             say_fault(w, &why);
             let why_shown = format!("{why}\n{shown}");
             if !results.join("ci.result").exists() {
-                if declaration_unchanged(w, c, path, &wt) {
+                if declaration_unchanged(w, &base, path, &wt) {
                     return infra_pass(w, label, c, batch, &why_shown);
                 }
                 w.err(format!(
-                    "queue.sh {label}: {} differs from the landing ref, so a member's diff may be why the CI entry never ran",
+                    "queue.sh {label}: {} differs from the round's base, so a member's diff may be why the CI entry never ran",
                     gate::own::DECL
                 ));
             }
