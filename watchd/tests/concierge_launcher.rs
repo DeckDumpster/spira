@@ -168,7 +168,7 @@ impl Released {
         std::fs::copy(repo().join("concierge.sh"), release.join("concierge.sh")).unwrap();
         std::fs::copy(repo().join("spira/runes/concierge.md"), home.join("runes/concierge.md")).unwrap();
         let stub = format!(
-            "{LIB_STUB}render_memories() {{ printf '%s\\n    %s\\n' \"$STUB_STATUTES\" \"$SPIRA_REPO/rule.sh show\"; }}\n"
+            "{LIB_STUB}render_memories() {{ [ -z \"$STUB_STATUTES\" ] || printf '%s\\n    %s\\n' \"$STUB_STATUTES\" \"$SPIRA_REPO/rule.sh show\"; }}\n"
         );
         std::fs::write(home.join("lib.sh"), stub).unwrap();
         let current = releases.join("current");
@@ -176,9 +176,10 @@ impl Released {
         Released { fx, current, home }
     }
 
-    fn run(&self, args: &[&str]) -> Out {
+    fn run(&self, args: &[&str], extra: &[(&str, &str)]) -> Out {
         let script = self.current.join("concierge.sh");
-        let env = [("SPIRA_RELEASE", self.current.to_str().unwrap()), ("SPIRA_HOME", self.home.to_str().unwrap())];
+        let mut env = vec![("SPIRA_RELEASE", self.current.to_str().unwrap()), ("SPIRA_HOME", self.home.to_str().unwrap())];
+        env.extend_from_slice(extra);
         self.fx.run_script(&script, args, &env)
     }
 }
@@ -188,7 +189,7 @@ impl Released {
 #[test]
 fn brief_names_every_tool_through_the_release_link_never_the_release_behind_it() {
     let r = Released::new();
-    let o = r.run(&["brief"]);
+    let o = r.run(&["brief"], &[]);
     assert_eq!(o.code, Some(0), "{}", o.err);
     let brief = std::fs::read_to_string(o.out.trim()).unwrap();
     let current = r.current.display();
@@ -199,12 +200,29 @@ fn brief_names_every_tool_through_the_release_link_never_the_release_behind_it()
     assert!(pinned.is_empty(), "the brief pins the release: {pinned:?}");
 }
 
+// covers: UC-operator-channel-41
+#[test_id(tohkrc9)]
+#[test]
+fn brief_refusals_point_at_the_rule_tool_through_the_release_link() {
+    let r = Released::new();
+    testkit::write_exe(r.fx.path().join("bin/spira-lc"), "#!/bin/sh\necho '{}'\n");
+    let empty: &[(&str, &str)] = &[("STUB_STATUTES", "")];
+    let typo: &[(&str, &str)] = &[("STUB_RUNE_STATUTE_CORE", "law-no-such-slug"), ("STUB_STATUTES", "- law-rm-alpha")];
+    for (env, refusal) in [(empty, "rendered empty"), (typo, "no statute rendered in full")] {
+        let o = r.run(&["brief"], env);
+        assert_eq!(o.code, Some(1), "{}", o.err);
+        assert!(o.err.contains(refusal), "{}", o.err);
+        assert!(o.err.contains(&format!("{}/rule.sh list", r.current.display())), "{}", o.err);
+        assert!(!o.err.contains(SHA), "{}", o.err);
+    }
+}
+
 // covers: UC-operator-channel-49
 #[test_id(t49o584)]
 #[test]
 fn session_hooks_are_registered_through_the_release_link() {
     let r = Released::new();
-    let o = r.run(&["_settings"]);
+    let o = r.run(&["_settings"], &[]);
     assert_eq!(o.code, Some(0), "{}", o.err);
     let hooks = format!("{}/spira/hooks", r.current.display());
     for hook in ["concierge-raw-pr-fence.sh", "statute-check-hook.sh"] {
