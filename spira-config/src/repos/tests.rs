@@ -130,6 +130,77 @@
         }
     }
 
+    fn publishing_toml(dir: &Path) -> std::path::PathBuf {
+        let no_map = dir.join("no-repo-map").display().to_string();
+        let toml = crate::process::fixture_toml(dir, &[("SPIRA_REPO_MAP", &no_map)]);
+        let mut text = std::fs::read_to_string(&toml).unwrap();
+        text.push_str("\n[publish.alpha]\nremote = \"origin\"\nbranch = \"main\"\n");
+        text.push_str("\n[repo.alpha]\npath = \"tmp/alpha\"\nmode = \"queue.local\"\nbase = \"local/main\"\n");
+        std::fs::write(&toml, text).unwrap();
+        toml
+    }
+
+    fn assert_declares_alpha(reg: &Registry) {
+        assert!(reg.publish_declared("alpha"), "no [publish.alpha]; names: {:?}", reg.names());
+        assert!(reg.names().contains(&"alpha".to_string()), "{:?}", reg.names());
+    }
+
+    #[test_id(ti6psr0)]
+    #[test]
+    fn the_toml_named_by_the_handed_env_is_read_when_the_process_names_none() {
+        let t = testkit::TempDir::new("repos-handed-toml");
+        let toml = publishing_toml(t.path());
+        let home = t.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let shipped = crate::resolve::locate_home_for_process().unwrap();
+        for dir in ["conf.d", "conf.toml.d"] {
+            std::os::unix::fs::symlink(shipped.join(dir), home.join(dir)).unwrap();
+        }
+        let handed = env(&[("HOME", &t.path().display().to_string()), ("SPIRA_TOML", &toml.display().to_string())]);
+        let _process = testkit::env(&[("SPIRA_TOML", None)]);
+        assert_declares_alpha(&Registry::from_env(handed, &home));
+    }
+
+    #[test_id(tku6rgm)]
+    #[test]
+    fn a_handed_home_with_no_key_registry_still_gets_the_handed_tomls_repositories() {
+        let t = testkit::TempDir::new("repos-handed-toml-foreign");
+        let toml = publishing_toml(t.path());
+        let foreign = t.path().join("other");
+        std::fs::create_dir_all(foreign.join(".git")).unwrap();
+        let handed = env(&[("HOME", &t.path().display().to_string()), ("SPIRA_TOML", &toml.display().to_string())]);
+        let _process = testkit::env(&[("SPIRA_TOML", None)]);
+        assert_declares_alpha(&Registry::from_env(handed, &foreign));
+    }
+
+    #[test_id(tlmrzn6)]
+    #[test]
+    fn the_handed_envs_toml_wins_over_the_processs() {
+        let t = testkit::TempDir::new("repos-handed-toml-wins");
+        let toml = publishing_toml(t.path());
+        let elsewhere = t.path().join("process");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let process_toml = crate::process::fixture_toml(&elsewhere, &[("SPIRA_REPO_MAP", &elsewhere.join("no-repo-map").display().to_string())]);
+        let home = crate::resolve::locate_home_for_process().unwrap();
+        let handed = env(&[("HOME", &t.path().display().to_string()), ("SPIRA_TOML", &toml.display().to_string())]);
+        let _process = testkit::env(&[("SPIRA_TOML", Some(process_toml.to_str().unwrap()))]);
+        assert_declares_alpha(&Registry::from_env(handed, &home));
+    }
+
+    #[test_id(tzo52dk)]
+    #[test]
+    fn an_unreadable_handed_toml_is_not_replaced_by_the_processs() {
+        let t = testkit::TempDir::new("repos-handed-toml-missing");
+        let process_toml = publishing_toml(t.path());
+        let home = crate::resolve::locate_home_for_process().unwrap();
+        let missing = t.path().join("absent.toml").display().to_string();
+        let handed = env(&[("HOME", &t.path().display().to_string()), ("SPIRA_TOML", &missing)]);
+        let _process = testkit::env(&[("SPIRA_TOML", Some(process_toml.to_str().unwrap()))]);
+        let reg = Registry::from_env(handed, &home);
+        assert!(!reg.publish_declared("alpha"));
+        assert!(reg.names().is_empty(), "{:?}", reg.names());
+    }
+
     fn env(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
