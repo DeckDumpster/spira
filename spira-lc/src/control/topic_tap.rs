@@ -5,14 +5,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use ports::{Rng, SeededRng};
 use rumqttc::v5::mqttbytes::v5::{Filter, Packet, Publish, RetainForwardRule, SubscribeReasonCode};
 use rumqttc::v5::mqttbytes::QoS;
 use rumqttc::v5::{Client, ConnectionError, Event, MqttOptions};
 use rumqttc::Transport;
 use serde::{Deserialize, Serialize};
-use spira_pub::link::{sleep_until_readable, LISTEN_PAUSE};
+use spira_pub::link::{nothing_listening, sleep_until_readable, wait_out_refusal};
 use spira_pub::{topics, SocketWatch, CONNECT_DEADLINE};
 use state_store::{limits, Backend, Contract, Object, Request, Selector, Txn};
 
@@ -148,6 +149,18 @@ fn write<B: Backend>(contract: &Contract<B>, rows: &[TopicRecord], writer: &str)
     contract.txn(&txn, &Request::new(&format!("{writer}/{head}"), "lc-serve", "topic-tap")).map(drop).map_err(|e| e.to_string())
 }
 
+/// Flushes, then pauses [`FLUSH`], for as long as `pause` says to go on.
+fn flush_every<B: Backend>(registry: &Mutex<Registry>, contract: &Contract<B>, writer: &str, mut pause: impl FnMut(Duration) -> bool) {
+    loop {
+        if let Err(e) = flush(registry, contract, writer) {
+            say(&format!("topic tap: {e}"));
+        }
+        if !pause(FLUSH) {
+            return;
+        }
+    }
+}
+
 fn say(line: &str) {
     eprintln!("spira-lc serve: {line}");
 }
@@ -155,30 +168,31 @@ fn say(line: &str) {
 /// Records what is published on the configured broker in `store`, from two threads of its own. A
 /// failure is logged and tried again; the store is served whatever happens here.
 pub(crate) fn serve<B: Backend + Send + Sync + 'static>(store: &Arc<Store<B>>) {
-    let started = spira_pub::configured_socket(&spira_config::process::cfg)
+    let cfg = spira_config::process::cfg;
+    let started = spira_pub::configured_socket(&cfg)
+        .and_then(|socket| Ok((socket, spira_pub::configured_seed(&cfg, store.contract().wall_ms())?)))
         .map_err(|e| e.to_string())
-        .and_then(|socket| start(store, socket.into()));
+        .and_then(|(socket, seed)| start(store, socket.into(), SeededRng::new(seed)));
     if let Err(e) = started {
         say(&format!("topics are not recorded: {e}"));
     }
 }
 
-fn start<B: Backend + Send + Sync + 'static>(store: &Arc<Store<B>>, socket: PathBuf) -> Result<(), String> {
+fn start<B: Backend + Send + Sync + 'static>(store: &Arc<Store<B>>, socket: PathBuf, mut rng: SeededRng) -> Result<(), String> {
     let registry = Arc::new(Mutex::new(Registry::default()));
     // The broker drops the older of two clients sharing an id.
-    let nanos = std::time::UNIX_EPOCH.elapsed().map_or(0, |d| d.as_nanos());
-    let client_id = format!("spira-lc-topics-{}-{nanos:x}", std::process::id());
+    let client_id = format!("spira-lc-topics-{}-{:016x}", std::process::id(), rng.next_u64());
     let spawn = |name: &str, body: Box<dyn FnOnce() + Send>| {
         std::thread::Builder::new().name(name.into()).spawn(body).map(drop).map_err(|e| format!("cannot start {name}: {e}"))
     };
     let (flushed, flushing, writer) = (store.clone(), registry.clone(), client_id.clone());
     spawn(
         "lc-topic-flush",
-        Box::new(move || loop {
-            if let Err(e) = flush(&flushing, flushed.contract(), &writer) {
-                say(&format!("topic tap: {e}"));
-            }
-            std::thread::sleep(FLUSH);
+        Box::new(move || {
+            flush_every(&flushing, flushed.contract(), &writer, |pause| {
+                std::thread::sleep(pause);
+                true
+            })
         }),
     )?;
     let clocked = store.clone();
@@ -215,15 +229,11 @@ fn listen(socket: &Path, client_id: &str, mut heard: impl FnMut(&Publish)) {
     loop {
         let armed = watch.arm();
         watch.drain();
-        // Real time, not the store's clock: this bounds socket I/O.
-        let began = Instant::now();
-        let ended = loop {
+        let attempt = |_| {
             let ended = session(socket, client_id, &mut heard);
-            if !(announced && ended.refused && began.elapsed() < CONNECT_DEADLINE) {
-                break ended;
-            }
-            std::thread::sleep(LISTEN_PAUSE);
+            if ended.refused { Err(ended) } else { Ok(ended) }
         };
+        let ended = wait_out_refusal(announced, attempt, |_| true).unwrap_or_else(|refused| refused);
         if ended.connected {
             say(&format!("topic tap: lost the broker: {}", ended.why));
             // Once at once, in case only this connection went.
@@ -251,7 +261,7 @@ fn session(socket: &Path, client_id: &str, heard: &mut impl FnMut(&Publish)) -> 
     match connection.recv_timeout(CONNECT_DEADLINE) {
         Ok(Ok(Event::Incoming(Packet::ConnAck(_)))) => {}
         Ok(Err(e)) => {
-            let refused = matches!(&e, ConnectionError::Io(io) if matches!(io.kind(), std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound));
+            let refused = matches!(&e, ConnectionError::Io(io) if nothing_listening(io));
             return unmade(e.to_string(), refused);
         }
         other => return unmade(format!("no CONNACK: {other:?}"), false),
@@ -339,6 +349,91 @@ mod tests {
         }
         flush(&registry, &contract, "w").unwrap();
         assert_eq!(contract.list(&[keys::TOPICS], &Selector::Everything).unwrap().0.len(), CHUNK * 2 + 1);
+    }
+
+    #[test_id(toml48z)]
+    #[test]
+    fn the_flush_loop_writes_once_between_pauses_however_much_is_published() {
+        let contract = contract();
+        let registry = Mutex::new(Registry::default());
+        let head = contract.head().unwrap();
+        let mut pauses = 0;
+        flush_every(&registry, &contract, "w", |pause| {
+            assert_eq!(pause, FLUSH);
+            assert!(contract.head().unwrap() <= head + pauses, "more than one write before pause {pauses}");
+            pauses += 1;
+            for n in 0..100 {
+                lock(&registry).saw(&format!("a/sp-{n}"), true, None, false, pauses * 1_000 + n);
+            }
+            pauses < 4
+        });
+        assert_eq!(contract.head().unwrap(), head + 3);
+    }
+
+    #[test_id(thkmxbj)]
+    #[test]
+    fn rows_a_failed_write_left_behind_are_written_by_the_next_flush() {
+        let contract = contract();
+        let registry = Mutex::new(Registry::default());
+        for n in 0..CHUNK {
+            lock(&registry).saw(&format!("a{n:03}"), true, None, false, 1);
+        }
+        // Sorts last, so it is in the second txn, which the store refuses for its size.
+        let oversize = "z".repeat(limits::MAX_REQUEST_BYTES);
+        lock(&registry).saw("y", true, None, false, 1);
+        lock(&registry).saw(&oversize, true, None, false, 1);
+        let why = flush(&registry, &contract, "w").unwrap_err();
+        assert!(why.contains("unwritten"), "{why}");
+        let written = || contract.list(&[keys::TOPICS], &Selector::Everything).unwrap().0.len();
+        assert_eq!(written(), CHUNK, "the first txn committed");
+        lock(&registry).rows.remove(&oversize);
+        flush(&registry, &contract, "w").unwrap();
+        assert_eq!(written(), CHUNK + 1);
+    }
+
+    #[test_id(tgq7dhc)]
+    #[test]
+    fn nothing_is_written_until_the_stored_rows_are_read_and_their_past_survives() {
+        let contract = contract();
+        let before = Mutex::new(Registry::default());
+        lock(&before).saw("a/sp-1", true, None, false, 100);
+        flush(&before, &contract, "first").unwrap();
+        let unreadable = Txn::new().put(&keys::topic("bad"), Object::new(serde_json::json!({})));
+        contract.txn(&unreadable, &Request::new("bad", "t", "t")).unwrap();
+        let again = Mutex::new(Registry::default());
+        lock(&again).saw("a/sp-2", true, None, false, 500);
+        let head = contract.head().unwrap();
+        let why = flush(&again, &contract, "second").unwrap_err();
+        assert!(why.contains("unread"), "{why}");
+        assert_eq!(contract.head().unwrap(), head);
+        contract.delete(&keys::topic("bad"), None, &Request::new("mend", "t", "t")).unwrap();
+        flush(&again, &contract, "second").unwrap();
+        assert_eq!((stored(&contract, "a/+").first_seen, stored(&contract, "a/+").last_seen), (100, 500));
+    }
+
+    #[test_id(t82u68y)]
+    #[test]
+    fn the_topics_verb_pages_from_the_store_and_refuses_a_limit_outside_its_bounds() {
+        let store = Store::new(contract(), 1_000);
+        let registry = Mutex::new(Registry::default());
+        for topic in ["a", "b"] {
+            lock(&registry).saw(topic, true, None, false, 1);
+        }
+        flush(&registry, store.contract(), "w").unwrap();
+        let ask = |flags: &[&str]| {
+            let argv: Vec<String> = ["topics"].iter().chain(flags).map(|s| s.to_string()).collect();
+            crate::control::verbs::run(&store, &argv)
+        };
+        let read = |flags: &[&str]| -> serde_json::Value { serde_json::from_str(&ask(flags).1).unwrap() };
+        assert_eq!((read(&["--limit", "2"])["topics"].as_array().unwrap().len(), &read(&["--limit", "2"])["next"]), (2, &serde_json::Value::Null));
+        assert_eq!(read(&["--limit", "1"])["next"], "a");
+        assert_eq!(read(&["--after", "a"])["topics"][0]["family"], "b");
+        assert_eq!(read(&["--limit", "10000"])["next"], serde_json::Value::Null);
+        for bad in ["0", "10001", "many"] {
+            let (code, out) = ask(&["--limit", bad]);
+            assert_eq!(code, spira_lc::CANNOT_TELL, "{bad}: {out}");
+            assert!(out.contains("--limit"), "{out}");
+        }
     }
 
     #[test_id(t2nybxa)]

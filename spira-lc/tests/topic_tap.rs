@@ -237,8 +237,11 @@ fn live_publishes_are_listed_once_per_family_and_survive_a_restart() {
 #[test]
 fn the_bridges_publishes_and_stamped_names_are_recorded_across_a_broker_restart() {
     let mut broker = Broker::up();
+    broker.stop();
     let home = Home::new();
     let server = Server::start(&home, &broker, PINNED_NOW);
+    server.wait_said("topic tap: cannot connect", 1);
+    broker.restart();
     assert_eq!(server.topics(&[])["next"], Value::Null);
     server.wait_said(SUBSCRIBED, 1);
 

@@ -134,7 +134,7 @@ pub fn configured_socket(cfg: &dyn Fn(&str) -> Result<String, String>) -> Result
 }
 
 /// `SPIRA_SEED` as `cfg` declares it; declared empty draws from the clock.
-fn configured_seed(cfg: &dyn Fn(&str) -> Result<String, String>, now_ms: u64) -> Result<u64, PubError> {
+pub fn configured_seed(cfg: &dyn Fn(&str) -> Result<String, String>, now_ms: u64) -> Result<u64, PubError> {
     let value = cfg("SPIRA_SEED").map_err(|why| PubError::Config(format!("cannot read SPIRA_SEED: {why}")))?;
     match value.trim() {
         "" => Ok(now_ms),
