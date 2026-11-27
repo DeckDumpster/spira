@@ -33,7 +33,11 @@ fn main() -> ExitCode {
         eprintln!("queue.sh: cannot find the harness (lib.sh): set SPIRA_HOME or SPIRA_RELEASE");
         return ExitCode::from(1);
     };
-    let lib = RealLib { home: home.clone() };
+    let lib = RealLib {
+        home: home.clone(),
+        store: RealLc::configured(spira_store::lifecycle_row::lc_bin().ok().map(Into::into)),
+        warn: std::sync::Arc::new(|m: &str| eprintln!("{m}")),
+    };
     // spira-lc and the forge are configured by conf.sh; resolve once for them.
     let (bd, lc) = match queue::ports::Lib::context(&lib, None) {
         Ok((s, _)) => (
@@ -60,6 +64,7 @@ fn main() -> ExitCode {
         SysEnv,
         StdEmit::new(),
     );
+    let rounds = queue::round_bus::RoundBus::configured();
     let w = World {
         git: &git,
         bd: &bd,
@@ -71,6 +76,7 @@ fn main() -> ExitCode {
         clock: &clock,
         env: &env,
         io: &io,
+        rounds: &rounds,
     };
     let rc = queue::telemetry::run(
         &queue::telemetry::sink(),

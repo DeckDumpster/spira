@@ -89,6 +89,8 @@ struct Fake {
     err: RefCell<Vec<String>>,
     clock: Cell<u64>,
     signal: Cell<bool>,
+    /// The throwaway broker the trial publishes to; none publishes nothing.
+    broker: RefCell<Option<PathBuf>>,
     // ---- composition (sp-2ghui)
     mode: RefCell<Result<GateMode, String>>,
     touched: RefCell<Result<Vec<Changed>, String>>,
@@ -231,6 +233,8 @@ fn ctx() -> Ctx {
         ("SPIRA_GATE_TARGET_CAP_MIB", "12288"),
         ("SPIRA_UNIT_TEST_DEADLINE_SECS", "60"),
         ("SPIRA_UNIT_TEST_DEADLINE_PERIODS", "2"),
+        ("SPIRA_INTEGRATION_TEST_DEADLINE_SECS", "60"),
+        ("SPIRA_INTEGRATION_TEST_DEADLINE_PERIODS", "2"),
     ] {
         vars.insert(k.to_string(), v.to_string());
     }
@@ -383,6 +387,7 @@ impl Fake {
             machine: RefCell::default(),
             machine_err: RefCell::default(),
             cancel_at: Cell::new(None),
+            broker: RefCell::default(),
         }
     }
     fn plain_run(&self, tree: &Path, env: &[(String, String)], timeout: &str, cmd: &str) -> (i32, String) {
@@ -956,6 +961,17 @@ impl World for Fake {
     fn now(&self) -> u64 {
         self.clock.get()
     }
+    fn publish(&self, messages: &[(String, serde_json::Value)]) {
+        let Some(socket) = self.broker.borrow().clone() else { return };
+        #[cfg(feature = "integration")]
+        {
+            let clock = std::sync::Arc::new(ports::VirtualClock::new(0));
+            let options = spira_pub::Options::new(socket, clock, Box::new(ports::SeededRng::new(1)));
+            crate::publish::send(spira_pub::Publisher::with("gate", options), messages);
+        }
+        #[cfg(not(feature = "integration"))]
+        let _ = (socket, messages);
+    }
     fn cgroup_mark(&self) -> Option<spira_otel::cgroup::Mark> {
         self.marks.borrow_mut().pop_front()
     }
@@ -1088,6 +1104,24 @@ fn the_trial_env_carries_spira_toml_so_the_box_tools_a_suites_step_runs_can_reso
     f.put_var("SPIRA_TOML", "box/spira.toml");
     assert_eq!(f.run(), PASS);
     assert_eq!(f.env_of(0, "SPIRA_TOML"), "box/spira.toml");
+}
+
+#[test_id(t7ak8vp)]
+#[test]
+fn the_gated_item_reaches_the_gate_string_and_the_re_entry_env() {
+    let f = Fake::new();
+    f.ancestor.set(true);
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.env_of(0, "SPIRA_GATE_BEAD"), "sp-a");
+
+    let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let n = f.cmds.borrow().len();
+    for i in [0, n - 1] {
+        assert_eq!(f.env_of(i, "SPIRA_GATE_BEAD"), "sp-a", "step {i}: the gate string and the re-entry both name the item");
+    }
 }
 
 #[test_id(t6392xf)]
@@ -2912,7 +2946,7 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
     let cfg = f.unit_config.borrow().clone();
     assert_eq!(cfg.len(), 1, "{cfg:?}");
     assert!(cfg[0].0.ends_with("target/gate-unit-nextest.toml"), "the nextest config lives under the trial tree's target directory: {cfg:?}");
-    assert_eq!(cfg[0].1, "[profile.default]\nslow-timeout = { period = \"60s\", terminate-after = 2 }\nstatus-level = \"skip\"\n");
+    assert_eq!(cfg[0].1, "[profile.default]\nslow-timeout = { period = \"60s\", terminate-after = 2 }\nstatus-level = \"skip\"\n[[profile.default.overrides]]\nfilter = \"kind(test)\"\nslow-timeout = { period = \"60s\", terminate-after = 2 }\n");
     assert!(f.stderr().contains(
         "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for 2 crates: queue spira-config (touched: spira-config)"
     ));
@@ -2927,6 +2961,17 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
         "{}",
         written[0].1
     );
+}
+
+#[test_id(tavr7sp)]
+#[test]
+fn the_configured_integration_deadline_bounds_the_tests_targets_in_the_gates_nextest_config() {
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    f.put_var("SPIRA_INTEGRATION_TEST_DEADLINE_SECS", "90");
+    f.put_var("SPIRA_INTEGRATION_TEST_DEADLINE_PERIODS", "3");
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let cfg = f.unit_config.borrow().clone();
+    assert_eq!(cfg[0].1, "[profile.default]\nslow-timeout = { period = \"60s\", terminate-after = 2 }\nstatus-level = \"skip\"\n[[profile.default.overrides]]\nfilter = \"kind(test)\"\nslow-timeout = { period = \"90s\", terminate-after = 3 }\n");
 }
 
 const TESTKIT_MISSING: &str = "        FAIL [   0.010s] (1/1) testkit t::a_standing\n  stderr ───\n    a_standing_condition_is_raised_once::tpdcn1g at testkit/src/lib.rs:295 ... binary testenv is not built at /srv/ssd-b/dwarf-build/dir.5/debug/testenv\n\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped\n        FAIL [   0.010s] (1/1) testkit t::a_standing";
@@ -3866,6 +3911,62 @@ fn a_flip_with_no_test_id_stays_the_branchs_red_and_writes_no_row() {
     assert!(f.fix_beads.borrow().is_empty() && f.registry_rows.borrow().is_empty());
 }
 
+/// The printed message of a FAIL verdict, apart from the lines said while the trial ran.
+fn verdict_message(f: &Fake) -> String {
+    let said = f.err.borrow();
+    said.iter().find(|l| l.contains("own gate failed")).cloned().unwrap_or_default()
+}
+
+/// A nextest run of `n` distinct tests, `t::t0000001` onward, every one with `status`.
+fn many_reds(status: &str, n: usize) -> String {
+    let mut out: String = (1..=n).map(|i| format!("        {status} [   0.010s] ({i}/{n}) bin/t t::t00000{i}\n")).collect();
+    let (passed, failed) = if status == "PASS" { (n, 0) } else { (0, n) };
+    out.push_str(&format!("     Summary [   0.010s] {n} tests run: {passed} passed, {failed} failed, 0 skipped"));
+    out
+}
+
+#[test_id(t7eja4q)]
+#[test]
+fn as_many_flips_as_the_cap_or_fewer_are_each_recorded_and_the_item_passes() {
+    let f = rerun_fake(&many_reds("FAIL", 2), Some(&many_reds("PASS", 2)));
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.fix_beads.borrow().len(), 2);
+    assert_eq!(f.registry_rows.borrow().len(), 2);
+    assert!(!f.stderr().contains("held back"), "{}", f.stderr());
+}
+
+#[test_id(tu45wjn)]
+#[test]
+fn flips_beyond_the_cap_file_nothing_are_named_as_held_back_and_the_item_goes_back() {
+    let f = rerun_fake(&many_reds("FAIL", 4), Some(&many_reds("PASS", 4)));
+    let status = f.run();
+    assert_eq!((status, f.fix_beads.borrow().len()), (FAIL, 3), "(status, fix beads)");
+    let rows: Vec<String> = f.registry_rows.borrow().iter().map(|r| r.0.clone()).collect();
+    assert_eq!(rows, ["test:t000001", "test:t000002", "test:t000003"]);
+    let verdict = verdict_message(&f);
+    assert!(verdict.contains("\ngate: held back by the flip cap (3): t::t000004 "), "{verdict}");
+    assert!(meter(&f).contains("t::t000003:red/green,t::t000004:red/held"), "{}", meter(&f));
+    assert_eq!(certified(&f, "pass"), 0);
+}
+
+#[test_id(thocb57)]
+#[test]
+fn only_a_recorded_flip_uses_the_cap_and_every_flip_after_the_third_row_is_held() {
+    let names = ["t000001", "noid_a", "t000002", "t000003", "noid_b", "t000004"];
+    let run = |status: &str, tally: &str| {
+        let lines: String = names.iter().map(|n| format!("        {status} [   0.010s] (1/6) bin/t t::{n}\n")).collect();
+        format!("{lines}     Summary [   0.010s] 6 tests run: {tally}, 0 skipped")
+    };
+    let f = rerun_fake(&run("FAIL", "0 passed, 6 failed"), Some(&run("PASS", "6 passed, 0 failed")));
+    assert_eq!(f.run(), FAIL);
+    let rows: Vec<String> = f.registry_rows.borrow().iter().map(|r| r.0.clone()).collect();
+    assert_eq!(rows, ["test:t000001", "test:t000002", "test:t000003"]);
+    let verdict = verdict_message(&f);
+    assert!(verdict.contains("so no registry row can hold it: t::noid_a\n"), "{verdict}");
+    assert!(verdict.contains("flip cap (3): t::noid_b t::t000004 "), "{verdict}");
+    assert!(meter(&f).contains("t::noid_b:red/held,t::t000004:red/held"), "{}", meter(&f));
+}
+
 #[test_id(tpwcbp4)]
 #[test]
 fn a_flip_beside_a_test_red_twice_is_recorded_and_the_item_still_goes_back() {
@@ -4062,7 +4163,7 @@ fn a_gate_on_a_tree_with_a_proved_fences_verdict_runs_no_fences_phase() {
     *f.base_tree_override.borrow_mut() = Some(BASE_TREE_HEX.into());
     f.files.borrow_mut().insert(
         PathBuf::from(format!("run/verdicts/fences/spira/{BASE_TREE_HEX}")),
-        fencecache::render("harness", "bash spira/fence.sh && run-suites", "fence: x checked 3 files"),
+        fencecache::render("harness", "", "bash spira/fence.sh && run-suites", "fence: x checked 3 files"),
     );
     assert_eq!(f.run(), FAIL);
     let cmds = f.cmds.borrow().clone();
@@ -4098,7 +4199,7 @@ fn a_crate_the_base_lacks_is_not_tested_on_the_base() {
 #[test_id(tdqm59l)]
 #[test]
 fn a_gate_with_no_unit_test_deadline_is_no_verdict_config() {
-    for var in ["SPIRA_UNIT_TEST_DEADLINE_SECS", "SPIRA_UNIT_TEST_DEADLINE_PERIODS"] {
+    for var in ["SPIRA_UNIT_TEST_DEADLINE_SECS", "SPIRA_UNIT_TEST_DEADLINE_PERIODS", "SPIRA_INTEGRATION_TEST_DEADLINE_SECS", "SPIRA_INTEGRATION_TEST_DEADLINE_PERIODS"] {
         for value in [None, Some("0")] {
             let f = unit_fake(&["gate/src/x.rs"]);
             match value {
@@ -6363,6 +6464,26 @@ fn a_unit_run_cut_at_its_deadline_without_a_summary_is_not_the_missing_report_fa
     assert!(!f.stderr().contains("printed no `Summary [` line"), "{}", f.stderr());
 }
 
+#[test_id(tilaj8r)]
+#[test]
+fn a_fences_pass_that_used_the_own_item_exemption_is_not_reused_for_another_item() {
+    for (owner, reused) in [("sp-a", false), ("sp-z", true)] {
+        let f = fences_fake(&["gate/src/x.rs"]);
+        for rev in [MERGE_SHA, "HEAD"] {
+            f.objects.borrow_mut().insert(format!("{rev}^{{tree}}"), BASE_TREE_HEX.into());
+        }
+        *f.deny.borrow_mut() = Ok(format!("disabled\ttest:t0aaaaa\t{owner}\t-\n"));
+        assert_eq!(f.run(), PASS, "{}", f.stderr());
+        let proved = f.written.borrow().iter().find(|(p, _)| p.starts_with("run/verdicts/fences")).cloned();
+        let (path, entry) = proved.expect("the first gate records its fences PASS");
+        f.files.borrow_mut().insert(path, entry);
+        f.put_var("SPIRA_GATE_BEAD", "sp-b");
+        f.err.borrow_mut().clear();
+        assert_eq!(f.run(), PASS, "{}", f.stderr());
+        assert_eq!(f.stderr().contains("fences reused"), reused, "row owned by {owner}: {}", f.stderr());
+    }
+}
+
 // ------------------------------------------------- the lint step reads the tree's config
 
 /// A tree whose fixture config says `mode`, holding `files`, with the tree's own
@@ -6391,6 +6512,7 @@ fn lint_fixture(mode: &str, files: &[(&str, &str)]) -> (testkit::TempDir, std::p
             "  [ -n \"$2\" ] || { echo 'spira-lint: --deny-list names no file' >&2; exit 2; }\n",
             "  echo \"fence: test-id-row-orphan checked 1 registry ($2: 1 rows, 1 test rows)\"\n",
             "else echo 'fence: test-id-row-orphan checked 0 registry (none configured)'; fi\n",
+            "while [ $# -gt 0 ]; do [ \"$1\" != --gate-bead ] || echo \"gate-bead=[$2]\"; shift; done\n",
         ),
     );
     (t, bin)
@@ -6404,6 +6526,10 @@ fn run_lint_step(t: &testkit::TempDir, bin: &std::path::Path, caller_mode: &str)
 }
 
 fn run_lint_step_with_deny(t: &testkit::TempDir, bin: &std::path::Path, caller_mode: &str, deny: Option<&str>) -> (bool, String) {
+    run_lint_step_with(t, bin, caller_mode, deny, None)
+}
+
+fn run_lint_step_with(t: &testkit::TempDir, bin: &std::path::Path, caller_mode: &str, deny: Option<&str>, gate_bead: Option<&str>) -> (bool, String) {
     let steps = checked_in_steps();
     let def = crate::def::parse(&steps).unwrap();
     let step = def.steps.iter().find(|s| s.contains("SPIRA_LINT_BIN")).expect("a spira-lint step");
@@ -6418,6 +6544,9 @@ fn run_lint_step_with_deny(t: &testkit::TempDir, bin: &std::path::Path, caller_m
         .env("SPIRA_TOML", &caller);
     if let Some(d) = deny {
         cmd.env("SPIRA_TEST_DENY_LIST", d);
+    }
+    if let Some(b) = gate_bead {
+        cmd.env("SPIRA_GATE_BEAD", b);
     }
     let out = cmd.output().unwrap();
     (out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
@@ -6456,6 +6585,17 @@ fn the_lint_step_refuses_when_the_gate_handed_no_deny_list() {
     for deny in [None, Some("")] {
         let (ok, out) = run_lint_step_with_deny(&t, &bin, "report", deny);
         assert!(!ok && out.contains("--deny-list"), "{deny:?}: {out}");
+    }
+}
+
+#[test_id(tbw806o)]
+#[test]
+fn the_lint_step_hands_spira_lint_the_gated_item_and_an_empty_one_when_unset() {
+    let (t, bin) = lint_fixture("enforce", &[("rule/tests/vocab.rs", "// nothing here\n")]);
+    let deny = t.path().join("target/gate-deny-list");
+    for (item, want) in [(Some("sp-a"), "gate-bead=[sp-a]"), (None, "gate-bead=[]")] {
+        let (ok, out) = run_lint_step_with(&t, &bin, "report", Some(deny.to_str().unwrap()), item);
+        assert!(ok && out.contains(want), "{item:?}: {out}");
     }
 }
 
@@ -6688,4 +6828,117 @@ fn a_branch_that_deletes_the_declaration_the_landing_ref_has_is_not_certified_on
     assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
     assert!(f.verdict_line().contains("reason=certifies-nothing"), "{}", f.verdict_line());
     assert!(cert_written(&f).is_none());
+}
+
+// ---- what a trial publishes
+
+/// A unit red twice on the same tree, in the crate the branch touches.
+#[cfg(feature = "integration")]
+fn published_red_fake() -> Fake {
+    const RED: &str = "        FAIL [   0.010s] (1/1) gate t::t0aaaaa\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped";
+    rerun_fake(RED, Some(RED))
+}
+
+/// The next `n` messages, by topic.
+#[cfg(feature = "integration")]
+fn delivered(sub: &mut testkit::broker::Subscriber, n: usize) -> std::collections::BTreeMap<String, serde_json::Value> {
+    (0..n).map(|_| sub.recv()).map(|m| (m.topic, serde_json::from_slice(&m.payload).unwrap())).collect()
+}
+
+#[cfg(feature = "integration")]
+#[test_id(t6e8sv7)]
+#[test]
+fn a_red_trial_publishes_its_result_and_its_red_test() {
+    let broker = testkit::broker::Broker::up();
+    let mut sub = testkit::broker::Subscriber::to(broker.socket(), &["gate/#", "test/#"]);
+    let f = published_red_fake();
+    *f.broker.borrow_mut() = Some(broker.socket().to_path_buf());
+
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+
+    let seen = delivered(&mut sub, 2);
+    assert_eq!(
+        seen.get("gate/spira/sp-a"),
+        Some(&serde_json::json!({"status": "FAIL", "rc": 1, "reason": "branch-red", "over_cap": false, "killed_by": null})),
+        "{seen:?}"
+    );
+    let red = &seen["test/t0aaaaa/red"];
+    assert_eq!((red["tree"].as_str(), red["touches_crate"].as_bool()), (Some("tree-of-spira/sp-a"), Some(true)), "{red}");
+    assert!(red["at"].is_u64(), "{red}");
+}
+
+#[cfg(feature = "integration")]
+#[test_id(t6lsjx1)]
+#[test]
+fn a_trial_whose_testenv_run_was_stopped_publishes_who_sent_the_signal() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    let dir = testkit::TempDir::new("gate-stopped");
+    let record = dir.join("record");
+    let mut supervisor = Command::new(testkit::bin_exe("testenv"))
+        .arg("sandbox-supervise")
+        .arg(&record)
+        .args(["sh", "-c", "echo ready; exec sleep 29.5"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut ready = String::new();
+    BufReader::new(supervisor.stdout.take().unwrap()).read_line(&mut ready).unwrap();
+    assert_eq!(ready.trim(), "ready");
+    let mut killer = Command::new("kill").args(["-TERM", &supervisor.id().to_string()]).spawn().unwrap();
+    supervisor.wait().unwrap();
+    killer.wait().unwrap();
+    let recorded = std::fs::read_to_string(&record).unwrap();
+    let stopped = crate::stopped::Stopped::parse(recorded.lines().next().unwrap()).expect("testenv's record parses");
+
+    let broker = testkit::broker::Broker::up();
+    let mut sub = testkit::broker::Subscriber::to(broker.socket(), &["gate/#"]);
+    let out = format!("VERDICT RED ran=1 red=1 first=unit-tests.sh: exit 143 {}", stopped.verdict_field());
+    let f = Fake::new();
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
+    f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = "bash spira/fence.sh && testenv run".into();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, out));
+    *f.broker.borrow_mut() = Some(broker.socket().to_path_buf());
+    f.run();
+
+    let result = &delivered(&mut sub, 1)["gate/spira/sp-a"];
+    assert_eq!(
+        result["killed_by"],
+        serde_json::json!({"sig": 15, "by_pid": killer.id(), "cmd": "kill", "cgroup": stopped.unit()}),
+        "{result}"
+    );
+}
+
+#[cfg(feature = "integration")]
+#[test_id(ts0etej)]
+#[test]
+fn a_trial_with_the_broker_stopped_ends_as_it_does_with_none() {
+    let mut broker = testkit::broker::Broker::up();
+    broker.stop();
+    let stopped = published_red_fake();
+    *stopped.broker.borrow_mut() = Some(broker.socket().to_path_buf());
+    let without = published_red_fake();
+
+    assert_eq!((stopped.run(), without.run()), (FAIL, FAIL), "{}", stopped.stderr());
+
+    assert_eq!(stopped.full_verdict_line(), without.full_verdict_line());
+    assert_eq!(*stopped.appended.borrow(), *without.appended.borrow(), "gate.log");
+    assert_eq!(stopped.tsd.borrow().len(), 1);
+    let row = |f: &Fake| f.tsd.borrow()[0].clone();
+    assert_eq!(row(&stopped), row(&without), "the gate-run row");
+}
+
+#[cfg(feature = "integration")]
+#[test_id(tcldycw)]
+#[test]
+fn a_trial_that_ran_no_testenv_takes_no_sender_from_what_its_tests_print() {
+    let broker = testkit::broker::Broker::up();
+    let mut sub = testkit::broker::Subscriber::to(broker.socket(), &["gate/#"]);
+    let printed = crate::stopped::Stopped { sig: 9, by_pid: Some(1), cmd: "kill".into(), cgroup: "x".into() };
+    let f = flip_fake_with(&format!("VERDICT RED ran=1 red=1 {}", printed.verdict_field()), Ok(vec![]));
+    *f.broker.borrow_mut() = Some(broker.socket().to_path_buf());
+
+    f.run();
+
+    assert_eq!(delivered(&mut sub, 1)["gate/spira/sp-a"]["killed_by"], serde_json::Value::Null);
 }

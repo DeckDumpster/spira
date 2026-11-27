@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=runtime
+DOC=The Unix socket the MQTT broker (spira-broker.service) listens on, its only listener. A relative value is a path under SPIRA_RUN.
+SCHEMA=REQUIRED: The MQTT broker's Unix socket; every publisher and subscriber reads this key. A relative value is a path under spira.run. spira-config init writes it on a fresh install and activation's config delta declares it on an upgrade; a reader never defaults it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Written by spira-config init only: a reader refuses a config that does not declare the key.
+    : "${SPIRA_BROKER_SOCKET:=broker.sock}"
+SPIRA_CONF_DEFAULT_EOF

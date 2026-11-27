@@ -291,8 +291,8 @@ pub trait Lib {
     fn format_batch(&self, wt: &Path, base: &str, name: &str);
     /// `_pf_gate` under a wall of `wall_secs`: (rc, output); 124 = wall hit.
     fn pf_gate(&self, branch: &str, name: &str, stamp: &str, wall_secs: u64) -> (i32, String);
-    /// R23: `BEADS_ACTOR=<actor> bdq create <title> --type bug --priority P --labels L
-    /// --body-file <body> --silent` → the new id (None when bd created nothing).
+    /// R23: `content create <title> --type bug`, `actor` on the body's first line → the new
+    /// id (None, with the reason logged, when nothing was created).
     fn create_bug(
         &self,
         actor: &str,
@@ -833,6 +833,7 @@ pub struct World<'a> {
     pub clock: &'a dyn Clock,
     pub env: &'a dyn Env,
     pub io: &'a dyn Emit,
+    pub rounds: &'a crate::round_bus::RoundBus,
 }
 
 impl World<'_> {

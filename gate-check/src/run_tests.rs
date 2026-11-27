@@ -1,54 +1,22 @@
-//! `run`'s walk over a fake [`World`]: what it discovers, what it reports, what it prints.
+//! `run`'s walk over a fake [`World`]: what it reports, resolves and prints.
 
 use super::*;
 use std::cell::RefCell;
 use std::path::Path;
-use testkit::TempDir;
 
+#[derive(Default)]
 struct Fake {
-    root: TempDir,
-    gates: &'static str,
     check: &'static str,
-    discovered: RefCell<Vec<(String, String)>>,
     resolved: RefCell<Vec<String>>,
     printed: RefCell<String>,
-    repos: Vec<&'static str>,
-}
-
-impl Fake {
-    fn new(gates: &'static str, check: &'static str) -> Fake {
-        Fake {
-            root: TempDir::new("gate-check-fake"),
-            gates,
-            check,
-            discovered: RefCell::new(Vec::new()),
-            resolved: RefCell::new(Vec::new()),
-            printed: RefCell::new(String::new()),
-            repos: vec!["prrepo", "pushrepo"],
-        }
-    }
 }
 
 impl World for Fake {
-    fn repo_names(&self) -> Vec<String> {
-        self.repos.iter().map(|r| r.to_string()).collect()
-    }
-    fn repo_land(&self, name: &str) -> String {
-        if name.starts_with("pr") { "pr" } else { "push" }.into()
-    }
-    fn repo_root(&self, name: &str) -> Option<PathBuf> {
-        let dir = self.root.path().join(name);
-        std::fs::create_dir_all(dir.join(if name == "prunborn" { "src" } else { ".git" })).unwrap();
-        Some(dir)
+    fn repo_root(&self, _: &str) -> Option<PathBuf> {
+        None
     }
     fn home_repo(&self) -> String {
         "prrepo".into()
-    }
-    fn bd_gate_list_json(&self) -> String {
-        self.gates.into()
-    }
-    fn bd_gate_discover(&self, repo: &str, branch: &str) {
-        self.discovered.borrow_mut().push((repo.into(), branch.into()));
     }
     fn bd_gate_check(&self) -> String {
         self.check.into()
@@ -99,55 +67,14 @@ impl World for Fake {
     }
 }
 
-const TWO_GATES_SAME_BRANCH: &str = r#"[
-    {"await_type":"gh:run","await_id":"","metadata":{"branch":"spira/sp-1"}},
-    {"await_type":"gh:run","await_id":"","metadata":{"branch":"spira/sp-1"}}
-]"#;
-
 // covers: UC-landing-merge-queue-52
-#[test_id(t9t7ces)]
+#[test_id(t23sotu)]
 #[test]
-fn an_unbound_gate_branch_is_discovered_once_in_pr_repos_only_and_a_stuck_gate_is_reported() {
-    let root = testkit::TempDir::new("gate-check-run");
-    let w = Fake::new(
-        TWO_GATES_SAME_BRANCH,
-        "gate x-1: no run ID specified\n⚠ zq-9k2: ESCALATE red\n",
-    );
-    run(&w, &root.join("nonexistent"));
+fn a_stuck_gate_is_reported_and_an_escalated_one_is_resolved() {
+    let w = Fake { check: "gate x-1: no run ID specified\n⚠ zq-9k2: ESCALATE red\n", ..Fake::default() };
+    run(&w, Path::new("nonexistent"));
 
-    let found = w.discovered.borrow();
-    assert_eq!(found.len(), 1, "one discover per distinct branch, pr repos only: {found:?}");
-    assert_eq!(found[0].1, "spira/sp-1");
-    assert_eq!(found[0].0, "prrepo");
     assert!(w.printed.borrow().contains("1 stuck: no await_id"));
     assert!(w.printed.borrow().contains("ESCALATE red"), "gate check ran and its output is shown");
     assert_eq!(*w.resolved.borrow(), vec!["zq-9k2".to_string()], "any id prefix is parsed");
-}
-
-// covers: UC-landing-merge-queue-52
-#[test_id(t5bemt6)]
-#[test]
-fn with_no_unbound_gate_nothing_is_discovered() {
-    let root = testkit::TempDir::new("gate-check-run");
-    let w = Fake::new("[]", "");
-    run(&w, &root.join("nonexistent"));
-    assert!(w.discovered.borrow().is_empty());
-    assert!(!w.printed.borrow().contains("stuck"));
-}
-
-// covers: UC-landing-merge-queue-53
-#[test_id(ty98wmg)]
-#[test]
-fn a_gates_branch_is_discovered_in_each_pr_repo_that_has_a_checkout_and_in_no_other() {
-    let root = testkit::TempDir::new("gate-check-scoped");
-    let mut w = Fake::new(TWO_GATES_SAME_BRANCH, "");
-    w.repos = vec!["prrepo", "pushrepo", "prsecond", "prunborn"];
-    run(&w, &root.join("nonexistent"));
-
-    let found: Vec<(String, String)> = w.discovered.borrow().clone();
-    assert_eq!(
-        found,
-        [("prrepo".to_string(), "spira/sp-1".to_string()), ("prsecond".to_string(), "spira/sp-1".to_string())],
-        "each pr repo with a checkout is asked once, by name; a push repo and a repo with no checkout are not"
-    );
 }

@@ -2,4 +2,3 @@
 # Shrink-only: a line leaves when its file routes the spawn through spira_config::release_env.
 gate-run/src/real.rs
 spira-lint/src/rules/conf_key_registry.rs
-watchtower/src/sweep/collect.rs

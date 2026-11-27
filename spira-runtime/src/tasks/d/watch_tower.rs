@@ -17,18 +17,18 @@
 //! | Field | Today | Becomes |
 //! |---|---|---|
 //! | halt / drain | `run/world.halted`, `run/world.draining` (`collect.rs:143-166,172-173`) | file read (host) |
-//! | failed units, CPU throttle | `systemctl --user list-units --failed` (`failed_units.rs:30-33`); `systemctl show -p ControlGroup` + `cpu.stat` (`cpu_throttle.rs:104-107`, `collect.rs:185`) | `unit.facts` (S6) + cgroupfs |
+//! | failed units, CPU throttle | the units port: the failed-unit list; each unit's `control_group` + `cpu.stat` (`cpu_throttle.rs`) | `unit.facts` (S6) + cgroupfs |
 //! | pipeline counters `SP_*` | `run/cockpit/cockpit.env` (`collect.rs:192-217`) | the cockpit projection (S7b) |
 //! | last landing, WORKING / SUBMITTED rows | `spira-lc list --state X` (`lc.rs:48-72`, `collect.rs:220,301`) | `LcClient` list (S7a) |
 //! | gate wait / slow / silence | `run/gate.log` (`collect.rs:228-232`) | file read |
-//! | yield | `bash yield.sh report` (`collect.rs:235-246`) | port into the task, or `(unverified)` keep |
+//! | yield | `strand::yield_report` over `run/gate-yield/*` and `run/gate.log` | file read |
 //! | no-verdict streaks | `run/noverdict/*` (`collect.rs:268-287`) | file read |
-//! | dwarves live / ready by rune | `bash -c '. lib.sh; spira_runes; dwarf_count; bd ready'` (`seams.rs:31-59`, `collect.rs:291`) + `run/dwarf-ledger.log` | ready counts projection (S7b) + `spira-claim` library |
+//! | dwarves live / ready by rune | `strand::probe::dwarf_count`; `spira_claim::cli::bulk_ready_by_rune` when `run/dwarf-ledger.log` exists (`seams.rs`) | ready counts projection (S7b) |
 //! | disk / mem / tmp | `df /`, `df /tmp`, `/proc/meminfo` (`collect.rs:313-314,413`) | statvfs + procfs |
 //! | throttle stamp | `run/queue-throttled` (`collect.rs:318`) | file read |
 //! | lapsed dwarves | `run/lapsed/` against `run/lapsed.swept` (`collect.rs:342`) | file read |
-//! | branch guard | `bash branch-guard.sh check` (`collect.rs`) | `(unverified)` library calls |
-//! | release status (hotfix) | `release status` (`collect.rs:354-357`) | `release` library |
+//! | branch guard | `watchtower::branch_guard`, git only for a moved ref | the same |
+//! | release status (hotfix) | `release::activate::status` | the same |
 //!
 //! Side effect hidden in observe: `cpu_throttle::gather` rewrites `run/cpu-throttle.state` (`cpu_throttle.rs:135`). The task moves that sample into carry, so the probe is read-only.
 //!
@@ -78,7 +78,7 @@
 //!   - `systemctl` ×2 (`failed_units.rs:33`, `cpu_throttle.rs:105`)
 //!   - `spira-lc` (`lc.rs:49`)
 //!   - `bdq` (`escalate.rs:47`)
-//!   - `bash` ×6: yield.sh, pipeline probe, suites.sh, branch-guard, incident.sh, moot-sweep.sh (`collect.rs:239,454,472`, `seams.rs:53`, `incident.rs:133`, `escalate.rs:388`)
+//!   - `bash` ×5: pipeline probe, suites.sh, branch-guard, incident.sh, moot-sweep.sh (`collect.rs:239,454,472`, `seams.rs:53`, `incident.rs:133`, `escalate.rs:388`)
 //!   - `testenv` (`collect.rs:457`)
 //!   - `release` (`collect.rs:356`)
 //!   - `df` ×2 (`collect.rs:413`, `disk_mem.rs:45`)

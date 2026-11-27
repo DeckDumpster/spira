@@ -3,6 +3,8 @@
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
+pub mod broker;
+
 use std::ffi::OsStr;
 use std::io::Write;
 use std::ops::Deref;
@@ -135,6 +137,11 @@ impl ChildGuard {
         cmd.process_group(0);
         let child = cmd.spawn().unwrap_or_else(|e| panic!("spawn {cmd:?}: {e}"));
         ChildGuard(child)
+    }
+
+    /// The piped stdout and stderr, for a test that reads them while the child runs.
+    pub fn pipes(&mut self) -> (Option<std::process::ChildStdout>, Option<std::process::ChildStderr>) {
+        (self.0.stdout.take(), self.0.stderr.take())
     }
 
     /// The child's pid (also its process group id, since it leads its own group).

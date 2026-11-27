@@ -292,19 +292,6 @@ mod tests {
         (rows, faults)
     }
 
-    #[test_id(t52kqz0)]
-    #[test]
-    fn the_shipped_manifest_alone_parses_and_names_no_inbox_keeper_row() {
-        let path = spira_config::resolve::locate_home_for_process().unwrap().join("watchers");
-        let text = std::fs::read_to_string(&path).unwrap();
-        let root = testkit::TempDir::new("watchd-manifest");
-        let r = shipped_resolver(&root);
-        let (rows, faults) = parse(&text, &r);
-        assert!(faults.is_empty(), "{faults:?}");
-        assert!(rows.iter().any(|r| r.name == "concierge-inbox"), "positive control: rows were parsed");
-        assert!(!rows.iter().any(|r| r.name == "inbox-keeper"), "inbox-keeper is hosted by spira-runtime, not a watchd row");
-    }
-
     /// W2 of the scheduler consolidation: the harness's own manifest runs no process. Every
     /// watcher that looped as a `daemon` row is a `spira-runtime serve` task or retired; the rows
     /// left name logs other components write. An operator overlay may still add a daemon row.

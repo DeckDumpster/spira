@@ -1,6 +1,6 @@
-//! The snapshot's `SP_*`/`YIELD_*` key-value map, read from `cockpit.env` and from
-//! `yield.sh report`'s stdout — both plain `KEY=value` lines, never full shell syntax, so
-//! parsing is a per-line prefix match, not `eval`. `g()` is the bash helper of the same
+//! The sweep's `SP_*`/`YIELD_*` key-value map. `SP_*` is read from `cockpit.env`, plain
+//! `KEY=value` lines and never full shell syntax, so parsing is a per-line prefix match, not
+//! `eval`; `YIELD_*` is set from `strand::yield_report`. `g()` is the bash helper of the same
 //! name: an absent or empty key renders `?`, never `0` (law-absence-needs-a-positive-control).
 
 use std::collections::BTreeMap;
@@ -105,17 +105,5 @@ mod tests {
         assert_eq!(e.g("SP_UNADOPTED_NAMES"), "sp-stray");
         assert_eq!(e.g("SP_OTHER"), "sp-double");
         assert_eq!(e.g("SP_BARE"), "sp-bare");
-    }
-
-    #[test_id(tlx6wd1)]
-    #[test]
-    fn merge_lines_handles_the_yield_prefix_with_quoted_values() {
-        // yield.sh's own output is re-quoted by the bash (`\1="\2"`) before eval; here the
-        // value is whatever text follows `=` verbatim, quotes and all, matching what a
-        // reader of the RAW yield.sh output (before the bash's own re-quoting) would see.
-        let mut e = Env::new();
-        e.merge_lines("YIELD_REDS=3\nYIELD_RECORDER=silent\n", "YIELD_");
-        assert_eq!(e.g("YIELD_REDS"), "3");
-        assert_eq!(e.g("YIELD_RECORDER"), "silent");
     }
 }

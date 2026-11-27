@@ -14,7 +14,7 @@ use crate::{Result, RuntimeError};
 const DEFAULT_PROGRAM: &str = "systemctl";
 const CALL_BUDGET: Duration = Duration::from_secs(20);
 
-const PROPS: [&str; 12] = ["Id", "LoadState", "UnitFileState", "ActiveState", "SubState", "Result", "MainPID", "NRestarts", "InvocationID", "ExecMainCode", "ExecMainStatus", "Environment"];
+const PROPS: [&str; 13] = ["Id", "LoadState", "UnitFileState", "ActiveState", "SubState", "Result", "MainPID", "NRestarts", "InvocationID", "ExecMainCode", "ExecMainStatus", "Environment", "ControlGroup"];
 
 pub struct SystemctlUnits {
     program: String,
@@ -97,6 +97,7 @@ fn detail_of_block(block: &str) -> Option<UnitDetail> {
         main_pid: number("MainPID").and_then(|p| u32::try_from(p).ok()).filter(|p| *p != 0),
         n_restarts: number("NRestarts").and_then(|n| u32::try_from(n).ok()),
         invocation_id: invocation,
+        control_group: word("ControlGroup"),
         environment: get("Environment").map(environment_words).unwrap_or_default(),
         ..UnitDetail::absent(&name)
     })
@@ -185,7 +186,7 @@ mod tests {
         p.to_string_lossy().into_owned()
     }
 
-    const SHOW: &str = "Id=spira-a.service\nLoadState=loaded\nUnitFileState=enabled\nActiveState=failed\nSubState=failed\nResult=signal\nMainPID=0\nNRestarts=3\nInvocationID=0123456789abcdef0123456789abcdef\nExecMainCode=2\nExecMainStatus=15\nEnvironment=SPIRA_RELEASE=/r/abc \"B=two words\"\n\nId=gone.service\nLoadState=not-found\nActiveState=inactive\n";
+    const SHOW: &str = "Id=spira-a.service\nLoadState=loaded\nUnitFileState=enabled\nActiveState=failed\nSubState=failed\nResult=signal\nMainPID=0\nNRestarts=3\nInvocationID=0123456789abcdef0123456789abcdef\nExecMainCode=2\nExecMainStatus=15\nControlGroup=user.slice/spira-a.service\nEnvironment=SPIRA_RELEASE=/r/abc \"B=two words\"\n\nId=gone.service\nLoadState=not-found\nActiveState=inactive\n";
 
     #[test_id(twn8mcp)]
     #[test]
@@ -195,6 +196,7 @@ mod tests {
         assert_eq!((d[0].state, d[0].exit, d[0].result.as_deref(), d[0].n_restarts, d[0].main_pid), (UnitState::Failed, Some(Exit::Signal(15)), Some("signal"), Some(3), None));
         assert_eq!(d[0].invocation_id.as_deref(), Some("0123456789abcdef0123456789abcdef"));
         assert_eq!(d[0].environment[0], "SPIRA_RELEASE=/r/abc");
+        assert_eq!(d[0].control_group.as_deref(), Some("user.slice/spira-a.service"));
         assert_eq!(d[1].state, UnitState::Absent);
     }
 

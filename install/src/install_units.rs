@@ -5,7 +5,7 @@
 //! `release install-tarball --skip-restart` leaves this call as the one that matters).
 
 use crate::decide::{decide, Action, State};
-use crate::manifest::{inst_name, inst_watch_name, Manifest};
+use crate::manifest::{inst_name, Manifest};
 use crate::systemctl::Systemctl;
 use crate::values::{render, HostValues};
 use std::collections::BTreeMap;
@@ -91,6 +91,26 @@ pub fn execstart_target_ok(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Why a running service whose `ExecStart=` program is under `env_bin` has outlived it, or
+/// `None`. spira-env is repointed under an unchanged unit text, and activation judges only
+/// programs under the releases root.
+pub fn program_outlived(text: &str, env_bin: &Path, exe: Option<&Path>) -> Option<String> {
+    let line = release::units::exec_lines(text).into_iter().find(|l| l.starts_with("ExecStart="))?;
+    let prog = Path::new(line["ExecStart=".len()..].trim_start_matches(['-', '@', '+', '!', ':']).split_whitespace().next()?);
+    if !prog.starts_with(env_bin) {
+        return None;
+    }
+    let (have, want) = match (fs::read(exe?), fs::read(prog)) {
+        (Ok(have), Ok(want)) => (have, want),
+        _ => return Some(format!("cannot compare its running executable with {}", prog.display())),
+    };
+    // A script's process runs its interpreter, so its bytes never match the script's.
+    if want.starts_with(b"#!") {
+        return None;
+    }
+    (have != want).then(|| format!("its running process's executable is not {}", prog.display()))
+}
+
 /// The manifest rows rendered from [`watchdog_files`] rather than from a template file.
 const WATCHDOG_ROWS: [&str; 2] = ["spira-watchdog.service", "spira-watchdog.timer"];
 
@@ -130,11 +150,20 @@ pub fn render_all(ctx: &Ctx) -> Result<Vec<(String, String, String)>, String> {
         let text = if WATCHDOG_ROWS.contains(&name) { render_watchdog_row(ctx, name)? } else { render_template(ctx, name, None)? };
         out.push((inst_name(name, &ctx.host.instance), name.to_string(), text));
     }
-    for w in &ctx.manifest.watch_names {
-        let text = render_template(ctx, "spira-watch@.service", Some(w))?;
-        out.push((inst_watch_name(w, &ctx.host.instance), "spira-watch@.service".to_string(), text));
+    let instances = ctx.manifest.instances().zip(ctx.manifest.instance_names(&ctx.host.instance));
+    for ((template, name), installed) in instances {
+        let text = render_template(ctx, template, Some(name))?;
+        out.push((installed, template.to_string(), text));
     }
     Ok(out)
+}
+
+/// [`crate::broker::place_conf`] when `rendered` includes the broker's unit.
+pub(crate) fn place_broker_conf(ctx: &Ctx, rendered: &[(String, String, String)]) -> Result<bool, String> {
+    if !rendered.iter().any(|(_, template, _)| template == crate::broker::UNIT) {
+        return Ok(false);
+    }
+    crate::broker::place_conf(ctx.templates_dir, ctx.host)
 }
 
 fn render_template(ctx: &Ctx, template: &str, watcher: Option<&str>) -> Result<String, String> {
@@ -207,6 +236,18 @@ pub fn run(ctx: &Ctx) -> Report {
     };
 
     let mut changed_templates: std::collections::BTreeSet<String> = Default::default();
+    // Before any unit is enabled: the broker cannot start without its config, and a changed
+    // config restarts it.
+    match place_broker_conf(ctx, &rendered) {
+        Ok(true) => {
+            changed_templates.insert(crate::broker::UNIT.to_string());
+        }
+        Ok(false) => {}
+        Err(e) => {
+            r.errors.push(e);
+            return r;
+        }
+    }
     let mut new_units: std::collections::BTreeSet<String> = Default::default();
     let mut masked: std::collections::BTreeSet<String> = Default::default();
 
@@ -265,6 +306,7 @@ pub fn run(ctx: &Ctx) -> Report {
     active_names.dedup();
     let active_all: BTreeMap<&String, bool> = active_names.iter().zip(ctx.systemctl.is_active_many(&active_names)).collect();
 
+    let mut deferred = read_deferred(ctx.unit_dir);
     for u in &ordered {
         if masked.contains(u) {
             r.enabled_actions.push((u.clone(), Action::Masked));
@@ -272,35 +314,48 @@ pub fn run(ctx: &Ctx) -> Report {
         }
         let subject = ctrl_subject(u, &ctx.host.instance);
         let suspended = (ctx.suspended)(&subject);
-        let disabled = enabled_all[u].as_deref() == Some("disabled") && !new_by_inst.contains(u) && !is_convergence_root(u, &ctx.host.instance);
+        let was_deferred = deferred.contains(u);
+        let disabled = enabled_all[u].as_deref() == Some("disabled") && !new_by_inst.contains(u) && !was_deferred && !is_convergence_root(u, &ctx.host.instance);
         // A changed template (spira-watch@.service) counts as a change to every instance.
-        let tmpl_of_u = rendered.iter().find(|(inst, _, _)| inst == u).map(|(_, t, _)| t.clone());
-        let changed = tmpl_of_u.as_deref().map(|t| changed_templates.contains(t)).unwrap_or(false);
-        let action = decide(State { changed, masked: false, suspended, disabled, halted: ctx.world_halted, active: active_all[u] });
-        apply(ctx, u, action, &active_all);
+        let row = rendered.iter().find(|(inst, _, _)| inst == u);
+        let changed = row.is_some_and(|(_, t, _)| changed_templates.contains(t));
+        let outlived = row.filter(|_| !changed && active_all[u] && u.ends_with(".service")).and_then(|(_, _, text)| program_outlived(text, Path::new(&ctx.host.env_bin), ctx.systemctl.running_exe(u).as_deref()));
+        let action = decide(State { changed: changed || outlived.is_some(), masked: false, suspended, disabled, halted: ctx.world_halted, active: active_all[u] });
+        // A deferred unit someone started by hand reads unchanged and active, and is still not enabled.
+        let action = if was_deferred && action == Action::Skip { Action::EnableNow } else { action };
+        if let (Action::Restart, Some(reason)) = (action, &outlived) {
+            println!("restarted {u}: {reason}");
+        }
+        let applied = apply(ctx, u, action, &active_all);
+        if matches!(action, Action::Enable | Action::Restart | Action::EnableNow) && applied.is_ok() {
+            deferred.remove(u);
+        }
         r.enabled_actions.push((u.clone(), action));
         if u == "dolt-beads.service" && !ctx.world_halted {
             db_server_wait(ctx);
         }
     }
+    if let Err(e) = write_deferred(ctx.unit_dir, &deferred) {
+        r.errors.push(format!("{DEFERRED_LEDGER}: {e}"));
+    }
 
     r
 }
 
-fn apply(ctx: &Ctx, unit: &str, action: Action, was_active: &BTreeMap<&String, bool>) {
+/// `Err` when systemd refused to enable the unit.
+fn apply(ctx: &Ctx, unit: &str, action: Action, was_active: &BTreeMap<&String, bool>) -> Result<(), String> {
     match action {
-        Action::Masked | Action::Suspended | Action::OperatorDisabled | Action::Skip => {}
-        Action::Enable => {
-            let _ = ctx.systemctl.enable(unit);
-        }
+        Action::Masked | Action::Suspended | Action::OperatorDisabled | Action::Skip => Ok(()),
+        Action::Enable => ctx.systemctl.enable(unit),
         Action::Restart => {
             drain_oneshot(ctx, unit, was_active);
-            let _ = ctx.systemctl.enable(unit);
+            let enabled = ctx.systemctl.enable(unit);
             restart_active(ctx, unit);
+            enabled
         }
         Action::EnableNow => {
             drain_oneshot(ctx, unit, was_active);
-            let _ = ctx.systemctl.enable_now(unit);
+            ctx.systemctl.enable_now(unit)
         }
     }
 }
@@ -351,40 +406,34 @@ fn drain_oneshot(ctx: &Ctx, unit: &str, was_active: &BTreeMap<&String, bool>) {
     eprintln!("install: warning — {svc} did not finish within {max}s; proceeding");
 }
 
-/// `_db_server_wait` (systemd/install.sh, gone with sp-31dm0's port): after dolt-beads.service
-/// is applied, hold every timer behind it in the same `ordered` pass until `bd` can read the
-/// database — so a timer whose elapsed-since-boot condition is already met does not fire into
-/// a server still starting (acceptance phase B, 2026-09-26: units.sh listed dolt-beads.service
-/// near the end of ENABLE, after every timer; the sentinel ran first, logged DATABASE
-/// UNREADABLE, exited 1 and was left failed). No database yet (a first install before phase
-/// 3's seed) or no `bd` at all: nothing to wait for. A server that never answers is reported,
-/// not fatal — the end-state check and the units' own failures say what is wrong more
-/// precisely than a refusal here would. `SPIRA_INSTALL_DB_READY_WAIT` bounds the wait
-/// (seconds, default 60); `SPIRA_DRAIN_INTERVAL` paces it (default 2, tests set it to 0).
+/// After dolt-beads.service is applied, hold every timer behind it in the same `ordered` pass
+/// until the beads store answers, so a timer already due does not fire into a server still
+/// starting. No store yet (a first install before phase 3's seed): nothing to wait for. A server
+/// that never answers is reported, not fatal: the end-state check and the units' own failures say
+/// what is wrong more precisely. `SPIRA_INSTALL_DB_READY_WAIT` bounds the wait (seconds, default
+/// 60); `SPIRA_DRAIN_INTERVAL` paces it (default 2, tests set it to 0).
 fn db_server_wait(ctx: &Ctx) {
     let db = ctx.host.db.as_str();
     if db.is_empty() || !Path::new(db).join(".beads").is_dir() {
         return;
     }
-    let bd = crate::bootstrap::nonempty_env("SPIRA_BD").unwrap_or_else(|| "bd".to_string());
+    let lc = match spira_store::lifecycle_row::lc_bin() {
+        Ok(lc) => lc,
+        Err(e) => {
+            eprintln!("install: warning — cannot ask the beads database whether it is up ({e}); arming timers anyway");
+            return;
+        }
+    };
     let interval = crate::bootstrap::nonempty_env("SPIRA_DRAIN_INTERVAL").and_then(|v| v.parse::<u64>().ok()).unwrap_or(2);
     let max = crate::bootstrap::nonempty_env("SPIRA_INSTALL_DB_READY_WAIT").and_then(|v| v.parse::<u64>().ok()).unwrap_or(60);
     let mut waited = 0u64;
     let mut printed_waiting = false;
     loop {
-        match spira_config::bounded::bounded(&bd).args(["-C", db, "sql", "select 1"]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status() {
-            Ok(s) if s.success() => {
-                if waited > 0 {
-                    println!("install: beads database answering after {waited}s");
-                }
-                return;
+        if spira_config::bounded::bounded(&lc).args(crate::orchestrate::STORE_PING).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success()) {
+            if waited > 0 {
+                println!("install: beads database answering after {waited}s");
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound && !printed_waiting && waited == 0 => {
-                // No bd on the path: nothing to wait for. Any other spawn failure (ETXTBSY on a
-                // just-written script, EAGAIN under load) is transient and is retried as a miss.
-                return;
-            }
-            _ => {}
+            return;
         }
         if waited >= max {
             break;
@@ -408,6 +457,25 @@ const RENAMED_OUT_OF_WATCHER_NAMESPACE: [&str; 2] = ["refresh", "notify"];
 /// predates per-instance suffixes. Enumerated from the manifest's own templates, so a
 /// template added here is automatically covered without a second edit.
 const LEDGER: &str = ".spira-installed-units";
+
+/// Installed ENABLE units not yet enabled because their `ExecStart=` target was missing. Their
+/// "disabled" is the harness's own doing; once enabled a unit leaves the list, so a later
+/// `disable` is the operator's and stands.
+const DEFERRED_LEDGER: &str = ".spira-deferred-enable";
+
+pub(crate) fn read_deferred(unit_dir: &Path) -> std::collections::BTreeSet<String> {
+    let text = fs::read_to_string(unit_dir.join(DEFERRED_LEDGER)).unwrap_or_default();
+    text.lines().map(str::trim).filter(|u| !u.is_empty()).map(str::to_string).collect()
+}
+
+pub(crate) fn write_deferred(unit_dir: &Path, units: &std::collections::BTreeSet<String>) -> io::Result<()> {
+    let path = unit_dir.join(DEFERRED_LEDGER);
+    let body: String = units.iter().map(|u| format!("{u}\n")).collect();
+    if fs::read_to_string(&path).unwrap_or_default() == body {
+        return Ok(());
+    }
+    fs::write(&path, body)
+}
 
 /// Units a previous run installed and this release no longer ships. The ledger, not a name
 /// pattern, decides what is Spira's to remove.
@@ -504,9 +572,6 @@ fn retire_unledgered_units(ctx: &Ctx, now: &std::collections::BTreeSet<String>, 
 
 fn migrate_legacy(ctx: &Ctx, r: &mut Report) {
     for name in ctx.manifest.template_names() {
-        if name == "spira-watch@.service" {
-            continue;
-        }
         if !(name.starts_with("spira-") && (name.ends_with(".service") || name.ends_with(".timer"))) {
             continue;
         }
@@ -587,7 +652,7 @@ pub fn prune_targets<'a>(on_disk_or_known: impl IntoIterator<Item = &'a str>, ex
 /// template's own installed name) — the prune passes' "a manifest unit, not a stray" set.
 pub fn expected_installed_names(manifest: &Manifest, instance: &str) -> std::collections::BTreeSet<String> {
     let mut s: std::collections::BTreeSet<String> = manifest.template_names().iter().map(|n| inst_name(n, instance)).collect();
-    s.extend(manifest.watch_names.iter().map(|w| inst_watch_name(w, instance)));
+    s.extend(manifest.instance_names(instance));
     s
 }
 
@@ -668,6 +733,7 @@ mod tests {
     }
     use crate::manifest::{build, Inputs};
     use crate::systemctl::{FakeSystemctl, FakeUnit};
+    use std::os::unix::fs::OpenOptionsExt;
     #[test_id(t0ch9rh)]
     #[test]
     fn the_enable_loop_asks_systemd_about_every_unit_in_two_calls_not_two_per_unit() {
@@ -713,7 +779,149 @@ mod tests {
     use std::fs;
 
     fn host() -> HostValues {
-        HostValues { toml: "h/cfg.toml".into(), home: "h".into(), repo: "h".into(), run: "run".into(), db: "db".into(), cockpit: "h/cockpit".into(), dolt_data: "".into(), dolt: "usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), sccache_dav_root: "run/sccache-dav".into(), repo_map: "".into(), lc_password_file: "h/lc.credential".into(), watchdog_every_s: "60".into(), unit_user: String::new() }
+        HostValues { toml: "h/cfg.toml".into(), home: "h".into(), repo: "h".into(), run: "run".into(), db: "db".into(), cockpit: "h/cockpit".into(), dolt_data: "".into(), dolt: "usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), sccache_dav_root: "run/sccache-dav".into(), repo_map: "".into(), lc_password_file: "h/lc.credential".into(), watchdog_every_s: "60".into(), unit_user: String::new(), broker_socket: "run/broker.sock".into() }
+    }
+
+    #[test_id(ts0atet)]
+    #[test]
+    fn both_installers_place_the_broker_config_enable_the_unit_and_only_a_changed_config_restarts_it() {
+        let td = tempdir();
+        let tmpl_dir = td.join("templates");
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        let shipped = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd").join(crate::broker::CONF_FILE);
+        fs::copy(shipped, tmpl_dir.join(crate::broker::CONF_FILE)).unwrap();
+        fs::write(tmpl_dir.join(crate::broker::UNIT), "[Service]\nExecStart=/bin/true\n").unwrap();
+        let mut manifest = build(&Inputs { instance: "prod".into(), ..Default::default() }).unwrap();
+        manifest.units.retain(|u| u.name == crate::broker::UNIT);
+        let unit = "spira-broker-prod.service";
+        assert_eq!(manifest.enable("prod"), [unit], "the manifest installs and enables the broker");
+        assert_eq!(release::broker::installed_unit("prod"), unit, "activation looks for the unit the manifest installs");
+        let no_suspend = |_: &str| false;
+        let host_in = |name: &str, socket: &str| HostValues { run: td.join(name).display().to_string(), broker_socket: td.join(name).join(socket).display().to_string(), ..host() };
+        let conf = |h: &HostValues| fs::read_to_string(Path::new(&h.run).join(crate::broker::CONF_FILE)).unwrap();
+
+        // unit-ensure, which activation runs.
+        let (h, sc, unit_dir) = (host_in("ensure", "s"), FakeSystemctl::default(), td.join("ensure-units"));
+        fs::create_dir_all(&unit_dir).unwrap();
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let r = crate::ensure::run(&ctx, false);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert_eq!(r.enabled_started, [unit]);
+        assert!(conf(&h).contains(&format!("listener 0 {}\n", h.broker_socket)), "{}", conf(&h));
+
+        // units-install.
+        let (h, sc, unit_dir) = (host_in("install", "s"), FakeSystemctl::default(), td.join("install-units"));
+        fs::create_dir_all(&unit_dir).unwrap();
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let r = run(&ctx);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(conf(&h).contains(&format!("listener 0 {}\n", h.broker_socket)), "{}", conf(&h));
+        sc.set(unit, FakeUnit { active: true, enabled: Some("enabled".into()), kind: "notify".into(), file_listed: true });
+
+        assert!(run(&ctx).errors.is_empty());
+        assert!(sc.restarts.borrow().is_empty(), "an unchanged install leaves the broker running: {:?}", sc.restarts.borrow());
+
+        let moved = host_in("install", "moved");
+        let ctx = Ctx { host: &moved, ..ctx };
+        assert!(run(&ctx).errors.is_empty());
+        assert!(conf(&moved).contains(&format!("listener 0 {}\n", moved.broker_socket)), "a differing file is rewritten: {}", conf(&moved));
+        assert_eq!(sc.restarts.borrow().as_slice(), [unit], "a changed config restarts the broker, its unit text unchanged");
+    }
+
+    #[test_id(t80w57c)]
+    #[test]
+    fn an_install_restarts_a_service_whose_spira_env_program_changed_under_it() {
+        let td = tempdir();
+        let tmpl_dir = td.join("templates");
+        let env_bin = td.join("spira-env/bin");
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        fs::create_dir_all(&env_bin).unwrap();
+        fs::copy(spira_config::resolve::checkout_root_for_process().unwrap().join("systemd").join(crate::broker::CONF_FILE), tmpl_dir.join(crate::broker::CONF_FILE)).unwrap();
+        let mut manifest = build(&Inputs { instance: "prod".into(), ..Default::default() }).unwrap();
+        manifest.units.retain(|u| u.name == crate::broker::UNIT);
+        manifest.units.push(crate::manifest::Template { name: "dolt-beads.service".into(), enable: true });
+        let unit = "spira-broker-prod.service";
+        let dolt = env_bin.join("dolt");
+        // Never executed: the mode only satisfies `execstart_target_ok`, so no child need write them.
+        let fixture = |path: &Path, body: &str| {
+            let mut f = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o755).open(path).unwrap();
+            io::Write::write_all(&mut f, body.as_bytes()).unwrap();
+        };
+        fixture(&dolt, "A");
+        fs::write(tmpl_dir.join("dolt-beads.service"), "[Service]\nExecStart=@DOLT@ sql-server\n").unwrap();
+        let h = HostValues { dolt: dolt.display().to_string(), env_bin: env_bin.display().to_string(), run: td.join("run").display().to_string(), broker_socket: td.join("run/s").display().to_string(), ..host() };
+        let no_suspend = |_: &str| false;
+        // Installs a broker unit running `exec`, then leaves it active on a process whose executable is `running`.
+        let installed = |case: &str, exec: &str, running: &str| {
+            fs::write(tmpl_dir.join(crate::broker::UNIT), format!("[Service]\nExecStart={exec} -c x\n")).unwrap();
+            let (sc, unit_dir, exe) = (FakeSystemctl::default(), td.join(case), td.join(format!("{case}.exe")));
+            fs::create_dir_all(&unit_dir).unwrap();
+            fs::write(&exe, running).unwrap();
+            let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+            let r = run(&ctx);
+            assert!(r.errors.is_empty(), "{:?}", r.errors);
+            sc.set(unit, FakeUnit { active: true, enabled: Some("enabled".into()), kind: "notify".into(), file_listed: true });
+            sc.running_exes.borrow_mut().insert(unit.to_string(), exe);
+            (sc, unit_dir)
+        };
+        let rerun = |sc: &FakeSystemctl, unit_dir: &Path| {
+            let r = run(&Ctx { unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false });
+            assert!(r.errors.is_empty(), "{:?}", r.errors);
+            assert!(r.written.is_empty(), "the unit text is unchanged: {:?}", r.written);
+            sc.restarts.borrow().clone()
+        };
+
+        let program = env_bin.join("mosquitto");
+        fixture(&program, "A");
+        let (sc, unit_dir) = installed("env", "@SPIRA_ENV_PATH@/mosquitto", "A");
+        assert_eq!(rerun(&sc, &unit_dir), Vec::<String>::new(), "a matching program leaves the broker running");
+        fs::write(&program, "B").unwrap();
+        assert_eq!(rerun(&sc, &unit_dir), [unit], "a rebuilt spira-env restarts the broker once");
+
+        let (sc, unit_dir) = installed("unreadable", "@SPIRA_ENV_PATH@/mosquitto", "B");
+        sc.running_exes.borrow_mut().insert(unit.to_string(), td.join("gone"));
+        assert_eq!(rerun(&sc, &unit_dir), [unit], "an executable that cannot be compared is not assumed current");
+
+        let outside = td.join("mosquitto");
+        fixture(&outside, "B");
+        let (sc, unit_dir) = installed("outside", &outside.display().to_string(), "A");
+        assert_eq!(rerun(&sc, &unit_dir), Vec::<String>::new(), "a program outside spira-env is not judged here");
+
+        fixture(&program, "#!/bin/sh\n");
+        let (sc, unit_dir) = installed("script", "@SPIRA_ENV_PATH@/mosquitto", "A");
+        assert_eq!(rerun(&sc, &unit_dir), Vec::<String>::new(), "a script's process runs its interpreter");
+
+        let store = "dolt-beads.service";
+        fixture(&program, "A");
+        let (sc, unit_dir) = installed("store", "@SPIRA_ENV_PATH@/mosquitto", "A");
+        sc.set(store, FakeUnit { active: true, enabled: Some("enabled".into()), kind: "notify".into(), file_listed: true });
+        sc.running_exes.borrow_mut().insert(store.to_string(), td.join("dolt.running"));
+        fs::write(td.join("dolt.running"), "old dolt").unwrap();
+        assert_eq!(rerun(&sc, &unit_dir), Vec::<String>::new(), "the store refuses a restart job");
+        assert_eq!(sc.kills.borrow().as_slice(), [store], "an outlived store is killed onto the new dolt");
+    }
+
+    #[test_id(ttoei3p)]
+    #[test]
+    fn units_install_enables_a_unit_unit_ensure_deferred_even_one_started_by_hand() {
+        let unit = "spira-example-prod.service";
+        for started_by_hand in [false, true] {
+            let (base, manifest) = crate::ensure::tests::deferred_fixture();
+            let (unit_dir, tmpl_dir) = (base.join("units"), base.join("templates"));
+            let (h, sc, no_suspend) = (host(), FakeSystemctl::default(), |_: &str| false);
+            let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+            crate::ensure::run(&ctx, false);
+            sc.set(unit, FakeUnit { active: started_by_hand, enabled: Some("disabled".into()), ..Default::default() });
+            testkit::write_exe(base.join("tool"), "");
+
+            let r = run(&ctx);
+
+            assert!(r.errors.is_empty(), "{:?}", r.errors);
+            assert_eq!(r.enabled_actions, [(unit.to_string(), Action::EnableNow)], "started by hand: {started_by_hand}");
+            assert_eq!(sc.enabled_now.borrow().as_slice(), [unit]);
+            let ledger = fs::read_to_string(unit_dir.join(".spira-deferred-enable")).unwrap_or_default();
+            assert!(!ledger.contains(unit), "{ledger}");
+        }
     }
 
     fn tiny_manifest() -> Manifest {

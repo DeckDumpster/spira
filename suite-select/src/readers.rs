@@ -5,7 +5,7 @@
 const READERS: &[(&str, &[&str])] = &[
     ("systemd/", &["release", "spira-world"]),
     ("spira/conf.d/SPIRA_BD_TAG", &["spira-lc"]),
-    ("spira/bd-pin.sh", &["spira-lc"]),
+    ("spira/pre-activate.sh", &["release", "spira-lc"]),
     ("spira/build-bd.sh", &["spira-lc"]),
     ("spira/runes/", &["spira-config", "dwarf"]),
     ("spira/conf.d/", CONFIG_READERS),
@@ -55,10 +55,10 @@ mod tests {
         assert!(readers_of("spira/config-delta.toml.bak").is_empty());
     }
 
-    #[test_id(tjw3jxx)]
+    #[test_id(tmq7m7y)]
     #[test]
-    fn the_bd_pin_and_the_units_keep_their_readers() {
-        assert_eq!(readers_of("spira/bd-pin.sh"), ["spira-lc"]);
+    fn the_pre_activate_script_and_the_units_keep_their_readers() {
+        assert_eq!(readers_of("spira/pre-activate.sh"), ["release", "spira-lc"]);
         assert_eq!(readers_of("systemd/a.service"), ["release", "spira-world"]);
         assert!(readers_of("spira/conf.d/SPIRA_BD_TAG").contains(&"spira-lc"));
     }

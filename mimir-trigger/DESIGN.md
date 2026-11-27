@@ -55,9 +55,6 @@ Side effects (unchanged from the bash):
 - A non-blocking `flock` on `$SPIRA_RUN/mimir-trigger.lock`; a caller that loses the race
   skips this tick silently (exit 0) rather than risking two overlapping list-then-create
   dedup checks.
-- One `bd -C $SPIRA_DB create` on a fire, **not** through `bdq` — this preserves an existing
-  asymmetry with `incident.sh` (which always uses `bdq`) rather than introducing a behaviour
-  change (see Decisions).
 - Log lines to stderr, `<ISO-8601Z> mimir-trigger: <message>`.
 
 ## Schema / architecture
@@ -67,19 +64,9 @@ Side effects (unchanged from the bash):
   predicates, invalid-closed row filtering/dedup, and all of the bead title/description/label
   string assembly. Every function is a table-driven unit test; this is the surface `sp-0ekp7`'s
   parity proof rests on.
-- `ports.rs` — the `World` trait: the seam between decision logic and everything stateful.
-- `real.rs` — `World` for production: `spira_home_repo`/`repo_root`/`spira_landref` and, since
-  wave 4.35 (sp-kelr2, row V), `spira_lane_admitted`/`spira_open_trigger_count`/
-  `spira_repo_lanes` all run in-process (`spira_config::repos::Registry` plus `crate::lanes`,
-  the latter fed label values `main.rs` resolves through `spira_config::resolve` — never a raw
-  `env::var` read, per law-a-binary-resolves-the-config-it-reads); `detect_invalid_closed`
-  alone still shells to the **`lib.sh` seam** (source `lib.sh`, call one function, read
-  stdout — the pattern `gate-check/src/real.rs` established); shells to `bd` directly for
-  `create`; shells to `git log` for landing counts; reads the watermark/lastpass files and
-  the repo-map file directly off disk.
-- `main.rs` — orchestration matching the bash's control flow 1:1: lock → dedup → lane check →
-  read clocks → count landings (home repo, then repo-map, skipping the home repo) → evaluate
-  the three triggers → file or exit.
+- `lanes.rs` — the lane family: `spira_lane_admitted`/`spira_repo_lanes` over the registry.
+- `observe.rs` — the reads the scheduler's trigger tasks make: the open-trigger count over the
+  store's content door and the lifecycle list, and landings counted from `git log`.
 
 ## Non-goals (out of scope for this bead)
 
@@ -88,10 +75,8 @@ Side effects (unchanged from the bash):
   this crate). Stays a subprocess seam here.
 - **`repo_field`, `spira_landref`'s resolution ladder — no longer true.** Family U (the repo
   registry) and family W (base refs) ported to `spira_config::repos` in sp-37rmg/sp-o88bx
-  ("wave 4.11"/"4.12"); `real.rs`'s `home_repo`/`repo_root`/`landref` call that in-process now
-  (sp-k6lku, "wave 4.13") instead of a `bash -c '. lib.sh; ...'` seam that itself only shelled
-  into the `spira-config` binary a second time. This is calling the canonical port, not a
-  second copy of it.
+  ("wave 4.11"/"4.12"); the reads here call that in-process. This is calling the canonical
+  port, not a second copy of it.
 - **`spira_lane_admitted`/`spira_open_trigger_count`/`spira_repo_lanes` — no longer true
   either.** Family V ported in-process (wave 4.35, sp-kelr2, "the plan: shims, not a big
   bang" — this bead's own family moves to its owning crate, and that crate's Rust seam
@@ -109,17 +94,12 @@ Side effects (unchanged from the bash):
 - `engine.rs`'s 21 unit tests include a fixture window of real commit subjects captured
   verbatim from this repository's own `git log --format=%s` history, so the landing-id
   extraction is checked against real data, not only hand-written examples.
-- `main.rs`'s tests run the sweep against a fake `World` and carry
-  `UC-ops-detection-remediation-16`: gap and landing triggers, non-bead commits, per-bead
-  dedup, the home repo counted once, a non-`origin` remote, an open trigger suppressing a
-  second, a failed `bd create` as a failed sweep, and the allowlisted closed-record rows.
+- `observe.rs`'s tests carry `UC-ops-detection-remediation-16` for two cases: landings read
+  from a repository whose only remote is not `origin`, and which trigger beads still count as
+  open.
 
 ## Decisions
 
-- **The bash calls `bd create` directly, not `bdq`** — Rust preserves that literally rather
-  than "fixing" it by routing through `bdq`'s extra fences (repo-label validation, the
-  schema-delete refusal). Changing that posture is not this bead's
-  call; noted here so a future reader does not mistake it for an oversight.
 - **Invalid-closed dedup is by an exact bead-id set, not the bash's substring-containment
   check** (`case "$acc" in *"$_bid"*)`). The two agree on every realistic input — a bead id is
   never a substring of another row's text — and an exact set is simpler to reason about and

@@ -6,11 +6,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use runtime::ports::{Proc, SysProc};
 use runtime::socket::lc_call;
 use spira_config::nonwork::{status_args, Kind, Which};
 use serde_json::Value;
 
-use crate::watchers::inbox_keeper;
 use crate::forge::{slug, Forge};
 use crate::watchers::cr_cadence;
 use crate::watchers::pr_notify::{self, RepoObs};
@@ -52,6 +52,8 @@ pub struct World {
     pub push_pattern: String,
     /// The `inbox-triage` program whose `flush` verb delivers a pushed line; empty, the release's.
     pub inbox_flusher: PathBuf,
+    /// Where an inbox append is announced as `concierge/inbox`.
+    pub inbox_bus: inbox_rules::Bus,
     pub lc_socket: PathBuf,
     pub proc_dir: PathBuf,
     pub mail: PathBuf,
@@ -141,15 +143,19 @@ pub fn pr_snapshot_from(records: &RecordedPrs, targets: &[PrTarget], forge: &For
 
 /// Each queue.local checkout's forge tip, fetched in parallel and best-effort: the measurement
 /// that follows reads local refs and answers from the cached tip when this fails.
-fn refresh_forge_tip(git: &Path, reg: spira_config::repos::Registry, r: &MapRow) {
-    use crate::tasks::a::queue_step::edge::git_with;
+fn refresh_forge_tip(proc: &dyn Proc, git: &Path, reg: spira_config::repos::Registry, r: &MapRow) {
+    use crate::tasks::a::queue_step::edge::git_through;
     let reg = &if git == Path::new("git") { reg } else { reg.with_git(git.to_path_buf()) };
     if let Some((remote, branch)) = spira_config::repos::publish_forge(reg, &r.name, &BTreeMap::new()) {
         if spira_config::repos::landref(reg, &r.name).is_some_and(|base| crate::unpublished::published(Path::new(&r.path), &base, &remote, &branch)) {
             return;
         }
-        let _ = git_with(git, Path::new(&r.path), &["fetch", "--quiet", &remote, &branch], REFRESH_FETCH);
+        let _ = git_through(proc, git, Path::new(&r.path), &["fetch", "--quiet", &remote, &branch], REFRESH_FETCH);
     }
+}
+
+fn forge_refresh(proc: &dyn Proc, reg: Option<spira_config::repos::Registry>) -> impl Fn(&Path, &MapRow) + Sync + '_ {
+    move |git, r| reg.iter().for_each(|reg| refresh_forge_tip(proc, git, reg.clone(), r))
 }
 
 /// Refreshes every queue.local checkout at once, waits for all of them, then measures each.
@@ -379,29 +385,6 @@ impl World {
             ..Snapshot::default()
         };
         serde_json::to_string(&snap).map_err(|e| e.to_string())
-    }
-
-    /// Whether watchd's reader lock on the Concierge inbox is held, and how many inbox lines lie past
-    /// its cursor; `Err` naming the path that could not be read. `input` is the keeper's carry.
-    pub fn keeper_snapshot(&self, input: &str) -> Result<String, String> {
-        let carry: inbox_keeper::Carry = serde_json::from_str(input).unwrap_or_default();
-        let run = self.run_dir.to_string_lossy();
-        let lock = watchd::paths::tail_lockfile(&run, INBOX_WATCHER);
-        let cursor = watchd::paths::cursorfile(&run, INBOX_WATCHER);
-        let dir = lock.parent().unwrap_or(&self.run_dir);
-        fs::metadata(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        let waiter_alive = watchd::lock::try_lock(&lock).map_err(|e| format!("{}: {e}", lock.display()))?.is_err();
-        let log = fs::read(&self.inbox).map_err(|e| format!("{}: {e}", self.inbox.display()))?;
-        let total = log.iter().filter(|&&b| b == b'\n').count() as u64;
-        let (pos, cursor_mtime) = match fs::read_to_string(&cursor) {
-            Ok(text) => {
-                let mtime = fs::metadata(&cursor).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
-                (watchd::cursor::clamp_pos(watchd::cursor::parse_cursor(&text), total), mtime)
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (0, 0),
-            Err(e) => return Err(format!("{}: {e}", cursor.display())),
-        };
-        inbox_keeper::observed(&carry, inbox_keeper::Snapshot { waiter_alive, unread: total - pos, cursor_mtime })
     }
 
     /// Every review and the epoch the next scheduled one is due. An unset or malformed zone or hour is an
@@ -878,8 +861,9 @@ impl World {
         work && scoped
     }
 
-    /// Brings `bead-stage` up to the lifecycle log, running its exporter only when the log is ahead
-    /// of it, then fails when the family still trails the log: a stalled export blinds the stage invariants.
+    /// Brings `bead-stage` up to the lifecycle log. A pass that runs the exporter takes its verdict:
+    /// exit 0 means it drained the log, and the store may not yet show those rows. Only a pass with
+    /// nothing to export asks the store whether the family trails the log.
     fn flow_export(&self) -> Result<(), String> {
         let logged = self.lc_json(&["event-seq", "--head"])?["seq"].as_u64().ok_or("event-seq: no seq")?;
         let checkpoint = self.run_dir.join("tsd").join(".bead-stage-checkpoint-lifecycle.json");
@@ -889,7 +873,7 @@ impl World {
             return if logged <= exported { Ok(()) } else { Err("bead-stage is behind the lifecycle log and no exporter is configured".into()) };
         }
         if logged > exported {
-            exporter_run(bin, "lifecycle")?;
+            return exporter_run(bin, "lifecycle");
         }
         let mut lc = spira_store::lc_call::LcClient::socket(&self.lc_socket);
         let mut metrics = spira_otel::query::Store::new(self.metrics_endpoint.as_deref()).map_err(|e| e.to_string())?;
@@ -1095,20 +1079,23 @@ impl World {
 
     /// Per queue.local repo, how far the forge trails the landing ref, as `spira-lc unpublished` measures it.
     pub fn publish_backlog_snapshot(&self) -> Result<String, String> {
+        self.publish_backlog_through(&forge_refresh(&SysProc, crate::tasks::a::queue_step::edge::registry().ok()), &crate::unpublished::measure)
+    }
+
+    fn publish_backlog_through(&self, refresh: &(dyn Fn(&Path, &MapRow) + Sync), measure: &dyn Fn(&Path, &str, u64) -> Result<crate::unpublished::Measurement, String>) -> Result<String, String> {
         let rows = match fs::read_to_string(&self.repo_map) {
             Ok(t) => map_rows(&t),
             Err(e) => return serde_json::to_string(&publish_backlog::Snapshot { repos: vec![(publish_backlog::REPO_MAP_KEY.into(), Read::Blind(format!("the repo map is unreadable: {e}")))] }).map_err(|e| e.to_string()),
         };
         let git = self.git_bin.as_deref().unwrap_or(Path::new("git"));
-        let reg = crate::tasks::a::queue_step::edge::registry().ok();
-        publish_backlog_snapshot_from(&rows, &|r| reg.iter().for_each(|reg| refresh_forge_tip(git, reg.clone(), r)), &|name| self.unpublished(git, name))
+        publish_backlog_snapshot_from(&rows, &|r| refresh(git, r), &|name| self.unpublished(measure, git, name))
     }
 
     /// Measures the repo here and records the measurement for lc-serve; a record that cannot be
     /// written is logged and the snapshot still carries what was read. `Ok(None)` is a repo declared to publish nowhere.
-    fn unpublished(&self, git: &Path, name: &str) -> Result<Option<Read>, String> {
+    fn unpublished(&self, measure: &dyn Fn(&Path, &str, u64) -> Result<crate::unpublished::Measurement, String>, git: &Path, name: &str) -> Result<Option<Read>, String> {
         let now = spira_config::vtime::now_epoch() as u64;
-        let measurement = crate::unpublished::measure(git, name, now)?;
+        let measurement = measure(git, name, now)?;
         if let Err(e) = lc_call(&self.lc_socket, &["git-fact", "put", "unpublished", "--json", &measurement.record(name)]) {
             eprintln!("publish-backlog: the measurement of {name} was not recorded: {}", e.0);
         }
@@ -1434,10 +1421,10 @@ impl World {
             true => spira_config::release_env::tool("inbox-triage").map(PathBuf::from),
             false => Ok(self.inbox_flusher.clone()),
         };
-        let mut pushed = false;
-        for line in input.lines().filter(|l| !l.is_empty()) {
-            pushed |= inbox_rules::record(&self.inbox, line, &self.push_wake, &self.push_pattern, flusher)?;
-        }
+        let lines: Vec<&str> = input.lines().filter(|l| !l.is_empty()).collect();
+        let cursor = watchd::paths::cursorfile(&self.run_dir.to_string_lossy(), INBOX_WATCHER);
+        let publisher = || self.inbox_bus.publisher("spira-runtime");
+        let pushed = inbox_rules::record_lines(&self.inbox, &lines, &self.push_wake, &self.push_pattern, flusher, &cursor, publisher)?;
         Ok(if pushed { "appended, pushed" } else { "appended" }.into())
     }
 }
@@ -1675,7 +1662,7 @@ mod pr_snapshot_tests {
     }
 
     fn tracking(n: u64) -> Carry {
-        let rc = RepoCarry { prs: BTreeMap::from([(n, Tracked { status: "green".into(), title: "t".into() })]), ..Default::default() };
+        let rc = RepoCarry { prs: BTreeMap::from([(n, Tracked { status: "green".into(), title: "t".into(), ..Default::default() })]), ..Default::default() };
         Carry { repos: BTreeMap::from([("r".to_string(), rc)]) }
     }
 
@@ -1829,7 +1816,18 @@ mod last_hold_tests {
 #[cfg(test)]
 mod publish_backlog_tests {
     use super::*;
+    use runtime::ports::{ProcOutput, ProcSpec};
     use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Recording(Mutex<Vec<ProcSpec>>);
+
+    impl Proc for Recording {
+        fn run(&self, spec: &ProcSpec) -> Result<ProcOutput, String> {
+            self.0.lock().unwrap().push(spec.clone());
+            Ok(ProcOutput { code: Some(0), stdout: vec![], stderr: vec![] })
+        }
+    }
 
     fn row(dir: &Path, name: &str, land: &str) -> MapRow {
         let path = dir.join(name);
@@ -1871,6 +1869,72 @@ mod publish_backlog_tests {
         let out = publish_backlog_snapshot_from(&rows, &|r| assert_ne!(r.name, "a", "refresh failed"), &|_| Ok(Some(measured(3)))).unwrap();
         let snap: publish_backlog::Snapshot = serde_json::from_str(&out).unwrap();
         assert_eq!(snap.repos, vec![("a".to_string(), measured(3)), ("b".to_string(), measured(3))]);
+    }
+
+    #[test_id(t8j0xi6)]
+    #[test]
+    fn the_production_refresh_fetches_the_forge_branch_with_the_git_it_was_handed() {
+        let tmp = testkit::TempDir::new("backlog");
+        let alpha = row(tmp.path(), "alpha", "queue.local");
+        let refs = Path::new(&alpha.path).join(".git/refs/heads/local");
+        fs::create_dir_all(&refs).unwrap();
+        fs::write(refs.join("main"), format!("{}\n", "a".repeat(40))).unwrap();
+        let map = format!("alpha|{}|queue.local|local/main||\n", alpha.path);
+        let reg = spira_config::repos::Registry::new(Some(&map), &BTreeMap::new(), tmp.path());
+        let rec = Recording::default();
+        let handed = tmp.path().join("handed-git");
+
+        forge_refresh(&rec, Some(reg))(&handed, &alpha);
+
+        let specs = rec.0.into_inner().unwrap();
+        assert_eq!(specs.len(), 1, "one fetch through the port: {specs:?}");
+        assert_eq!(specs[0].prog, handed.display().to_string(), "the fetch ran the handed git");
+        assert_eq!(specs[0].args, ["-C", alpha.path.as_str(), "fetch", "--quiet", "origin", "main"]);
+    }
+
+    #[test_id(tpr5txo)]
+    #[test]
+    fn the_snapshot_records_the_unpublished_range_it_measured_and_runs_no_verb_that_measures() {
+        let dir = testkit::TempDir::new("world-publish-backlog");
+        let alpha = row(dir.path(), "alpha", "queue.local");
+        let map = dir.path().join("repos");
+        fs::write(&map, format!("alpha|{}|queue.local|local/main||\n", alpha.path)).unwrap();
+
+        let sock = dir.path().join("lc.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+        let asked: std::sync::Arc<Mutex<Vec<Vec<String>>>> = Default::default();
+        let seen = asked.clone();
+        std::thread::spawn(move || {
+            runtime::socket::answer(&listener, &|argv| {
+                seen.lock().unwrap().push(argv.to_vec());
+                match argv.first().map(String::as_str) {
+                    Some("git-fact") => Ok("{}".into()),
+                    _ => Err(runtime::RuntimeError::new("the double has no such verb")),
+                }
+            })
+        });
+
+        let handed = dir.path().join("handed-git");
+        let world = World { lc_socket: sock, repo_map: map, run_dir: dir.path().join("run"), home_repo: "alpha".into(), git_bin: Some(handed.clone()), ..World::default() };
+        let refreshed = Mutex::new(vec![]);
+        let measured_with = Mutex::new(vec![]);
+        let snapshot = world
+            .publish_backlog_through(&|git: &Path, _: &MapRow| refreshed.lock().unwrap().push(git.to_path_buf()), &|git, name, now| {
+                measured_with.lock().unwrap().push((git.to_path_buf(), name.to_string()));
+                Ok(crate::unpublished::Measurement::Measured(crate::unpublished::Measured { landing_tip: "landing".into(), forge_tip: "forge".into(), count: 2, oldest_arrival: Some(1_700_000_000), read_at: now }))
+            })
+            .unwrap();
+
+        assert!(snapshot.contains("\"count\":2"), "{snapshot}");
+        assert_eq!(*refreshed.lock().unwrap(), std::slice::from_ref(&handed), "the forge refresh was handed the world's git");
+        assert_eq!(*measured_with.lock().unwrap(), [(handed, "alpha".to_string())], "the measurement was handed the world's git");
+        let asked = asked.lock().unwrap();
+        assert_eq!(asked.len(), 1, "one call, the record: {asked:?}");
+        assert_eq!(asked[0][..4], ["git-fact", "put", "unpublished", "--json"]);
+        let body: serde_json::Value = serde_json::from_str(&asked[0][4]).unwrap();
+        assert_eq!((body["repo"].as_str(), body["count"].as_u64()), (Some("alpha"), Some(2)));
+        assert_eq!((body["forge_tip"].as_str(), body["landing_tip"].as_str(), body["oldest_arrival"].as_u64()), (Some("forge"), Some("landing"), Some(1_700_000_000)));
+        assert!(body["read_at"].is_u64(), "{body}");
     }
 }
 

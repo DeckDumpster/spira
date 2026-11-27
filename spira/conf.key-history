@@ -741,6 +741,8 @@ ready_scheduler_wait_s
 victorialogs_url
 unit_test_deadline_secs
 unit_test_deadline_periods
+integration_test_deadline_secs
+integration_test_deadline_periods
 beads_sql_host
 beads_sql_port
 beads_sql_user
@@ -836,3 +838,8 @@ margin_token_file
 conditions_max_file
 cr_size_unit_lines
 dolt_unit
+broker_socket
+session_linger_secs
+sub_control_dir
+pressure_cpu_avg300
+pressure_io_avg300

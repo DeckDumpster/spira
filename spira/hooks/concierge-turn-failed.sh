@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # concierge-turn-failed.sh — StopFailure hook for the Concierge session: a turn that ended on an
-# API error before re-arming the waiter hands its last inbox delivery back, so the next
-# `watchd next concierge-inbox` prints it again. Prints nothing; always exits 0.
-# Test seams as concierge-waiter-stop.sh: SPIRA_CONCIERGE_SESSION_PID, SPIRA_PROC_ROOT.
+# API error hands its last `watchd next concierge-inbox` delivery back, so the next such read
+# prints it again. Prints nothing; always exits 0.
+# Test seams: SPIRA_CONCIERGE_SESSION_PID, SPIRA_PROC_ROOT.
 set -uo pipefail
 
 [ -t 0 ] || cat >/dev/null 2>&1 || true

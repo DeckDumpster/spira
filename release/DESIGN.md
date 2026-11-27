@@ -5,7 +5,7 @@ brain `wiki/projects/spira/designs/runtime-is-a-release-2026-09-29.md`). It repl
 local use, the Makefile's `install` target, `spira/activate.sh` and `spira/build-tarball.sh`.
 
 **sp-jsnbm** (wave 2 of the rewrite programme) extends it to the public (GitHub tag/tarball)
-pipeline: `install-tarball`, `stage` move `spira/activate.sh`, `spira/stage.sh`
+pipeline: `install-tarball` moves `spira/activate.sh`
 into this crate, so the GitHub acceptance workflow and `install.sh` call
 the same binary the local path does. `spira/build-tarball.sh` stays bash (it produces the
 tarball `install-tarball` consumes; a separate concern, untouched here — DESIGN.md "Callers").
@@ -31,7 +31,6 @@ release rollback [--settle S]                           activate the previous re
 release prune [--keep N]                                keep the newest N releases
 release status                                          current, previous, RUNNING UNLANDED, ALERT
 release install-tarball <tarball> [--dry-run] [--settle S]   the public pipeline's own install
-release stage up [ROOT] | down <ROOT>                   an isolated Spira for testing
 release acceptance <tag> --scratch-repo P [...]         release acceptance on a clean machine (DESIGN.md "acceptance")
 release session-hook install|status|uninstall|prune S  the client's SessionStart hook + statusLine (DESIGN.md "session-hook")
 release intake install|status|uninstall                 wire systemd alert units into incident intake (DESIGN.md "intake")
@@ -105,15 +104,20 @@ Passes only if all hold, and reports every failure, not just the first:
   release built with function names stripped is refused;
 * every runtime-tier program in `spira/deps.toml` resolves to an executable on the release's
   own PATH, and meets `version_min` from its store directory name when one is set
-  (`deps_check`; files only, nothing is started; skipped with `--no-pre-activate`);
+  (`deps_check`; files only, nothing is started; skipped with `--no-pre-activate`). For a
+  release with a flake, a `provider = "spira-env"` row resolves instead in the `bin/` of the
+  env that flake builds, linked in a scratch directory; the installed env link and
+  `spira-env.prev` are untouched, and a failed build is a problem that leaves those rows
+  unjudged. A release with no flake keeps the installed env, so its rows resolve on PATH;
 * the release's own `spira/pre-activate.sh <release>` passes (skip with
   `--no-pre-activate`; a release that has none is a failure).
 
 **pre-activate's environment (sp-vrn3v).** The dependency check and `pre-activate.sh` resolve
 binaries against a PATH built from the release, so both run with `SPIRA_RELEASE` and `PATH` set from
-the release **under verification** — `<rel>/bin:<rel>/spira:<system dirs><tail>`
-(`release_path_with_tail`, the box's own tool tail from `Config::path_tail`) — never
-inherited from the caller. Before this, the child ran with whatever `PATH` the caller's
+the release **under verification** — `<rel>/bin:<rel>/spira:<spira-env bin>:<system dirs><tail>`,
+the shape every unit runs with (`release_path_with_env_and_tail`; the env bin is under the
+config's `HOME`, the box's own tool tail from `Config::path_tail`) — never inherited from the
+caller. Before this, the child ran with whatever `PATH` the caller's
 shell had; at cutover that was the old checkout's `spira-config`, which lacked
 `path-tail`, and verify failed judging binaries that were never the release's own. Every
 other inherited variable is left alone: only `SPIRA_RELEASE` and `PATH` are ever ambiguous
@@ -129,9 +133,20 @@ about which release they name.
 3. Render every installed unit that comes from one of the release's templates, against
    `spira-releases/<sha>` — never `current`, so a unit states exactly what it runs. Any
    render failure is a refusal before anything is touched.
+   Then, **before anything changes**, a release with `flake.nix` and `flake.lock` has its
+   `spira-env` built into `~/.local/lib/spira-env` (every unit's tools), with `nix` from
+   `$SPIRA_NIX_PROFILE_BIN`, and the env it replaces rooted at `spira-env.prev`. A failed
+   build or root refuses with the link as it was. Every later failure points the link back.
+   `rollback` does the same for the release it returns to. A release without a flake skips it.
+   A switch that stood with a changed env starts the background garbage collection install
+   starts, without waiting for it, and no service is restarted for an env change.
 4. Install the rendered files that differ (write `.new`, rename).
 5. Swap `current` atomically (a symlink written beside it, renamed over it).
-6. `daemon-reload`.
+6. `daemon-reload`. Then, when the broker's unit is installed and the release ships
+   `systemd/mosquitto.conf`, render it into the run directory (`release::broker`, the renderer
+   the installers call too), before `unit-ensure` can. A rewrite restarts the broker in step 7
+   with "its config changed", whatever its `Exec*=` lines say; a refusal to render, like any
+   later failure, puts the old file back. `rollback` does the same for its target.
 7. Restart each **service whose `Exec*=` lines changed, that is active, and is not a
    oneshot**. An active oneshot finishes its run from the old release, which is still on
    disk and still immutable, and its next start reads the new unit file. Inactive units are
@@ -174,6 +189,11 @@ rendering anything when a tail segment resolves inside a release or a checkout.
 **Live dwarves.** `activate.sh` refused while dwarves ran. Activation here never restarts an
 dwarf (they are transient units with no file in the unit directory) and never restarts a
 oneshot mid-run, and a dwarf's tools stay on disk in its release. So there is no guard.
+
+A completed activation publishes the retained topic `release/active` with `{sha, at, restarted}`
+and flushes it before the process exits. A publish that fails is logged and never fails the
+activation. A failed activation publishes nothing. A rollback publishes the restored sha once it
+is switched and recorded, including when it then reports units not up or a late config error.
 
 ### config delta
 
@@ -360,29 +380,6 @@ Kept deliberately close to `spira/activate.sh`'s own behaviour rather than upgra
   `build-tarball.sh verify`'s job, run separately in the release workflow, not
   `install-tarball`'s.
 
-### stage
-
-`spira/stage.sh`'s replacement: stand up (or tear down) a fully isolated Spira for
-testing — its own git repo and bare remote, its own beads database (`bd-embedded`, via a
-private `bin/bd` symlink so nothing this stage runs can resolve the caller's real `bd`), its
-own `SPIRA_RUN`, a minimal runes (one `canary` rune, `RUNE_SINGLE_FLIGHT=1`), a
-six-column `repo-map` line, and the two synthetic dispatch scripts `sentinel` needs in place
-of `systemd-run`: `fake-call.sh` (refuses: a stage runs no model) and
-`fake-launch.sh` (records the landing dispatch timestamp and exits 0 — a stage's caller runs
-`landing-pass land` directly so it controls the timing).
-
-Every non-test `.sh`/`.py` file directly under `$SPIRA_RELEASE/spira/` (the release stage is
-run from, never a checkout — DESIGN.md's own Intent) is symlinked into the stage's own
-`spira/`, so a stage runs the actual code, not a copy frozen at setup. Isolation is asserted
-at build time: `up` refuses to return an env block where `SPIRA_DB`, `SPIRA_RUN` or
-`SPIRA_HOME` resolves outside the stage root, the same assertion `stage.sh` made. `down`
-refuses a path with no `spira/runes/canary.rune` — the one check that stands between it
-and an arbitrary `rm -rf`.
-
-`SPIRA_SCOPE_LABEL` is always empty in a stage's own env, never read from the caller's: the
-`spira.conf` default of `spira` would make sentinel query for `spira,plan` while the bead is
-created with `plan` only, and `plan_ready` stays 0 (the same reasoning `stage.sh` documented).
-
 ### acceptance
 
 **sp-ak7qm** (rewrite wave 3) moves `spira/acceptance-run.sh` and the library it sourced,
@@ -408,7 +405,7 @@ the tag's checkout, which was the same commit by another route.
 
 ```
 release acceptance <tag> --scratch-repo <path> [--prev-tag <tag>] [--record]
-                   [--notes-repo <path>] [--file-defects] [--bd-db <path>]
+                   [--notes-repo <path>] [--file-defects]
                    [--agent <path>] [--waive-upgrade] [--tarball <path>]
                    [--prev-tarball <path>]
 ```
@@ -424,7 +421,7 @@ Exit `0` every check passed; `1` a check failed; `2` usage, or a failed prerequi
 
 **Phases.** The same four, with the same check names, so a log from the script and a log from
 the binary compare line for line. The prerequisites are the positive control of the tool lookup;
-`bd`, `dolt`, `git`, `gh` and `python3` on `PATH` (`install.sh` and `systemd/render.py`
+`dolt`, `git`, `gh` and `python3` on `PATH` (`install.sh` and `systemd/render.py`
 still need python3); a working `systemctl --user`; and a git scratch repo. **A** checks the
 positive control of the binary check, then acquires the tarball (a bounded wait for the forge
 asset, sp-5olmi), stages it into the local release source, and runs `install-tarball`. It then
@@ -447,8 +444,8 @@ the migration.
 writes one JSON line to `<forensics>/checks.jsonl`:
 `{"phase","check","verdict":"ok"|"fail","reason"?,"ts","elapsed"}`. The first failure in a
 phase takes a forensics snapshot, `<forensics>/NN-first-fail-<phase>/`, and the end of the
-run takes one too. A snapshot holds the timers, unit status, per-unit journals, `bd`
-list/ready/probe, the run dir, the instance config directory, the scratch repo's refs, `ps`,
+run takes one too. A snapshot holds the timers, unit status, per-unit journals, the
+store's list, claim view and probe, the run dir, the instance config directory, the scratch repo's refs, `ps`,
 `free` and `df`. A forensics failure never changes the verdict. The summary is
 `<pass> passed, <fail> failed`, followed by `verdict: PASS|FAIL  tag=<tag>  date=<rfc3339>`.
 The note on `refs/tags/<tag>` under `refs/notes/acceptance` has this form:
@@ -460,6 +457,23 @@ sha256:<hex> tarball:<name>            (when a tarball was acquired)
 aged-install from=<prev>: PASS|FAIL    (when a predecessor was tested)
 upgrade phases waived by operator      (when waived)
 ```
+
+**The store is the installed release's.** Every probe, seed, count and snapshot read goes
+through `spira-lc` on the release's launcher environment; the run starts no `bd`. So a
+predecessor must have the content writer: acceptance accepts the previous release only.
+
+- A probe is filed with `content create`, so the filing contract judges its labels and body.
+  `create-bead` is then polled until the row exists.
+- "Claimable" is `spira-lc claimable` offering the probe to a builder, or its history showing a
+  builder already claimed it, which takes it out of the view.
+- The closed seed is closed with `spira-lc close`: the content door refuses its own `close`.
+- A seed's lifecycle row is read with `show`. A row nothing has moved has no history.
+- A seed the store did not take is a FAIL, so the counts are never compared over nothing.
+- The installed instance's `db` is `$HOME/.local/share/spira/db`.
+- The installer's answers include `metrics_flush_minutes` and `gate_target_cap_mib`: typed keys with
+  no registered default.
+- The `--file-defects` bead carries no `repo:` label: the instance's repo map holds only the
+  scratch repositories.
 
 **Structure, where the script had text.** The `acceptance-run` spira-lint rule held the
 script to about 55 textual invariants, because the script ran for real only on a clean
@@ -497,7 +511,7 @@ a PASS, each class of FAIL, and the waiver.
    note is written to and the forge repo is derived from. It defaults to
    `$SPIRA_NOTES_REPO`. **`--record` with neither is a usage error (exit 2)**, where the
    script always had a checkout to fall back on.
-5. **A count that cannot be read is a FAIL.** `bd list --all --json | python3 … || printf 0`
+5. **A count that cannot be read is a FAIL.** A `list | count || printf 0`
    read an unreadable store as 0 both before and after the upgrade, and 0 ≥ 0 passed. Now
    phase D fails when it cannot count. The same applies to a `SPIRA_RELEASES` that the
    release conf does not yield: phase B's sidecar check no longer guesses
@@ -675,20 +689,19 @@ only `HOME` is required of the caller.
 | `config` | resolve the releases dir, run dir, keep, unit dir and host keys |
 | `build` | archive, cargo, bins, clash check, MANIFEST, read-only, rename |
 | `verify` | the checks above |
+| `spira_env` | build, root and restore the release's tool env, and start the background nix collection (`GcPlan`) that removes superseded ones (shared with `spira-install`) |
 | `units` | installed-unit ↔ template mapping and the renderer |
 | `systemctl` | the `Systemctl` trait; the real one runs `systemctl --user` (`$SPIRA_SYSTEMCTL`) |
 | `git` | the `Git` trait (resolve, archive, is-ancestor) |
 | `activate` | activate, rollback, the hotfix rule, history, status |
 | `prune` | prune |
 | `install` | `install-tarball`: unpack, swap, restart, prune a timestamp-named release |
-| `stage` | stand up / tear down an isolated Spira; the rune, repo-map and dispatch-script content |
 | `acceptance` | `release acceptance`: the release acceptance run (phases A-D), its checks, forensics and note |
 | `session_hook` | `release session-hook`: the client's `SessionStart` hook and `statusLine` |
 | `intake` | `release intake`: systemd alert templates wired to `incident.sh` via a drop-in |
 
 Unit tests run activation and rollback against a fake `Systemctl` and a temporary unit
 directory; `install-tarball` against a fake `Systemctl` and a fake `Unpack` (no real `tar`);
-`stage`'s pure content (the rune, the repo-map line) and its build-time refusals directly;
 `intake` against a fake `Templates` (no real `find`) and the same fake `Systemctl`.
 `session_hook`'s JSON transformation is pure and needs no fake at all; one further test
 (`release/tests/session_hook_minimal_env.rs`) runs the real `session.sh`
@@ -713,7 +726,7 @@ sibling of the releases dir — DESIGN.md "install-tarball" resolves `state_dir(
 unconditionally; sp-ak7qm replaced acceptance-lib.sh's `_install_from_tarball`) and
 `install.sh`'s own messages. `release acceptance` replaces `spira/acceptance-run.sh` and
 `spira/acceptance-lib.sh`, which are deleted: `acceptance-ci.sh` (acceptance.yml) and
-`acceptance-local.sh` run the candidate tarball's own `bin/release acceptance`. `stage` replaces `spira/stage.sh`, which is deleted. `systemd/render.py`
+`acceptance-local.sh` run the candidate tarball's own `bin/release acceptance`. `systemd/render.py`
 remains for `install.sh` and `unit-ensure.sh`, which own unit membership.
 
 `release session-hook` replaces `spira/install-session-hook.sh`, which is deleted: every

@@ -302,7 +302,6 @@ jobs:
                       --standing "${STANDING_WAIVER:-}")" || exit 1
           [ "$_waive" = "waive" ] && _waive=true
           _args=("$_tag"
-                 --bd-db  "$HOME/.local/share/spira/db"
                  --agent  "$GITHUB_WORKSPACE/spira/acceptance-agent.sh"
                  --record)
           if [ "$_waive" = "true" ]; then

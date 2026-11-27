@@ -2,7 +2,7 @@
 //! are active — installs missing or changed unit files and daemon-reloads, but never
 //! restarts a running service. `landing-pass` runs this after every pass.
 
-use crate::install_units::{execstart_target_ok, is_masked, render_all, retire_dropped_units, write_unit, Ctx};
+use crate::install_units::{execstart_target_ok, is_masked, place_broker_conf, read_deferred, render_all, retire_dropped_units, write_deferred, write_unit, Ctx};
 use std::fs;
 
 #[derive(Debug, Default)]
@@ -25,6 +25,12 @@ pub fn run(ctx: &Ctx, retire: bool) -> Report {
             return r;
         }
     };
+
+    // Before any unit is enabled. A running broker keeps its old config until its next restart.
+    if let Err(e) = place_broker_conf(ctx, &rendered) {
+        r.errors.push(e);
+        return r;
+    }
 
     let mut newly_installed: std::collections::BTreeSet<String> = Default::default();
     for (inst, _tpl, text) in &rendered {
@@ -61,36 +67,45 @@ pub fn run(ctx: &Ctx, retire: bool) -> Report {
         r.retired = ir.retired;
     }
 
-    // Enable+start only newly installed units in the ENABLE set — updated (DIFFERS) units
-    // are not restarted here; that is the operator's call (`units-install`'s job instead).
+    // Enable+start only ENABLE units that are newly installed or were deferred for a missing
+    // target — updated (DIFFERS) units are not restarted here; that is the operator's call
+    // (`units-install`'s job instead).
+    let deferred = read_deferred(ctx.unit_dir);
+    let mut still_deferred = std::collections::BTreeSet::new();
     for u in ctx.manifest.enable(&ctx.host.instance) {
-        if !newly_installed.contains(&u) {
+        let dest = ctx.unit_dir.join(&u);
+        if !(newly_installed.contains(&u) || deferred.contains(&u)) || is_masked(&dest) {
             continue;
         }
-        let dest = ctx.unit_dir.join(&u);
         let text = fs::read_to_string(&dest).unwrap_or_default();
         if let Err(e) = execstart_target_ok(&text) {
             r.missing_target.push(format!("{u} ({e})"));
+            still_deferred.insert(u);
             continue;
         }
         if ctx.systemctl.enable(&u).is_ok() {
             let _ = ctx.systemctl.enable_now(&u);
             r.enabled_started.push(u);
+        } else if deferred.contains(&u) {
+            still_deferred.insert(u);
         }
+    }
+    if let Err(e) = write_deferred(ctx.unit_dir, &still_deferred) {
+        r.errors.push(format!("cannot record the deferred enables: {e}"));
     }
 
     r
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::manifest::{build, Inputs};
     use crate::systemctl::FakeSystemctl;
     use crate::values::HostValues;
 
     fn host() -> HostValues {
-        HostValues { toml: "h/cfg.toml".into(), home: "h".into(), repo: "h".into(), run: "run".into(), db: "db".into(), cockpit: "h/cockpit".into(), dolt_data: "".into(), dolt: "usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), sccache_dav_root: "run/sccache-dav".into(), repo_map: "".into(), lc_password_file: "h/lc.credential".into(), watchdog_every_s: "60".into(), unit_user: String::new() }
+        HostValues { toml: "h/cfg.toml".into(), home: "h".into(), repo: "h".into(), run: "run".into(), db: "db".into(), cockpit: "h/cockpit".into(), dolt_data: "".into(), dolt: "usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), sccache_dav_root: "run/sccache-dav".into(), repo_map: "".into(), lc_password_file: "h/lc.credential".into(), watchdog_every_s: "60".into(), unit_user: String::new(), broker_socket: "run/broker.sock".into() }
     }
 
     fn tiny_manifest() -> crate::manifest::Manifest {
@@ -187,7 +202,8 @@ mod tests {
         std::fs::write(dropin.join("tick-30.conf"), "[Service]\nEnvironment=X=1\n").unwrap();
         std::fs::write(unit_dir.join(".spira-installed-units"), "spira-sentinel-prod.service\nspira-sentinel-prod.timer\nspira-watch-queue-watch-prod.service\nspira-mail-deliver-prod.service\nspira-psi-sample-prod.service\nspira-psi-sample-prod.timer\n").unwrap();
         let manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: true, dolt_durable_set: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
-        let h = host();
+        // The real manifest places the broker config in the run directory.
+        let h = HostValues { run: base.join("run").display().to_string(), ..host() };
         let sc = FakeSystemctl::default();
         let no_suspend = |_: &str| false;
         let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
@@ -210,5 +226,110 @@ mod tests {
         let (_base, unit_dir, _sc, r) = retire_fixture(false);
         assert!(r.retired.is_empty());
         assert!(unit_dir.join("spira-dropped-prod.service").exists());
+    }
+
+    const DEFERRED: &str = "spira-example-prod.service";
+
+    /// One ENABLE unit whose ExecStart names a program that is not there yet.
+    pub(crate) fn deferred_fixture() -> (testkit::TempDir, crate::manifest::Manifest) {
+        let base = td();
+        std::fs::create_dir_all(base.join("units")).unwrap();
+        std::fs::create_dir_all(base.join("templates")).unwrap();
+        std::fs::write(base.join("templates/spira-example.service"), format!("[Service]\nExecStart={}\n", base.join("tool").display())).unwrap();
+        let manifest = crate::manifest::Manifest { units: vec![crate::manifest::Template { name: "spira-example.service".into(), enable: true }], ..Default::default() };
+        (base, manifest)
+    }
+
+    #[test_id(t9r8t3f)]
+    #[test]
+    fn a_unit_deferred_for_a_missing_target_is_enabled_by_the_first_pass_that_finds_it() {
+        let (base, manifest) = deferred_fixture();
+        let (unit_dir, tmpl_dir) = (base.join("units"), base.join("templates"));
+        let (h, sc, no_suspend) = (host(), FakeSystemctl::default(), |_: &str| false);
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+
+        let first = run(&ctx, false);
+        assert!(first.errors.is_empty(), "{:?}", first.errors);
+        assert!(first.missing_target.iter().any(|m| m.starts_with(DEFERRED)), "{:?}", first.missing_target);
+        assert!(first.enabled_started.is_empty() && sc.enabled_now.borrow().is_empty());
+
+        testkit::write_exe(base.join("tool"), "");
+        let second = run(&ctx, false);
+        assert_eq!(second.enabled_started, [DEFERRED]);
+        assert_eq!(sc.enabled_now.borrow().as_slice(), [DEFERRED]);
+
+        let third = run(&ctx, false);
+        assert!(third.enabled_started.is_empty(), "{:?}", third.enabled_started);
+        assert_eq!(sc.enabled_now.borrow().len(), 1);
+    }
+
+    #[test_id(tckhlk2)]
+    #[test]
+    fn an_operator_disable_after_the_deferred_enable_stands_against_both_installers() {
+        let (base, manifest) = deferred_fixture();
+        let (unit_dir, tmpl_dir) = (base.join("units"), base.join("templates"));
+        let (h, sc, no_suspend) = (host(), FakeSystemctl::default(), |_: &str| false);
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        run(&ctx, false);
+        testkit::write_exe(base.join("tool"), "");
+        assert_eq!(run(&ctx, false).enabled_started, [DEFERRED]);
+
+        sc.set(DEFERRED, crate::systemctl::FakeUnit { active: false, enabled: Some("disabled".into()), ..Default::default() });
+        assert!(run(&ctx, false).enabled_started.is_empty());
+        let installed = crate::install_units::run(&ctx);
+        assert!(installed.errors.is_empty(), "{:?}", installed.errors);
+        assert_eq!(installed.enabled_actions, [(DEFERRED.to_string(), crate::decide::Action::OperatorDisabled)]);
+        assert_eq!(sc.enabled_now.borrow().len(), 1, "only the deferred enable itself");
+        assert_eq!(sc.units.borrow()[DEFERRED].enabled.as_deref(), Some("disabled"));
+    }
+
+    #[test_id(tmff3bh)]
+    #[test]
+    fn a_deferral_lasts_while_the_target_is_missing_and_ends_when_the_unit_leaves_the_enable_set_or_is_masked() {
+        let (base, manifest) = deferred_fixture();
+        let (unit_dir, tmpl_dir) = (base.join("units"), base.join("templates"));
+        let (h, sc, no_suspend) = (host(), FakeSystemctl::default(), |_: &str| false);
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let listed = || std::fs::read_to_string(unit_dir.join(".spira-deferred-enable")).unwrap_or_default();
+        run(&ctx, false);
+
+        let again = run(&ctx, false);
+        assert!(again.missing_target.iter().any(|m| m.starts_with(DEFERRED)), "{:?}", again.missing_target);
+        assert_eq!(listed(), format!("{DEFERRED}\n"));
+
+        let mut off = manifest.clone();
+        off.units[0].enable = false;
+        run(&Ctx { manifest: &off, ..ctx }, false);
+        assert_eq!(listed(), "", "no longer in the ENABLE set");
+
+        std::fs::write(unit_dir.join(".spira-deferred-enable"), format!("{DEFERRED}\n")).unwrap();
+        std::fs::remove_file(unit_dir.join(DEFERRED)).unwrap();
+        std::os::unix::fs::symlink(system_paths::DEV_NULL, unit_dir.join(DEFERRED)).unwrap();
+        run(&Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false }, false);
+        assert_eq!(listed(), "", "masked");
+        assert!(sc.enabled_now.borrow().is_empty());
+    }
+
+    #[test_id(toe7uoo)]
+    #[test]
+    fn a_refused_enable_keeps_the_unit_deferred_for_both_installers() {
+        let (base, manifest) = deferred_fixture();
+        let (unit_dir, tmpl_dir) = (base.join("units"), base.join("templates"));
+        let (h, sc, no_suspend) = (host(), FakeSystemctl::default(), |_: &str| false);
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        run(&ctx, false);
+        testkit::write_exe(base.join("tool"), "");
+        sc.set(DEFERRED, crate::systemctl::FakeUnit { enabled: Some("disabled".into()), ..Default::default() });
+        sc.enable_fails.borrow_mut().insert(DEFERRED.into());
+        let listed = || std::fs::read_to_string(unit_dir.join(".spira-deferred-enable")).unwrap_or_default();
+
+        assert!(run(&ctx, false).enabled_started.is_empty());
+        assert_eq!(listed(), format!("{DEFERRED}\n"), "after unit-ensure");
+        crate::install_units::run(&ctx);
+        assert_eq!(listed(), format!("{DEFERRED}\n"), "after units-install");
+
+        sc.enable_fails.borrow_mut().clear();
+        assert_eq!(run(&ctx, false).enabled_started, [DEFERRED]);
+        assert_eq!(listed(), "");
     }
 }

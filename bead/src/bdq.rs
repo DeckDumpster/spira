@@ -1,15 +1,6 @@
-//! `bdq` — the harness's one chokepoint for invoking `bd`, and the create-time safety
-//! fences every caller goes through on the way there. Ported from `spira/lib.sh`'s `bdq`,
-//! `_bdq_check_repo_label`, `_bdq_check_schema_delete`, `ghq`,
-//! `bdjson`, `json_only` and `json_count` (sp-w3h16, wave 4.14, wave4-decomposition.md row A
-//! and row B, safety note (c1)).
-//!
-//! Pure, argv-in/decision-out logic lives here so it is unit-testable with no database, no
-//! subprocess and no filesystem. The actual `bd`/`czar-fence.sh`/`bdsim` subprocess work,
-//! and the retry loop that drives it, live in `src/bin/bdq.rs` — the same split `lib.rs`/
-//! `main.rs` already draws for `bead file`/`bead lint`.
-
-use std::collections::BTreeMap;
+//! Pure argv-in, decision-out classifiers over bd's argv: what the write guards
+//! ([`crate::guard`]) judge, and the small filters other crates share. No store, no
+//! subprocess, no filesystem.
 
 use spira_config::repos::Registry;
 
@@ -154,18 +145,16 @@ pub fn created_repo(args: &[String]) -> Option<String> {
 
 /// Whether a `repo:<val>` claim is acceptable: no claim at all (`val` empty — the same
 /// `[ -z "$repo_val" ]` bash's own fence short-circuits on), the home repo, or a name the
-/// map carries. Shared core of `check_repo_label` (bdq's own argv-parsing entry point) and
-/// incident's `invalid_repo_label` (decide.rs — `incident.sh` never goes through `bdq`'s argv
-/// at all, so it calls this directly with its own already-known `home_repo`/`known_repos`).
+/// map carries. Shared core of `check_repo_label` (the argv-parsing entry point) and
+/// incident's `invalid_repo_label` (decide.rs), which holds no argv and so calls this directly
+/// with its own already-known `home_repo`/`known_repos`.
 /// One table of "what is a valid repo claim" for both, rather than the empty-value edge case
 /// living in one copy and not the other.
 pub fn repo_label_allowed(repo_val: &str, home_repo: &str, known: &[String]) -> bool {
     repo_val.is_empty() || repo_val == home_repo || known.iter().any(|n| n == repo_val)
 }
 
-/// `_bdq_check_repo_label`. `registry` is this process's repo registry (built from
-/// `$SPIRA_REPO_MAP`/`$SPIRA_HOME`/`$SPIRA_REPO`/`$SPIRA_REPO_DERIVED`/`$SPIRA_HOME_REPO`,
-/// read by the caller — see `src/bin/bdq.rs::build_registry`). Returns the refusal message
+/// The repo-label fence over the caller's repo registry. Returns the refusal message
 /// (already newline-terminated, ready for stderr), or `None` when the call is allowed.
 pub fn check_repo_label(args: &[String], registry: &Registry) -> Option<String> {
     let labels = all_labels_value(args);
@@ -267,9 +256,9 @@ pub fn check_schema_delete(args: &[String]) -> Option<String> {
         return Some(
             "spira: bead contains \"DELETE FROM schema_migrations\" — this SQL is refused\n\
              even with an operator ask because it was escalated and approved three times while wrong.\n\
-             Run `bd migrate schema` and include its output in the escalation instead.\n\
-             The correct response to a real mismatch is rebuilding bd (see bd-pin.sh),\n\
-             not deleting migration rows from the database.\n"
+             Run `spira-lc admin-store check` and include its output in the escalation instead.\n\
+             The correct response to a real mismatch is a spira-lc admin verb that repairs\n\
+             the layout, not deleting migration rows from the database.\n"
                 .to_string(),
         );
     }
@@ -300,15 +289,6 @@ pub fn creates_beads(args: &[String]) -> bool {
     }
 }
 
-/// `import` and `mol` print ids only under `--json`, so a run that must read them gets it.
-pub fn id_bearing_args(args: &[String]) -> Vec<String> {
-    let mut a = args.to_vec();
-    if !is_create(args) && creates_beads(args) && !a.iter().any(|x| x == "--json") {
-        a.push("--json".to_string());
-    }
-    a
-}
-
 /// A bead created already closed (`--status closed`) is never claimed, so it needs no
 /// lifecycle row. Such a bead is an insight — a non-work record, filed closed — so the value
 /// is read as one (`spira_config::nonwork`, sp-mve9i).
@@ -336,10 +316,10 @@ pub fn creates_rowless_type(args: &[String]) -> bool {
 
 // =========================================================================================
 // The czar fence's dispatch decision: whether the fence applies to a call at all, and with
-// which class. The fence itself is `crate::guard::czar`, which bdq and the content door share.
+// which class. The fence itself is `crate::guard::czar`.
 // =========================================================================================
 
-/// Whether `bdq`'s czar-fence dispatch applies to this call, and the class to pass
+/// Whether the czar-fence dispatch applies to this call, and the class to pass
 /// `czar-fence.sh` if so. Mirrors the bash's `case "${1:-}" in reopen) ...; update|close)
 /// ...; esac`, gated on `rune == "czar"` and a non-empty class.
 pub fn czar_fence_class<'a>(
@@ -366,14 +346,6 @@ pub fn czar_fence_class<'a>(
     }
 }
 
-/// `czar-fence.sh <class>`, in-process: `Ok(())` when `SPIRA_CZAR_STAGE_<CLASS>` (hyphens to
-/// underscores, upper-cased) reads `act`; otherwise the refusal line the script printed. An
-/// unset stage is shadow (law-guard-binds-the-caller: a new class starts contained). The one
-/// implementation is [`crate::guard::czar_stage`].
-pub fn czar_fence(class: &str, stage_of: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
-    crate::guard::czar_stage(class, stage_of).map_err(|r| r.text.trim_end().to_string())
-}
-
 /// `date -u +%Y-%m-%dT%H:%M:%S.%NZ` of `t`.
 pub fn utc_stamp_nanos(t: std::time::SystemTime) -> String {
     let d = t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
@@ -382,7 +354,7 @@ pub fn utc_stamp_nanos(t: std::time::SystemTime) -> String {
 }
 
 // =========================================================================================
-// bdjson / json_only / json_count
+// json_only
 // =========================================================================================
 
 /// `json_only`: `sed -n '/^[[{]/,$p'` — find the first line that starts (at column 1, no
@@ -401,19 +373,8 @@ pub fn json_only(input: &str) -> &str {
     ""
 }
 
-/// `json_count`: parse stdin as JSON; an array's length, 1 for any other value, 0 for
-/// anything that fails to parse (including empty input) — never a hard error, matching the
-/// bash's `d = []` fallback on any python exception.
-pub fn json_count(input: &str) -> u64 {
-    match serde_json::from_str::<serde_json::Value>(input) {
-        Ok(serde_json::Value::Array(a)) => a.len() as u64,
-        Ok(_) => 1,
-        Err(_) => 0,
-    }
-}
-
 // =========================================================================================
-// Retry-loop decision (the subprocess calls themselves are in src/bin/bdq.rs).
+// Retry-loop decision
 // =========================================================================================
 
 /// Whether the retry loop should attempt again: bash's
@@ -424,73 +385,11 @@ pub fn should_retry(rc: i32, try_n: u32, max_tries: u32, stderr_has_invalid_conn
     rc != 0 && try_n < max_tries.max(1) && stderr_has_invalid_connection
 }
 
-/// What bdq says when bd failed and said nothing, so the caller's refusal carries a cause
-/// instead of an empty stderr. A write that exited non-zero may still have committed.
-pub fn silent_failure_note(args: &[String], rc: i32, stderr: &str, tries: u32, ms: u128) -> Option<String> {
-    if rc == 0 || !stderr.trim().is_empty() {
-        return None;
-    }
-    let verb = args.iter().find(|a| !a.starts_with('-')).map(String::as_str).unwrap_or("");
-    let unknown = if is_write(args) { "; the write's outcome is unknown, read it back before repeating it" } else { "" };
-    Some(format!("bdq: bd {verb} exited {rc} with no output after {tries} attempt(s) in {ms}ms{unknown}\n"))
-}
-
-const READ_VERBS: &[&str] = &["show", "list", "count", "ready", "blocked", "query", "search", "stats", "status", "children", "dep", "graph", "find", "export"];
-
-/// A read may be retried on any dropped connection. A write only when bd never got as far as
-/// the statement ("failed to open database"), so it cannot have committed.
-pub fn retryable(args: &[String], stderr: &str) -> bool {
-    if !stderr.contains("invalid connection") {
-        return false;
-    }
-    let verb = args.iter().find(|a| !a.starts_with('-')).map(String::as_str).unwrap_or("");
-    READ_VERBS.contains(&verb)
-        || stderr.contains("failed to open database")
-        || stderr.contains("failed to check if database")
-}
-
-/// A call that mutates the store: anything whose verb is not a read. These are the calls the
-/// writer cap serialises.
-pub fn is_write(args: &[String]) -> bool {
-    let verb = args.iter().find(|a| !a.starts_with('-')).map(String::as_str).unwrap_or("");
-    !verb.is_empty() && !READ_VERBS.contains(&verb)
-}
-
-/// Exit status `flock -E` reports when the writer slot was not won in time.
-pub const WRITER_LOCK_BUSY: i32 = 75;
-
-/// Sleep before attempt `try_n + 1`: base, then doubling.
-pub fn backoff_ms(base_ms: u64, try_n: u32) -> u64 {
-    base_ms.saturating_mul(1u64 << (try_n.saturating_sub(1)).min(10))
-}
-
-/// A repo registry built the same way `spira-config`'s own CLI builds one (see
-/// `spira-config/src/main.rs::repo_registry`): `$SPIRA_REPO_MAP`/`$SPIRA_HOME`/`$SPIRA_REPO`/
-/// `$SPIRA_REPO_DERIVED`/`$SPIRA_HOME_REPO` read straight out of an env map the caller
-/// supplies — never self-located beyond that. Exposed here (not just duplicated in
-/// `src/bin/bdq.rs`) so a test can build one without going through `std::env`.
-pub fn registry_from_env(env: &BTreeMap<String, String>, home: &std::path::Path) -> Registry {
-    let map_text = env
-        .get("SPIRA_REPO_MAP")
-        .filter(|p| !p.is_empty())
-        .and_then(|p| std::fs::read_to_string(p).ok());
-    Registry::new(map_text.as_deref(), env, home)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
     use std::path::Path;
-
-    #[test_id(tnpxhhr)]
-    #[test]
-    fn czar_fence_admits_act_only_and_defaults_to_shadow() {
-        let stage = |v: &str| (v == "SPIRA_CZAR_STAGE_LOOP_STALLED").then(|| "act".to_string());
-        assert_eq!(czar_fence("loop-stalled", &stage), Ok(()));
-        assert!(czar_fence("deadlock", &stage).unwrap_err().contains("SPIRA_CZAR_STAGE_DEADLOCK=act"));
-        assert!(czar_fence("deadlock", &|_| Some("wat".into())).unwrap_err().contains("unknown stage wat"));
-        assert!(czar_fence("", &stage).is_err());
-    }
 
     #[test_id(t93407l)]
     #[test]
@@ -501,6 +400,10 @@ mod tests {
 
     fn env(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    fn registry_from_env(env: &BTreeMap<String, String>, home: &Path) -> Registry {
+        Registry::new(None, env, home)
     }
 
     fn s(strs: &[&str]) -> Vec<String> {
@@ -646,7 +549,8 @@ mod tests {
     #[test_id(tnt6md6)]
     #[test]
     fn schema_delete_is_detected_regardless_of_case_or_spacing() {
-        assert!(check_schema_delete(&s(&["create", "DELETE   FROM schema_migrations"])).is_some());
+        let refusal = check_schema_delete(&s(&["create", "DELETE   FROM schema_migrations"])).expect("refused");
+        assert!(refusal.contains("spira-lc admin-store check"), "{refusal}");
         assert!(check_schema_delete(&s(&["create", "clean", "-d", "please delete from schema_migrations now"]))
             .is_some());
         assert_eq!(check_schema_delete(&s(&["create", "delete from somewhere_else"])), None);
@@ -725,15 +629,6 @@ mod tests {
         assert!(!is_create(&s(&["mol", "pour", "p"])));
     }
 
-    #[test_id(t24xa0z)]
-    #[test]
-    fn id_bearing_args_adds_json_only_where_ids_are_otherwise_unprinted() {
-        assert_eq!(id_bearing_args(&s(&["import", "f"])), s(&["import", "f", "--json"]));
-        assert_eq!(id_bearing_args(&s(&["mol", "pour", "p"])), s(&["mol", "pour", "p", "--json"]));
-        assert_eq!(id_bearing_args(&s(&["import", "f", "--json"])), s(&["import", "f", "--json"]));
-        assert_eq!(id_bearing_args(&s(&["create", "t"])), s(&["create", "t"]));
-    }
-
     // -- czar fence dispatch ------------------------------------------------------------------
 
     #[test_id(ttjkkkn)]
@@ -797,50 +692,7 @@ mod tests {
         assert_eq!(json_only("[1]\nnot json\n"), "[1]\nnot json\n");
     }
 
-    // -- json_count ---------------------------------------------------------------------------
-
-    #[test_id(tm38mh7)]
-    #[test]
-    fn json_count_array_length() {
-        assert_eq!(json_count("[1,2,3]"), 3);
-        assert_eq!(json_count("[]"), 0);
-    }
-
-    #[test_id(tdd73ls)]
-    #[test]
-    fn json_count_object_is_one() {
-        assert_eq!(json_count("{\"a\":1}"), 1);
-    }
-
-    #[test_id(tvuxg0i)]
-    #[test]
-    fn json_count_unparseable_is_zero() {
-        assert_eq!(json_count(""), 0);
-        assert_eq!(json_count("not json"), 0);
-    }
-
     // -- should_retry -------------------------------------------------------------------------
-
-    #[test_id(tlbyhrc)]
-    #[test]
-    fn is_write_is_every_verb_that_is_not_a_read() {
-        assert!(is_write(&s(&["close", "x"])));
-        assert!(is_write(&s(&["--json", "update", "x"])));
-        assert!(!is_write(&s(&["show", "x"])));
-        assert!(!is_write(&s(&["--json", "list"])));
-        assert!(!is_write(&[]));
-    }
-
-    #[test_id(topyb5o)]
-    #[test]
-    fn a_silent_failed_write_says_its_outcome_is_unknown_and_a_loud_one_adds_nothing() {
-        let w = silent_failure_note(&s(&["create", "t"]), 2, "", 3, 1200).unwrap();
-        assert!(w.contains("bd create exited 2 with no output after 3 attempt(s)") && w.contains("outcome is unknown"), "{w}");
-        let r = silent_failure_note(&s(&["list"]), 2, "  \n", 1, 5).unwrap();
-        assert!(!r.contains("unknown"), "{r}");
-        assert_eq!(silent_failure_note(&s(&["create", "t"]), 2, "boom", 1, 5), None);
-        assert_eq!(silent_failure_note(&s(&["create", "t"]), 0, "", 1, 5), None);
-    }
 
     #[test_id(tp3upsz)]
     #[test]
@@ -849,28 +701,6 @@ mod tests {
         assert!(!should_retry(0, 1, 2, true), "success never retries");
         assert!(!should_retry(1, 2, 2, true), "budget exhausted");
         assert!(!should_retry(1, 1, 2, false), "a different error never retries");
-    }
-
-    #[test_id(tkhjraq)]
-    #[test]
-    fn retryable_reads_on_any_drop_writes_only_before_the_statement() {
-        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert!(retryable(&a(&["show", "x"]), "Error: invalid connection"));
-        assert!(retryable(&a(&["--json", "count"]), "Error: invalid connection"));
-        assert!(!retryable(&a(&["close", "x"]), "Error: invalid connection"));
-        assert!(retryable(&a(&["close", "x"]), "failed to open database: invalid connection"));
-        assert!(retryable(
-            &a(&["note", "x"]),
-            "failed to check if database spira exists on server: invalid connection"
-        ));
-        assert!(!retryable(&a(&["show", "x"]), "bead not found"));
-    }
-
-    #[test_id(tj55z23)]
-    #[test]
-    fn backoff_doubles() {
-        assert_eq!(backoff_ms(1000, 1), 1000);
-        assert_eq!(backoff_ms(1000, 2), 2000);
     }
 
     #[test_id(tf12g34)]

@@ -69,10 +69,6 @@ fn now_iso() -> String {
         .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
 }
 
-fn sql_str(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
-}
-
 // ── legacy / backfill: bd's audit `events` table ─────────────
 
 fn run_legacy(mode: &str, default_since: &str) -> Result<(), String> {
@@ -99,11 +95,7 @@ fn run_legacy(mode: &str, default_since: &str) -> Result<(), String> {
 
 fn fetch_bd_events(since: &str) -> Result<Vec<BdAuditEvent>, String> {
     let lc = spira_store::lifecycle_row::lc_bin()?;
-    let query = format!(
-        "SELECT id, issue_id, event_type, actor, new_value, created_at FROM events \
-         WHERE created_at >= {} ORDER BY created_at, id",
-        sql_str(since)
-    );
+    let query = tsd_lifecycle_export::legacy_events_query(since);
     let mut child = spira_config::bounded::bounded(&lc)
         .args(["admin-store", "sql", "--json"])
         .stdin(std::process::Stdio::piped())

@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=gate
+DOC=One period of the per-test deadline in seconds (cargo-nextest slow-timeout period) for the tests/ targets (integration and sim, nextest kind(test)) in the gate, the round and attribution reruns.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_INTEGRATION_TEST_DEADLINE_SECS:=60}"
+SPIRA_CONF_DEFAULT_EOF

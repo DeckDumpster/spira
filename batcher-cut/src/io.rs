@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use crate::pace::{CutError, CutKind};
 use batcher::core::{Member, MergeResult};
+use lifecycle::bead::{certifies_nothing, BeadState};
 
 /// Where a repo's landed branch goes — `repo_land`'s `queue`/`queue.forge` alias normalizes
 /// to `Forge`; `queue.local` is `Local`. Carried on `Repo` so a caller never has to re-derive
@@ -440,6 +441,8 @@ pub enum Cause {
     GateUnjudged { paths: Vec<String> },
     NotInForce { dep: String },
     InForceUnread { dep: String, error: String },
+    Uncertified,
+    RoundHeld { key: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -465,6 +468,8 @@ impl LeftOut {
             Cause::GateUnjudged { .. } => "gate-unjudged".into(),
             Cause::NotInForce { .. } => "blocked-not-in-force".into(),
             Cause::InForceUnread { .. } => "in-force-unread".into(),
+            Cause::Uncertified => "uncertified".into(),
+            Cause::RoundHeld { .. } => "round-held".into(),
         }
     }
 
@@ -526,6 +531,14 @@ impl LeftOut {
             Cause::InForceUnread { dep, error } => (
                 format!("it depends on {dep}, and whether the running release carries {dep} could not be read: {error}"),
                 format!("a later cut that can read whether the release carries {dep} readmits it"),
+            ),
+            Cause::Uncertified => (
+                format!("it is SUBMITTED and not certified at {tip}, which a forge batch needs"),
+                format!("a PASS from its gate at {tip}, or a gate verdict there that certifies nothing, readmits it"),
+            ),
+            Cause::RoundHeld { key } => (
+                format!("the round it would be cut in ({key}) is held: its last assemble merged nothing new"),
+                "a new tip, or a change in the round's members, readmits it".into(),
             ),
         };
         format!("batcher {repo}: {id} left out of the cut: {why} — {exit}")
@@ -628,11 +641,11 @@ fn hold_kinds(r: &serde_json::Value) -> Vec<String> {
     kinds
 }
 
-fn read_pool(env: &Env, repo: &str) -> Result<(Vec<PoolRow>, Vec<LeftOut>), String> {
-    Ok(pool_rows(&lc_rows(env)?, repo))
+fn read_pool(env: &Env, repo: &Repo) -> Result<(Vec<PoolRow>, Vec<LeftOut>), String> {
+    Ok(pool_rows(&lc_rows(env)?, &repo.name, repo.land))
 }
 
-fn pool_rows(rows: &[serde_json::Value], repo: &str) -> (Vec<PoolRow>, Vec<LeftOut>) {
+fn pool_rows(rows: &[serde_json::Value], repo: &str, land: Land) -> (Vec<PoolRow>, Vec<LeftOut>) {
     let mut left = Vec::new();
     let mut pool: Vec<PoolRow> = rows
         .iter()
@@ -678,6 +691,12 @@ fn pool_rows(rows: &[serde_json::Value], repo: &str) -> (Vec<PoolRow>, Vec<LeftO
                 })
                 .unwrap_or_default();
             let provisional = r.get("state").and_then(|s| s.as_str()) == Some("SUBMITTED");
+            let reason = r.get("reason").and_then(|s| s.as_str());
+            // A forge cut is refused whole for one member the queue would not admit.
+            if provisional && land == Land::Forge && !certifies_nothing(BeadState::Submitted, reason) {
+                left.push(LeftOut { id, tip, cause: Cause::Uncertified });
+                return None;
+            }
             Some((id, tip, epoch, express, blocked_by, provisional))
         })
         .collect();
@@ -800,6 +819,15 @@ fn barred_ids(
         .collect())
 }
 
+/// The pool's own left-out rows whose commits a stacked member would carry into the cut unjudged.
+/// Held and ejected rows are [`barred_ids`]'.
+fn barred_by_left(left: &[LeftOut]) -> std::collections::BTreeSet<String> {
+    left.iter()
+        .filter(|l| matches!(l.cause, Cause::Uncertified | Cause::TipMoved { .. }))
+        .map(|l| l.id.clone())
+        .collect()
+}
+
 /// Drops every member whose recorded stack names a barred bead, or a member dropped for that
 /// reason, and returns each drop with the prerequisite it stacks on.
 fn drop_stacked_on_barred(
@@ -917,16 +945,10 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
 
 /// [`certified_pool`] and every bead it left out, for the cut to announce once with the rest.
 pub fn certified_pool_left_out(env: &Env, repo: &Repo) -> Result<(Vec<Member>, Vec<LeftOut>), String> {
-    let (certified, mut left) = read_pool(env, &repo.name)?;
+    let (certified, mut left) = read_pool(env, repo)?;
     let branches = repo_branch_tips(repo)?;
     left.extend(moved_tips(&certified, &branches));
-    let mut barred = std::collections::BTreeSet::new();
-    barred.extend(
-        certified
-            .iter()
-            .filter(|(id, tip, ..)| !tip_current(tip, id, &branches))
-            .map(|(id, ..)| id.clone()),
-    );
+    let mut barred = barred_by_left(&left);
     let certified: Vec<_> = certified
         .into_iter()
         .filter(|(id, tip, ..)| tip_current(tip, id, &branches))
@@ -2887,6 +2909,31 @@ pub fn keep_attribution_deny_list(run: &Path, batch: &str, evidence: &Path) -> R
     fs::write(&tmp, text).and_then(|()| fs::rename(&tmp, &to)).map_err(|e| format!("{}: {e}", to.display()))
 }
 
+/// What a red test phase leaves at the top of a pass's results; round-vm's TEST_PHASE_FILES.
+pub const RED_TEST_OUTPUT: [&str; 6] = ["unit.json", "unit-tests.out", "unit-tests-failures.out", "integration.json", "integration-tests.out", "integration-tests-failures.out"];
+
+/// Where a round keeps the red pass's test output, under its own batch-results directory.
+pub const RED_PASS_DIR: &str = "red-pass";
+
+/// Copies the red test phases' output of `pass` into `to`, which a later pass of the batch
+/// does not overwrite; the dir when it holds any, else None.
+pub fn keep_red_test_output(pass: &Path, to: &Path) -> Option<PathBuf> {
+    if red_test_results(pass).is_empty() {
+        return None;
+    }
+    fs::create_dir_all(to).ok()?;
+    let kept = RED_TEST_OUTPUT.iter().filter(|f| fs::copy(pass.join(f), to.join(f)).is_ok()).count();
+    (kept > 0).then(|| to.to_path_buf())
+}
+
+/// The bead-body line naming where a red's test output is kept.
+pub fn red_output_line(kept: Option<&Path>) -> String {
+    match kept {
+        Some(d) => format!("Red test output (each failing test's nextest block in *-failures.out): {}", d.display()),
+        None => "Red test output: none — the round's local results hold no red test phase".to_string(),
+    }
+}
+
 pub fn round_results_dir(run: &Path, batch: &str) -> PathBuf {
     run.join("rounds").join(format!("{batch}.results"))
 }
@@ -4820,6 +4867,7 @@ pub fn file_judgement(
     j: &batcher::core::Judgement,
     members: &[String],
     evidence: &str,
+    red_output: Option<&Path>,
 ) -> Result<String, String> {
     use batcher::core::{judgement_body, RedSource};
     let title = format!(
@@ -4831,7 +4879,7 @@ pub fn file_judgement(
         repo.name,
         j.suites.join(",")
     );
-    let body = judgement_body(&repo.name, j, members, evidence);
+    let body = format!("{}{}\n", judgement_body(&repo.name, j, members, evidence), red_output_line(red_output));
     let tmp_dir = env.run.join("tmp");
     fs::create_dir_all(&tmp_dir).map_err(|e| format!("{}: {e}", tmp_dir.display()))?;
     let tmp = tmp_dir.join(format!("judgement-{}-{}.txt", repo.name, now()));
@@ -4865,15 +4913,22 @@ pub fn file_flip_bead(
     repo: &Repo,
     test: &str,
     round_branch: &str,
+    red_output: Option<&Path>,
 ) -> Result<String, String> {
     let title = format!(
         "{}: {test} flipped in a batcher round and was disabled — fix or delete it",
         repo.name
     );
-    let body = format!(
-        "{test} was red on the round tree ({round_branch}) and green on a rerun of that unchanged tree, on the base, and on every member alone, so the batcher disabled it in the test registry for the registry's hold (spira.test_registry_hold_secs) and certified the round without it (law-a-test-that-flips-is-deleted). It runs again when the row expires.\n\nDeliverable: find the nondeterminism, then fix or delete the test; a deterministic test restores coverage parity.\n"
-    );
+    let body = flip_body(test, round_branch, red_output);
     file_batcher_bead(env, repo, "flip", &title, &body)
+}
+
+/// The body of a flipped test's follow-up bead.
+pub fn flip_body(test: &str, round_branch: &str, red_output: Option<&Path>) -> String {
+    format!(
+        "{test} was red on the round tree ({round_branch}) and green on a rerun of that unchanged tree, on the base, and on every member alone, so the batcher disabled it in the test registry for the registry's hold (spira.test_registry_hold_secs) and certified the round without it (law-a-test-that-flips-is-deleted). It runs again when the row expires.\n\nDeliverable: find the nondeterminism, then fix or delete the test; a deterministic test restores coverage parity.\n\n{}\n",
+        red_output_line(red_output)
+    )
 }
 
 /// File the fix bead for a test that is red on the merged tree and on the base after its owner lifted its row.
@@ -5363,15 +5418,45 @@ mod pool_parity_tests {
             serde_json::json!({"bead_id": "sp-s", "state": "SUBMITTED", "tip": "ts", "holds": []}),
             serde_json::json!({"bead_id": "sp-c", "state": "CERTIFIED", "tip": "tc", "holds": []}),
         ];
-        let pool = pool_rows(&rows, "spira").0;
+        let pool = pool_rows(&rows, "spira", Land::Local).0;
         let flags: Vec<(&str, bool)> = pool.iter().map(|p| (p.0.as_str(), p.5)).collect();
         assert_eq!(flags, [("sp-c", false), ("sp-s", true)]);
+    }
+
+    #[test_id(tn1p4ut)]
+    #[test]
+    fn the_forge_pool_takes_a_submitted_bead_only_when_its_gate_certifies_nothing() {
+        let rows = vec![
+            serde_json::json!({"bead_id": "sp-u", "state": "SUBMITTED", "tip": "tu", "holds": []}),
+            serde_json::json!({"bead_id": "sp-n", "state": "SUBMITTED", "tip": "tn", "holds": [], "reason": "gate-certifies-nothing"}),
+            serde_json::json!({"bead_id": "sp-c", "state": "CERTIFIED", "tip": "tc", "holds": []}),
+        ];
+        let (pool, left) = pool_rows(&rows, "spira", Land::Forge);
+        assert_eq!(pool.iter().map(|p| (p.0.as_str(), p.5)).collect::<Vec<_>>(), [("sp-c", false), ("sp-n", true)]);
+        assert_eq!(left, [LeftOut { id: "sp-u".into(), tip: "tu".into(), cause: Cause::Uncertified }]);
+        assert!(left[0].line("spira").contains("not certified"), "{}", left[0].line("spira"));
+        let (pool, left) = pool_rows(&rows, "spira", Land::Local);
+        assert_eq!(pool.iter().map(|p| (p.0.as_str(), p.5)).collect::<Vec<_>>(), [("sp-c", false), ("sp-n", true), ("sp-u", true)]);
+        assert!(left.is_empty(), "{left:?}");
+    }
+
+    #[test_id(tw514ey)]
+    #[test]
+    fn a_member_stacked_on_an_uncertified_or_moved_row_is_left_out_with_it() {
+        let rows = [serde_json::json!({"bead_id": "sp-u", "state": "SUBMITTED", "tip": "tu", "holds": []})];
+        let mut left = pool_rows(&rows, "spira", Land::Forge).1;
+        left.push(LeftOut { id: "sp-m".into(), tip: "tm".into(), cause: Cause::TipMoved { branch_tip: "new".into() } });
+        left.push(LeftOut { id: "sp-w".into(), tip: "tw".into(), cause: Cause::NoContentRow });
+        let member = |id: &str, on: &str| Member { id: id.into(), tip: format!("t-{id}"), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::from([(on.to_string(), "t".to_string())]), blocked_by: vec![], provisional: false };
+        let (kept, dropped) = drop_stacked_on_barred(vec![member("sp-a", "sp-u"), member("sp-b", "sp-m"), member("sp-c", "sp-w")], barred_by_left(&left));
+        assert_eq!(kept.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["sp-c"]);
+        assert_eq!(ids_of(&dropped), ["sp-a", "sp-b"]);
     }
 
     fn gate_own_pool(rows: &[serde_json::Value], changed: &[(&str, &[&str])]) -> (Vec<PoolRow>, Vec<LeftOut>) {
         let own = gate::def::parse("own gate.steps\nown gate/\nstep a\n").unwrap();
         let changed = changed.iter().map(|(id, ps)| (id.to_string(), ps.iter().map(|p| p.to_string()).collect())).collect();
-        gate_own_left_out(pool_rows(rows, "spira").0, &own, &changed)
+        gate_own_left_out(pool_rows(rows, "spira", Land::Local).0, &own, &changed)
     }
 
     #[test_id(tl062tz)]
@@ -5416,7 +5501,7 @@ mod pool_parity_tests {
             serde_json::json!({"bead_id": "sp-p", "state": "SUBMITTED", "tip": "tp", "holds": []}),
             serde_json::json!({"bead_id": "sp-c", "state": "CERTIFIED", "tip": "tc", "holds": []}),
         ];
-        let pool = || pool_rows(&rows, "spira").0;
+        let pool = || pool_rows(&rows, "spira", Land::Local).0;
         let ids = |p: &[PoolRow]| p.iter().map(|r| r.0.clone()).collect::<Vec<_>>();
         let (kept, left) = gate_own_apply(pool(), Some("nonsense\n"), &mut |_| Ok(vec![]));
         assert_eq!((ids(&kept), ids_of(&left)), (vec!["sp-c".to_string()], vec!["sp-p".to_string()]));
@@ -5451,12 +5536,12 @@ mod pool_parity_tests {
     fn a_submitted_bead_held_or_at_its_ejected_red_tip_is_left_out_naming_its_cause() {
         let held = |kind: &str| serde_json::json!({"bead_id": "sp-h", "state": "SUBMITTED", "tip": "th", "holds": [kind]});
         for kind in ["manual", "wait", "ask", "poison"] {
-            let (pool, left) = pool_rows(&[held(kind)], "spira");
+            let (pool, left) = pool_rows(&[held(kind)], "spira", Land::Local);
             assert!(pool.is_empty(), "{kind}");
             assert_eq!(left[0].cause, Cause::Held(vec![kind.into()]));
         }
         let red = serde_json::json!({"bead_id": "sp-e", "state": "SUBMITTED", "tip": "te", "holds": [], "ejected_red_tip": "te"});
-        let (pool, left) = pool_rows(&[red], "spira");
+        let (pool, left) = pool_rows(&[red], "spira", Land::Local);
         assert!(pool.is_empty());
         assert_eq!(left[0].cause, Cause::EjectedRed);
     }
@@ -5471,7 +5556,7 @@ mod pool_parity_tests {
             row("cb-h", "cubby", "SUBMITTED", &["manual"]),
             row("cb-c", "cubby", "CERTIFIED", &[]),
         ];
-        let (pool, left) = pool_rows(&rows, "spira");
+        let (pool, left) = pool_rows(&rows, "spira", Land::Local);
         assert_eq!(pool.iter().map(|p| p.0.as_str()).collect::<Vec<_>>(), ["sp-sc"]);
         assert_eq!(left.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(), ["sp-sh"]);
         let branches = BTreeMap::from([("sp-sc".to_string(), "t".to_string())]);
@@ -5530,7 +5615,7 @@ mod pool_parity_tests {
         let rows = vec![
             serde_json::json!({"bead_id": "sp-c", "state": "CERTIFIED", "tip": "tc", "holds": []}),
         ];
-        let pool = pool_rows(&rows, "spira").0;
+        let pool = pool_rows(&rows, "spira", Land::Local).0;
         assert_eq!(pool.len(), 1);
         assert_eq!((pool[0].0.as_str(), pool[0].1.as_str()), ("sp-c", "tc"));
     }
@@ -5543,7 +5628,7 @@ mod pool_parity_tests {
             serde_json::json!({"bead_id": "sp-h", "state": "CERTIFIED", "tip": "th", "holds": ["manual"]}),
             serde_json::json!({"bead_id": "sp-e", "state": "CERTIFIED", "tip": "te", "holds": [], "ejected_red_tip": "te"}),
         ];
-        let (pool, left) = pool_rows(&rows, "spira");
+        let (pool, left) = pool_rows(&rows, "spira", Land::Local);
         assert_eq!(pool.iter().map(|p| p.0.as_str()).collect::<Vec<_>>(), ["sp-p"]);
         let causes: Vec<_> = left.iter().map(|l| (l.id.as_str(), l.cause.clone())).collect();
         assert_eq!(causes, [("sp-h", Cause::Held(vec!["manual".into()])), ("sp-e", Cause::EjectedRed)]);
@@ -7336,5 +7421,40 @@ mod ref_file_tests {
         assert_eq!(repo_branch_tips(&repo), Ok(want));
         std::fs::write(d.join(".git/refs/heads/spira/sp-loose"), format!("{}\n", sha('7'))).unwrap();
         assert_eq!(repo_branch_tips(&repo).unwrap()["sp-loose"], sha('7'), "nothing is cached between reads");
+    }
+}
+
+#[cfg(test)]
+mod red_output_tests {
+    use super::*;
+
+    #[test_id(tynr80j)]
+    #[test]
+    fn a_red_pass_keeps_its_failing_blocks_where_the_next_pass_cannot_replace_them_and_the_beads_name_them() {
+        let d = testkit::TempDir::new("io-red-output");
+        let (pass, round) = (d.join("rounds/b.results"), d.join("batch-results/spira-r1"));
+        fs::create_dir_all(&pass).unwrap();
+        fs::write(pass.join("integration.json"), r#"{"stage":"integration-tests","verdict":"red","failed":["t::bad"]}"#).unwrap();
+        fs::write(pass.join("integration-tests-failures.out"), "        FAIL [   0.010s] (2/4) fx t::bad\n    thread 't::bad' panicked at fx/src/t.rs:9:5:\n").unwrap();
+        let kept = keep_red_test_output(&pass, &round.join(RED_PASS_DIR)).expect("a red pass is kept");
+        fs::remove_dir_all(&pass).unwrap();
+        assert_eq!(kept, round.join(RED_PASS_DIR));
+        assert!(fs::read_to_string(kept.join("integration-tests-failures.out")).unwrap().contains("panicked at fx/src/t.rs:9:5"));
+        let line = format!("{}: {}", "Red test output (each failing test's nextest block in *-failures.out)", kept.display());
+        assert!(flip_body("test:tx", "spira/queue/1", Some(&kept)).contains(&line));
+        assert!(red_output_line(Some(&kept)).ends_with(&kept.display().to_string()));
+    }
+
+    #[test_id(t3y6f5g)]
+    #[test]
+    fn a_green_pass_keeps_nothing_and_the_bead_says_none_was_kept() {
+        let d = testkit::TempDir::new("io-red-output-green");
+        let pass = d.join("pass");
+        fs::create_dir_all(&pass).unwrap();
+        fs::write(pass.join("unit.json"), r#"{"stage":"unit-tests","verdict":"green"}"#).unwrap();
+        fs::write(pass.join("unit-tests.out"), "stale\n").unwrap();
+        assert_eq!(keep_red_test_output(&pass, &d.join("red-pass")), None);
+        assert!(!d.join("red-pass").exists());
+        assert!(flip_body("test:tx", "b", None).contains("Red test output: none"));
     }
 }

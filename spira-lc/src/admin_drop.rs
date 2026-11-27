@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::control::facts::Fact;
 use crate::control::journal::{Carried, EffectRow, PoisonRow, ScheduleRow, StateRow};
-use crate::db::Conn;
+use crate::db::{Conn, DbError};
 use crate::{flag, CANNOT_TELL, REFUSED};
 
 /// The administrator: `SPIRA_LC_ADMIN_USER` with the password in `SPIRA_LC_ADMIN_PASSWORD_FILE` (or
@@ -31,6 +31,12 @@ pub(crate) fn provisioned() -> Result<Option<(String, String)>, String> {
     let Some(path) = spira_config::resolve::lc_admin_password_file(&env) else { return Ok(None) };
     let password = std::fs::read_to_string(&path).map_err(|e| format!("reading {path}: {e}"))?;
     Ok(Some(("root".to_string(), password.trim().to_string())))
+}
+
+/// [`administrator`] from this process's environment, else root with the password in the admin
+/// credential file, or none where there is no file: what a verb on the local beads server logs in as.
+pub(crate) fn local_administrator() -> Result<(String, String), String> {
+    administrator(|k| std::env::var(k).ok(), || Ok(Some(provisioned()?.unwrap_or_else(|| ("root".to_string(), String::new())))))
 }
 
 /// A database name safe to put between backticks.
@@ -62,11 +68,11 @@ pub(crate) trait Dolt {
 
 impl Dolt for Conn {
     fn rows(&self, sql: &str) -> Result<Vec<Value>, String> {
-        self.query(sql).map_err(|e| format!("{e:?}"))
+        self.query(sql).map_err(|DbError::CannotTell(m)| m)
     }
 
     fn execute(&self, sql: &str) -> Result<(), String> {
-        Conn::execute(self, sql).map_err(|e| format!("{e:?}"))
+        Conn::execute(self, sql).map_err(|DbError::CannotTell(m)| m)
     }
 }
 

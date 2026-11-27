@@ -2,12 +2,19 @@
 name = "inbox-triage"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "inbox-triage — the concierge's in-session Monitor over SPIRA_CONCIERGE_INBOX: drop echoes, dedup, pass the rest. Replaces spira/inbox-triage.sh (sp-48f6g)."
 
+[[test]]
+name = "publish"
+path = "tests/publish.rs"
+required-features = ["integration"]
+
 [features]
-integration = ["inbox-rules/integration", "spira-config/integration", "spira-otel/integration", "spira-world/integration", "testkit/integration", "spira-test-id/integration"]
+integration = ["spira-pub/integration", "inbox-rules/integration", "spira-config/integration", "spira-otel/integration", "spira-world/integration", "testkit/integration", "spira-test-id/integration"]
 [dependencies]
 inbox-rules = { path = "../inbox-rules" }
+spira-pub = { path = "../spira-pub" }
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
 libc = "0.2"
@@ -15,5 +22,6 @@ spira-world = { path = "../spira-world" }
 regex = "1"
 
 [dev-dependencies]
+serde_json = "1"
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }

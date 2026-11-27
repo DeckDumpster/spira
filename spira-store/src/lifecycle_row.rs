@@ -9,6 +9,10 @@ use crate::lc_call::{LcClient, LcError, Reply, CANNOT_TELL, LC_TIMEOUT, REFUSED}
 
 pub const LC_BIN_ENV: &str = "SPIRA_LC_BIN";
 
+/// What `spira-lc admin-create-beads` says on stderr, before the database's name, when it is about
+/// to create into a database holding nothing: after a failure, only then may a caller drop it.
+pub const CREATING_BEADS_DATABASE: &str = "admin-create-beads: creating database ";
+
 pub fn lc_bin() -> Result<String, String> {
     match std::env::var(LC_BIN_ENV).ok().filter(|v| !v.is_empty()) {
         Some(v) => Ok(v),
@@ -124,22 +128,59 @@ pub fn bead_event_on(c: &LcClient, id: &str, kind: &BeadEventKind, actor: &str) 
     if shown.code != 0 {
         return Err(format!("{id}: no lifecycle row to mark: {}", shown.why()));
     }
-    let v: serde_json::Value = serde_json::from_str(shown.out.trim()).map_err(|e| format!("{id}: show is not JSON: {e}"))?;
-    let field = |k: &str| match &v["bead"][k] {
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Number(n) => n.to_string(),
-        _ => String::new(),
-    };
-    let (state, version) = (field("state"), field("version"));
+    let (state, version) = row_head(id, &shown.out)?;
+    send_bead_event(c, id, &state, &version, kind, actor)
+}
+
+/// The bead row's state and version, from what `show` answered.
+fn row_head(id: &str, shown: &str) -> Result<(String, String), String> {
+    let v: serde_json::Value = serde_json::from_str(shown.trim()).map_err(|e| format!("{id}: show is not JSON: {e}"))?;
+    let (state, version) = (json_field(&v["bead"], "state"), json_field(&v["bead"], "version"));
     if state.is_empty() || version.is_empty() {
         return Err(format!("{id}: no lifecycle row to mark"));
     }
+    Ok((state, version))
+}
+
+fn send_bead_event(c: &LcClient, id: &str, state: &str, version: &str, kind: &BeadEventKind, actor: &str) -> Result<(), String> {
     let kind = serde_json::to_string(kind).map_err(|e| e.to_string())?;
-    status_on(c, &["event", "bead", id, "--expect", &state, "--version", &version, "--actor", actor, "--kind", &kind])
+    status_on(c, &["event", "bead", id, "--expect", state, "--version", version, "--actor", actor, "--kind", &kind])
 }
 
 pub fn content_on_base_on(c: &LcClient, id: &str, proof: &str, actor: &str) -> Result<(), String> {
     bead_event_on(c, id, &BeadEventKind::ContentOnBase { proof: proof.into() }, actor)
+}
+
+/// What [`landed_record_on`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LandedRecord {
+    Recorded,
+    /// The row holds no landing to record; `state` is where it is.
+    Nothing { state: String },
+}
+
+/// `close-on-land`'s record over the socket, which serves no such verb: `ContentOnBase` on a row
+/// the builder has handed on and that has not landed or ended. Reaping is the caller's.
+pub fn landed_record_on(c: &LcClient, id: &str, sha: &str, actor: &str) -> Result<LandedRecord, String> {
+    let nothing = |state: &str| Ok(LandedRecord::Nothing { state: state.into() });
+    let shown = c.call(&["show", id])?;
+    match shown.code {
+        0 => {}
+        NO_ROW => return nothing("no row"),
+        _ => return Err(format!("{id}: show exited {}: {}", shown.code, shown.why())),
+    }
+    let (state, version) = row_head(id, &shown.out)?;
+    if !matches!(state.as_str(), "SUBMITTED" | "CERTIFIED" | "IN_DELIVERY") {
+        return nothing(&state);
+    }
+    let sha = if sha.is_empty() { "unknown" } else { sha };
+    let kind = BeadEventKind::ContentOnBase { proof: format!("landed:{sha}") };
+    send_bead_event(c, id, &state, &version, &kind, actor).map(|()| LandedRecord::Recorded)
+}
+
+/// [`landed_record_on`], answering whether it wrote.
+pub fn record_landed_on(c: &LcClient, id: &str, sha: &str, actor: &str) -> Result<bool, String> {
+    landed_record_on(c, id, sha, actor).map(|r| r == LandedRecord::Recorded)
 }
 
 /// One exit of the delivery round, with the git proof its caller already computed.
@@ -881,6 +922,29 @@ mod tests {
     fn a_refused_event_is_an_error_not_a_quiet_miss() {
         let (r, _) = delivered_via(row("SUBMITTED", Some("PR_OPEN")), 3, &Delivery::PrClosed);
         assert!(r.unwrap_err().contains("refused"));
+    }
+
+    fn landed_via(row: String, sha: &str) -> (Result<bool, String>, Vec<String>) {
+        let t = Arc::new(Socket { row, event: 0, seen: Mutex::new(Vec::new()) });
+        let r = record_landed_on(&LcClient::over(t.clone(), true), "sp-a", sha, "hel");
+        let seen = t.seen.lock().unwrap().clone();
+        (r, seen)
+    }
+
+    #[test_id(tly8w45)]
+    #[test]
+    fn a_landing_is_recorded_only_on_a_row_the_builder_has_handed_on_and_that_has_not_ended() {
+        for (state, sha, proof) in [("SUBMITTED", "abc", "landed:abc"), ("CERTIFIED", "abc", "landed:abc"), ("IN_DELIVERY", "", "landed:unknown")] {
+            let (r, seen) = landed_via(row(state, None), sha);
+            assert_eq!(r, Ok(true), "{state}");
+            let event = format!(r#"event bead sp-a --expect {state} --version 12 --actor hel --kind {{"ContentOnBase":{{"proof":"{proof}"}}}}"#);
+            assert_eq!(seen, vec!["show sp-a".to_string(), event], "{state}");
+        }
+        for shown in [row("LANDED", None), row("READY", None), row("DROPPED", None), String::new()] {
+            let (r, seen) = landed_via(shown.clone(), "abc");
+            assert_eq!(r, Ok(false), "{shown}");
+            assert_eq!(seen, vec!["show sp-a"], "{shown}");
+        }
     }
 
     #[test_id(tu4p3nx)]

@@ -5,19 +5,11 @@
 use std::path::{Path, PathBuf};
 
 pub trait World {
-    /// Every repository name in the map, in `lib.sh`'s own order.
-    fn repo_names(&self) -> Vec<String>;
-    /// `repo_land <name>` — `pr`, `push` or `hold`.
-    fn repo_land(&self, name: &str) -> String;
     /// `repo_root <name>` — `None` when the map has no entry or the checkout is absent.
     fn repo_root(&self, name: &str) -> Option<PathBuf>;
     /// `spira_home_repo`.
     fn home_repo(&self) -> String;
 
-    fn bd_gate_list_json(&self) -> String;
-    /// `gate discover --branch <branch> --repo <repo name>`, best-effort — its exit code and
-    /// output are never read, same as the bash's `|| true`.
-    fn bd_gate_discover(&self, repo: &str, branch: &str);
     /// `bd gate check --type=gh:run`, combined output.
     fn bd_gate_check(&self) -> String;
     fn bd_show_json(&self, id: &str) -> String;

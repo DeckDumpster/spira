@@ -11,7 +11,7 @@
 #              THIS release's spira-config schema — not the host's
 #   registry   every key a binary in the release reads (`check-config`) is registered in the
 #              release's own spira/conf.d, so a binary is never promoted ahead of its keys
-#   store      the bead store is reachable and its schema matches the bd on PATH
+#   store      the bead store is reachable and has every column spira-lc reads and writes
 #   units      every systemd unit renders with no unresolved placeholder
 #   self-test  the release's own spira/self-test.sh
 #   ami        a round AMI exists for the release's recipe-sha; only warns
@@ -89,28 +89,27 @@ check_registry() {
     [ "$FAIL" -ne 0 ] || ok registry
 }
 
-# --- store: the bead store is reachable and its schema matches the bd on PATH ---
+# --- store: the bead store is reachable and has every column the release reads and writes ---
 check_store() {
     if ! command -v spira-lc >/dev/null 2>&1; then
         fail store "spira-lc not on PATH"
         return
     fi
     local t="${SPIRA_STORE_CHECK_TIMEOUT:-30}" out rc attempt
-    local conn_re='i/o timeout|connection refused|connection reset|broken pipe|failed to open database|driver: bad connection|packets\.go|dial tcp'
     for attempt in 1 2; do
-        out="$(timeout "$t" spira-lc admin-store migrate-status 2>&1)"
+        out="$(timeout "$t" spira-lc admin-store check 2>&1)"
         rc=$?
-        [ "$rc" -eq 0 ] && break
-        [ "$rc" -ne 124 ] && ! grep -qiE "$conn_re" <<<"$out" && break
+        # 0 and 1 are the store's own answer.
+        [ "$rc" -le 1 ] && break
     done
     if [ "$rc" -eq 0 ]; then
         ok store
+    elif [ "$rc" -eq 1 ]; then
+        fail store "schema mismatch: $out"
     elif [ "$rc" -eq 124 ]; then
         fail store "store slow: no answer in ${t} s (2 attempts)"
-    elif grep -qiE "$conn_re" <<<"$out"; then
-        fail store "store slow/unreachable: $out"
     else
-        fail store "schema mismatch: $out"
+        fail store "store slow/unreachable: $out"
     fi
 }
 

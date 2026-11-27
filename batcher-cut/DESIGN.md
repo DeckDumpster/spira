@@ -33,6 +33,9 @@ Carrying it out means merges, the round's suites, the PR, the open-batch record 
 
 The pool is every unheld SUBMITTED or CERTIFIED lifecycle row whose tip is its branch's live
 tip: no gate verdict is required, because the round's full suite is the stronger trial. A
+`queue.forge` pool takes a SUBMITTED row only when its reason says its gate certifies nothing
+(`lifecycle::bead::certifies_nothing`); any other is left out (`Uncertified`) and bars what stacks
+on it, because the queue refuses a whole forge cut for one member it will not admit. A
 non-empty pool cuts at once (`should_cut`: no count, no idle wait; an open batch prepares the
 next round). `select_round` is feature-first: the epic root (the id before its first `.`)
 shared by the most members, at least two, with the members they stack on or that stack on
@@ -189,7 +192,7 @@ for it; a new commit changes the tip and readmits it. Tests: `redtip::tests`.
 
 A cut names each own-repository (the row's `repo`; the pool never holds another repository's bead) SUBMITTED or CERTIFIED bead it refuses: held (`Held`), tip recorded
 ejected-red (`EjectedRed`), certified tip no longer the branch tip (`TipMoved`), stacked on a barred or
-left-out bead (`StackedOn`), no content row (`NoContentRow`), or a prerequisite that has not landed
+left-out bead (`StackedOn`), SUBMITTED and unmarked in a forge pool (`Uncertified`), no content row (`NoContentRow`), or a prerequisite that has not landed
 (`Blocked`, from `core::refuse_blocked`'s `BlockedRefusal`). `io::certified_pool_left_out` returns the
 pool's causes without announcing; `run_cut` assembles them with the refusals (`io::cut_left_out`) and calls
 `io::announce_left_out` once per cut, because `announce_with` removes the record of any id not in the list

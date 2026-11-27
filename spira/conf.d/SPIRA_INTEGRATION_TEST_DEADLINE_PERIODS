@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=gate
+DOC=A test of a tests/ target (integration and sim, nextest kind(test)) is terminated, in the gate, the round and attribution reruns, after this many deadline periods (cargo-nextest slow-timeout terminate-after).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_INTEGRATION_TEST_DEADLINE_PERIODS:=2}"
+SPIRA_CONF_DEFAULT_EOF

@@ -258,27 +258,51 @@ pub mod run {
 
     /// A one-shot HTTP sink on a loopback port: returns its address and a handle yielding the request text.
     pub fn fixture_sink() -> (String, std::thread::JoinHandle<String>) {
-        use std::io::{Read, Write};
-        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = l.local_addr().unwrap().to_string();
-        let h = std::thread::spawn(move || {
-            let (mut c, _) = l.accept().unwrap();
-            let mut buf = Vec::new();
-            let mut chunk = [0u8; 4096];
-            loop {
-                let n = c.read(&mut chunk).unwrap();
-                buf.extend_from_slice(&chunk[..n]);
-                let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
-                let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
-                let len: usize = head.split("content-length: ").nth(1).unwrap().split("\r\n").next().unwrap().parse().unwrap();
-                if buf.len() >= i + 4 + len {
-                    break;
-                }
+        let (l, addr) = loopback();
+        let h = std::thread::spawn(move || answer_one(l.accept().unwrap().0));
+        (addr, h)
+    }
+
+    /// [`fixture_sink`] that yields `None` when nothing has connected by `deadline`.
+    pub fn fixture_sink_within(deadline: Duration) -> (String, std::thread::JoinHandle<Option<String>>) {
+        use std::os::fd::AsRawFd;
+        let (l, addr) = loopback();
+        let end = Instant::now() + deadline;
+        let h = std::thread::spawn(move || loop {
+            let left = end.saturating_duration_since(Instant::now());
+            let mut fd = libc::pollfd { fd: l.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+            // SAFETY: one valid pollfd, and `l` keeps its descriptor open across the call.
+            match unsafe { libc::poll(&mut fd, 1, left.as_millis() as libc::c_int) } {
+                0 => return None,
+                n if n > 0 => return Some(answer_one(l.accept().unwrap().0)),
+                _ => assert_eq!(std::io::Error::last_os_error().kind(), std::io::ErrorKind::Interrupted, "poll failed"),
             }
-            c.write_all(b"HTTP/1.1 204 No Content\r\n\r\n").unwrap();
-            String::from_utf8_lossy(&buf).into_owned()
         });
         (addr, h)
+    }
+
+    fn loopback() -> (std::net::TcpListener, String) {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap().to_string();
+        (l, addr)
+    }
+
+    fn answer_one(mut c: std::net::TcpStream) -> String {
+        use std::io::{Read, Write};
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = c.read(&mut chunk).unwrap();
+            buf.extend_from_slice(&chunk[..n]);
+            let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+            let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
+            let len: usize = head.split("content-length: ").nth(1).unwrap().split("\r\n").next().unwrap().parse().unwrap();
+            if buf.len() >= i + 4 + len {
+                break;
+            }
+        }
+        c.write_all(b"HTTP/1.1 204 No Content\r\n\r\n").unwrap();
+        String::from_utf8_lossy(&buf).into_owned()
     }
 
     #[cfg(test)]

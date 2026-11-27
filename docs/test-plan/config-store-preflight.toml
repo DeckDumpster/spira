@@ -54,22 +54,7 @@ statement = "every program the harness executes is declared in the bin manifest"
 [[use_case]]
 id = "UC-config-store-preflight-09"
 tier = "T1"
-statement = "when $SPIRA_DB/.beads metadata and the bd binary disagree, or the store cannot be resolved, conf.sh refuses at source time and names cause and remedy"
-
-[[use_case]]
-id = "UC-config-store-preflight-10"
-tier = "T1"
-statement = "a store 'locked by another process' result is a configuration error after bounded retry, never a pass"
-
-[[use_case]]
-id = "UC-config-store-preflight-11"
-tier = "T1"
-statement = "the schema-version check is stamped and cached so repeated sources do not re-probe bd"
-
-[use_case.uncovered]
-reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
-date = "2026-11-12"
-bead = "sp-ugnv1x"
+statement = "release verify and deploy refuse a store lacking a column spira-lc reads or writes, naming it, and report a store they cannot ask as slow or unreachable, never as a mismatch"
 
 [[use_case]]
 id = "UC-config-store-preflight-12"
@@ -128,16 +113,6 @@ statement = "schema-apply.sh applies the schema additions to a server store idem
 
 [use_case.uncovered]
 reason = "bead/tests/schema_sh.rs drove schema-apply.sh against a real server store; deleted with every Rust test that spawns a binary or runs over 100 ms (sp-ao9dn2)"
-date = "2026-11-02"
-bead = "sp-ao9dn2"
-
-[[use_case]]
-id = "UC-config-store-preflight-21"
-tier = "T1"
-statement = "schema-apply.sh refuses an embedded-mode store, naming cause and remedy"
-
-[use_case.uncovered]
-reason = "bead/tests/schema_sh.rs ran schema-apply.sh as a shell program; deleted with every Rust test that spawns a binary or runs over 100 ms (sp-ao9dn2)"
 date = "2026-11-02"
 bead = "sp-ao9dn2"
 

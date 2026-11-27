@@ -38,7 +38,7 @@ impl Store {
             return None;
         };
         let root = std::env::var("TESTDB_ROOT").ok().filter(|r| !r.is_empty()).unwrap_or_else(|| dir.join("db").display().to_string());
-        let schema = testkit::manifest_dir().join("../testenv/fixtures/beads-schema.sql");
+        let schema = testkit::manifest_dir().join("../spira-lc/beads-schema.sql");
         let out = Command::new(testkit::bin_exe("testenv")).args(["testdb", "up", "--tag", "conditions-on-store", "--dolt", &dolt, "--root", &root]).arg("--schema").arg(&schema).output().expect("testenv runs");
         let text = String::from_utf8_lossy(&out.stdout).into_owned();
         assert!(out.status.success(), "testdb up: {text}{}", String::from_utf8_lossy(&out.stderr));

@@ -275,7 +275,7 @@ fn a_pilgrim_world_takes_its_tree_from_the_release_so_tree_is_a_usage_error() {
 }
 
 mod landing {
-    use spira_sim::pilgrim_land::{self, CargoTests, RoundRegistry};
+    use spira_sim::pilgrim_land::{self, CargoTests, RoundRegistry, RunTests};
     use spira_sim::registryworld::Registry;
     use spira_sim::world::git;
     use std::path::Path;
@@ -316,6 +316,21 @@ mod landing {
         std::fs::write(&file, text.replace(from, to)).unwrap();
         git(work, &["commit", "-q", "-am", &format!("{bead}: edit")]).unwrap();
         git(work, &["checkout", "-q", "main"]).unwrap();
+    }
+
+    #[test_id(t4lettf)]
+    #[test]
+    fn the_rounds_cargo_tests_run_no_compiler_wrapper_the_parent_names() {
+        let t = testkit::TempDir::new("pw-wrapper");
+        pilgrim_land::write_tree(t.path()).unwrap();
+        std::fs::create_dir_all(t.join(".cargo")).unwrap();
+        std::fs::write(t.join(".cargo/config.toml"), "[build]\nrustc-wrapper = \"false\"\nrustc-workspace-wrapper = \"false\"\n").unwrap();
+
+        let run = CargoTests.run(t.path(), &[]).unwrap();
+
+        assert!(run.green, "{}", run.output);
+        let fixture_fn = pilgrim_land::stamped_tests(t.path()).into_iter().find(|(id, _)| id == pilgrim_land::FIXTURE_TEST).map(|(_, f)| f).unwrap();
+        assert!(run.passed.contains(&fixture_fn), "{fixture_fn} in {:?}", run.passed);
     }
 
     fn history(reg: &Registry) -> String {

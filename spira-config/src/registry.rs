@@ -167,15 +167,35 @@ pub fn declares_key(home: &Path, key: &str) -> bool {
     SOURCE_DIRS.iter().any(|d| home.join(d).join(key).is_file())
 }
 
-/// This process's registry, read once from the release [`crate::resolve::locate_home_for_process`]
-/// finds. A refusal is not remembered: the next call looks again.
+/// This process's registry, beside the home it was loaded from.
+static PROCESS: OnceLock<(PathBuf, Registry)> = OnceLock::new();
+
+/// This process's registry: the pinned one, else read from the release
+/// [`crate::resolve::locate_home_for_process`] finds and pinned. A refusal is not remembered:
+/// the next call looks again.
 pub fn for_process() -> Result<&'static Registry, String> {
-    static REGISTRY: OnceLock<Registry> = OnceLock::new();
-    if let Some(r) = REGISTRY.get() {
+    if let Some((_, r)) = PROCESS.get() {
         return Ok(r);
     }
-    let loaded = Registry::load(&crate::resolve::locate_home_for_process()?)?;
-    Ok(REGISTRY.get_or_init(|| loaded))
+    let home = crate::resolve::locate_home_for_process()?;
+    let loaded = Registry::load(&home)?;
+    Ok(&PROCESS.get_or_init(|| (home, loaded)).1)
+}
+
+/// Names the release of a process that derives it instead of inheriting
+/// `SPIRA_HOME`/`SPIRA_RELEASE`; call before any config is loaded. A second home is refused.
+pub fn pin_for_process(home: &Path) -> Result<&'static Registry, String> {
+    let (pinned, registry) = match PROCESS.get() {
+        Some(p) => p,
+        None => {
+            let loaded = Registry::load(home)?;
+            PROCESS.get_or_init(|| (home.to_path_buf(), loaded))
+        }
+    };
+    if pinned != home {
+        return Err(format!("this process's key registry is already {}; refusing to pin {}", pinned.display(), home.display()));
+    }
+    Ok(registry)
 }
 
 /// The registry index a release carries beside `conf.d`: every source file of `conf.d` and

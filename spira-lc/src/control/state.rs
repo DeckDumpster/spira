@@ -135,6 +135,7 @@ fn column(rec: &LifecycleRecord, r: Option<&Readiness>, view: &Value, name: &str
         "claim" => rec.claim.as_ref().map_or(Value::Null, |c| serde_json::to_value(c).unwrap_or(Value::Null)),
         "carried_by" => text(rec.carried_by.as_deref()),
         "manual_hold" => row.manual_hold.as_ref().map_or(Value::Null, |m| serde_json::to_value(m).unwrap_or(Value::Null)),
+        "ask_since" => number(row.ask_since),
         "takeover" => row.takeover.as_ref().map_or(Value::Null, |t| serde_json::to_value(t).unwrap_or(Value::Null)),
         "claim_view" => view.clone(),
         "blocked_by" => Value::Array(
@@ -176,6 +177,7 @@ const SHOWN: &[&str] = &[
     "carried_by",
     "manual_hold",
     "takeover",
+    "ask_since",
 ];
 
 const LISTED: &[&str] = &[

@@ -57,7 +57,6 @@ fn real_main() -> i32 {
 }
 
 fn run(world: &dyn World, home: &std::path::Path) {
-    discover(world);
     let check_out = world.bd_gate_check();
     world.print(&check_out);
     world.print("\n");
@@ -78,29 +77,7 @@ fn run(world: &dyn World, home: &std::path::Path) {
     }
 }
 
-/// STEP 1: DISCOVER — pr-mode repositories only (push merges directly, hold leaves the
-/// branch to a human; in both, the landing gate is the only gate and no CI run exists).
-fn discover(world: &dyn World) {
-    let gate_list = world.bd_gate_list_json();
-    let branches = engine::discover_branches(&gate_list);
-    if branches.is_empty() {
-        return;
-    }
-    for name in world.repo_names() {
-        if world.repo_land(&name) != "pr" {
-            continue;
-        }
-        let Some(repo) = world.repo_root(&name) else { continue };
-        if !repo.join(".git").exists() {
-            continue;
-        }
-        for branch in &branches {
-            world.bd_gate_discover(&name, branch);
-        }
-    }
-}
-
-/// STEP 2b: for each `ESCALATE` line, resolve the gate so the bead re-enters the queue and
+/// For each `ESCALATE` line, resolve the gate so the bead re-enters the queue and
 /// emit `ci.failed`.
 fn resolve_escalated(world: &dyn World, esc: &str) {
     let Some(gate_id) = engine::gate_id_in(esc) else { return };

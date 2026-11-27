@@ -197,7 +197,6 @@ dependencies = [
 name = "bead"
 version = "0.1.0"
 dependencies = [
- "forge",
  "regex",
  "serde_json",
  "sha2",
@@ -498,6 +497,7 @@ dependencies = [
  "spira-claim",
  "spira-config",
  "spira-otel",
+ "spira-pub",
  "spira-store",
  "spira-test-id",
  "strand",
@@ -534,17 +534,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "exec-census"
-version = "1.0.0"
-dependencies = [
- "spira-config",
- "spira-otel",
- "spira-test-id",
- "system-paths",
- "testkit",
-]
-
-[[package]]
 name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -574,6 +563,23 @@ name = "find-msvc-tools"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
+
+[[package]]
+name = "fixedbitset"
+version = "0.5.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5905ec755cc8386d7928353e4d356d2be3e89e81e5ca01fe630a1ca4d08dc175"
+
+[[package]]
+name = "flume"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da0e4dd2a88388a1f4ccc7c9ce104604dab68d9f408dc34cd45823d5a9069095"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+ "spin",
+]
 
 [[package]]
 name = "foldhash"
@@ -670,13 +676,16 @@ version = "0.1.0"
 dependencies = [
  "incident",
  "libc",
+ "ports",
  "serde",
  "serde_json",
  "sha2",
  "spira-config",
  "spira-desired-state",
  "spira-otel",
+ "spira-pub",
  "spira-test-id",
+ "strand",
  "suite-select",
  "system-paths",
  "testkit",
@@ -849,6 +858,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-pub",
  "spira-store",
  "spira-test-id",
  "testkit",
@@ -994,7 +1004,10 @@ dependencies = [
 name = "inbox-rules"
 version = "1.0.0"
 dependencies = [
+ "ports",
  "regex",
+ "serde_json",
+ "spira-pub",
  "spira-test-id",
  "testkit",
 ]
@@ -1006,8 +1019,10 @@ dependencies = [
  "inbox-rules",
  "libc",
  "regex",
+ "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-pub",
  "spira-test-id",
  "spira-world",
  "testkit",
@@ -1144,6 +1159,7 @@ dependencies = [
  "hel",
  "incident",
  "libc",
+ "lifecycle",
  "mail",
  "regex",
  "serde",
@@ -1622,12 +1638,14 @@ dependencies = [
  "landing-pass",
  "libc",
  "lifecycle",
+ "ports",
  "release",
  "runtime",
  "serde",
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-pub",
  "spira-store",
  "spira-test-id",
  "state-store",
@@ -1869,6 +1887,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "release"
 version = "0.1.0"
 dependencies = [
+ "bead",
  "runtime",
  "rustc-demangle",
  "serde",
@@ -1876,6 +1895,7 @@ dependencies = [
  "sha2",
  "spira-config",
  "spira-otel",
+ "spira-pub",
  "spira-store",
  "spira-test-id",
  "state-store",
@@ -1955,6 +1975,23 @@ dependencies = [
  "spira-test-id",
  "testkit",
  "toml",
+]
+
+[[package]]
+name = "rumqttc"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0feff8d882bff0b2fddaf99355a10336d43dd3ed44204f85ece28cf9626ab519"
+dependencies = [
+ "bytes",
+ "fixedbitset",
+ "flume",
+ "futures-util",
+ "log",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
 ]
 
 [[package]]
@@ -2358,6 +2395,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "spin"
+version = "0.9.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
+dependencies = [
+ "lock_api",
+]
+
+[[package]]
 name = "spira-claim"
 version = "1.0.0"
 dependencies = [
@@ -2437,6 +2483,7 @@ dependencies = [
  "inotify",
  "libc",
  "lifecycle",
+ "mail",
  "opentelemetry-proto",
  "ports",
  "reconciler-engine",
@@ -2451,6 +2498,7 @@ dependencies = [
  "spira-config",
  "spira-desired-state",
  "spira-otel",
+ "spira-pub",
  "spira-store",
  "spira-test-id",
  "state-store",
@@ -2459,6 +2507,7 @@ dependencies = [
  "testkit",
  "tokio",
  "tsd",
+ "tsd-lifecycle-export",
  "watchtower",
 ]
 
@@ -2493,6 +2542,23 @@ dependencies = [
  "spira-test-id",
  "system-paths",
  "testkit",
+]
+
+[[package]]
+name = "spira-pub"
+version = "0.1.0"
+dependencies = [
+ "inotify",
+ "libc",
+ "ports",
+ "rumqttc",
+ "serde",
+ "serde_json",
+ "spira-config",
+ "spira-otel",
+ "spira-test-id",
+ "testkit",
+ "toml",
 ]
 
 [[package]]
@@ -2560,6 +2626,7 @@ dependencies = [
  "spira-claim",
  "spira-config",
  "spira-otel",
+ "spira-pub",
  "spira-store",
  "spira-submission",
  "spira-test-id",
@@ -2619,6 +2686,23 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-test-id",
+ "testkit",
+]
+
+[[package]]
+name = "spira-sub"
+version = "0.1.0"
+dependencies = [
+ "ports",
+ "rumqttc",
+ "serde",
+ "serde_json",
+ "spira-config",
+ "spira-otel",
+ "spira-pub",
+ "spira-test-id",
+ "spira-world",
+ "strand",
  "testkit",
 ]
 
@@ -2861,6 +2945,7 @@ name = "testkit"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "rumqttc",
  "spira-test-id",
  "system-paths",
  "toml",
@@ -2956,6 +3041,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a3d06f0b082ba57c26b79407372e57cf2a1e28124f78e9479fe80322cf53420b"
 dependencies = [
  "futures-core",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-util"
+version = "0.7.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e464cf451ba96ebfc6f9b6542f17ee8b8956e33f1e40d9690624e59d7a7f8a4b"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "futures-sink",
+ "libc",
  "pin-project-lite",
  "tokio",
 ]
@@ -3347,6 +3446,7 @@ dependencies = [
  "install",
  "libc",
  "reconciler-engine",
+ "release",
  "runtime",
  "serde",
  "serde_json",
@@ -3354,6 +3454,7 @@ dependencies = [
  "spira-config",
  "spira-ctrl",
  "spira-desired-state",
+ "spira-pub",
  "spira-store",
  "spira-test-id",
  "strand",

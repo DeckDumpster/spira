@@ -41,6 +41,8 @@ pub struct Fixture {
     pub projects: PathBuf,
     pub published: Arc<Mutex<Vec<String>>>,
     pub checkout_rows: Arc<Mutex<Vec<(String, String)>>>,
+    pub labelled: Arc<Mutex<Option<(String, String)>>>,
+    pub cockpit_input: &'static str,
 }
 
 pub fn real_git() -> PathBuf {
@@ -58,8 +60,21 @@ pub fn git(repo: &Path, args: &[&str], at: u64) {
     assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
 }
 
+/// A config the ref files cannot list remotes from, as a checkout with dwarf worktrees has.
+pub fn per_worktree_config(repo: &Path) {
+    git(repo, &["config", "extensions.worktreeConfig", "true"], 1);
+}
+
 pub fn commit(repo: &Path, msg: &str, at: u64) {
     git(repo, &["commit", "-q", "--allow-empty", "-m", msg], at);
+}
+
+/// A file as new as the index is racily clean: each `git status` rewrites the index, so a held
+/// status is read again until the wall clock moves on.
+fn settle(repo: &Path, files: &[&str]) {
+    for f in files {
+        touch(&repo.join(f), 1);
+    }
 }
 
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
@@ -84,21 +99,17 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
     std::fs::create_dir_all(images.parent().unwrap()).unwrap();
     std::fs::write(&images, "[]").unwrap();
     let rows = r#"{"rows":[{"bead":"sp-aaaaaa","test":"t","state":"disabled","until":4102444800}]}"#;
+    let stub = bin.join("stub");
+    let graph = graph_root.display();
+    testkit::write_exe(&stub, &format!("#!/bin/sh\nname=${{0##*/}}\necho \"$name $*\" >> {}\ncase $name in\ntest-registry) echo '{rows}';;\npodman) case \"$1\" in info) echo {graph};; *) echo sha;; esac;;\ndate) exec {} \"$@\";;\ntimeout) shift; exec \"$@\";;\ngh) exit 1;;\n*) echo '[]';;\nesac\n", started.display(), real_tool("date").display()));
     for d in [release.join("bin"), release.join("spira"), bin.clone()] {
         std::fs::create_dir_all(&d).unwrap();
         for name in LOGGED_PROGRAMS {
-            let reply = match name {
-                "test-registry" => format!("echo '{rows}'"),
-                "podman" => format!("case \"$1\" in info) echo {};; *) echo sha;; esac", graph_root.display()),
-                "date" | "timeout" => format!("exec {} \"$@\"", real_tool(name).display()),
-                _ => "echo '[]'".to_string(),
-            };
-            testkit::write_exe(d.join(name), &format!("#!/bin/sh\necho \"{name} $*\" >> {}\n{reply}\n", started.display()));
+            std::os::unix::fs::symlink(&stub, d.join(name)).unwrap();
         }
     }
-    for d in [release.join("bin"), bin.clone()] {
-        testkit::write_exe(d.join("timeout"), &format!("#!/bin/sh\necho \"timeout $*\" >> {}\nshift\nexec \"$@\"\n", started.display()));
-    }
+    // The host's own gh would answer by whatever login and network it has; it fails here either way.
+    std::os::unix::fs::symlink(&stub, bin.join("gh")).unwrap();
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
 
     let local = dir.join("local");
@@ -106,6 +117,7 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
     git(&local, &["init", "-q", "-b", "main"], 1);
     std::fs::write(local.join("Cargo.toml"), "[dependencies]\ndumpster-kit = \"1.0\"\n").unwrap();
     std::fs::write(local.join("Cargo.lock"), "[[package]]\nname = \"dumpster-kit\"\nversion = \"1.0.0\"\n").unwrap();
+    settle(&local, &["Cargo.toml", "Cargo.lock"]);
     git(&local, &["add", "."], 1);
     commit(&local, "sp-aaaaaa landed", LANDED_S);
     git(&local, &["branch", "local/main"], 1);
@@ -119,6 +131,9 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
     std::fs::create_dir(&wiki).unwrap();
     git(&wiki, &["init", "-q", "-b", "main"], 1);
     std::fs::write(wiki.join("page.md"), "page").unwrap();
+    std::fs::create_dir_all(wiki.join("wiki/notes")).unwrap();
+    std::fs::write(wiki.join(STATUTE_PAGE), "### law-one\n").unwrap();
+    settle(&wiki, &["page.md", STATUTE_PAGE]);
     git(&wiki, &["add", "."], 1);
     commit(&wiki, "page", LANDED_S);
 
@@ -161,6 +176,8 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
     let served = published.clone();
     let checkout_rows: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
     let answering_rows = checkout_rows.clone();
+    let labelled: Arc<Mutex<Option<(String, String)>>> = Arc::default();
+    let answering_labelled = labelled.clone();
     std::thread::spawn(move || runtime::socket::answer(&listener, &|argv| {
         asked.lock().unwrap().push(argv.join(" "));
         match argv.first().map(String::as_str) {
@@ -174,7 +191,7 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
             }
             Some("plan") if argv.get(1).map(String::as_str) == Some("items") => Ok(format!("{{\"items\":[{}]}}", bead.lock().unwrap().as_deref().map_or(String::new(), plan_row))),
             Some("plan") => Ok("{\"watermark\":1,\"items\":[]}".into()),
-            Some("content") => Ok("[]".into()),
+            Some("content") => Ok(answering_labelled.lock().unwrap().as_ref().filter(|(label, _)| argv.windows(2).any(|w| w[0] == "--label" && w[1] == *label)).map_or_else(|| "[]".into(), |(_, rows)| rows.clone())),
             Some("list-asks") => Ok("[]".into()),
             Some("section") if argv.get(1).map(String::as_str) == Some("publish-status") => {
                 served.lock().unwrap().push(argv.last().cloned().unwrap_or_default());
@@ -207,6 +224,9 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
     let trap = format!("#!/bin/sh\necho \"spira-lc $*\" >> {}\nexit 1\n", programs.display());
     testkit::write_exe(release.join("bin/spira-lc"), &trap);
     testkit::write_exe(bin.join("spira-lc"), &trap);
+    testkit::write_exe(bin.join("branch-guard.sh"), "#!/bin/sh\n");
+    testkit::write_exe(release.join("bin/resolve"), "#!/bin/sh\n");
+    std::fs::write(run_dir.join("dwarf-ledger.log"), "").unwrap();
     let incident = dir.join("incident.sh");
     testkit::write_exe(&incident, "#!/bin/sh\nexit 0\n");
     let psi = dir.join("psi");
@@ -288,6 +308,8 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
         worktrees,
         published,
         checkout_rows,
+        labelled,
+        cockpit_input: COCKPIT_UNSENT,
         units,
         proc_root,
         release,
@@ -332,8 +354,13 @@ pub fn plan_row(id: &str) -> String {
 
 pub const IDLE_TASK_PROGRAMS: [&str; 5] = ["mail-health.sh", "bash", "bead.sh", "schema.sh", "spira-sendmail"];
 pub const DATE_RUNS_PER_OPEN_EPOCH: usize = 4;
+pub const QUIET_STRETCH_CONFIG_VALIDATIONS: usize = 0;
 pub const ENSURE_UNIT: &str = spira_runtime::tasks::g::cockpit_ensure::UNIT;
-pub const LOGGED_PROGRAMS: [&str; 23] = [
+pub const STATUTE_PAGE: &str = "wiki/notes/common-law.md";
+pub const LOGGED_PROGRAMS: [&str; 26] = [
+    "drift.sh",
+    "tsd-query.sh",
+    "yield.sh",
     "tmux",
     "spira-claim",
     "systemctl",
@@ -399,15 +426,23 @@ pub fn strand_rows(f: &Fixture) -> Vec<String> {
     snap["strand"].as_array().into_iter().flatten().filter_map(|r| r.as_str().map(str::to_string)).collect()
 }
 
+pub fn cockpit_600s_every_probe() -> &'static str {
+    spira_runtime::tasks::g::cockpit::probe_input(spira_runtime::tasks::g::cockpit_tier_600s::PROBES, &Default::default()).leak()
+}
+
 pub const COCKPIT_UNSENT: &str = r#"{"probes":[{"name":"cockpit.unsent","timeout_ms":300000}],"config":{}}"#;
+
+pub const COCKPIT_LIVELOCK: &str = r#"{"probes":[{"name":"cockpit.livelock","timeout_ms":300000}],"config":{}}"#;
+
+pub const COCKPIT_DRIFT: &str = r#"{"probes":[{"name":"cockpit.drift","timeout_ms":300000}],"config":{}}"#;
 
 pub fn doubles(f: &Fixture, names: &[&'static str]) -> Arc<sim::doubles::Doubles> {
     let mut d = sim::doubles::service();
     for name in names.iter().copied() {
-        let (e, seen) = (f.effects.clone(), f.seen.clone());
+        let (e, seen, cockpit_input) = (f.effects.clone(), f.seen.clone(), f.cockpit_input);
         d = d.double(name, move |input| {
             use runtime::host::EffectRunner;
-            let input = if name == "cockpit-tier-600s.observe" { COCKPIT_UNSENT } else { input };
+            let input = if name == "cockpit-tier-600s.observe" { cockpit_input } else { input };
             let out = e.run("k", &runtime::EffectSpec::keyed(name, "k", input.to_string(), 60_000));
             seen.lock().unwrap().push((name.to_string(), out.clone().unwrap_or_else(|e| e)));
             out
@@ -495,6 +530,20 @@ pub fn touch(path: &Path, secs_after_epoch: u64) {
     let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
     f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs_after_epoch)).unwrap();
 }
+pub const SWEEP_PROGRAMS: [&str; 5] = ["bash", "release", "spira-claim", "systemctl", "spira-config"];
+
+pub fn started_by_the_sweep(f: &Fixture) -> Vec<String> {
+    let all = std::fs::read_to_string(&f.started).unwrap_or_default();
+    all.lines().filter(|l| SWEEP_PROGRAMS.iter().any(|p| l.split_whitespace().next() == Some(*p))).map(str::to_string).collect()
+}
+
+pub const GUARD_TIP_READ: &str = "log -1 --format=%ae%x00%P%x00%h%x00%s";
+
+pub fn guard_reads(lines: &[String], repo: &Path) -> usize {
+    let tip = format!("-C {} {GUARD_TIP_READ}", repo.display());
+    lines.iter().filter(|l| l.contains(&tip)).count()
+}
+
 pub const WATCHTOWER_PROGRAMS: [&str; 5] = ["systemctl", "spira-config", "target-reap", "timeout", "watchd"];
 
 pub fn started_by_the_watchtower_checks(f: &Fixture) -> Vec<String> {

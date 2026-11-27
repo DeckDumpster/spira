@@ -4,9 +4,8 @@
 #
 #   gate-check.sh
 #
-# The logic is the Rust `gate-check` binary (gate-check/DESIGN.md, sp-ubw2o): the same five
-# legs (discover, check, escalated-run resolution, flaky-suite beads, red-twice-suite beads,
-# TSD ingest), the same dedup rules, the same `bd`/`gh`/`bead.sh`/`tsd-ingest.sh` calls. This
+# The logic is the Rust `gate-check` binary (gate-check/DESIGN.md): its legs are check,
+# escalated-run resolution, flaky-suite beads, red-twice-suite beads and TSD ingest. This
 # file stays the one entry point every caller names — `spira-gate-check.service`'s
 # `ExecStart`, and the suites that test the wiring — the same shim pattern `gate.sh` uses for
 # `gate` (sp-0tpcs).

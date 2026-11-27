@@ -52,7 +52,7 @@ not a summary to double-check against the bead title.
 
 ## Tests
 
-While iterating, run the unit tests of the crate you are changing (`cargo test -p <crate>`).
+While iterating, run the unit tests of the crate you are changing (`tools/test-sandbox/runner --around cargo test -p <crate>`).
 Before closing, do not run the suites: commit and close, and the landing pass certifies the
 branch with the budgeted gate right after. A runner call with no `--suites` is not the gate's
 selection — it runs the full unbudgeted diff set outside the gate's host-wide admission. The one
@@ -108,10 +108,7 @@ If you cannot finish — the culprit is not clear, or the fix needs a decision o
 operator can make — do **not** finish the bead. Hold it on the question (this files the ask
 too):
 
-    work blocked "<what is blocked>" --default "<what you would do>" --class <permissions|policy|destructive|design> --basis "<why it is that class>"
-
-The question is the human topic and must not start with a bead id: the bound bead is attached
-automatically.
+    work blocked "<what is blocked>" --default "<what you would do>" --class <permissions|policy|destructive|design> --class-basis "<why it is that class>"
 
 or, when no operator question fits, note precisely what is blocked and what you would do by
 default, and exit non-zero:

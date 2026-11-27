@@ -12,7 +12,22 @@ use spira_config::repos::{Column, Registry};
 
 use crate::engine;
 use crate::lanes::{self, LaneLabels};
-use crate::real::{json_ids, unfinished_count};
+
+/// The ids in `content list --json`'s array; `None` for anything that is not an array.
+pub fn json_ids(input: &str) -> Option<Vec<String>> {
+    match serde_json::from_str::<serde_json::Value>(input) {
+        Ok(serde_json::Value::Array(a)) => Some(a.iter().filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect()),
+        _ => None,
+    }
+}
+
+/// `spira_open_trigger_count`'s own counter: the trigger beads still open — their lifecycle
+/// row READY, WORKING or REWORK (what bd's `open,in_progress` meant). A bead with no row can
+/// never be worked, and a poisoned one is not claimable again: neither is open, or one dead
+/// trigger would suppress every later one.
+pub fn unfinished_count(ids: &[String], lc: &std::collections::HashMap<String, spira_store::lc_state::Row>) -> u64 {
+    ids.iter().filter(|id| lc.get(*id).is_some_and(|r| !r.past_builder() && !r.held("poison"))).count() as u64
+}
 
 /// `spira_open_trigger_count <labels>` over the store's door: the beads carrying every label in
 /// `labels` (comma-separated) whose lifecycle row is still before its builder's hand-off and not
@@ -148,6 +163,69 @@ mod tests {
         git_at(d.path(), 1700000400, &["commit", "-q", "--allow-empty", "-m", "sp-cccccc: newer"]);
         assert_eq!(git_log_subjects(d.path(), 1700000250, "main"), "sp-cccccc: newer\nsp-bbbbbb: new\n", "a moved tip is read again");
         assert_eq!(git_log_subjects(d.path(), 1700000050, "main").lines().count(), 4, "an earlier cutoff than the held read is read again");
+    }
+
+    use spira_store::lc_state::Row;
+
+    /// sp-mve9i: an open trigger is one whose lifecycle row is still before its builder's
+    /// hand-off; bd's status is not read.
+    #[test_id(tg04f41)]
+    #[test]
+    fn an_open_trigger_is_one_the_machine_has_not_seen_handed_on() {
+        let ids = json_ids(r#"[{"id":"a","status":"closed"},{"id":"b","status":"open"},{"id":"c"},{"id":"d"},{"id":"e"}]"#).unwrap();
+        let lc = [("a", "READY"), ("b", "SUBMITTED"), ("c", "WORKING"), ("d", "DONE")]
+            .iter()
+            .map(|(i, st)| (i.to_string(), Row { bead_id: i.to_string(), state: st.to_string(), ..Default::default() }))
+            .collect();
+        assert_eq!(unfinished_count(&ids, &lc), 2);
+        let mut lc: std::collections::HashMap<String, Row> = lc;
+        lc.get_mut("a").unwrap().holds = vec!["poison".to_string()];
+        assert_eq!(unfinished_count(&ids, &lc), 1, "a poisoned trigger is dead and must not suppress the next");
+        assert!(json_ids("not json").is_none());
+    }
+
+    // covers: UC-ops-detection-remediation-16
+    #[test_id(tshqhsu)]
+    #[test]
+    fn a_trigger_still_working_suppresses_a_second_and_one_handed_on_does_not() {
+        let ids = json_ids(r#"[{"id":"w"},{"id":"s"}]"#).unwrap();
+        let row = |st: &str, id: &str| (id.to_string(), Row { bead_id: id.to_string(), state: st.to_string(), ..Default::default() });
+        let lc: std::collections::HashMap<_, _> = [row("WORKING", "w"), row("SUBMITTED", "s")].into_iter().collect();
+        assert_eq!(unfinished_count(&ids, &lc), 1);
+        assert_eq!(unfinished_count(&ids[..1], &lc), 1, "positive control: the working one alone counts");
+        assert_eq!(unfinished_count(&ids[1..], &lc), 0);
+    }
+
+    // covers: UC-ops-detection-remediation-16
+    #[test_id(txqmn0y)]
+    #[test]
+    fn landings_on_a_repo_whose_only_remote_is_not_origin_are_read_from_its_own_default_branch_since_the_mark() {
+        let ws = testkit::TempDir::new("mimir-trigger-gitea");
+        let remote = ws.path().join("remote.git");
+        let repo = ws.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        testkit::git(ws.path(), &["init", "-q", "--bare", "-b", "trunk", remote.to_str().unwrap()]);
+        testkit::git(&repo, &["init", "-q", "-b", "trunk"]);
+        let at = |when: &str, msg: &str| {
+            let out = std::process::Command::new("git")
+                .arg("-C").arg(&repo)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit", "-q", "--allow-empty", "-m", msg])
+                .env("GIT_AUTHOR_DATE", when).env("GIT_COMMITTER_DATE", when)
+                .output().unwrap();
+            assert!(out.status.success());
+        };
+        at("2020-01-01T00:00:00Z", "spira: land sp-old1");
+        at("2030-01-01T00:00:00Z", "spira: land sp-new1");
+        at("2030-01-02T00:00:00Z", "tidy readme");
+        testkit::git(&repo, &["remote", "add", "gitea", remote.to_str().unwrap()]);
+        testkit::git(&repo, &["push", "-q", "gitea", "trunk"]);
+
+        let reg = spira_config::repos::Registry::new(None, &BTreeMap::new(), ws.path());
+        let base = spira_config::repos::landref(&reg, repo.to_str().unwrap()).expect("a lone remote that is not origin still resolves");
+        assert_eq!(base, "gitea/trunk");
+        let mark = 1_893_000_000; // 2029-12-26, after the old commit and before the new
+        let ids = crate::engine::parse_landing_ids(&git_log_subjects(&repo, mark, &base));
+        assert_eq!(ids, ["sp-new1"]);
     }
 
     use spira_store::lc_call::{Reply, Transport};

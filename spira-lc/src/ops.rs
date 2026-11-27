@@ -26,7 +26,7 @@ pub const TRANSITION_MACHINES: [&str; 2] = ["bead", "batch"];
 pub const GRAPH_MACHINES: [&str; 4] = ["bead", "batch", "ask", "mending"];
 
 use crate::control::stays::DAY_S;
-const LIVE: [BeadState; 7] = [BeadState::Open, BeadState::Ready, BeadState::Working, BeadState::Submitted, BeadState::Certified, BeadState::InDelivery, BeadState::Rework];
+pub(crate) const LIVE: [BeadState; 7] = [BeadState::Open, BeadState::Ready, BeadState::Working, BeadState::Submitted, BeadState::Certified, BeadState::InDelivery, BeadState::Rework];
 const ROUND_STATES: [&str; 5] = ["OPEN", "CI_RUNNING", "GREEN", "ATTRIBUTING", "REBUILDING"];
 
 fn text(v: impl ToString) -> Value {

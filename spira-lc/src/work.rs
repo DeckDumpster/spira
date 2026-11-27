@@ -1051,6 +1051,12 @@ fn released_on_ask(history: &[(String, String)]) -> bool {
 /// selects work beads, which a groom pass must never close.
 const GROOM_TRIGGER_MARKER: &str = "groom-trigger";
 
+/// Subject, default and body of the ask that gets an untriggered bead relabelled.
+fn untriggered_groom_ask(bead_id: &str) -> (String, String, String) {
+    let body = format!("## Question\n{bead_id} carries the groom label without the {GROOM_TRIGGER_MARKER} marker, so the groomer released it instead of closing it. Which builder persona should it be relabelled for?\n\n## Default\nrelabel {bead_id} for its builder\n");
+    ("A groom-labelled bead is not a groom trigger".to_string(), "relabel for its builder".to_string(), body)
+}
+
 fn release_untriggered_groom(bead_id: &str, actor: &str) -> (i32, String) {
     let (code, out) = crate::plane::apply(bead_id, actor, BeadEventKind::Release);
     if code != 0 {
@@ -1058,9 +1064,8 @@ fn release_untriggered_groom(bead_id: &str, actor: &str) -> (i32, String) {
     }
     let why = "claimed by the groom predicate but is not a groom trigger; relabel for its builder";
     let _ = crate::bd::note(bead_id, why);
-    let subject = format!("{bead_id} was claimed by the groomer but is not a groom trigger");
-    let body = format!("## Question\n{bead_id} carries the groom label without the {GROOM_TRIGGER_MARKER} marker, so the groomer released it instead of closing it. Which builder persona should it be relabelled for?\n\n## Default\nrelabel {bead_id} for its builder\n");
-    match crate::bd::ask_operator(&format!("{actor} <{actor}@spira>"), &subject, "relabel for its builder", bead_id, &body) {
+    let (subject, default, body) = untriggered_groom_ask(bead_id);
+    match crate::bd::ask_concierge(&format!("{actor} <{actor}@spira>"), &subject, &default, bead_id, &body) {
         Ok(_) => (REFUSED, format!("refused: work done: {why}; released, ask filed")),
         Err(e) => (REFUSED, format!("refused: work done: {why}; released, but filing the ask failed: {e}")),
     }
@@ -1070,38 +1075,7 @@ fn not_a_question(text: &str) -> Option<String> {
     (text.trim().is_empty() || text.starts_with("--")).then(|| format!("{text:?} is not a question"))
 }
 
-#[derive(Debug)]
-struct BlockedAsk {
-    question: String,
-    default: String,
-    class: String,
-    body: String,
-}
-
-const BLOCKED_USAGE: &str = "usage: work blocked \"<the question>\" --default \"<what you would do>\" --class <permissions|policy|destructive|design> --basis \"<why it is that class>\"";
-
-const BLOCKED_CLASSES: [&str; 4] = ["permissions", "policy", "destructive", "design"];
-
-/// The class and basis are the asker's: a basis the verb wrote itself would argue nothing.
-fn blocked_ask(args: &[String]) -> Result<BlockedAsk, String> {
-    let refuse = |why: String| format!("work blocked: {why}; {BLOCKED_USAGE}");
-    let Some(question) = args.first() else {
-        return Err(refuse("missing \"<question>\"".into()));
-    };
-    if let Some(e) = not_a_question(question) {
-        return Err(refuse(e));
-    }
-    let required = |name: &str| flag(args, name).filter(|v| !v.trim().is_empty()).ok_or_else(|| refuse(format!("{name} is required")));
-    let default = required("--default")?;
-    let class = required("--class")?;
-    if !BLOCKED_CLASSES.contains(&class.as_str()) {
-        return Err(refuse(format!("unknown --class {class:?} (want one of {})", BLOCKED_CLASSES.join(", "))));
-    }
-    let basis = required("--basis")?;
-    // mail refuses a question ask unless each of these sections is filled.
-    let body = format!("## Question\n{question}\n\n## Default\n{default}\n\n## Class basis\n{basis}\n");
-    Ok(BlockedAsk { question: question.clone(), default, class, body })
-}
+const BLOCKED_USAGE: &str = "usage: work blocked \"<the question>\" --default \"<what you would do>\" --class <permissions|policy|destructive|design> --class-basis \"<why it is that class>\"";
 
 fn cmd_blocked(bead_id: &str, args: &[String]) -> (i32, String) {
     let actor = match require_actor(args) {
@@ -1111,18 +1085,35 @@ fn cmd_blocked(bead_id: &str, args: &[String]) -> (i32, String) {
     if let Some(quiet) = mender_calls_closed(bead_id, &actor, "blocked") {
         return quiet;
     }
-    let ask = match blocked_ask(args) {
-        Ok(a) => a,
-        Err(e) => return (CANNOT_TELL, e),
+    let Some(question) = args.first() else {
+        return (CANNOT_TELL, "work blocked: missing \"<question>\"".into());
     };
-    if let Err(e) = crate::bd::ask_operator_classed(&format!("{actor} <{actor}@spira>"), &ask.question, &ask.default, Some(&ask.class), bead_id, &ask.body) {
+    if let Some(e) = not_a_question(question) {
+        return (CANNOT_TELL, format!("work blocked: {e}; {BLOCKED_USAGE}"));
+    }
+    let Some(default) = flag(args, "--default") else {
+        return (CANNOT_TELL, "work blocked: --default <default> is required".into());
+    };
+    let required = |name: &str| {
+        flag(args, name).filter(|v| !v.trim().is_empty() && !v.starts_with("--")).ok_or_else(|| (CANNOT_TELL, format!("work blocked: {name} is required; {BLOCKED_USAGE}")))
+    };
+    let (class, class_basis) = match (required("--class"), required("--class-basis")) {
+        (Ok(c), Ok(b)) => (c, b),
+        (Err(e), _) | (_, Err(e)) => return e,
+    };
+    let body = blocked_ask_body(question, &default, &class_basis);
+    if let Err(e) = crate::bd::ask_operator_classed(&format!("{actor} <{actor}@spira>"), question, &default, Some(&class), bead_id, &body) {
         return (REFUSED, format!("refused: work blocked: the question could not be delivered, so no hold was applied: {e}"));
     }
-    let hold = BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(ask.question) };
+    let hold = BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(question.clone()) };
     match apply_ask_hold(bead_id, &actor, hold) {
         (0, _) => (0, format!("ask filed; hold applied for {bead_id}")),
         (code, e) => (code, format!("the question WAS delivered (do not ask again), but the ask hold on {bead_id} was not applied: {e}")),
     }
+}
+
+fn blocked_ask_body(question: &str, default: &str, class_basis: &str) -> String {
+    format!("## Question\n{question}\n\n## Default\n{default}\n\n## Class basis\n{class_basis}\n")
 }
 
 /// A hold write whose reply was lost may still have applied: read the row back before
@@ -1511,9 +1502,6 @@ pub fn exec(id: &str) -> (i32, String) {
 
 fn run_recorded(request: &crate::control::work_requests::WorkRequest) -> (i32, String) {
     let mut argv = request.argv.clone();
-    if request.argv.first().map(String::as_str) == Some(crate::composed::CONTENT_WRITE) {
-        return crate::composed::run_recorded(&argv, request.stdin.as_deref());
-    }
     if let Some(body) = &request.stdin {
         argv.extend(["--stdin".to_string(), body.clone()]);
     }
@@ -2926,43 +2914,54 @@ mod tests {
         assert!(!bare_id_lines("## Question\nsp-old1 sp-new2?\n").is_empty(), "POSITIVE CONTROL: the lint shape catches a bare-id line");
     }
 
-    #[test_id(tdn8ia1)]
+    #[test_id(t17aspn)]
     #[test]
-    fn a_blocked_ask_missing_its_class_or_basis_is_refused_with_the_usage() {
-        let full = ["Which one?", "--default", "the first", "--class", "policy", "--basis", "it sets a rule"].map(String::from);
-        let ask = super::blocked_ask(&full).unwrap();
-        assert_eq!((ask.question.as_str(), ask.default.as_str(), ask.class.as_str()), ("Which one?", "the first", "policy"));
-        assert_eq!(ask.body, "## Question\nWhich one?\n\n## Default\nthe first\n\n## Class basis\nit sets a rule\n");
-        let without = |name: &str| {
-            let mut a = full.to_vec();
-            let i = a.iter().position(|x| x == name).unwrap();
-            a.drain(i..i + 2);
-            a
+    fn a_blocked_ask_is_one_mail_delivers_to_the_operator() {
+        let (question, default) = ("Has the Control run passed?", "wait for it");
+        let body = super::blocked_ask_body(question, default, "retiring a running unit is policy");
+        assert_eq!(mail::cmds::operator_refusal("question", default, "policy", &body, ""), None, "{body}");
+        let kinds = spira_config::resolve::locate_home_for_process().unwrap().join("mail/kinds");
+        let input = mail::lint::LintInput { kind: "question", subject: question, default, from: "builder <builder@spira>", urgent: false, body: &body, digest: false };
+        assert_eq!(mail::lint::lint_check(&input, &kinds, "sp"), Ok(()), "{body}");
+    }
+
+    #[test_id(tvpek5o)]
+    #[test]
+    fn an_untriggered_groom_ask_passes_mails_lint() {
+        let (subject, default, body) = super::untriggered_groom_ask("sp-abc123");
+        let kinds = spira_config::resolve::locate_home_for_process().unwrap().join("mail/kinds");
+        let lint = |subject: &str| {
+            let input = mail::lint::LintInput { from: "groomer <groomer@spira>", subject, kind: "question", default: &default, urgent: false, body: &body, digest: false };
+            mail::lint::lint_check(&input, &kinds, "sp")
         };
-        let with = |name: &str, value: &str| {
-            let mut a = full.to_vec();
-            let i = a.iter().position(|x| x == name).unwrap();
-            a[i + 1] = value.to_string();
-            a
-        };
-        let cases = [
-            (without("--default"), "--default"),
-            (without("--class"), "--class"),
-            (without("--basis"), "--basis"),
-            (with("--basis", " "), "--basis"),
-            (with("--class", "bogus"), "unknown --class \"bogus\""),
-            (with("--class", "bogus"), "permissions, policy, destructive, design"),
+        let refused = lint("sp-abc123 was claimed by the groomer").unwrap_err();
+        assert!(refused.contains("Subject leads with a bead id"), "POSITIVE CONTROL: {refused}");
+        assert_eq!(lint(&subject), Ok(()), "{body}");
+        assert!(!subject.starts_with("sp-abc123"), "{subject}");
+        assert!(body.contains("sp-abc123"), "{body}");
+    }
+
+    #[test_id(tfh9r32)]
+    #[test]
+    fn a_blocked_call_without_its_class_or_basis_is_refused_before_anything_is_sent() {
+        let dir = testkit::TempDir::new("blocked-no-mail");
+        let _env = testkit::env(&[("SPIRA_MAIL_SH", Some(&dir.path().join("mail").to_string_lossy()))]);
+        let base = ["Has the Control run passed?", "--default", "wait for it"];
+        let calls: [&[&str]; 7] = [
+            &[],
+            &["--class", "policy"],
+            &["--class-basis", "it is policy"],
+            &["--class", "", "--class-basis", "it is policy"],
+            &["--class", "policy", "--class-basis", " "],
+            &["--class", "policy", "--class-basis"],
+            &["--class", "--class-basis", "it is policy"],
         ];
-        for (args, want) in cases {
-            let refusal = super::blocked_ask(&args).unwrap_err();
-            assert!(refusal.contains(want), "{want:?} missing from {refusal}");
-            assert!(refusal.ends_with(super::BLOCKED_USAGE), "no usage line in {refusal}");
-        }
-        for not_asked in ["", "--default"] {
-            let mut args = full.to_vec();
-            args[0] = not_asked.to_string();
-            let refusal = super::blocked_ask(&args).unwrap_err();
-            assert!(refusal.contains("is not a question") && refusal.ends_with(super::BLOCKED_USAGE), "{refusal}");
+        for extra in calls {
+            // The client appends --actor after the caller's own arguments.
+            let args: Vec<String> = base.iter().chain(extra).chain(&["--actor", "builder"]).map(|a| a.to_string()).collect();
+            let (code, out) = super::cmd_blocked("sp-x", &args);
+            assert_eq!(code, super::CANNOT_TELL, "{extra:?}: {out}");
+            assert!(out.contains("--class <permissions|policy|destructive|design>") && out.contains("--class-basis \""), "{extra:?}: {out}");
         }
     }
 
@@ -2975,6 +2974,16 @@ mod tests {
     }
 
     use super::*;
+
+    #[test_id(theaybd)]
+    #[test]
+    fn a_content_write_recorded_by_the_previous_release_is_answered_and_runs_nothing() {
+        let argv = ["content-write", "", "gate", "discover", "--branch", "b"].map(String::from).to_vec();
+        let row = crate::control::work_requests::WorkRequest { id: "wr-1".into(), bead: "-".into(), actor: "content".into(), argv, stdin: None, bound_ms: 1, state: "running".into(), code: None, output: String::new(), truncated: false, queued_at: 0, started_at: None, finished_at: None };
+        let (code, out) = super::run_recorded(&row);
+        assert_eq!(code, crate::CANNOT_TELL, "{out}");
+        assert!(out.contains("unknown verb \"gate\""), "{out}");
+    }
 
     fn commit(sha: &str, message: &str) -> (String, String, String) {
         (sha.into(), message.lines().next().unwrap_or("").into(), message.into())

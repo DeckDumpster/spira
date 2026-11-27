@@ -447,6 +447,29 @@ fn make_legacy<B: Backend>(s: &Store<B>, id: &str) -> usize {
     n
 }
 
+/// Writes `n` legacy (`{}`) history entries for `id` in one commit, all naming a copy of the
+/// events key of `rev`, so a backlog above the backfill cap costs one write, not `n` applies.
+fn legacy_backlog<B: Backend>(s: &Store<B>, id: &str, rev: u64, n: usize) {
+    use state_store::{Object, Rev, Write};
+    let events = s.contract().get(&state_store::events_key(rev)).unwrap().unwrap();
+    let head = s.contract().head().unwrap();
+    let mut writes: Vec<Write> = (0..n)
+        .map(|k| Write::Put {
+            key: keys::history_entry(id, 1_000 + k as u64, &format!("legacy-{k}")),
+            value: Object::new(serde_json::json!({})).encode(),
+            create_rev: Rev::new(head + 1, k as u32),
+            prev: None,
+        })
+        .collect();
+    writes.push(Write::Put {
+        key: state_store::events_key(head + 1),
+        value: events.value.encode(),
+        create_rev: Rev::new(head + 1, n as u32),
+        prev: None,
+    });
+    s.contract().backend().commit(head, &writes).unwrap();
+}
+
 fn backfill<B: Backend>(s: &Store<B>, flag: &str) -> String {
     let (code, out) = verbs::run(s, &["backfill-history-audits", flag].map(String::from));
     assert_eq!(code, 0, "{out}");
@@ -538,16 +561,14 @@ fn a_history_read_after_the_backfill_reads_no_events_key() {
 #[test_id(tnwyvpg)]
 #[test]
 fn a_backfill_stops_at_its_cap_and_the_next_call_goes_on() {
-    use crate::control::feed::BACKFILL_PER_CALL;
+    use crate::control::{feed::BACKFILL_PER_CALL, store::RECORD_CHUNK};
     let s = store(MemBackend::new(), &VirtualClock::new(0));
-    let per_bead = BACKFILL_PER_CALL / 5 + 20;
+    let per_bead = (BACKFILL_PER_CALL + RECORD_CHUNK) / 5;
     for i in 0..5 {
         let id = format!("sp-{i}");
         create(&s, &id);
-        for k in 0..per_bead {
-            toggle(&s, &id, k as u32);
-        }
-        make_legacy(&s, &id);
+        let rev = toggle(&s, &id, 0);
+        legacy_backlog(&s, &id, rev, per_bead);
     }
     let first = backfill(&s, "--apply");
     assert!(first.contains("stopped after"), "{first}");

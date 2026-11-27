@@ -125,10 +125,9 @@ When the deliverable is not code on this branch — child beads, a document, a m
 
 When you are blocked on a question only the operator can answer:
 
-    work blocked \"<the question>\" --default \"<what you would do by default>\" --class <permissions|policy|destructive|design> --basis \"<why it is that class>\"
+    work blocked \"<the question>\" --default \"<what you would do by default>\" --class <permissions|policy|destructive|design> --class-basis \"<why it is that class>\"
 
-This both holds the bead and files the ask; you do not also send mail yourself. The question is
-the human topic and must not start with a bead id: the bound bead is attached automatically.
+This both holds the bead and files the ask; you do not also send mail yourself.
 
 When you discover other work rather than doing it:
 

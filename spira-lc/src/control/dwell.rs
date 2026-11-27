@@ -45,7 +45,7 @@ pub const WAITING: [BeadState; 6] = [
 pub const KINDS: [&str; 4] = ["Claim", "Submit", "Deliver", "Delivered"];
 
 /// Revisions read per chunk of the newest-first audit scan, while the chunks hold audits.
-const CHUNK_REVS: u64 = 500;
+pub(super) const CHUNK_REVS: u64 = 500;
 /// Items per range read inside a chunk.
 const PAGE: usize = 1_000;
 /// The most audit keys one sweep's [`Store::warm_dwell`] reads: a few chunks, so the index
@@ -53,7 +53,7 @@ const PAGE: usize = 1_000;
 pub const WARM_SCANNED: usize = 5 * CHUNK_REVS as usize;
 /// The most revisions a request folds forward; past it the answer is incomplete and the rest
 /// is left to [`Store::warm_dwell`], so a long-idle index cannot rebuild the cut.
-const FORWARD_REVS: u64 = 2_000;
+pub(super) const FORWARD_REVS: u64 = 2_000;
 
 /// The most rounds one dwell answer reads from the `opened_at` index; a full read is an error.
 pub const DWELL_ROUNDS_MAX: usize = 5_000;
@@ -314,7 +314,7 @@ impl<B: Backend> Store<B> {
         Ok(d)
     }
 
-    /// Folds the revisions committed since the index last advanced, at most [`FORWARD_REVS`] of
+    /// Folds the revisions committed since the index last advanced, at most `dwell_forward_revs` of
     /// them, and reports whether the index now covers `window_s` back from `now` up to `head`.
     /// It never reads backward: that is [`Store::warm_dwell`]'s, off the request path.
     fn advance(&self, idx: &mut LastIndex, head: u64, now: i64, window_s: u64, known: &mut BTreeMap<String, Option<String>>, scanned: &mut usize) -> Result<(bool, i64)> {
@@ -322,7 +322,7 @@ impl<B: Backend> Store<B> {
             (idx.low_rev, idx.high_rev, idx.started) = (head, head, true);
         }
         if idx.high_rev < head {
-            self.fold_forward(idx, head, FORWARD_REVS, known, scanned)?;
+            self.fold_forward(idx, head, self.dwell_forward_revs, known, scanned)?;
         }
         Ok(Self::coverage(idx, head, now, window_s))
     }
@@ -366,7 +366,7 @@ impl<B: Backend> Store<B> {
     }
 
     /// Advances the index off the request path: forward to the head, then back in
-    /// [`CHUNK_REVS`] chunks until it reaches `now - window_s`, the start of the log, or
+    /// `dwell_chunk_revs` chunks until it reaches `now - window_s`, the start of the log, or
     /// `max_scanned` audit keys are read in this call. Whether the index now covers the window,
     /// and the keys read.
     pub fn warm_dwell(&self, now: i64, window_s: u64, max_scanned: usize) -> Result<(bool, usize)> {
@@ -382,7 +382,8 @@ impl<B: Backend> Store<B> {
             self.fold_forward(&mut idx, head, FORWARD_REVS, &mut known, &mut scanned)?;
         }
         let mut repo = |id: &str| self.repo_at(&mut known, head, id);
-        let mut span = CHUNK_REVS;
+        let chunk = self.dwell_chunk_revs;
+        let mut span = chunk;
         while idx.high_rev >= head && idx.horizon > floor && idx.low_rev > 0 && scanned < max_scanned {
             let hi = idx.low_rev;
             let lo = hi.saturating_sub(span);
@@ -391,7 +392,7 @@ impl<B: Backend> Store<B> {
             idx.reached(oldest);
             // Revisions with no audit (lock renewals, a reopen's jump, the import's baseline)
             // are crossed in doubling strides, so a gap costs a few reads, not one per chunk.
-            span = if oldest.is_some() { CHUNK_REVS } else { (span * 2).min(CHUNK_REVS * 64) };
+            span = if oldest.is_some() { chunk } else { (span * 2).min(chunk * 64) };
         }
         let (complete, _) = Self::coverage(&mut idx, head, now, window_s);
         Ok((complete, scanned))

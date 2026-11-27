@@ -1,11 +1,13 @@
 //! `release activate`, `release rollback`, `release status`, and the hotfix rule
 //! (DESIGN.md "activate", "Hotfix", "rollback").
 
+use crate::broker;
 use crate::config::Config;
 use crate::config_delta::{self, Txn};
 use crate::fsutil;
 use crate::git::Git;
 use crate::machine::{self, ReleaseState};
+use crate::spira_env;
 use crate::systemctl::Systemctl;
 use crate::units;
 use crate::verify;
@@ -102,6 +104,7 @@ pub struct Ctx<'a> {
     pub cfg: &'a Config,
     pub reads: &'a dyn Reads,
     pub sc: &'a dyn Systemctl,
+    pub nix: &'a dyn spira_env::Nix,
     pub git: &'a dyn Git,
     /// The repository the hotfix rule asks about ancestry in.
     pub repo: Option<PathBuf>,
@@ -120,6 +123,12 @@ pub struct Ctx<'a> {
     pub warm_pause: Duration,
     /// Where the lines that state a measurement go.
     pub report: &'a dyn Fn(&str),
+    /// Installs the units the new release adds: [`ensure_new_units`], which runs its `unit-ensure`.
+    pub unit_ensure: &'a dyn Fn(&Config, &str) -> Result<(), String>,
+    /// Collects the envs a switch supersedes; `None` collects nothing.
+    pub gc: Option<spira_env::Collector<'a>>,
+    /// The publisher `release/active` goes out on, built only once an activation stands.
+    pub publisher: &'a dyn Fn() -> Result<spira_pub::Publisher, spira_pub::PubError>,
 }
 
 /// A standing hotfix: the running system is on a commit that has not landed.
@@ -324,6 +333,42 @@ fn is_up(active: &str) -> bool {
     matches!(active, "active" | "activating" | "reloading")
 }
 
+/// Builds `rel`'s tool env and links it; `None` for a release that carries no flake.
+fn build_env(ctx: &Ctx, rel: &Path, sha: &str) -> Result<Option<spira_env::Built>, String> {
+    if !spira_env::has_flake(rel) {
+        eprintln!("release: spira-env not built: {sha} has no flake.nix and flake.lock");
+        return Ok(None);
+    }
+    let home = ctx.cfg.home()?;
+    let link = home.join(spira_config::SPIRA_ENV_REL);
+    let held = fs::canonicalize(&link).ok();
+    let built = spira_env::build(ctx.nix, rel, &home).map_err(|e| {
+        // Claimed only when true: a root that failed may also have failed to put the link back.
+        let unchanged = if fs::canonicalize(&link).ok() == held { "; nothing changed" } else { "" };
+        format!("cannot build spira-env from {sha}: {e}{unchanged}")
+    })?;
+    match &built.before {
+        Some(before) if *before == built.after => eprintln!("release: spira-env unchanged ({})", built.after.display()),
+        before => eprintln!("release: spira-env {} -> {}", before.as_deref().map_or("(none)".into(), |b| b.display().to_string()), built.after.display()),
+    }
+    Ok(Some(built))
+}
+
+/// Starts the background collection when the switch replaced the env. Never fails the switch.
+fn collect_superseded_env(ctx: &Ctx, env: Option<&spira_env::Built>, rel: &Path) {
+    let replaced = env.and_then(spira_env::Built::replaced).is_some();
+    let (true, Some(gc)) = (replaced, ctx.gc.as_ref()) else { return };
+    let home = match ctx.cfg.home() {
+        Ok(h) => h,
+        Err(e) => return eprintln!("release: WARN: nix garbage will not be collected: {e}"),
+    };
+    let plan = spira_env::GcPlan::for_release(&gc.profile_bin, &gc.run_dir, rel);
+    match spira_env::collect_nix_garbage(gc.units, &plan, &home.join(spira_config::SPIRA_ENV_REL)) {
+        Ok(name) => eprintln!("release: started nix garbage collection as {name}"),
+        Err(w) => eprintln!("release: WARN: {w}"),
+    }
+}
+
 /// Switch the running system onto release `sha`: render and install units, swap
 /// `current`, daemon-reload, restart what changed, check it came up, and undo all of it
 /// when something did not.
@@ -371,6 +416,9 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
         return Err(format!("cannot render units against {sha}; nothing changed:\n  {}", errors.join("\n  ")));
     }
 
+    // Before any unit changes: units resolve their tools through the env this links.
+    let env = build_env(ctx, &rel, sha)?;
+
     let cur_link = cfg.releases.join(CURRENT);
     let prev = fs::read_link(&cur_link).ok().map(|t| t.to_string_lossy().to_string());
     let prev_root = prev.as_ref().map(|p| cfg.releases.join(p));
@@ -379,12 +427,12 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
     for (written, c) in changes.iter().enumerate() {
         if let Err(e) = fsutil::write_atomic(&c.path, &c.new) {
             restore_files(&changes[..written]);
-            return Err(e);
+            return Err(format!("{e}{}", incomplete(restore_env(ctx, env.as_ref()).err())));
         }
     }
     if let Err(e) = fsutil::atomic_symlink(&cur_link, sha) {
         restore_files(&changes);
-        return Err(e);
+        return Err(format!("{e}{}", incomplete(restore_env(ctx, env.as_ref()).err())));
     }
     eprintln!("release: current -> {sha} ({} unit file(s) rewritten)", changes.len());
     let mut retired = Vec::new();
@@ -402,15 +450,30 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
         }
     }
     if let Err(e) = ctx.sc.daemon_reload() {
-        let undo = undo(ctx, &changes, prev.as_deref(), &[]);
+        let undo = undo(ctx, env.as_ref(), &changes, None, prev.as_deref(), &[]);
         return Err(format!("daemon-reload failed: {e}; rolled back{undo}"));
     }
 
+    // Before the new release's unit-ensure: it writes the same file, and a write made there
+    // would never be seen here and so never restart the broker.
+    let broker_unit = broker::installed_unit(&instance);
+    let conf = if rendered.iter().any(|r| r.0 == broker_unit) {
+        match follow_broker_conf(cfg, &rel, &host) {
+            Ok(replaced) => replaced,
+            Err(e) => {
+                let undo = undo(ctx, env.as_ref(), &changes, None, prev.as_deref(), &[]);
+                return Err(format!("{e}; nothing was restarted; rolled back{undo}"));
+            }
+        }
+    } else {
+        None
+    };
+
     if install_new {
         let before = unit_files(&cfg.unit_dir);
-        if let Err(e) = ensure_new_units(cfg, sha) {
+        if let Err(e) = (ctx.unit_ensure)(cfg, sha) {
             let added: Vec<String> = unit_files(&cfg.unit_dir).difference(&before).cloned().collect();
-            let undo = undo(ctx, &changes, prev.as_deref(), &[]);
+            let undo = undo(ctx, env.as_ref(), &changes, conf.as_ref(), prev.as_deref(), &[]);
             let shipped = if added.is_empty() { String::new() } else { format!(" (units new in {sha}: {})", added.join(", ")) };
             return Err(format!("{e}{shipped}; nothing was restarted; rolled back{undo}"));
         }
@@ -422,11 +485,11 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
         if !unit.ends_with(".service") {
             continue;
         }
-        let fixed = restart_reason(unit, old, new, &roots);
+        let fixed = restart_reason(unit, old, new, &roots).or_else(|| (conf.is_some() && *unit == broker_unit).then(|| "its config changed".to_string()));
         let st = match ctx.sc.state(unit) {
             Ok(st) => st,
             Err(e) if fixed.is_some() => {
-                let undo = undo(ctx, &changes, prev.as_deref(), &[]);
+                let undo = undo(ctx, env.as_ref(), &changes, conf.as_ref(), prev.as_deref(), &[]);
                 return Err(format!("cannot read the state of {unit}: {e}; rolled back{undo}"));
             }
             Err(e) => {
@@ -517,13 +580,15 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) 
         }
     }
     if !failed.is_empty() {
-        let undo = undo(ctx, &changes, prev.as_deref(), &attempted);
+        let undo = undo(ctx, env.as_ref(), &changes, conf.as_ref(), prev.as_deref(), &attempted);
         return Err(format!(
             "activating {sha} failed, rolled back to {}:\n  {}{undo}",
             prev.as_deref().unwrap_or("no current release"),
             failed.join("\n  ")
         ));
     }
+    // Past the last undo: a collection started sooner could remove an env an undo links back to.
+    collect_superseded_env(ctx, env.as_ref(), &rel);
     revive_failed(ctx, &mut out);
     for s in units::path_shadows(&cfg.unit_dir, &rel, &cfg.releases) {
         eprintln!("release: WARN: {s}");
@@ -845,10 +910,61 @@ fn restore_files(changes: &[Change]) -> Vec<String> {
     errs
 }
 
-/// Put everything back: unit files, `current`, daemon-reload, and restart what was
+/// Points the env link back at what it held before this switch built over it.
+fn restore_env(ctx: &Ctx, env: Option<&spira_env::Built>) -> Result<(), String> {
+    match env.and_then(spira_env::Built::replaced) {
+        Some(before) => spira_env::restore(&ctx.cfg.home()?, before),
+        None => Ok(()),
+    }
+}
+
+/// The broker config a switch rewrote, as it was before; `None` when there was none.
+struct ReplacedConf {
+    path: PathBuf,
+    before: Option<String>,
+}
+
+impl ReplacedConf {
+    fn restore(&self) -> Result<(), String> {
+        match &self.before {
+            Some(text) => fsutil::write_atomic(&self.path, text),
+            None => fs::remove_file(&self.path).map_err(|e| format!("cannot remove {}: {e}", self.path.display())),
+        }
+    }
+}
+
+/// Places the broker config `rel` ships, so the broker runs the one of the release it is on;
+/// `Some` when that rewrote the file. A release without the template places nothing.
+fn follow_broker_conf(cfg: &Config, rel: &Path, host: &std::collections::BTreeMap<String, String>) -> Result<Option<ReplacedConf>, String> {
+    let templates = rel.join("systemd");
+    if !templates.join(broker::CONF_FILE).is_file() {
+        return Ok(None);
+    }
+    let run = cfg.run.as_ref().ok_or_else(|| format!("no run directory to place {} in", broker::CONF_FILE))?;
+    let path = run.join(broker::CONF_FILE);
+    let before = match fs::read_to_string(&path) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+    };
+    let socket = host.get(spira_config::broker::SOCKET_KEY).map(String::as_str).unwrap_or_default();
+    let wrote = broker::place_conf(&templates, socket, run).map_err(|e| match cfg.broker_socket_refusal.as_str() {
+        "" => e,
+        why => format!("{e} ({why})"),
+    })?;
+    if wrote {
+        eprintln!("release: wrote {}", path.display());
+    }
+    Ok(wrote.then_some(ReplacedConf { path, before }))
+}
+
+/// Put everything back: the tool env, unit files, the broker config, `current`, daemon-reload, and restart what was
 /// restarted so it runs the old release again. Returns "" or the problems undoing hit.
-fn undo(ctx: &Ctx, changes: &[Change], prev: Option<&str>, restarted: &[String]) -> String {
-    let mut errs = restore_files(changes);
+fn undo(ctx: &Ctx, env: Option<&spira_env::Built>, changes: &[Change], conf: Option<&ReplacedConf>, prev: Option<&str>, restarted: &[String]) -> String {
+    // The env goes first: what is restarted below must resolve the old release's tools.
+    let mut errs: Vec<String> = restore_env(ctx, env).err().into_iter().collect();
+    errs.extend(restore_files(changes));
+    errs.extend(conf.and_then(|c| c.restore().err()));
     let cur_link = ctx.cfg.releases.join(CURRENT);
     match prev {
         Some(p) => {
@@ -870,6 +986,11 @@ fn undo(ctx: &Ctx, changes: &[Change], prev: Option<&str>, restarted: &[String])
             errs.push(format!("restart {u} on the previous release: {e}"));
         }
     }
+    incomplete(errs)
+}
+
+fn incomplete(errs: impl IntoIterator<Item = String>) -> String {
+    let errs: Vec<String> = errs.into_iter().collect();
     if errs.is_empty() {
         String::new()
     } else {
@@ -900,7 +1021,7 @@ fn switch_with_config(ctx: &Ctx, sha: &str, txn: Option<&Txn>, install_new: bool
 /// through the release's own `unit-ensure` (which owns the manifest: gates, enable flags,
 /// watchers). `switch` only rewrites units already on disk. A release with no `unit-ensure`
 /// has nothing to install them with and is skipped.
-fn ensure_new_units(cfg: &Config, sha: &str) -> Result<(), String> {
+pub fn ensure_new_units(cfg: &Config, sha: &str) -> Result<(), String> {
     let rel = verify::release_dir(cfg, sha)?;
     let bin = rel.join("bin/unit-ensure");
     if !fsutil::is_executable(&bin) {
@@ -1252,7 +1373,21 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
     if let Some(e) = late {
         return Err(e);
     }
+    announce(ctx, sha, &out.restarted);
     Ok(out)
+}
+
+const ANNOUNCE_FLUSH: Duration = Duration::from_secs(1);
+
+/// Publishes `release/active` and waits for the broker to take it: the process may exit next.
+/// The switch already stands, so a failure is only said.
+fn announce(ctx: &Ctx, sha: &str, restarted: &[String]) {
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let payload = serde_json::json!({ "sha": sha, "at": at, "restarted": restarted });
+    let sent = (ctx.publisher)().and_then(|p| p.publish("release/active", &payload).and_then(|()| p.flush(ANNOUNCE_FLUSH)));
+    if let Err(e) = sent {
+        eprintln!("release: WARN: {sha} is active; release/active was not published: {e}");
+    }
 }
 
 /// A failed activation leaves its release `rolled_back`, whether or not it got as far as
@@ -1298,6 +1433,7 @@ pub fn rollback(ctx: &Ctx) -> Result<String, String> {
     write_history(&state, &history)?;
     let rec = prev.hotfix.as_ref().map(|r| Hotfix { sha: prev.sha.clone(), reason: r.clone(), at: fsutil::now_rfc3339() });
     write_hotfix(&state, rec.as_ref())?;
+    announce(ctx, &prev.sha, &switched.restarted);
     if !switched.down.is_empty() {
         let units: Vec<String> = switched.down.iter().map(|d| format!("{} ({}): systemctl --user start {}", d.unit, d.state, d.unit)).collect();
         let config = late.map(|e| format!("\n  {e}")).unwrap_or_default();
@@ -1441,6 +1577,27 @@ mod restart_tests {
         let pruned = Roots { releases: &rel, old: Some(&a1), new: &rel.join("c3") };
         let exe = b2.join("bin/spira-lc");
         assert!(live_reason(&unit("c3"), &unit("c3"), &pruned, Some(&exe), None).is_some_and(|w| w.contains("cannot")), "unreadable new program");
+    }
+
+    /// A release restarts no subscriber: neither restart judgement finds a reason to restart a
+    /// running broker when only the release changes.
+    #[test_id(txumw36)]
+    #[test]
+    fn the_shipped_broker_unit_is_left_running_across_releases() {
+        let t = testkit::TempDir::new("release-broker-unit");
+        let rel = t.path().join("releases");
+        let (a1, b2) = (rel.join("a1"), rel.join("b2"));
+        let template = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/spira-broker.service");
+        let text = fs::read_to_string(template).unwrap();
+        let env_bin = t.path().join("env-bin");
+        let host = [("SPIRA_ENV_PATH", env_bin.clone()), ("SPIRA_RUN", t.path().join("run")), ("SPIRA_TOML", t.path().join("cfg.toml"))].map(|(k, v)| (k.to_string(), v.display().to_string())).into();
+        let render = |r: &Path| units::render("spira-broker.service", &text, r, &host, None, "prod").unwrap();
+        let (old, new) = (render(&a1), render(&b2));
+        let roots = Roots { releases: &rel, old: Some(&a1), new: &b2 };
+        let started: Vec<u8> = old.lines().filter_map(|l| l.strip_prefix("Environment=")).flat_map(|l| format!("{l}\0").into_bytes()).collect();
+        let started = crate::systemctl::release_of_environ(&started);
+        assert_eq!(restart_reason("spira-broker-prod.service", &old, &new, &roots), None);
+        assert_eq!(live_reason(&old, &new, &roots, Some(&env_bin.join("mosquitto")), started.as_deref()), None);
     }
 
     /// sp-sv2lw2: a stale unit is restarted unless its template states a reason for never

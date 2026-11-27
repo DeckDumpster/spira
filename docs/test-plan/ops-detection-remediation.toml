@@ -154,7 +154,7 @@ statement = "PR stall is handled per repo setting: a stale REBASED `pr-open` in 
 [[use_case]]
 id = "UC-ops-detection-remediation-29"
 tier = "T2"
-statement = "The livelock detector reports, from an empty DB as 0 (never `?`): a bead unclaimable by every persona; an ask without `overseer`; an unmapped repo; `ci-stuck` (push-mode repos only). Claimable or blocked beads are never reported."
+statement = "The livelock detector reports, from an empty DB as 0 (never `?`): an ask without `overseer`; an unmapped repo; `ci-stuck` (push-mode repos only). Claimable or blocked beads are never reported."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-30"

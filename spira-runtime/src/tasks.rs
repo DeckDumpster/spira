@@ -19,7 +19,7 @@ use runtime::heartbeat::{self, Heartbeat};
 use runtime::units;
 
 use crate::watchers::*;
-use crate::{wake, Runner, Settings};
+use crate::{Runner, Settings};
 
 pub mod a;
 pub mod b;
@@ -95,8 +95,7 @@ impl Task {
 pub static CORE: &[Task] = &[
     Task { name: heartbeat::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: Heartbeat::boot, cadence_ms: |s| s.heartbeat_secs * 1000, effects: &[heartbeat::PING], runners: &[(heartbeat::PING, |e, _, s| e.ping(s))], keys: &[&["SPIRA_RUNTIME_HEARTBEAT_URL", "SPIRA_RUNTIME_HEARTBEAT_SECS"]], build: |s| Heartbeat { interval_ms: s.heartbeat_secs * 1000, ping_deadline_ms: s.ping_deadline_ms() }.registration() },
     Task { name: round_duty::NAME, reads: Reads::Polled(&["lifecycle/", "readiness/", "batches/"]), plane: runtime::Plane::Work, signal: &[], boot: round_duty::RoundDuty::boot, cadence_ms: |s| s.round_duty.interval_ms, effects: &[round_duty::OBSERVE, INBOX_APPEND], runners: &[(round_duty::OBSERVE, |e, _, s| e.world.round_snapshot(&s.input))], keys: &[&["SPIRA_RUNTIME_ROUND_DUTY_SECS", "SPIRA_ROUND_MIN", "SPIRA_ROUND_MAX_OPEN", "SPIRA_ROUND_DUE_REMIND", "SPIRA_ROUND_IDLE_CUT", "SPIRA_ROUND_LEASE_TTL_SECS", "SPIRA_HALT_PAGE_AFTER", "SPIRA_ACTIVATION_STORE_BOUND"]], build: |s| s.round_duty.clone().registration() },
-    Task { name: inbox_keeper::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[CONCIERGE_WAKE, pr_notify::OPERATOR_NOTE], boot: inbox_keeper::InboxKeeper::boot, cadence_ms: |s| s.inbox_keeper.interval_ms, effects: &[inbox_keeper::OBSERVE, CONCIERGE_WAKE, pr_notify::OPERATOR_NOTE], runners: &[(inbox_keeper::OBSERVE, |e, _, s| e.world.keeper_snapshot(&s.input)), (CONCIERGE_WAKE, |_, _, s| wake::release_wake_for_process(&s.input, std::time::Duration::from_millis(inbox_keeper::WAKE_KILL_MS)))], keys: &[&["SPIRA_RUNTIME_INBOX_KEEPER_SECS", "SPIRA_CONCIERGE_INBOX_STALL", "SPIRA_CONCIERGE_INBOX_BACKOFF", "SPIRA_CONCIERGE_WAKE_TRIES"]], build: |s| s.inbox_keeper.clone().registration() },
-    Task { name: pr_notify::NAME, reads: Reads::Polled(&["batches/"]), plane: runtime::Plane::Work, signal: &[pr_notify::OPERATOR_NOTE], boot: pr_notify::PrNotify::boot, cadence_ms: |s| s.pr_notify.interval_ms, effects: &[pr_notify::OBSERVE, pr_notify::OPERATOR_NOTE, INBOX_APPEND], runners: &[(pr_notify::OBSERVE, |e, _, s| e.world.pr_snapshot(&e.forge, &s.input)), (pr_notify::OPERATOR_NOTE, |e, _, s| e.operator_note(&s.input))], keys: &[&["SPIRA_RUNTIME_PR_NOTIFY_SECS", "SPIRA_PR_DEPLOY_GIVEUP"]], build: |s| s.pr_notify.clone().registration() },
+    Task { name: pr_notify::NAME, reads: Reads::Polled(&["batches/"]), plane: runtime::Plane::Work, signal: &[pr_notify::OPERATOR_NOTE], boot: pr_notify::PrNotify::boot, cadence_ms: |s| s.pr_notify.interval_ms, effects: &[pr_notify::OBSERVE, pr_notify::OPERATOR_NOTE, INBOX_APPEND, pr_notify::PUBLISH], runners: &[(pr_notify::OBSERVE, |e, _, s| e.pr_observe(&s.input)), (pr_notify::PUBLISH, |e, _, s| e.pr_publish(&s.input)), (pr_notify::OPERATOR_NOTE, |e, _, s| e.operator_note(&s.input))], keys: &[&["SPIRA_RUNTIME_PR_NOTIFY_SECS", "SPIRA_PR_DEPLOY_GIVEUP"]], build: |s| s.pr_notify.clone().registration() },
     Task { name: cr_cadence::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: cr_cadence::CrCadence::boot, cadence_ms: |s| s.cr_cadence.interval_ms, effects: &[cr_cadence::OBSERVE, cr_cadence::OPEN, INBOX_APPEND], runners: &[(cr_cadence::OBSERVE, |e, _, s| e.world.cr_cadence_snapshot(&s.input)), (cr_cadence::OPEN, |e, _, _| e.world.cr_open())], keys: &[&["SPIRA_RUNTIME_CR_CADENCE_SECS", "SPIRA_CR_TZ", "SPIRA_CR_OPEN_HOUR", "SPIRA_CR_STALE_DAYS"]], build: |s| s.cr_cadence.clone().registration() },
     Task { name: margin_comments::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: margin_comments::MarginComments::boot, cadence_ms: |s| s.sweep_secs * 1000, effects: &[margin_comments::DELIVER, margin_comments::PUBLISH, INBOX_APPEND], runners: &[(margin_comments::DELIVER, |e, _, s| e.world.margin_deliver(&s.input)), (margin_comments::PUBLISH, |e, _, s| e.world.margin_publish(&s.input))], keys: &[&["SPIRA_RUNTIME_SWEEP_SECS"]], build: |s| margin_comments::MarginComments { sweep_ms: s.sweep_secs * 1000 }.registration() },
     Task { name: asks::NAME, reads: Reads::Polled(&["planning/", "lifecycle/", "history/"]), plane: runtime::Plane::Work, signal: &[], boot: asks::Asks::boot, cadence_ms: |s| s.asks.interval_ms, effects: &[asks::OBSERVE, INBOX_APPEND], runners: &[(asks::OBSERVE, |e, _, s| e.world.asks_snapshot(&s.input))], keys: &[&["SPIRA_RUNTIME_ASKS_SECS"]], build: |s| s.asks.clone().registration() },
@@ -209,7 +208,7 @@ pub const SIGNAL_SAFE: &[(&str, &str)] = &[
     (e::inbox_notify::ASK, "mails the operator a question (watchd send)"),
     (e::inbox_notify::CONCIERGE_NOTE, "mails the Concierge a note (watchd send)"),
     (pr_notify::OPERATOR_NOTE, "mails the operator a note (mail send)"),
-    (CONCIERGE_WAKE, "runs the Concierge's wake verb, which wakes its reader"),
+    (pr_notify::PUBLISH, "publishes each changed PR's state to pr/<repo>/<n> on the broker"),
     (g::concierge_ensure::ALERT, "mails the operator an alert (alert::send)"),
     (e::watch_backup_age::MAIL, "mails an alert (alert::send)"),
     (e::watch_pass_rate::MAIL, "mails an alert (alert::send)"),

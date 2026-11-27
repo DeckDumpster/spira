@@ -302,6 +302,7 @@ struct LiveOps<'a> {
     mend_pass: std::cell::Cell<u32>,
     lifted: io::LiftedRows,
     returns_read: std::cell::RefCell<Option<(std::time::Instant, Vec<batcher::mender::Failure>)>>,
+    red_kept: Option<PathBuf>,
 }
 
 const MEND_DEADLINE_SECS: i64 = 900;
@@ -322,6 +323,16 @@ fn returned_from_listing(json: &str) -> Result<(Option<u32>, Vec<batcher::mender
 }
 
 impl LiveOps<'_> {
+    /// The red pass's test output, copied once beside the round's evidence, before a later pass replaces it.
+    fn red_output(&mut self) -> Option<PathBuf> {
+        if self.red_kept.is_none() {
+            let evidence = PathBuf::from(&self.evidence);
+            let from = self.pass.clone().unwrap_or_else(|| evidence.clone());
+            self.red_kept = io::keep_red_test_output(&from, &evidence.parent()?.join(io::RED_PASS_DIR));
+        }
+        self.red_kept.clone()
+    }
+
     fn keep_own_commits(&self) {
         if let Err(e) = vm::keep_round_commits(Path::new(&self.evidence), &self.own_commits) {
             eprintln!("batcher {}: could not keep the round's own commits for attribution: {e}", self.repo.name);
@@ -651,7 +662,8 @@ impl drive::RoundOps for LiveOps<'_> {
             source: batcher::core::RedSource::Local,
             suites: suites.to_vec(),
         };
-        match io::file_judgement(self.env, self.repo, &j, members, &self.evidence) {
+        let red = self.red_output();
+        match io::file_judgement(self.env, self.repo, &j, members, &self.evidence, red.as_deref()) {
             Ok(id) => println!("{} — filed {id}", batcher::core::judgement_event(&j, &self.repo.name).text),
             Err(e) => println!("batcher {}: red {} not attributable to any member — could not file the judgement: {e}", self.repo.name, suites.join(",")),
         }
@@ -731,9 +743,10 @@ impl drive::RoundOps for LiveOps<'_> {
 
     fn disable_flips(&mut self, tests: &[String]) -> Result<(), String> {
         let registry = spira_config::release_env::tool("test-registry")?;
+        let red = self.red_output();
         let (env, repo, branch) = (self.env, self.repo, self.round_branch.clone());
         let rows = io::disable_flips_with(
-            &mut |id| io::file_flip_bead(env, repo, id, &branch),
+            &mut |id| io::file_flip_bead(env, repo, id, &branch, red.as_deref()),
             &mut io::through_registry(&registry, env),
             Path::new(&self.evidence),
             &branch,
@@ -1113,6 +1126,7 @@ fn stabilize_round(
         mend_pass: Default::default(),
         lifted: io::LiftedRows::new(lifted),
         returns_read: Default::default(),
+        red_kept: None,
     };
     let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
     let round_members = members.clone();
@@ -2302,7 +2316,7 @@ fn judgement_ci(o: &Opts) -> Result<(), String> {
 
     let env_ = env_for(o, home, run)?;
     let repo = find_repo(&env_, &o.repo)?;
-    let id = io::file_judgement(&env_, &repo, &j, &members, &evidence)?;
+    let id = io::file_judgement(&env_, &repo, &j, &members, &evidence, None)?;
     println!("id={id}");
     Ok(())
 }
@@ -2455,7 +2469,10 @@ impl<'a> judge::Edge for LiveEdge<'a> {
             mend_pass: Default::default(),
             lifted: io::LiftedRows::default(),
             returns_read: Default::default(),
+            red_kept: None,
         };
+        let mut ops = ops;
+        ops.red_output();
         Ok((runner, ops))
     }
 

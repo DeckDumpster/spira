@@ -14,6 +14,7 @@ pub mod hunk;
 pub mod margin_mail;
 pub mod modes;
 pub mod notify;
+pub mod pr_topics;
 pub mod repin;
 pub mod reconcile_host;
 pub mod settings;
@@ -23,7 +24,6 @@ pub mod status;
 pub mod store;
 pub mod tasks;
 pub mod unpublished;
-pub mod wake;
 pub mod watchers;
 pub mod wiki_git;
 pub mod world;
@@ -233,6 +233,9 @@ pub struct Effects {
     /// The VM pool the cockpit document's VM rows are read from; none reads as an error row.
     pub vm_pool: Option<Arc<round_vm::pool::Pool>>,
     pub overrides_held: wiki_git::Held,
+    /// pr-notify's publisher, built at its first use; `None` when the configuration names no
+    /// broker.
+    pub pr_topics: OnceLock<Option<pr_topics::PrTopics>>,
 }
 
 /// The mail environment operator notes are sent under: no bd (a note needs no tracking bead, and an empty db keeps the mailer from launching one), and the repeat guard overridden because consecutive merges normalise to one subject.
@@ -253,15 +256,31 @@ impl Effects {
         let env = self.concierge_mail.as_deref().ok_or("no concierge mail environment configured")?;
         let note: watchers::reconciler_flow::Mail = serde_json::from_str(input).map_err(|e| e.to_string())?;
         let args = mail::cmds::SendArgs { mailbox: "concierge", from: Some(reconciler_engine::mail::FROM), subject: &note.subject, kind: "note", default: "", class: "", bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
-        let bd = mail::bead::BdCli { bdq: String::new(), conn_retries: 1 };
+        let bd = mail::bead::BdCli { conn_retries: 1 };
         mail::cmds::send(&bd, env, &args, format!("## Note\n{}\n", note.body)).map(|o| o.delivered_path.display().to_string()).inspect_err(|_| eprintln!("reconciler-flow: concierge alert failed for: {}", note.subject))
+    }
+
+    fn pr_topics(&self) -> Option<&pr_topics::PrTopics> {
+        let build = || spira_pub::Publisher::new("pr-notify").inspect_err(|e| eprintln!("pr-notify: nothing will be published: {e}")).ok().map(pr_topics::PrTopics::new);
+        self.pr_topics.get_or_init(build).as_ref()
+    }
+
+    fn pr_observe(&self, input: &str) -> Result<String, String> {
+        if let Some(topics) = self.pr_topics() {
+            topics.track(input);
+        }
+        self.world.pr_snapshot(&self.forge, input)
+    }
+
+    fn pr_publish(&self, input: &str) -> Result<String, String> {
+        self.pr_topics().map_or_else(|| Ok("not published: no broker configured".into()), |t| t.publish(input))
     }
 
     fn operator_note(&self, input: &str) -> Result<String, String> {
         let env = self.mail.as_deref().ok_or("no mail environment configured")?;
         let note: watchers::pr_notify::Note = serde_json::from_str(input).map_err(|e| e.to_string())?;
         let args = mail::cmds::SendArgs { mailbox: "operator", from: Some("PR Notify <pr-notify@spira>"), subject: &note.subject, kind: "note", default: "", class: "", bead: "", urgent: false, digest: true, dry_run: false, requested_by: "" };
-        let bd = mail::bead::BdCli { bdq: String::new(), conn_retries: 1 };
+        let bd = mail::bead::BdCli { conn_retries: 1 };
         mail::cmds::send(&bd, env, &args, format!("## Note\n{}\n", note.body)).map(|o| o.delivered_path.display().to_string()).inspect_err(|_| eprintln!("pr-notify: operator mail failed for: {}", note.subject))
     }
 }

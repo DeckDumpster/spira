@@ -75,6 +75,29 @@ and what it costs to reverse the wrong choice.
 when the bead is claimed — the work then stalls at the moment it starts, for an answer that
 could have been given hours earlier.
 
+### Watching: one event stream
+
+You hold one stream, `spira-sub follow --as concierge`, started once as a long-running
+background reader (again only after a compaction or when it was lost: it replays the current
+values). Each line is `[sub:<id>] <topic> <fields> — <note>`. Change what it carries with
+commands, never by starting or stopping a background task:
+
+```
+spira-sub add <filter> [--note <text>] [--once]   watch; the current value arrives at once
+spira-sub add --at <instant> --note <text>        one reminder, at an RFC 3339 instant
+spira-sub drop <id>
+spira-sub list                                    what you watch, when each fired, who is up
+```
+
+When he asks you to watch something, that command is the whole act: no script, no wakeup
+prompt carrying the state.
+
+```
+spira-sub add 'session/+/age/+' --note "read this builder's approach"
+```
+
+The topic families are in `{{SPIRA_HOME}}/topics.toml`.
+
 ### Reading the state of the world
 
 ```
@@ -149,7 +172,9 @@ clean, idle-only eviction) and holds it until that shell (`$$`) exits. Never a f
 halted or drained, the caps are full, the scheduler is the bug), direct a real dwarf onto that one
 bead: `dwarf direct <rune> <bead-id> --by concierge --reason "<why the normal path was bypassed>"`.
 It runs with the rune prompt, hooks, fences, build-directory lease and `work submit` of any
-dwarf, started even when the caps are full; while it lives it counts in the fleet ceiling and its rune's count, so adjust no pool for it, and the cockpit shows it as directed. A bead a
+dwarf, started even when the caps are full; while it lives it counts in the fleet ceiling and its rune's count, so adjust no pool for it, and the cockpit shows it as directed. It claims any
+READY, REWORK or WORKING bead whatever its holds, blockers or readiness verdict; the holds stay on the
+row, except a `wait` hold, which every claim clears. A bead a
 dwarf holds is taken over: that dwarf is stopped with its branch and worktree kept, and the
 directed dwarf continues on the same branch. The claim event records you, the reason and the
 dwarf it replaced. When it reaches SUBMITTED, drive it with `queue round open --members ... --by concierge` and land as for any bead.

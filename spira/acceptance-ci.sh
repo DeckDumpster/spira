@@ -2,8 +2,7 @@
 # acceptance-ci.sh — shell-only steps of the acceptance workflow.
 # Called by acceptance.yml. (test-acceptance-ci.sh was deleted as a flip, 2026-09-27; re-add it with the fix.)
 #
-# Usage: acceptance-ci.sh <tag> [--prev-tag <t>] [--bd-db <path>]
-#                                [--agent <path>] [--record] [--waive-upgrade]
+# Usage: acceptance-ci.sh <tag> [--prev-tag <t>] [--agent <path>] [--record] [--waive-upgrade]
 #                                [--standing-waiver]
 #                                [--tarball <path>]
 #
@@ -26,7 +25,6 @@ set -uo pipefail
 
 _tag=""
 _prev_tag=""
-_bd_db="$HOME/.local/share/spira/db"
 _agent=""
 _do_record=0
 _waive_upgrade=0
@@ -37,8 +35,6 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --prev-tag)   _prev_tag="${2:-}"; shift 2 ;;
         --prev-tag=*) _prev_tag="${1#--prev-tag=}"; shift ;;
-        --bd-db)      _bd_db="${2:-}"; shift 2 ;;
-        --bd-db=*)    _bd_db="${1#--bd-db=}"; shift ;;
         --agent)      _agent="${2:-}"; shift 2 ;;
         --agent=*)    _agent="${1#--agent=}"; shift ;;
         --record)     _do_record=1; shift ;;
@@ -56,7 +52,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$_tag" ] || {
-    printf 'usage: acceptance-ci.sh <tag> [--prev-tag <t>] [--bd-db <path>]\n' >&2
+    printf 'usage: acceptance-ci.sh <tag> [--prev-tag <t>]\n' >&2
     exit 2
 }
 
@@ -118,7 +114,7 @@ done
 export SPIRA_ACCEPTANCE_FORENSICS="${SPIRA_ACCEPTANCE_FORENSICS:-$HOME/acceptance-forensics}"
 mkdir -p "$SPIRA_ACCEPTANCE_FORENSICS"
 
-_run_args=("$_tag" --scratch-repo "$HOME/scratch-repo" --bd-db "$_bd_db" --notes-repo "$_NOTES_REPO")
+_run_args=("$_tag" --scratch-repo "$HOME/scratch-repo" --notes-repo "$_NOTES_REPO")
 [ -n "$_agent" ]        && _run_args+=(--agent "$_agent")
 [ "$_do_record" -eq 1 ] && _run_args+=(--record)
 [ -n "$_tarball" ]      && _run_args+=(--tarball "$_tarball")
@@ -131,10 +127,7 @@ printf -- '--- runner env ---\n'
 printf 'whoami: %s\n' "$(whoami 2>/dev/null || echo unknown)"
 printf 'HOME:   %s\n' "$HOME"
 printf 'PATH:   %s\n' "$PATH"
-printf 'bd:     %s\n' "$(command -v bd 2>/dev/null || echo not-on-PATH)"
 ls -l "$HOME/.local/bin" 2>/dev/null || printf '  (.local/bin absent)\n'
-file "$HOME/.local/bin/bd" 2>/dev/null || printf '  (file: not found)\n'
-"$HOME/.local/bin/bd" --version 2>/dev/null || printf '  (bd --version failed)\n'
 findmnt -T "$HOME/.local/bin" -o TARGET,OPTIONS 2>/dev/null || printf '  (findmnt unavailable)\n'
 printf -- '--- end ---\n'
 

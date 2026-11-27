@@ -26,22 +26,12 @@ impl Beads {
 }
 
 impl World for Beads {
-    fn repo_names(&self) -> Vec<String> {
-        Vec::new()
-    }
-    fn repo_land(&self, _: &str) -> String {
-        "push".into()
-    }
     fn repo_root(&self, _: &str) -> Option<PathBuf> {
         None
     }
     fn home_repo(&self) -> String {
         "home".into()
     }
-    fn bd_gate_list_json(&self) -> String {
-        "[]".into()
-    }
-    fn bd_gate_discover(&self, _: &str, _: &str) {}
     fn bd_gate_check(&self) -> String {
         String::new()
     }

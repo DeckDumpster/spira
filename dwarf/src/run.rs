@@ -19,6 +19,7 @@ use crate::ports::{s, Bd, Env, Exec, Git, Seam};
 use crate::restrict;
 use crate::seam::Snapshot;
 use crate::session::{self, Beat, Heartbeat, Launcher, SessionSpec, Stop};
+use crate::session_feed::{Renewal, SessionFeed};
 use crate::stack;
 use crate::trace;
 use crate::util::{self, Out, Sink};
@@ -117,6 +118,8 @@ pub struct State {
     /// add nothing (sp-iku03, sp-al5ng).
     pub session_start_tip: String,
     pub lc_model_restricted: bool,
+    /// The raise time of an ask hold a directed claim found already on the row.
+    pub inherited_ask: Option<i64>,
     /// The stronger model this claim runs on, and the rejection history its brief carries.
     pub model_override: Option<String>,
     pub rejection_brief: String,
@@ -134,6 +137,8 @@ pub struct State {
     pub stack: std::collections::BTreeMap<String, String>,
     /// The owned build directory this run leased (sp-ke0uk8), held until teardown ends.
     pub build_dir: Option<spira_config::build_dir::Lease>,
+    /// What this run publishes about its session; shared with the heartbeat.
+    pub feed: Option<Arc<SessionFeed>>,
 }
 
 /// `spira-lc phase`'s exit for a move the machine refused (not WORKING, not the holder, not forward).
@@ -364,8 +369,6 @@ impl<'a> Run<'a> {
         );
     }
 
-    /// A bead rejected twice claims on the persona's stronger model with its history in the
-    /// brief; at the third rejection it is released and held for the Concierge instead of run.
     /// A persona that requires a build spec stops at once on a bead without one: the bead is
     /// held with an ask for the Concierge, and no session starts to invent a mechanism.
     fn build_spec_gate(&mut self, c: &claim::Claimed) -> Option<i32> {
@@ -382,6 +385,8 @@ impl<'a> Run<'a> {
         Some(0)
     }
 
+    /// A bead rejected twice claims on the persona's stronger model; at the ceiling it is
+    /// released and held for the Concierge, unless the claim was directed.
     fn escalation_gate(&mut self, id: &str) -> Option<i32> {
         use spira_config::escalation::{self, Tier};
         let o = self.d.exec.exec("spira-claim", &s(&["rejections", id]), None, None);
@@ -395,6 +400,10 @@ impl<'a> Run<'a> {
                 self.s.rejection_brief = escalation::history_brief(&st.history, &model);
                 spira_otel::run::event("escalated", &[("rune", self.f()), ("model", &model)]);
                 self.s.model_override = Some(model);
+                None
+            }
+            Tier::Hold if matches!(self.mode, Mode::Directed(_)) => {
+                self.log(&format!("{}: {id} directed claim proceeds past {}", self.f(), escalation::hold_reason(st.stronger_rejections)));
                 None
             }
             Tier::Hold => {
@@ -495,7 +504,7 @@ impl<'a> Run<'a> {
         if let Err(code) = self.claim() { return code }
         spira_otel::run::event("call", &[("rune", self.f())]);
         // ---- armed: every exit from here runs the teardown ----
-        std::thread::scope(|sc| {
+        let rc = std::thread::scope(|sc| {
             let rc = match self.work(sc) {
                 Ok(()) => 0,
                 Err(Abort::Die(m)) => {
@@ -513,7 +522,11 @@ impl<'a> Run<'a> {
             let rc = self.teardown(rc);
             self.release_build_dir();
             rc
-        })
+        });
+        // The heartbeat has joined, so this drops the last handle, which delivers what is queued
+        // before the process exits.
+        self.s.feed = None;
+        rc
     }
 
     /// The capacity / halted / draining / paused declines: Some(exit code) to stop.
@@ -646,6 +659,7 @@ impl<'a> Run<'a> {
         let until = (self.now() + self.rune.lease_seconds()).to_string();
         let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
         let delay = Duration::from_secs(self.conf.i("SPIRA_CLAIM_RETRY_DELAY_S").max(0) as u64);
+        let directed = matches!(self.mode, Mode::Directed(_));
         let directs = match &self.mode {
             Mode::Directed(sm) => sm.claim_json(),
             _ => String::new(),
@@ -657,7 +671,7 @@ impl<'a> Run<'a> {
             rc <= 1
         }, |id| {
             let p = self.stack_proposal(id, who);
-            if let Some(reason) = p.reason.as_deref().filter(|r| !p.claimable && r.starts_with("Blocked")) {
+            if let Some(reason) = p.reason.as_deref().filter(|r| !directed && !p.claimable && r.starts_with("Blocked")) {
                 let line = format!("{who}: {id} refused by spira-claim stack ({reason}), trying the next ranked candidate");
                 self.log(&line);
                 stack_refusals.push(line);
@@ -722,8 +736,8 @@ impl<'a> Run<'a> {
         }
     }
 
-    /// The holds on a just-claimed row that make it unclaimable: the Claim event does not
-    /// read holds, so a hold applied between the ready read and the claim is caught here.
+    /// The holds on a just-claimed row: the Claim event does not read them, so one applied
+    /// between the ready read and a pool claim is caught here. A directed claim keeps them.
     /// A store that cannot tell is retried, then `Unknown`: never read as a hold, so it never
     /// releases the claim (sp-druc64).
     fn blocking_holds(&self, id: &str) -> claim::Holds {
@@ -774,7 +788,7 @@ impl<'a> Run<'a> {
         direct::refusal_reason(bead, by, &row, &self.s.refused)
     }
 
-    fn claim(&mut self) -> Result<(), i32> {
+    pub(crate) fn claim(&mut self) -> Result<(), i32> {
         self.take_name();
         let who = format!("{}/{}", self.f(), self.s.dwarf);
         let (ids, resumable, tier) = self.candidates()?;
@@ -809,6 +823,12 @@ impl<'a> Run<'a> {
 
         // Read-after-claim: the predicate and the claim are not atomic.
         match self.blocking_holds(&c.id) {
+            claim::Holds::Known(held) if !held.is_empty() && matches!(self.mode, Mode::Directed(_)) => {
+                self.log(&format!("{who}: directed claim of {} keeps its {} hold(s)", c.id, held.join(",")));
+                if held.iter().any(|h| h == "ask") {
+                    self.s.inherited_ask = self.lc_bead(&c.id).and_then(|r| r.ask_since);
+                }
+            }
             claim::Holds::Known(held) if !held.is_empty() => {
                 self.release();
                 self.log(&format!("{who}: {} carries a {} hold — released immediately after claim (race with the hold)", c.id, held.join(",")));
@@ -991,6 +1011,7 @@ impl<'a> Run<'a> {
         self.d.env.set("BEAD_ID", &bead);
         self.d.env.set("SPIRA_MAIL", &mail);
         self.d.env.set("SPIRA_MAIL_FROM", &self.rune.mail_from());
+        self.s.feed = self.open_session_feed();
         self.start_heartbeat(sc);
         self.phase("building");
         self.check_stop()?;
@@ -1559,12 +1580,21 @@ impl<'a> Run<'a> {
             }
             return Err(Abort::Die(format!("{}: {bead}: {why}", self.f())));
         }
+        // The row's builder claim count numbers this session among the bead's.
+        let sessions = self.s.feed.as_ref().and_then(|_| self.lc_bead(&bead)?.builder_claims);
         let launched = self.now();
+        if let Some(feed) = &self.s.feed {
+            feed.started(launched, sessions);
+        }
         let rc = self.d.launcher.run(&spec, &self.stop);
+        let exited = self.now();
+        // Before any teardown: the heartbeat is still beating, and nothing may follow the exit.
+        if let Some(feed) = &self.s.feed {
+            feed.ended(exited, rc, (exited - launched).max(0));
+        }
         if let Some((sim, world)) = &pilgrim {
             pilgrim_world::down(self.d.exec, sim, world);
         }
-        let exited = self.now();
         self.s.session_exited_at = Some(exited);
         self.s.session_wall_s = Some((exited - launched).max(0));
         // Interrupted: bash's trap ran before `SESSION_RC=$rc`, so SESSION_RC stays 0.
@@ -1630,7 +1660,10 @@ impl<'a> Run<'a> {
             }
         }
         let dir = lease.dir().to_path_buf();
-        let trimmed = lease.release();
+        let (trimmed, reserved) = if self.s.submitted_at.is_some() { lease.release_reserved(&self.s.bead) } else { (lease.release(), Ok(())) };
+        if let Err(e) = reserved {
+            self.log(&format!("{}: could not reserve build directory {d} for {}'s gate: cannot write {d}.gate: {e} — any session may lease it", self.f(), self.s.bead, d = dir.display()));
+        }
         self.log(&format!("{}: released build directory {}: {trimmed}", self.f(), dir.display()));
         use spira_config::build_dir as pool;
         let bases = pool::parse_bases(&self.conf.s(pool::BASE_ENV));
@@ -1706,6 +1739,18 @@ impl<'a> Run<'a> {
         true
     }
 
+    fn open_session_feed(&self) -> Option<Arc<SessionFeed>> {
+        let cfg = |k: &str| self.conf.v.get(k).cloned().ok_or_else(|| format!("{k} is not declared"));
+        let linger_s = self.conf.i("SPIRA_SESSION_LINGER_SECS");
+        match SessionFeed::over_broker(&self.s.bead, self.f(), linger_s, &cfg) {
+            Ok(feed) => Some(Arc::new(feed)),
+            Err(e) => {
+                self.log(&format!("{}: this session is not published: {e}", self.s.bead));
+                None
+            }
+        }
+    }
+
     fn start_heartbeat<'s>(&self, sc: &'s std::thread::Scope<'s, '_>)
     where
         'a: 's,
@@ -1734,6 +1779,7 @@ impl<'a> Run<'a> {
             sink: self.d.sink,
             clock: self.d.clock,
             repos: self.conf.repos.clone(),
+            feed: self.s.feed.clone(),
         };
         let stop = Arc::clone(&self.stop);
         let shutdown = Arc::clone(&self.hb_shutdown);
@@ -1769,6 +1815,7 @@ pub struct RealBeat<'a> {
     /// borrowed: the heartbeat thread outlives `start_heartbeat`'s own `&self`, and
     /// `Registry` is cheap to clone (a repo-map's rows, a handful of strings).
     pub repos: spira_config::repos::Registry,
+    pub feed: Option<Arc<SessionFeed>>,
 }
 
 impl Beat for RealBeat<'_> {
@@ -1816,6 +1863,17 @@ impl Beat for RealBeat<'_> {
         }
         let row = claim::ask_row(self.exec, &self.bead, 1, Duration::ZERO, &|_| {}).ok().flatten();
         decide::sent_back(row.as_ref(), refused)
+    }
+    fn renewal_outcome(&self) -> Renewal {
+        // Only 1 says the row left this holder's WORKING; 3 refuses an event on a row still read as it.
+        match *self.renew_rc.lock().unwrap_or_else(|e| e.into_inner()) {
+            claim::LC_APPLIED => Renewal::Applied,
+            1 => Renewal::Refused,
+            _ => Renewal::Unjudged,
+        }
+    }
+    fn feed(&self) -> Option<&SessionFeed> {
+        self.feed.as_deref()
     }
     fn disposition(&self, status: &str, note: &str) {
         let o = self.exec.exec("spira-lc", &s(&["disposition", &self.bead, status, note, &self.holder]), None, None);

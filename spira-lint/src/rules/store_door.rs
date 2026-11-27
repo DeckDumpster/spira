@@ -28,16 +28,14 @@ const ALLOW_FILE: &str = "spira-lint/store-door-allow";
 /// Path prefixes (or exact files) allowed to invoke the store, each with why.
 const DOORS: &[(&str, &str)] = &[
     ("spira-lc/", "the door: the one program that talks to the stores"),
-    ("bead/src/bin/bdq.rs", "bdq itself, until it is deleted"),
     ("spira/bead.sh", "the sanctioned bd wrapper (bead) for content"),
     ("spira-lint/", "the rule's own fixtures and detectors name the programs it refuses"),
     ("lifecycle-guard/", "detectors for direct bd calls carry them as fixtures"),
     ("testenv/", "builds and tears down the throwaway fixture databases tests run on"),
-    ("install/", "installs, boots and probes the dolt server itself"),
+    ("install/", "starts the dolt server and asks it a first query before the store exists"),
     ("spira/testdb", "throwaway fixture database on an embedded dolt"),
     ("spira/dolt-", "operates the dolt server process"),
     ("spira/build-bd.sh", "builds the bd binary"),
-    ("spira/bd-pin.sh", "pins the bd binary version"),
     ("spira/test-", "legacy: suite fixtures drive the throwaway store they created; shrink-only"),
     ("store-persist/", "legacy: the persistence probe operates dolt itself; shrink-only"),
     ("spira/lc-backup.sh", "legacy: dolt backup and restore of the stores; shrink-only"),
@@ -503,13 +501,13 @@ mod tests {
         assert_eq!(run(&t, &["foo/x.sh"]).unwrap(), Vec::<String>::new());
     }
 
-    #[test_id(tr0l0m0)]
+    #[test_id(tjg0zfh)]
     #[test]
-    fn a_bdq_spawn_inside_bead_but_outside_bdq_rs_is_caught() {
+    fn a_planted_bdq_spawn_is_refused_wherever_the_bead_crate_puts_it() {
         let t = TempDir::new("sd-bead");
         t.write("bead/src/main.rs", "fn f() { Command::new(tool(\"bdq\")?); }\n");
-        t.write("bead/src/bin/bdq.rs", "fn f() { Command::new(tool(\"bdq\")?); }\n");
-        assert_eq!(run(&t, &["bead/src/main.rs", "bead/src/bin/bdq.rs"]).unwrap().len(), 1);
+        t.write("bead/src/bin/bdq.rs", "fn f() { Command::new(\"bdq\"); }\n");
+        assert_eq!(run(&t, &["bead/src/main.rs", "bead/src/bin/bdq.rs"]).unwrap().len(), 2);
     }
 
     #[test_id(tmc7z0z)]
@@ -544,7 +542,7 @@ mod tests {
     #[test]
     fn the_shipped_list_counts_the_known_executors() {
         let list = parse_count_allow(ALLOW_FILE, include_str!("../../store-door-allow")).unwrap();
-        for p in ["dwarf/src/session.rs", "spira-claim/src/store.rs", "mail/src/bead.rs", "incident/src/real.rs", "spira/lib.sh"] {
+        for p in ["dwarf/src/session.rs", "spira-claim/src/store.rs", "incident/src/real.rs", "spira/lib.sh"] {
             assert!(list.contains_key(p), "{p} missing from the allow list");
         }
     }

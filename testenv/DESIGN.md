@@ -971,8 +971,8 @@ are exactly what they were.
 
 What matters, and is ported:
 
-1. **The image is named by its build closure** — sha256 over the Containerfile's content,
-   the bd pin file's content and `deps.toml`'s content, 12 hex characters. A pulled image is
+1. **The image is named by its build closure** — sha256 over the Containerfile's content
+   and `deps.toml`'s content, 12 hex characters. A pulled image is
    exactly as safe as a built one. Nothing floating is ever pushed.
 2. **Acquire, then build.** Local image → registry pull (`SPIRA_TESTENV_REGISTRY`, retagged
    to the local name) → build. A miss is slow, never fatal. A cold build prints a heartbeat
@@ -1030,7 +1030,6 @@ default conf.sh carries — conf.sh is no longer sourced:
 
 | key | spira.toml | default |
 |---|---|---|
-| `SPIRA_BD_PIN` | `spira.bd_pin` | `$SPIRA_RUN/bd-pin` (SPIRA_RUN resolved as §2.5) |
 | `SPIRA_TESTENV_REGISTRY` | `spira.testenv_registry` | empty (no registry) |
 | `SPIRA_TESTENV_MAX_CONCURRENT` / `_QUEUE_TIMEOUT` / `_QUEUE_POLL` | `spira.testenv_*` | 8 / 900 / 5 |
 | `SPIRA_TESTENV_BUILD_HEARTBEAT` | — | 60 |
@@ -1070,8 +1069,7 @@ that this cleanup ran.
   threads. `SPIRA_ARTIFACTS`/`SPIRA_ARTIFACTS_ROOT` are still removed from its environment.
 * **D18 — fail closed where the script guessed.** (a) `tag` refuses (rc 1, no output) when
   the Containerfile or `deps.toml` cannot be read; the script hashed whatever it could read
-  and printed a tag for an image nothing could build. The bd pin stays optional — CI and a
-  fresh install have none, and the script's tags on those machines must not move. (b) `up`
+  and printed a tag for an image nothing could build. (b) `up`
   refuses at once when `podman run` fails, instead of recording an owner and spending the
   basic.target wait (≈22 s) on a container that was never created. (c) `tag`/`image`/
   `publish`/`up` without a harness refuse naming it.

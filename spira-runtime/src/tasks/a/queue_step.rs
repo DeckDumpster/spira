@@ -94,7 +94,8 @@
 //! A `queue.local` repo whose standing publish record's check is green also emits `publish_wanted` each tick,
 //! in any batch state, until `publish` settles and deletes the record.
 //!
-//! Concierge-owned batches refuse the whole pass (`owner_refused`, `ops/verdict.rs:1052`; actor key `SPIRA_QUEUE_ACTOR`, `:1050`).
+//! A Concierge-claimed batch is left alone (`queue::ops::concierge_claimed`). Any other batch's closed or
+//! merged PR is reconciled; the rest of the pass runs only on a batcher-owned batch.
 //!
 //! ## Silence
 //!
@@ -156,6 +157,8 @@ pub const RECORD: &str = "queue.step.record";
 
 pub const CADENCE_MS: u64 = 120_000;
 pub const OBSERVE_DEADLINE_MS: u64 = 30_000;
+/// The actor `queue verdict` takes when the leg names none.
+const VERDICT_LEG_ACTOR: &str = "verdict";
 /// The judgement leg's cap (the contract's unverified 600 s): a leg with no `unit.ran` by then is failed.
 pub const JUDGEMENT_CAP_MS: u64 = 600_000;
 
@@ -556,8 +559,8 @@ impl Machine<'_> {
             return;
         };
         let id = format!("{}:{}", b.id, b.version);
-        // `owner_refused` (`ops/verdict.rs:1052`): a Concierge-owned batch refuses the pass.
-        if self.rc.settled.as_deref() == Some(id.as_str()) || (!b.batcher_owned && b.owner != "batcher") {
+        // A settled batch is done with; a Concierge-claimed one refuses the verdict leg.
+        if self.rc.settled.as_deref() == Some(id.as_str()) || queue::ops::concierge_claimed(&b.owner, VERDICT_LEG_ACTOR) {
             self.go(Trigger::Nothing);
             return;
         }
@@ -569,6 +572,11 @@ impl Machine<'_> {
             return;
         }
         match repo.check {
+            // A hand-opened batch's push, judgement, sweep and rerun stay with whoever opened it.
+            _ if !b.batcher_owned => {
+                self.rc.batch = None;
+                self.go(Trigger::Nothing);
+            }
             Check::Pending => {
                 self.go(Trigger::CheckPending);
             }
@@ -582,7 +590,7 @@ impl Machine<'_> {
                 self.go(Trigger::CheckGreenBaseMoved);
                 self.acts.push(Step { key: format!("{}/{}", self.repo, self.now_ms), ..at }.act(SWEEP));
             }
-            Check::Red if b.batcher_owned => {
+            Check::Red => {
                 self.go(Trigger::CheckRedBatcherOwned);
                 let unit = unit_key(self.repo, &format!("{}/{}", b.id, b.sealed_head), "judgement", 1);
                 self.rc.leg = Some(unit.clone());
@@ -799,9 +807,14 @@ pub mod edge {
 
     /// [`git`] through the given git program.
     pub fn git_with(prog: &Path, dir: &Path, args: &[&str], deadline: Duration) -> Result<String, String> {
+        git_through(&SysProc, prog, dir, args, deadline)
+    }
+
+    /// [`git_with`] through the given Proc port.
+    pub fn git_through(proc: &dyn Proc, prog: &Path, dir: &Path, args: &[&str], deadline: Duration) -> Result<String, String> {
         let mut all = vec!["-C".to_string(), dir.display().to_string()];
         all.extend(args.iter().map(|a| a.to_string()));
-        let out = SysProc.run(&ProcSpec { prog: prog.display().to_string(), args: all, stdin: vec![], deadline })?;
+        let out = proc.run(&ProcSpec { prog: prog.display().to_string(), args: all, stdin: vec![], deadline })?;
         if out.code == Some(0) {
             Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
         } else {
@@ -990,7 +1003,7 @@ pub mod edge {
         let env = e.mail.as_deref().ok_or("no mail environment configured")?;
         let mailbox = cfg("SPIRA_MAIL_SESSION_MAILBOX")?;
         let args = mail::cmds::SendArgs { mailbox: &mailbox, from: Some("queue <queue@spira>"), subject: &s.subject, kind: "note", default: "", class: "", bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
-        let bd = mail::bead::BdCli { bdq: String::new(), conn_retries: 1 };
+        let bd = mail::bead::BdCli { conn_retries: 1 };
         mail::cmds::send(&bd, env, &args, format!("## {}\n{}\n", s.repo, s.body)).map(|o| o.delivered_path.display().to_string())
     }
 

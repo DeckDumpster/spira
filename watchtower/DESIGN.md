@@ -55,11 +55,15 @@ bash's `[ -r "$X" ] || { log …; exit 0; }` guards).
 
 ## 3. What moved, and what stayed bash
 
-`incident.sh`, `ctrl.sh`, `world.sh`, `yield.sh`, `testenv`, `branch-guard.sh`,
-`release`, `cockpit/moot-sweep.sh` are **not in this bead's scope** (other rewrite waves, or
+`incident.sh`, `ctrl.sh`, `world.sh`, `testenv`,
+`cockpit/moot-sweep.sh` are **not in this bead's scope** (other rewrite waves, or
 not yet scheduled) and stay bash/binary dependencies called exactly as the bash called them:
 by bare name (or `SPIRA_*_SH` override) on the release PATH, same argv, same env, same
 stdin/stdout contract. Repointing those is each script's own wave.
+
+The sweep starts none of these on an idle pass: the branch-guard audit is `branch_guard`
+(`branch-guard.sh` keeps the git-hook verbs), release status and the ready-by-rune count are
+the `release` and `spira-claim` libraries, and a unit's cgroup is read through the units port.
 
 `world.sh`'s `TIMER_PRIORITY` array and `ctrl.sh`'s suspension map (`ctrl_load_suspended`)
 are bash-library state with no CLI form; `--disabled-timer-check` gets them through a fixed
@@ -136,6 +140,11 @@ duplication is exactly what let a timer added after a hand list was written esca
   PSI `full avg60` at `SPIRA_PSI_FULL_AVG60` for `SPIRA_PSI_SUSTAIN_SECS`; release trees over
   `SPIRA_RELEASES_KEEP` + `SPIRA_RELEASE_STORE_SLACK`.
 - Writes: `$SPIRA_RUN/conditions/{filed,pending}/<probe>/<key>`, `failed-runs.tally`.
+- `host/pressure` (`pressure_topic.rs`, run by this pass and by the sentinel's in-process one):
+  cpu PSI `some avg300` and io PSI `full avg300` against `SPIRA_PRESSURE_CPU_AVG300` and
+  `SPIRA_PRESSURE_IO_AVG300`, published only when either changes side. The band the broker took
+  is kept in `conditions/pressure-band.json` and republished on reconnect. A failure is logged
+  and never fails the pass.
 
 ### Sweep (default / `--show`)
 Unchanged field list and heredoc layout from the bash (see `render::render` doc comment for
@@ -188,7 +197,7 @@ fake systemctl).
 
 - **Not a second timer list.** §3.
 - **Not the collector.** `collect.sh`/`cockpit.sh` write `cockpit.env`; this only reads it.
-- **Not the yield meter.** `yield.sh` computes `YIELD_*`; this shells to it exactly as the
-  bash did (out of scope this bead).
+- **Not the yield meter.** `strand::yield_report` computes `YIELD_*` from the records
+  `yield.sh record` writes and from `gate.log`; this only calls it.
 - **Not incident.sh's dedup.** That logic (lookback window, `SPIRA_FENRIR_EXEMPT`) lives in
   incident.sh; this crate only calls it with the same `SPIRA_INCIDENT_*` env the bash used.

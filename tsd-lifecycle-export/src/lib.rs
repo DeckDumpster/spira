@@ -47,6 +47,16 @@ pub struct BdAuditEvent {
     pub created_at: String,
 }
 
+/// The legacy events from `since` on. `created_at` is formatted here: [`tsd::parse_ts`] and the
+/// checkpoint's string order read only `…T…Z`, not the server's own datetime text.
+pub fn legacy_events_query(since: &str) -> String {
+    format!(
+        "SELECT id, issue_id, event_type, actor, new_value, DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at FROM events \
+         WHERE created_at >= '{}' ORDER BY created_at, id",
+        since.replace('\'', "''")
+    )
+}
+
 fn default_facts() -> BeadFacts {
     BeadFacts {
         bd_status: BdStatus::Open,

@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use spira_store::lc_call::{LcClient, Reply, Transport};
 
-use crate::ports::{Lc, Rerun, RoundLease};
-use crate::real::{self, RealLc};
+use crate::ports::{Lc, Lib, Rerun, RoundLease};
+use crate::real::{self, RealLc, RealLib};
 
 /// Answers each call from a script, oldest first, and records argv and stdin.
 #[derive(Default)]
@@ -243,4 +243,146 @@ fn the_forges_answers_map_as_its_childs_did() {
         ),
         vec![("12".to_string(), "spira/queue/a".to_string())]
     );
+}
+
+type Logged = Arc<Mutex<Vec<String>>>;
+
+fn lib(answers: Vec<Result<Reply, String>>) -> (RealLib, Arc<Scripted>, Logged) {
+    let (store, t) = lc(answers);
+    let logged = Logged::default();
+    let sink = logged.clone();
+    let lib = RealLib {
+        home: "h".into(),
+        store,
+        warn: Arc::new(move |m: &str| sink.lock().unwrap().push(m.to_string())),
+    };
+    (lib, t, logged)
+}
+
+fn sent(t: &Scripted) -> Vec<(Vec<String>, Option<String>)> {
+    t.seen.lock().unwrap().clone()
+}
+
+fn call(argv: &[&str], body: Option<&str>) -> (Vec<String>, Option<String>) {
+    (
+        argv.iter().map(|a| a.to_string()).collect(),
+        body.map(str::to_string),
+    )
+}
+
+fn row(state: &str) -> Result<Reply, String> {
+    reply(0, &format!("{{\"bead\":{{\"bead_id\":\"sp-a\",\"state\":\"{state}\"}}}}"))
+}
+
+#[test_id(tjidt8f)]
+#[test]
+fn a_comment_is_added_through_the_content_door() {
+    let (lib, t, logged) = lib(vec![reply(0, "")]);
+    lib.comment("sp-a", "ejected: $(x)\nsecond line");
+    assert_eq!(
+        sent(&t),
+        [call(&["content", "comments", "add", "sp-a", "ejected: $(x)\nsecond line"], None)]
+    );
+    assert!(logged.lock().unwrap().is_empty());
+}
+
+#[test_id(tfaoc8u)]
+#[test]
+fn a_refused_comment_logs_the_reason() {
+    let (lib, _, logged) = lib(vec![reply(3, "no such bead sp-a")]);
+    lib.comment("sp-a", "x");
+    let logged = logged.lock().unwrap();
+    assert!(logged[0].contains("sp-a") && logged[0].contains("no such bead"), "{logged:?}");
+}
+
+#[test_id(tndl7xe)]
+#[test]
+fn a_bug_is_filed_with_its_body_on_stdin_and_the_actor_on_the_first_line() {
+    let (lib, t, logged) = lib(vec![reply(0, "sp-new1\n")]);
+    let id = lib.create_bug("queue.sh", "publish PR 7 red", "1", "spira,plan,repo:spira", "## Build\nfix it\n");
+    assert_eq!(id.as_deref(), Some("sp-new1"));
+    assert_eq!(
+        sent(&t),
+        [call(
+            &["content", "create", "publish PR 7 red", "--type", "bug", "--priority", "1", "--labels", "spira,plan,repo:spira", "--body-file", "-", "--silent"],
+            Some("Filed by queue.sh.\n\n## Build\nfix it\n")
+        )]
+    );
+    assert!(logged.lock().unwrap().is_empty());
+}
+
+#[test_id(to3apze)]
+#[test]
+fn a_refused_create_files_nothing_and_logs_the_reason() {
+    let (lib, _, logged) = lib(vec![reply(1, "bead: --repo <name> required")]);
+    assert_eq!(lib.create_bug("q", "t", "1", "spira", "b"), None);
+    let logged = logged.lock().unwrap();
+    assert!(logged[0].contains("bead: --repo <name> required"), "{logged:?}");
+}
+
+#[test_id(txk0lmn)]
+#[test]
+fn a_create_that_names_no_id_files_nothing_and_says_so() {
+    let (lib, _, logged) = lib(vec![reply(0, "\n")]);
+    assert_eq!(lib.create_bug("q", "t", "1", "spira", "b"), None);
+    assert_eq!(logged.lock().unwrap().len(), 1);
+}
+
+#[test_id(tlyabms)]
+#[test]
+fn a_live_bead_is_noted_with_the_body_on_stdin() {
+    let (lib, t, _) = lib(vec![row("REWORK"), reply(0, "")]);
+    assert!(lib.amend_bug("queue.sh", "sp-a", "red again"));
+    assert_eq!(
+        sent(&t),
+        [
+            call(&["show", "sp-a"], None),
+            call(&["content", "note", "sp-a", "--stdin"], Some("Noted by queue.sh.\n\nred again")),
+        ]
+    );
+}
+
+#[test_id(t7nrvil)]
+#[test]
+fn a_refused_note_is_not_an_amendment_and_logs_the_reason() {
+    let (lib, _, logged) = lib(vec![row("READY"), reply(3, "note refused here")]);
+    assert!(!lib.amend_bug("q", "sp-a", "n"));
+    let logged = logged.lock().unwrap();
+    assert!(logged[0].contains("note refused here"), "{logged:?}");
+}
+
+#[test_id(tx0tyhg)]
+#[test]
+fn a_terminal_bead_is_neither_amended_nor_live() {
+    for state in ["LANDED", "SUPERSEDED", "DROPPED", "DONE"] {
+        let (lib, t, _) = lib(vec![row(state), row(state)]);
+        assert!(!lib.amend_bug("q", "sp-a", "n"), "{state}");
+        assert!(!lib.bead_live("sp-a"), "{state}");
+        assert_eq!(sent(&t), [call(&["show", "sp-a"], None), call(&["show", "sp-a"], None)], "{state}");
+    }
+}
+
+#[test_id(tjdsrko)]
+#[test]
+fn an_unreadable_row_is_neither_amended_nor_live() {
+    for answer in [
+        reply(1, ""),
+        reply(2, "cannot tell: down"),
+        reply(0, "not json"),
+        reply(0, "{\"bead\":null}"),
+        row(""),
+        Err("cannot tell: lost".to_string()),
+    ] {
+        let (lib, t, _) = lib(vec![answer.clone(), answer]);
+        assert!(!lib.amend_bug("q", "sp-a", "n"));
+        assert!(!lib.bead_live("sp-a"));
+        assert!(sent(&t).iter().all(|c| c.0[0] == "show"));
+    }
+}
+
+#[test_id(toma1x4)]
+#[test]
+fn a_bead_with_a_fix_in_flight_is_live() {
+    let (lib, _, _) = lib(vec![row("WORKING")]);
+    assert!(lib.bead_live("sp-a"));
 }

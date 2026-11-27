@@ -1,7 +1,7 @@
-//! Every test binary runs under cargo's target runner, `tools/test-sandbox/runner`, which
-//! `.cargo/config.toml` names: a bubblewrap sandbox in which the caller's installation is out of
-//! reach (sp-bpenvh). What a binary can reach inside it is the test-sandbox suite's to prove
-//! with a probe binary; these tests read files and spawn at most the runner's own `--print-args`.
+//! A run enters the test sandbox once, through `tools/test-sandbox/runner --around`, and every test
+//! binary inside it is launched directly: the cargo config a test sees names no target runner. What
+//! a test can reach inside is the test-sandbox suite's to prove with a probe binary; these tests
+//! read files and spawn at most the runner itself.
 
 #[macro_use]
 extern crate spira_test_id;
@@ -13,20 +13,91 @@ fn workspace() -> PathBuf {
     spira_config::resolve::checkout_root_for_process().unwrap()
 }
 
+/// The workspace's `.cargo/config.toml` as committed: a test sees the sandbox's runner-less
+/// overlay at that path, so the file itself is read from the tree's own commit.
+fn committed_cargo_config() -> toml::Table {
+    let out = std::process::Command::new("git").arg("-C").arg(workspace()).args(["show", "HEAD:.cargo/config.toml"]).output().expect("git spawns");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8(out.stdout).unwrap().parse().expect(".cargo/config.toml parses")
+}
+
 #[test_id(tx9xe9v)]
 #[test]
-fn cargo_runs_every_test_binary_through_the_sandbox_runner() {
+fn cargo_names_the_sandbox_runner_outside_the_sandbox_and_the_overlay_is_that_config_without_it() {
     let ws = workspace();
-    let text = fs::read_to_string(ws.join(".cargo/config.toml")).expect("the workspace's .cargo/config.toml");
-    let conf: toml::Table = text.parse().expect(".cargo/config.toml parses");
+    let overlay: toml::Table = fs::read_to_string(ws.join("tools/test-sandbox/cargo-config.toml")).unwrap().parse().expect("cargo-config.toml parses");
+    let mode = fs::metadata(ws.join("tools/test-sandbox/runner")).expect("the runner exists").permissions().mode();
+    assert_ne!(mode & 0o111, 0, "the runner is executable");
+    let conf = committed_cargo_config();
     let target = conf.get("target").and_then(toml::Value::as_table).expect("a [target] table");
     for triple in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"] {
         let runner = target.get(triple).and_then(|t| t.get("runner")).and_then(toml::Value::as_str);
         assert_eq!(runner, Some("tools/test-sandbox/runner"), "[target.{triple}] names the sandbox runner");
     }
     assert!(target.keys().all(|k| !k.starts_with("cfg(")), "a cfg(...) key loses to a triple key in ~/.cargo/config.toml: {target:?}");
-    let mode = fs::metadata(ws.join("tools/test-sandbox/runner")).expect("the runner exists").permissions().mode();
-    assert_ne!(mode & 0o111, 0, "the runner is executable");
+    let mut without = conf.clone();
+    without.remove("target");
+    assert_eq!(overlay, without, "cargo-config.toml is .cargo/config.toml minus its target tables");
+}
+
+#[test_id(tw5vhoi)]
+#[test]
+fn a_test_reads_no_target_runner_in_the_cargo_config_of_its_own_run() {
+    let text = fs::read_to_string(workspace().join(".cargo/config.toml")).expect("the workspace's .cargo/config.toml");
+    let conf: toml::Table = text.parse().expect(".cargo/config.toml parses");
+    let runners: Vec<_> = conf.get("target").and_then(toml::Value::as_table).into_iter().flatten().filter_map(|(k, v)| v.get("runner").map(|r| format!("{k}: {r}"))).collect();
+    assert!(runners.is_empty(), "cargo in the sandbox would launch each test through {runners:?}");
+}
+
+#[test_id(tbf8ca5)]
+#[test]
+fn the_runner_called_as_a_target_runner_refuses_and_names_around() {
+    let out = std::process::Command::new(workspace().join("tools/test-sandbox/runner")).arg(system_paths::USR_BIN_TRUE).output().expect("the runner spawns");
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--around"), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test_id(ttrajft)]
+#[test]
+fn a_cargo_run_artifact_beside_fingerprint_runs_as_it_is_while_a_harness_in_deps_is_refused() {
+    let tmp = testkit::TempDir::new("cargo-run-artifact");
+    let profile = tmp.path().join("debug");
+    fs::create_dir_all(profile.join(".fingerprint")).unwrap();
+    fs::create_dir_all(profile.join("deps")).unwrap();
+    let run = |bin: PathBuf| {
+        testkit::write_exe(&bin, "#!/bin/sh\necho \"ran $1\"\n");
+        std::process::Command::new(workspace().join("tools/test-sandbox/runner")).arg(&bin).arg("a").output().expect("the runner spawns")
+    };
+    let artifact = run(profile.join("tool"));
+    assert_eq!((artifact.status.code(), &artifact.stdout[..]), (Some(0), &b"ran a\n"[..]), "{}", String::from_utf8_lossy(&artifact.stderr));
+    let harness = run(profile.join("deps/tool-0123"));
+    assert_eq!((harness.status.code(), &harness.stdout[..]), (Some(2), &b""[..]));
+}
+
+#[test_id(trhutlx)]
+#[test]
+fn around_applies_the_environment_allow_list_once_keeping_rust_build_flags() {
+    let printed = std::process::Command::new(workspace().join("tools/test-sandbox/runner"))
+        .args(["--print-args", "--around", system_paths::USR_BIN_ENV])
+        .env("SPIRA_RELEASE", "x")
+        .env("RUSTFLAGS", "y")
+        .env("CARGO_REGISTRY_TOKEN", "secret")
+        .env("CARGO_REGISTRIES_X_TOKEN", "secret")
+        .output()
+        .expect("the runner spawns");
+    let printed = String::from_utf8_lossy(&printed.stdout);
+    assert!(printed.lines().any(|l| l == "RUSTFLAGS") && printed.lines().any(|l| l == "y"), "{printed}");
+    assert!(!printed.contains("SPIRA_RELEASE") && !printed.contains("secret"), "{printed}");
+    let out = std::process::Command::new(workspace().join("tools/test-sandbox/runner"))
+        .args(["--around", system_paths::USR_BIN_ENV])
+        .env("SPIRA_RELEASE", "x")
+        .env("RUSTFLAGS", "y")
+        .output()
+        .expect("the runner spawns");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let env = String::from_utf8_lossy(&out.stdout);
+    assert!(env.lines().any(|l| l == "RUSTFLAGS=y"), "{env}");
+    assert!(!env.contains("SPIRA_RELEASE"), "{env}");
 }
 
 /// The repository's own git directory, which both sandboxes bind back read-only so a test can
@@ -97,7 +168,7 @@ fn print_args(args: &[&str]) -> Vec<String> {
 
 #[test_id(tdbmfid)]
 #[test]
-fn around_binds_each_target_link_destination_writable_and_keeps_the_environment() {
+fn around_binds_each_target_link_destination_writable_and_the_runner_less_cargo_config_over_the_workspaces() {
     let ws = workspace();
     let scratch = testkit::TempDir::new("around-dest");
     let dest = scratch.path().to_path_buf();
@@ -113,7 +184,10 @@ fn around_binds_each_target_link_destination_writable_and_keeps_the_environment(
     }
     let want = fs::canonicalize(&dest).unwrap().display().to_string();
     assert!(args.windows(3).any(|w| w[0] == "--bind" && w[1] == want && w[2] == want), "{want} bound writable: {args:?}");
-    assert!(!args.iter().any(|a| a == "--clearenv"), "the caller's environment is kept: {args:?}");
+    assert!(args.iter().any(|a| a == "--clearenv"), "the environment is cleared to the allow-list: {args:?}");
+    let overlay = ws.join("tools/test-sandbox/cargo-config.toml").display().to_string();
+    let config = ws.join(".cargo/config.toml").display().to_string();
+    assert!(args.windows(3).any(|w| w[0] == "--ro-bind" && w[1] == overlay && w[2] == config), "the runner-less config is bound over the workspace's: {args:?}");
     assert!(args.windows(3).any(|w| w[0] == "--setenv" && w[1] == "GIT_CONFIG_SYSTEM"), "{args:?}");
     assert_eq!(&args[args.len() - 4..], ["--", system_paths::USR_BIN_TRUE, "nextest", "run"]);
 }
@@ -123,7 +197,7 @@ fn around_binds_each_target_link_destination_writable_and_keeps_the_environment(
 fn the_held_decision_comes_before_any_work_a_held_call_does_not_need() {
     let text = fs::read_to_string(workspace().join("tools/test-sandbox/runner")).unwrap();
     let held = text.find("[ -z \"$print\" ] && held").expect("the runner decides held");
-    for later in ["readlink -f", "sed -n", "/bwrap"] { // not a path: a substring searched for in the runner script
+    for later in ["readlink -f", "gitdir:", "/bwrap"] { // not a path: a substring searched for in the runner script
         let first_use = text.find(later).unwrap();
         assert!(held < first_use, "`{later}` runs at byte {first_use}, before the held decision at {held}");
     }
@@ -131,27 +205,47 @@ fn the_held_decision_comes_before_any_work_a_held_call_does_not_need() {
 
 #[test_id(t4iqnrz)]
 #[test]
-fn print_args_for_a_binary_is_what_the_landing_ref_printed() {
+fn print_args_for_a_command_is_what_the_landing_ref_printed_but_for_the_environment_and_the_config_overlay() {
     let ws = workspace();
     let old = std::process::Command::new("git").arg("-C").arg(&ws).args(["show", "local/main:tools/test-sandbox/runner"]).output();
     let Some(old) = old.ok().filter(|o| o.status.success()) else { return };
     let copy = ws.join("tools/test-sandbox/runner.landing-ref");
     testkit::write_exe(&copy, &String::from_utf8(old.stdout).unwrap());
-    let before = std::process::Command::new(&copy).args(["--print-args", system_paths::USR_BIN_TRUE, "a", "b"]).output();
+    let before = std::process::Command::new(&copy).args(["--print-args", "--around", system_paths::USR_BIN_TRUE, "a", "b"]).output();
     fs::remove_file(&copy).unwrap();
     let before = String::from_utf8(before.unwrap().stdout).unwrap();
+    let landing_ref_kept_the_environment = !before.lines().any(|l| l == "--clearenv");
     let strip = |mut args: Vec<String>| {
         for name in [".cargo/config.toml", ".cargo/config"] {
             if let Some(i) = args.windows(3).position(|w| w[0] == "--ro-bind" && w[1].ends_with(name) && w[1] == w[2]) {
                 args.drain(i..i + 3);
             }
         }
-        if let Some(i) = args.windows(3).position(|w| w[0] == "--setenv" && w[1] == "RUSTC_WRAPPER" && w[2].is_empty()) {
+        if let Some(i) = args.windows(3).position(|w| w[0] == "--ro-bind" && w[2].ends_with(".cargo/config.toml") && w[1].ends_with("test-sandbox/cargo-config.toml")) {
             args.drain(i..i + 3);
+        }
+        while let Some(i) = args.windows(3).position(|w| w[0] == "--bind" && w[1].contains("/around-dest")) {
+            args.drain(i..i + 3);
+        }
+        if landing_ref_kept_the_environment {
+            while let Some(i) = args.iter().position(|a| a == "--setenv") {
+                args.drain(i..i + 3);
+            }
+            args.retain(|a| a != "--clearenv");
+        }
+        let home = fs::canonicalize(std::env::var_os("HOME").unwrap()).unwrap().display().to_string();
+        let round_env = format!("{home}/spira-env");
+        if let Some(i) = args.windows(3).position(|w| w[0] == "--ro-bind" && w[1] == round_env && w[2] == round_env) {
+            args.drain(i..i + 3);
+        }
+        // A landing ref's runner may carry over a broker directory, or print no round env.
+        if let Some(i) = args.windows(3).position(|w| w[0] == "--setenv" && w[1] == "PATH") {
+            let kept: Vec<&str> = args[i + 2].split(':').filter(|d| !d.contains("-mosquitto-") && *d != format!("{round_env}/bin")).collect();
+            args[i + 2] = kept.join(":");
         }
         args
     };
-    let now = strip(print_args(&[system_paths::USR_BIN_TRUE, "a", "b"]));
+    let now = strip(print_args(&["--around", system_paths::USR_BIN_TRUE, "a", "b"]));
     let before = strip(before.lines().map(String::from).collect());
     assert_eq!(now, before);
 }
@@ -243,7 +337,7 @@ fn around_binds_the_cargo_config_back_read_only_and_never_the_credentials() {
 fn a_binary_run_binds_the_declared_cargo_homes_config_back_read_only_and_never_the_credentials() {
     let (_tmp, home) = cargo_config_fixture("binary-cargo-config");
     let out = std::process::Command::new(workspace().join("tools/test-sandbox/runner"))
-        .args(["--print-args", system_paths::USR_BIN_TRUE])
+        .args(["--print-args", "--around", system_paths::USR_BIN_TRUE])
         .env_clear()
         .env("PATH", format!("{}:{}", system_paths::USR_BIN, system_paths::BIN))
         .env("HOME", &home)
@@ -253,6 +347,56 @@ fn a_binary_run_binds_the_declared_cargo_homes_config_back_read_only_and_never_t
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let args: Vec<String> = String::from_utf8(out.stdout).unwrap().lines().map(String::from).collect();
     assert_config_bound_after_shadow_and_credentials_not(&args, &home);
+}
+
+/// The printed command line for a caller whose only installation is what `home` holds.
+fn print_args_under_home(home: &Path) -> Vec<String> {
+    let out = std::process::Command::new(workspace().join("tools/test-sandbox/runner"))
+        .args(["--print-args", "--around", system_paths::USR_BIN_TRUE])
+        .env_clear()
+        .env("PATH", format!("{}:{}", system_paths::USR_BIN, system_paths::BIN))
+        .env("HOME", home)
+        .output()
+        .expect("the runner spawns");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8(out.stdout).unwrap().lines().map(String::from).collect()
+}
+
+fn sandbox_path_in(args: &[String]) -> Vec<PathBuf> {
+    let path = &args.windows(3).find(|w| w[0] == "--setenv" && w[1] == "PATH").expect("a PATH is set")[2];
+    std::env::split_paths(path).collect()
+}
+
+#[test_id(tdu6g7u)]
+#[test]
+fn a_rounds_spira_env_is_bound_back_over_the_hidden_home_and_its_bin_is_on_the_sandbox_path() {
+    let tmp = testkit::TempDir::new("around-round-env");
+    let root = fs::canonicalize(tmp.path()).unwrap();
+    let (home, store_env) = (root.join("home"), root.join("store-env"));
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(store_env.join("bin")).unwrap();
+    testkit::write_exe(store_env.join("bin/dolt"), "#!/bin/sh\nexit 0\n");
+    std::os::unix::fs::symlink(&store_env, home.join("spira-env")).unwrap();
+    let args = print_args_under_home(&home);
+    let hidden = home.display().to_string();
+    let shadow = args.windows(2).position(|w| w[0] == "--tmpfs" && w[1] == hidden).expect("the home is shadowed");
+    let env = format!("{hidden}/spira-env");
+    let at = args.windows(3).position(|w| w[0] == "--ro-bind" && w[1] == env && w[2] == env);
+    assert!(at.is_some_and(|at| at > shadow), "{env} is not bound back over the hidden home: {args:?}");
+    let dirs = sandbox_path_in(&args);
+    let installed = dirs.iter().position(|d| *d == home.join(".local/lib/spira-env/bin")).expect("the installed env is on PATH");
+    assert_eq!(dirs.get(installed + 1), Some(&home.join("spira-env/bin")), "the round's env follows the installed one: {dirs:?}");
+}
+
+#[test_id(tidh4by)]
+#[test]
+fn a_home_without_a_rounds_spira_env_gets_neither_its_bind_nor_its_path_entry() {
+    let tmp = testkit::TempDir::new("around-no-round-env");
+    let home = fs::canonicalize(tmp.path()).unwrap().join("home");
+    fs::create_dir_all(&home).unwrap();
+    let args = print_args_under_home(&home);
+    let env = home.join("spira-env").display().to_string();
+    assert!(args.iter().all(|a| !a.contains(&env)), "{args:?}");
 }
 
 #[test_id(tj4gn43)]
@@ -283,7 +427,7 @@ fn a_held_run_keeps_the_identity_an_enclosing_sandbox_handed_in_when_run_is_unwr
         .arg(&home)
         .args(["--tmpfs", system_paths::RUN, "--remount-ro", system_paths::RUN, "--unshare-net"])
         .arg(workspace().join("tools/test-sandbox/runner"))
-        .arg(system_paths::USR_BIN_ENV)
+        .args(["--around", system_paths::USR_BIN_ENV])
         .env("HOME", &home)
         .env("GIT_CONFIG_SYSTEM", &identity);
     let out = cmd.output().expect("bwrap spawns");
@@ -308,147 +452,47 @@ fn conf_default(key: &str) -> u64 {
 #[test]
 fn the_nextest_config_is_the_unit_deadline_defaults() {
     let want = spira_config::unit_tier::nextest_config(
-        conf_default("SPIRA_UNIT_TEST_DEADLINE_SECS"),
-        conf_default("SPIRA_UNIT_TEST_DEADLINE_PERIODS"),
+        (conf_default("SPIRA_UNIT_TEST_DEADLINE_SECS"), conf_default("SPIRA_UNIT_TEST_DEADLINE_PERIODS")),
+        (conf_default("SPIRA_INTEGRATION_TEST_DEADLINE_SECS"), conf_default("SPIRA_INTEGRATION_TEST_DEADLINE_PERIODS")),
         &spira_config::unit_tier::DenyList::default(),
     );
     assert_eq!(fs::read_to_string(workspace().join(".config/nextest.toml")).unwrap(), want);
 }
 
-struct Fixture {
-    _tmp: testkit::TempDir,
-    root: PathBuf,
-}
-
-fn bounded_fixture() -> Fixture {
-    let tmp = testkit::TempDir::new("bounded-runner");
-    let root = fs::canonicalize(tmp.path()).unwrap();
-    fs::create_dir_all(root.join("tools/test-sandbox")).unwrap();
-    fs::create_dir_all(root.join(".config")).unwrap();
-    testkit::write_exe(root.join("tools/test-sandbox/runner"), &fs::read_to_string(workspace().join("tools/test-sandbox/runner")).unwrap());
-    fs::write(root.join(".config/nextest.toml"), "[profile.default]\nslow-timeout = { period = \"1s\", terminate-after = 1 }\n").unwrap();
-    Fixture { _tmp: tmp, root }
-}
-
-impl Fixture {
-    /// A stream test is about bytes, not silence: a starved watcher on a loaded box outlasts one period.
-    fn streaming(self) -> Self {
-        fs::write(self.root.join(".config/nextest.toml"), "[profile.default]\nslow-timeout = { period = \"60s\", terminate-after = 1 }\n").unwrap();
-        self
-    }
-
-    fn run(&self, name: &str, script: &str, nextest: bool) -> std::process::Output {
-        let bin = self.root.join(name);
-        testkit::write_exe(&bin, &format!("#!/bin/bash\n{script}\n"));
-        let mut cmd = std::process::Command::new("bash");
-        cmd.arg(self.root.join("tools/test-sandbox/runner"));
-        cmd.arg(&bin).env_remove("NEXTEST");
-        if nextest {
-            cmd.env("NEXTEST", "1");
-        }
-        cmd.output().expect("the runner spawns")
-    }
-
-    fn assert_killed(&self, name: &str, script: &str, test: &str) {
-        let out = self.run(name, script, false);
-        let err = String::from_utf8_lossy(&out.stderr);
-        assert_eq!(out.status.code(), Some(124), "{err}");
-        assert!(err.contains(&format!("test-sandbox: HUNG test={test} binary={name}")), "{err}");
-        let pid: String = fs::read_to_string(self.root.join("grandchild")).unwrap().trim().to_string();
-        assert!(!Path::new(system_paths::PROC).join(&pid).exists(), "grandchild {pid} outlived the runner");
+#[test_id(ths23zl)]
+#[test]
+fn the_rounds_config_carries_the_unit_deadline_defaults() {
+    let spira = spira_config::load(&workspace().join("spira/testlib/complete.toml")).unwrap().spira.unwrap();
+    for key in [
+        "SPIRA_UNIT_TEST_DEADLINE_SECS",
+        "SPIRA_UNIT_TEST_DEADLINE_PERIODS",
+        "SPIRA_INTEGRATION_TEST_DEADLINE_SECS",
+        "SPIRA_INTEGRATION_TEST_DEADLINE_PERIODS",
+    ] {
+        let declared = spira.get_u32(key).unwrap().map(u64::from);
+        assert_eq!(declared, Some(conf_default(key)), "complete.toml's {key} differs from the conf.d default");
     }
 }
 
-const GRANDCHILD: &str = "sleep 6 & echo $! > \"$(dirname \"$0\")/grandchild\"";
-
-#[test_id(tt2sybr)]
+#[test_id(tewojri)]
 #[test]
-fn a_binary_that_prints_libtests_hung_line_and_sleeps_is_killed_named_and_its_children_die() {
-    let f = bounded_fixture();
-    f.assert_killed("hangs", &format!("{GRANDCHILD}\necho 'test mod::slow has been running for over 60 seconds'\nwait"), "mod::slow");
-}
-
-#[test_id(tfv15vy)]
-#[test]
-fn a_silent_binary_is_killed_after_the_declared_period_and_its_children_die() {
-    let f = bounded_fixture();
-    f.assert_killed("silent", &format!("{GRANDCHILD}\nwait"), "-");
-}
-
-#[test_id(t6gqur3)]
-#[test]
-fn a_finishing_binary_keeps_its_exit_code_stdout_and_stderr() {
-    let f = bounded_fixture();
-    let out = f.run("done", "echo out; echo err >&2; exit 7", false);
-    assert_eq!((out.status.code(), &out.stdout[..], &out.stderr[..]), (Some(7), &b"out\n"[..], &b"err\n"[..]));
-}
-
-#[test_id(tf36ekh)]
-#[test]
-fn under_nextest_a_silent_binary_is_not_killed() {
-    let f = bounded_fixture();
-    let out = f.run("quiet", "sleep 1.5; echo fin", true);
-    assert_eq!((out.status.code(), &out.stdout[..]), (Some(0), &b"fin\n"[..]));
-}
-
-#[test_id(txpbx5s)]
-#[test]
-fn a_burst_of_output_on_both_streams_arrives_whole_and_separate() {
-    let f = bounded_fixture().streaming();
-    let out = f.run("burst", "for i in $(seq 1 3000); do echo \"o$i\"; echo \"e$i\" >&2; done", false);
-    let lines = |b: &[u8], p: char| String::from_utf8_lossy(b).lines().map(String::from).collect::<Vec<_>>().eq(&(1..=3000).map(|i| format!("{p}{i}")).collect::<Vec<_>>());
-    assert!(lines(&out.stdout, 'o') && lines(&out.stderr, 'e'), "streams arrive whole and in order");
-}
-
-/// uutils tee dies mid-stream when the kernel sizes its private pipe down; a stream must not
-/// depend on a `tee` on the caller's PATH.
-#[test_id(tppacx1)]
-#[test]
-fn a_tee_that_dies_mid_stream_cannot_cut_a_stream() {
-    let f = bounded_fixture().streaming();
-    let shim = f.root.join("shim");
-    fs::create_dir_all(&shim).unwrap();
-    testkit::write_exe(shim.join("tee"), "#!/bin/bash\nexec 3>\"$1\"\nfor _ in 1 2; do IFS= read -r l && printf '%s\\n' \"$l\" && printf '%s\\n' \"$l\" >&3; done\nexit 101\n");
-    let bin = f.root.join("burst");
-    testkit::write_exe(&bin, "#!/bin/bash\nfor i in $(seq 1 50); do echo \"o$i\"; echo \"e$i\" >&2; done\n");
-    let path = format!("{}:{}", shim.display(), std::env::var("PATH").unwrap_or_default());
-    let out = std::process::Command::new("bash")
-        .arg(f.root.join("tools/test-sandbox/runner"))
-        .arg(&bin)
-        .env_remove("NEXTEST")
-        .env("PATH", path)
-        .output()
-        .expect("the runner spawns");
-    let want = |p: char| (1..=50).map(|i| format!("{p}{i}\n")).collect::<String>();
-    assert_eq!(
-        (out.status.code(), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned()),
-        (Some(0), want('o'), want('e'))
-    );
-}
-
-#[test_id(tztmwrt)]
-#[test]
-fn silence_is_bounded_by_the_file_period_times_terminate_after_not_by_one_period() {
-    let f = bounded_fixture();
-    fs::write(f.root.join(".config/nextest.toml"), "[profile.default]\nslow-timeout = { period = \"1s\", terminate-after = 3 }\n").unwrap();
-    let out = f.run("pause", "sleep 1.5; echo fin", false);
-    assert_eq!((out.status.code(), &out.stdout[..]), (Some(0), &b"fin\n"[..]));
+fn the_integration_and_sim_targets_keep_a_two_minute_deadline_in_the_nextest_config() {
+    let config: toml::Table = fs::read_to_string(workspace().join(".config/nextest.toml")).unwrap().parse().unwrap();
+    let overrides = config["profile"]["default"].get("overrides").and_then(|o| o.as_array()).expect("an override scopes the tests/ targets");
+    let tests = overrides.iter().find(|o| o["filter"].as_str() == Some("kind(test)")).expect("an override for kind(test)");
+    assert_eq!(tests["slow-timeout"]["period"].as_str(), Some("60s"));
+    assert_eq!(tests["slow-timeout"]["terminate-after"].as_integer(), Some(2));
 }
 
 #[test_id(tlmmajp)]
 #[test]
-fn print_args_prints_the_command_line_and_never_runs_the_binary() {
-    let f = bounded_fixture();
-    let marker = f.root.join("ran");
-    let bin = f.root.join("probe");
+fn print_args_prints_the_command_line_and_never_runs_the_command() {
+    let tmp = testkit::TempDir::new("print-args-probe");
+    let marker = tmp.path().join("ran");
+    let bin = tmp.path().join("probe");
     testkit::write_exe(&bin, &format!("#!/bin/bash\ntouch {}\n", marker.display()));
-    let out = std::process::Command::new("bash")
-        .arg(f.root.join("tools/test-sandbox/runner"))
-        .arg("--print-args")
-        .arg(&bin)
-        .output()
-        .unwrap();
-    assert!(out.status.success() && String::from_utf8_lossy(&out.stdout).contains("bwrap"));
+    let out = std::process::Command::new(workspace().join("tools/test-sandbox/runner")).args(["--print-args", "--around"]).arg(&bin).output().unwrap();
+    assert!(out.status.success() && String::from_utf8_lossy(&out.stdout).contains("bwrap"), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(!marker.exists());
 }
 
@@ -475,4 +519,38 @@ fn the_built_testenv_supervisor_records_who_signalled_it_and_passes_the_signal_o
     assert!(text.starts_with(&format!("testenv: stopped from outside: sig=15 from pid={} cmd=", killer.id())), "{text}");
     assert_eq!(status.code(), Some(143));
     killer.wait().unwrap();
+}
+
+#[test_id(tzvk5ed)]
+#[test]
+fn around_binds_a_relative_config_file_argument_at_its_absolute_path() {
+    let tmp = testkit::TempDir::new("around-config-file-relative");
+    fs::write(tmp.path().join("gate-unit-nextest.toml"), "").unwrap();
+    let out = std::process::Command::new(workspace().join("tools/test-sandbox/runner"))
+        .current_dir(tmp.path())
+        .args(["--print-args", "--around", system_paths::USR_BIN_TRUE, "--config-file", "gate-unit-nextest.toml"])
+        .output()
+        .unwrap();
+    let printed = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = printed.lines().collect();
+    let path = fs::canonicalize(tmp.path().join("gate-unit-nextest.toml")).unwrap().display().to_string();
+    assert!(lines.windows(3).any(|w| w[0] == "--ro-bind" && w[1] == path && w[2] == path), "{printed}");
+    assert!(!lines.windows(2).any(|w| w[0] == "--ro-bind" && w[1] == "gate-unit-nextest.toml"), "{printed}");
+}
+
+#[test_id(t4nmj1z)]
+#[test]
+fn around_binds_a_config_file_argument_read_only_so_a_config_in_the_hidden_home_stays_readable() {
+    let tmp = testkit::TempDir::new("around-config-file");
+    let home = fs::canonicalize(tmp.path()).unwrap().join("home");
+    fs::create_dir_all(&home).unwrap();
+    let cfg = home.join("round-nextest.toml");
+    fs::write(&cfg, "").unwrap();
+    let out = std::process::Command::new(workspace().join("tools/test-sandbox/runner")).args(["--print-args", "--around", system_paths::USR_BIN_TRUE, "--config-file"]).arg(&cfg).env("HOME", &home).output().unwrap();
+    let printed = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = printed.lines().collect();
+    let (home, path) = (home.display().to_string(), cfg.display().to_string());
+    let hidden = lines.windows(2).position(|w| w[0] == "--tmpfs" && w[1] == home).unwrap_or_else(|| panic!("the home is hidden: {printed}"));
+    let bound = lines.windows(3).position(|w| w[0] == "--ro-bind" && w[1] == path && w[2] == path).unwrap_or_else(|| panic!("the config is bound: {printed}"));
+    assert!(hidden < bound, "the config is bound on top of the hidden home: {printed}");
 }

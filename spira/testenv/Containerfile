@@ -77,14 +77,15 @@ RUN mkdir /out && \
 # tag and only the binary is needed afterwards.
 FROM docker.io/library/rust:${RUST_VERSION}-slim AS rust-builder
 
-# ── Stage 2b: habit-hook tools from the flake's pinned nixpkgs ────────────────
+# ── Stage 2b: habit-hook tools and the broker from the flake's pinned nixpkgs ────────────────
 # NIXPKGS_REV must equal the nixpkgs input in flake.nix (spira-env); test-testenv-nixpkgs-pin.sh checks it.
 FROM docker.io/nixos/nix:2.24.10 AS nix-tools
 ARG NIXPKGS_REV=7fd4004d0511991fff3a0524856a9be09e28c5f0
 RUN nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths \
         "github:NixOS/nixpkgs/${NIXPKGS_REV}#rust-code-analysis" \
         "github:NixOS/nixpkgs/${NIXPKGS_REV}#shellcheck" \
-        "github:NixOS/nixpkgs/${NIXPKGS_REV}#llvmPackages.clang-unwrapped" > /tmp/outs && \
+        "github:NixOS/nixpkgs/${NIXPKGS_REV}#llvmPackages.clang-unwrapped" \
+        "github:NixOS/nixpkgs/${NIXPKGS_REV}#mosquitto" > /tmp/outs && \
     mkdir -p /out/nix/store /out/bin && \
     for p in $(nix-store -qR $(cat /tmp/outs)); do cp -a "$p" /out/nix/store/; done && \
     for p in $(cat /tmp/outs); do for b in "$p"/bin/*; do if [ -e "$b" ]; then ln -s "$b" "/out/bin/$(basename "$b")"; fi; done; done
@@ -265,6 +266,12 @@ RUN useradd -m -s /bin/bash -u 1001 spirauser && \
     echo 'spirauser ALL=(ALL) NOPASSWD: /usr/bin/systemctl' \
          > /etc/sudoers.d/spirauser-systemctl && \
     chmod 0440 /etc/sudoers.d/spirauser-systemctl
+
+# Where spira-broker.service renders its ExecStart (spira_config::SPIRA_ENV_REL).
+RUN _home="$(getent passwd spirauser | cut -d: -f6)" && \
+    mkdir -p "$_home/.local/lib/spira-env/bin" && \
+    ln -s /usr/local/bin/mosquitto "$_home/.local/lib/spira-env/bin/mosquitto" && \
+    chown -R spirauser:spirauser "$_home/.local"
 
 # CARGO_HOME outside any user home directory so the volume path avoids a literal
 # that inventory.sh would flag. The directory is created owned by spirauser so it

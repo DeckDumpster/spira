@@ -106,11 +106,11 @@ reached the bash.
 | `SPIRA_GATE_TIMEOUT` | `timeout` on the gate command | 2700 |
 | `SPIRA_GATE_DEADLINE` | wall clock for the gate's own tests, charged from the first test phase: the base trial's reruns count, the tools, fences and build phases (base trial's too) do not and carry no phase cap. At expiry NO_VERDICT `reason=deadline` naming the running test phase; never a pass | 300 |
 | `SPIRA_GATE_BUILD_STALL` | seconds a tools, fences or build phase may show no progress (a compiler output line, or CPU time in the phase's process group) before it is ended as NO_VERDICT `reason=build-stall` naming the phase and the last compiler line. A phase that keeps progressing is never ended; only `SPIRA_GATE_TIMEOUT` bounds it | 300 |
-| `SPIRA_GATE_BUILDER_DIR_WAIT_SECS` | seconds a unit gate waits for the session that submitted its bead to release that session's build directory, which the gate then builds in; past it the gate builds as it would without one | 120 |
+| `SPIRA_GATE_BUILDER_DIR_WAIT_SECS` | seconds a unit gate waits for the bead's own session to release its build directory, which the gate then builds in (any other holder is not waited for); past it the gate builds as it would without one | 120 |
 | `SPIRA_GATE_BUDGET` | the selector's prediction of suite time (testenv `--deadline`); with the fixed phases it fits the deadline | 140 |
 | `SPIRA_GATE_LOCK_WAIT` | wait for an admission slot and for the tree lock | `4 × SPIRA_GATE_TIMEOUT` |
 | `SPIRA_CERTIFY_PAR` | admission pool size; unset or non-numeric derives `min(nproc/4, MemAvailable/400MiB)`, at least 1, re-read every second | derived |
-| `SPIRA_GATE_BEAD` | ejected-suites lookup (the re-entry check), the key, `lc_certify` | — |
+| `SPIRA_GATE_BEAD` | ejected-suites lookup (the re-entry check), the key, `lc_certify`; passed through to the gate command (the lint step's `--gate-bead`) | — |
 | `SPIRA_GATE_CALLER` | `by=` in the cache entry | the branch |
 | `LANDSTATE` (lib.sh) | `<bead>.ejected`, else an `EJECTED` landstate row | `$SPIRA_RUN/landstate` |
 | `SPIRA_GATE_BUDGET`, `SPIRA_GATE_ALL`, `SPIRA_BATCH_MAXPAR`, `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS` (sp-govet), `HOME` | passed through to the gate command | as bash |
@@ -126,7 +126,7 @@ not the release), never the PATH the gate inherited, so a bare tool name is the 
 first and the box's own tools after the system directories. Either `SPIRA_RELEASE` unset or
 a tail entry inside a release or a checkout is `NO_VERDICT reason=release-unset` before
 anything runs, and `SPIRA_RELEASE` is passed through. `HOME`, `TERM=dumb`, `SPIRA_GATE_REPO`, `SPIRA_GATE_REPO_NAME`,
-`SPIRA_GATE_BRANCH`, `SPIRA_GATE_BASE`, `SPIRA_GATE_SELECT_HEAD=<branch>`, `SPIRA_GATE_FILES`,
+`SPIRA_GATE_BRANCH`, `SPIRA_GATE_BASE`, `SPIRA_GATE_BEAD` (empty if the caller set none), `SPIRA_GATE_SELECT_HEAD=<branch>`, `SPIRA_GATE_FILES`,
 `SPIRA_GATE_STEPS` (an empty file per trial; the gate command appends `<step name>\t<unix epoch secs>` as each step starts, and the engine reads the longest step into gate.log's `slowest_step=<name>:<secs>` and the TSD row — the last step lasts until the gate phase ends; a command that writes nothing gives no field; a verdict other than PASS also keeps the phase's whole output as `tsd/gate-out-<ts>.log`, named by `out=<path>`, newest 50 kept),
 `SPIRA_GATE_EJECTED_SUITES`, `SPIRA_GATE_ALL` (default 0),
 `SPIRA_BATCH_MAXPAR`,
@@ -251,7 +251,7 @@ repo map → repository → yield/meter armed → landing ref → changed files 
 **merge** → `bash -n` → beads data → foreign harness → **the definition** (the tree's
 `gate.steps`; else, for a `queue.local` repository whose `.spira/testenv.toml` has a `ci_entry`
 and no harness Containerfile, that declaration's default tiers; else the column; "The tree
-owns its gate") → empty gate string (PASS `syntax-only`, column only; NO_VERDICT `certifies-nothing` when the repository declares tiers in `.spira/testenv.toml` — declare `ci_entry` on a `queue.local` repository or add `gate.steps`) → preflight (`bash <path>` words
+owns its gate") → empty gate string (PASS `syntax-only`, column only; NO_VERDICT `certifies-nothing` when the repository declares tiers in `.spira/testenv.toml` — declare `ci_entry` on a `queue.local` repository or add `gate.steps`; under queue.forge the landing pass records it on the row and the item enters its batch provisionally) → preflight (`bash <path>` words
 exist on the base for a column, on the revision under test for a tree definition) → key →
 cache → admission →
 sweep → tree lock → checkout the gate revision (proved by `rev-parse HEAD`) → **composition**
@@ -432,7 +432,7 @@ A fence red is still a `branch-red`; a unit test the branch breaks is the round'
 | `unit`, any **script** touched | `suites(script)` | the same |
 | `unit`, `SPIRA_GATE_ALL=1` | `suites(gate-all)` | the same — the caller asked for the corpus |
 | `unit`, the touched set or the graph unreadable | `suites(no-diff)` / `suites(no-metadata)` | the same — no guessing a cheaper gate |
-| `unit`, crates (± docs, config, suites) | `unit` | the gate string's fences **without the build fence** (below), then on the host: `CARGO_BUILD_JOBS=J cargo test --no-run --timings --features integration -p …` (build, `compose::unit_build_words`, the line testenv's unit tier also runs; when the selected crates declare `[package.metadata.spira] test-bins`, `cargo build --features integration -p <each> --bins && ` runs ahead of it), then the test phase, two commands from `spira_config::unit_tier` that differ from the round's only in `-p …` for `--workspace`: `cargo nextest run --config-file target/gate-unit-nextest.toml --no-fail-fast --features integration -p … --lib --bins` (one process per test, each under `SPIRA_UNIT_TEST_DEADLINE_SECS` × `SPIRA_UNIT_TEST_DEADLINE_PERIODS`), and `cargo test --no-fail-fast --features integration -p … --test '*'`; a tier no selected crate has a target for is left out, and a host without `cargo-nextest` is no verdict (75); all in the `dev` profile |
+| `unit`, crates (± docs, config, suites) | `unit` | the gate string's fences **without the build fence** (below), then on the host: `CARGO_BUILD_JOBS=J cargo test --no-run --timings --features integration -p …` (build, `compose::unit_build_words`, the line testenv's unit tier also runs; when the selected crates declare `[package.metadata.spira] test-bins`, `cargo build --features integration -p <each> --bins && ` runs ahead of it), then the test phase, two commands from `spira_config::unit_tier` that differ from the round's only in `-p …` for `--workspace`: `cargo nextest run --config-file target/gate-unit-nextest.toml --no-fail-fast --features integration -p … --lib --bins` (one process per test, each under `SPIRA_UNIT_TEST_DEADLINE_SECS` × `SPIRA_UNIT_TEST_DEADLINE_PERIODS`; the same config puts the `tests/` targets under `SPIRA_INTEGRATION_TEST_DEADLINE_SECS` × `SPIRA_INTEGRATION_TEST_DEADLINE_PERIODS`), and `cargo test --no-fail-fast --features integration -p … --test '*'`; a tier no selected crate has a target for is left out, and a host without `cargo-nextest` is no verdict (75); all in the `dev` profile |
 | `unit`, nothing buildable | `fences` | the gate string's fences |
 | `fences`, a fresh bead | `fences` | the gate string **without its suites step** ("Fences mode") |
 | `fences`, a re-entering bead (named suites) or a changed suite | `fences+reentry` | the same, then the re-entry phase: exactly those suites |
@@ -500,11 +500,17 @@ Each failing test is judged on the rerun output: **flip** (a `PASS [` / `... ok`
 
 * A flip with a test id (`ports::flip_test_id`) gets what the round gives one
   (`flip.rs`, shared with `batcher-cut`): a fix bead filed `--for batcher`, then a seven-day
-  `test-registry` row naming that bead, actor `gate`. If every failing test flipped the verdict is
+  `test-registry` row naming that bead, actor `gate`. If every failing test flipped, none held back, the verdict is
   PASS and says `gate: flipped — <test> red, then green on a rerun of the same tree; disabled
   until <date>, fix bead <id>` per test. A refused filing or row is NO_VERDICT `flip-unrecorded`:
   a flip is never passed without its record. A flip with no id cannot hold a row and stays the
   branch's red.
+* One gate records at most 3 flips (`MAX_GATE_FLIPS`, law-a-detector-files-a-bounded-batch), the
+  first in first-run order. Every flipped test after the third row gets no bead and no row, the
+  message adds `gate: held back by the flip cap (3): <tests>`, and the item goes back as FAIL:
+  that many flips is the box, not the tests. Held tests are the one exception to
+  law-a-flipping-test-is-disabled-by-a-registry-row. The FAIL and the line are the unattributed
+  `branch-red` path's: the cross-bead PASS and the base-fences-red FAIL keep their own messages.
 * Any red-twice or unproven test sends the item back as FAIL `branch-red`, the message adding
   `gate: red twice on the same tree <T>: <tests>` and/or `gate: not rerun: <tests>`. Rows for
   flips among them are still written. A red the cross-bead detector (`shared_unit_red`) matches
@@ -512,9 +518,9 @@ Each failing test is judged on the rerun output: **flip** (a `PASS [` / `... ok`
 * A fences or suites composition, a red beside a red fence or a failed build, never reruns.
 * `flip.rs` calls `bead.sh` and `test-registry` through the bounded runner (60 s each) for both the gate and the round.
 
-Records: gate.log ends ` reruns=<test>:<red|timeout>/<green|red|timeout|unrun>,…`; the
+Records: gate.log ends ` reruns=<test>:<red|timeout>/<green|red|timeout|unrun|held>,…`; the
 `gate-run` row carries the same text as `reruns`; `spira_gate_test_reruns{repo,result}` counts one
-per rerun test (`result` is `flip|red-twice|unproven`; no test or bead label). `unit_run_secs`
+per rerun test (`result` is `flip|red-twice|unproven|held`; no test or bead label). `unit_run_secs`
 stays the first run's wall; the Grafana panel "Gate test reruns by result (1d)" plots the counter.
 
 ### What it records (for item 7)
@@ -825,6 +831,14 @@ closes the question the gate could not answer.
 * **Copying is Rust (`install_tools`), not more shell in the tools string.** The proof and the
   install are logic; the tools string stays `cargo build … && [ -x … ]`.
 
+## What a trial publishes
+
+After its `gate-run` row, a trial publishes `gate/<repo>/<bead>` and `test/<id>/red` for each
+test its branch run showed red (`src/publish.rs`; fields in `spira/topics.toml`). `killed_by`
+is read from the `stopped=` field ending testenv's last `VERDICT` line, and only by a trial
+that ran testenv; that field names the sender's program and unit, not its whole command or
+cgroup path. A failed publish is logged and changes no verdict.
+
 ## Boundaries (ports)
 
 `World` in `src/ports.rs`: git reads and the merge, the touched set (`diff_raw`), the mode
@@ -985,8 +999,9 @@ Full contract: `spira-config/DESIGN-build-cache.md`. In the gate:
   commit or tree path discards the directory and builds cold. The pool also records the tree
   path it was built in; adopting at another path removes every unit whose rustc `env-dep:`
   lines name that path (`env!("CARGO_MANIFEST_DIR")`), because cargo's fingerprints are
-  tree-relative and would serve its binary with the donor's path baked in. sccache is not a
-  carrier: its Rust keys hash the manifest dir, and `gate/tests/warm_build.rs` pins that.
+  tree-relative and would serve its binary with the donor's path baked in. A unit test in
+  `src/warm.rs` pins this path through the pool. sccache is not a carrier: its Rust keys hash
+  the manifest dir. That is a property of the tool, which no gate test asserts.
 * **No on-disk warm target (concierge/gate-overcap, 2026-10-14; retires sp-nv7btk's slots).**
   sp-nv7btk linked the `dwarf`-profile directory to a per-admission-slot directory on the disk,
   `<run>/gate-warm/slot.N/dwarf`, so a unit build would "recompile only what the branch
@@ -1080,12 +1095,11 @@ filter hold to).
   exact tree already pass," not "is the base independently red on this suite").
 * **`harness` and `image` are recorded and checked on every read** (`basecache::fresh`),
   because the base tree not moving does not mean nothing that could change a suite's answer
-  has: a new gate binary, or a rebuilt testenv container from the *same* tree content (an
-  external pin — `testenv`'s own `bd_pin`, DESIGN.md of `testenv` — is not itself in the tree).
+  has: a new gate binary, or a rebuilt testenv container from the *same* tree content.
   An entry recorded under either differing is a miss, never trusted with the right suite name
   attached to the wrong answer.
 * **The testenv image tag** is `testenv container tag` (`testenv/src/container.rs`'s
-  `Driver::image_tag`, a pure hash of `testenv/Containerfile` + `deps.toml` + the `bd_pin`),
+  `Driver::image_tag`, a pure hash of `testenv/Containerfile` + `deps.toml`),
   invoked once per base trial that has at least one non-absent red suite to ask about — never
   on a PASS, never on a red whose suites are all absent — via the same `World::run_gate` port
   already used for the targeted rerun, bare `testenv` on PATH (no tree-built binary; the

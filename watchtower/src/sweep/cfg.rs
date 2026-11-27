@@ -24,7 +24,7 @@ pub struct Cfg {
     pub noverdict_window_s: i64,
     pub noverdict_max: i64,
     pub yield_window_s: i64,
-    pub yield_sh: Option<String>,
+    pub yield_dir: PathBuf,
     pub disk_warn_pct: i64,
     pub mem_warn_mb: i64,
     pub meminfo_path: PathBuf,
@@ -37,7 +37,6 @@ pub struct Cfg {
     pub closed_stranded_warn_h: i64,
     pub drain_warn_mins: i64,
     pub idle_while_ready_n: usize,
-    pub systemctl: String,
     pub units: std::sync::Arc<dyn runtime::units::Units>,
 
     pub prompt_file: Option<PathBuf>,
@@ -56,7 +55,6 @@ pub struct Cfg {
     pub moot_timeout_s: u64,
     /// `SPIRA_RESOLVE_SH`, else `resolve`.
     pub resolve_bin: String,
-    pub branch_guard_sh: Option<String>,
     /// `spira-lc`: whether an incident bead is unfinished is its lifecycle row's answer.
     pub lc_bin: String,
 }
@@ -119,7 +117,7 @@ impl Cfg {
             noverdict_window_s: 172800,
             noverdict_max: 3,
             yield_window_s: 86400,
-            yield_sh: None,
+            yield_dir: d.join("gate-yield"),
             disk_warn_pct: 90,
             mem_warn_mb: 1500,
             meminfo_path: PathBuf::from(format!("{}/meminfo", system_paths::PROC)),
@@ -132,7 +130,6 @@ impl Cfg {
             closed_stranded_warn_h: 48,
             drain_warn_mins: 15,
             idle_while_ready_n: 5,
-            systemctl: "systemctl".into(),
             units: std::sync::Arc::new(runtime::units::ScriptedUnits::new(std::sync::Arc::new(runtime::ports::VirtualClock::new(0)))),
             prompt_file: None,
             lapsed_dir: None,
@@ -145,7 +142,6 @@ impl Cfg {
             cockpit_db: None,
             moot_timeout_s: 30,
             resolve_bin: "resolve".into(),
-            branch_guard_sh: None,
             lc_bin: "does/not/exist/spira-lc".into(),
         }
     }

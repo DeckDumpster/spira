@@ -323,20 +323,25 @@ printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res
 
 /// The round's cargo environment, spliced into the round's phases and the attribution probes
 /// alike so a probe cannot lack a tool the phase it re-runs has.
-macro_rules! unit_env_fn {
+macro_rules! unit_env_words {
     () => {
-        concat!(r#"unit_env() {
-    env -i RUST_TEST_THREADS="#, spira_config::run_test_threads_literal!(), r#" CARGO_BUILD_JOBS="$(nproc)" HOME="$HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
+        concat!(r#"env -i RUST_TEST_THREADS="#, spira_config::run_test_threads_literal!(), r#" CARGO_BUILD_JOBS="$(nproc)" HOME="$HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
         CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="${RUSTC_WRAPPER:-}" SCCACHE_IGNORE_SERVER_IO_ERROR=1 SCCACHE_SERVER_PORT="${SCCACHE_SERVER_PORT:-4226}" \
         SCCACHE_WEBDAV_ENDPOINT="${SCCACHE_WEBDAV_ENDPOINT:-}" SCCACHE_WEBDAV_KEY_PREFIX="${SCCACHE_WEBDAV_KEY_PREFIX:-}" \
         ${CARGO_TARGET_DIR:+CARGO_TARGET_DIR="$CARGO_TARGET_DIR"} \
         GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
-        cargo "$@"
+        "#)
+    };
 }
-"#)
+
+/// `unit_env` builds; `test_env` runs the tests, entering the test sandbox once for the whole run.
+macro_rules! unit_env_fn {
+    () => {
+        concat!("unit_env() {\n    ", $crate::run::unit_env_words!(), "cargo \"$@\"\n}\ntest_env() {\n    ", $crate::run::unit_env_words!(), "tools/test-sandbox/runner --around cargo \"$@\"\n}\n")
     };
 }
 pub(crate) use unit_env_fn;
+pub(crate) use unit_env_words;
 
 #[cfg(test)]
 pub(crate) const UNIT_ENV_FN: &str = unit_env_fn!();
@@ -699,11 +704,12 @@ prune_superseded_unit() {
     echo "round-vm: unit prune removed ${n} superseded files, ${bytes} bytes" >&2
 }
 write_unit_nextest_config() {
-    printf '"#, spira_config::unit_tier_config_printf!(), r#"' "$1" "$2" > "$3"
-    printf '%s' "${4:-}" >> "$3"
+    printf '"#, spira_config::unit_tier_config_printf!(), r#"' "$1" "$2" > "$5"
+    printf '%s' "${6:-}" >> "$5"
+    printf '"#, spira_config::unit_tier_config_integration_printf!(), r#"' "$3" "$4" >> "$5"
 }
 unit_nextest() {
-    unit_env "#, spira_config::unit_tier_unit!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#"
+    test_env "#, spira_config::unit_tier_unit!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#"
 }
 phase unit-build
 unit_build_mark="$HOME/round-work/.runtime/spira/batch-results/unit-build"
@@ -774,6 +780,12 @@ test_phase_bound() {
 nextest_reds() {
     awk '/^ *Summary \[/ { exit } match($0, /^ *(FAIL|TIMEOUT|SIG[A-Z]+|LEAK-FAIL|EXEC-FAIL) +\[[ >]*[0-9.]+s\] +\( *[0-9]+\/[0-9]+\) +[^ ]+ +/) { n = split(substr($0, 1, RLENGTH), head, " "); print $1, substr($0, RLENGTH + 1), head[n] }' "$1"
 }
+# Each red test's block of a nextest log: its status line and the output nextest printed under it.
+nextest_fail_blocks() {
+    awk '/^ *Summary \[/ || /^-+$/ { exit }
+         /^ *(TRY [0-9]+ )?[A-Z][A-Z-]+ +\[[ >]*[0-9.]+s\]/ { keep = ($0 ~ /^ *(TRY [0-9]+ )?(FAIL|TIMEOUT|SIG[A-Z]+|LEAK-FAIL|EXEC-FAIL) +\[/) }
+         keep' "$1"
+}
 # One line per failed test of a plain `cargo test` log: `FAIL dir:<directory> <test>` when cargo printed a
 # path that names the test's directory, else (a path relative to its package) `FAIL test:<target> <test>`,
 # the target read off the `(<exe>-<hash>)` of the `Running` line. A test libtest reported running over its
@@ -838,6 +850,8 @@ test_phase_red() {
         tail -100 "$log"
         [ ! -s "$hung" ] || { echo "round-vm: ${stage^^}: HUNG (test<TAB>binary):"; cat "$hung"; }
     } > "$out"
+    nextest_fail_blocks "$log" | head -4000 > "${out%.out}-failures.out"
+    [ -s "${out%.out}-failures.out" ] || rm -f "${out%.out}-failures.out"
     {
         printf '{"stage":"%s","verdict":"red","ran_before_suites":%s,"cause":"%s","secs":%s,"last_binary":"%s","long_running":[' \
             "$stage" "$before" "$(json_str "$cause")" "$secs" "$(json_str "$last")"
@@ -1055,6 +1069,12 @@ if [ -n "$lint" ] && { [ "${lint_rc:-0}" -ne 0 ] || [ -n "$fence_fail" ]; }; the
     kill "$sampler_pid" 2>/dev/null
     exit 1
 fi
+write_round_nextest_config() {
+    local secs periods tsecs tperiods
+    secs="$(target/release/spira-config get spira.unit_test_deadline_secs)" && periods="$(target/release/spira-config get spira.unit_test_deadline_periods)" || { echo "round-vm: cannot read the unit-test deadline (spira.unit_test_deadline_secs, spira.unit_test_deadline_periods) from the round's config" >&2; exit 2; }
+    tsecs="$(target/release/spira-config get spira.integration_test_deadline_secs)" && tperiods="$(target/release/spira-config get spira.integration_test_deadline_periods)" || { echo "round-vm: cannot read the tests/ deadline (spira.integration_test_deadline_secs, spira.integration_test_deadline_periods) from the round's config" >&2; exit 2; }
+    write_unit_nextest_config "$secs" "$periods" "$tsecs" "$tperiods" "$HOME/round-nextest.toml" "$deny_filter_line"
+}
 # THE WORKSPACE'S OWN TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo), in the
 # standard two phases (sp-cddf76). UNIT FIRST: the tests inside src/ (--lib --bins) run to the end
 # BEFORE any suite. They are the cheapest red the round can find, so a red there ends the pass:
@@ -1072,7 +1092,7 @@ if [ -n "$only" ]; then
         : > "$integ_hung"
         rc=0
         write_round_nextest_config
-        unit_env "#, spira_config::unit_tier_integration!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#" > ~/round-integration-tests.log 2>&1 || rc=$?
+        test_env "#, spira_config::unit_tier_integration!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#" > ~/round-integration-tests.log 2>&1 || rc=$?
         if [ "$rc" -ne 0 ]; then
             phase_failed integration-tests "$rc"
             test_phase_red integration-tests ~/round-integration-tests.log "$rc" "$(( $(date +%s) - only_t0 ))" "$integ_hung" "$rdir/integration-tests.out" "$rdir/integration.json" false
@@ -1095,11 +1115,6 @@ phase unit-tests
 rdir="$HOME/round-work/.runtime/spira/batch-results"
 write_unit_timings() {
     { echo "unit_build_secs $unit_build_secs"; echo "unit_secs $unit_secs"; grep -E '"#, spira_config::unit_tier_timing_lines!(), r#"' ~/round-unit-tests.log; } > "$rdir/unit-timings" || true
-}
-write_round_nextest_config() {
-    local secs periods
-    secs="$(target/release/spira-config get spira.unit_test_deadline_secs)" && periods="$(target/release/spira-config get spira.unit_test_deadline_periods)" || { echo "round-vm: cannot read the unit-test deadline from the round's config" >&2; exit 2; }
-    write_unit_nextest_config "$secs" "$periods" "$HOME/round-nextest.toml" "$deny_filter_line"
 }
 # One line per `test:` row of the deny list ($1) saying whether nextest ($2) reported a test ending `::<id>` skipped.
 unit_registry_skips() {
@@ -1147,7 +1162,7 @@ else
 fi
 integ_cargo() {
     local rc=0
-    unit_env "#, spira_config::unit_tier_integration!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#" || rc=$?
+    test_env "#, spira_config::unit_tier_integration!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#" || rc=$?
     return "$rc"
 }
 : > ~/round-integration-tests.log
@@ -2322,7 +2337,7 @@ pub const UNIT_TIMINGS: &str = "unit-timings";
 /// each phase's verdict as a record and its failures' output — the unit phase's, before any
 /// suite, and the integration phase's, beside them. They sit outside testenv's leaf, so the host
 /// carries them over by name, as it does [`FENCE_TIMES`].
-pub const TEST_PHASE_FILES: [&str; 4] = ["unit.json", "unit-tests.out", "integration.json", "integration-tests.out"];
+pub const TEST_PHASE_FILES: [&str; 6] = ["unit.json", "unit-tests.out", "unit-tests-failures.out", "integration.json", "integration-tests.out", "integration-tests-failures.out"];
 
 /// The two counts the VM script rewrites while tests run: nextest's unit tests, and the integration binaries.
 pub const PROGRESS_FILES: [&str; 2] = [crate::progress::UNIT_FILE, crate::progress::INTEGRATION_FILE];
@@ -4043,9 +4058,10 @@ mod tests {
         std::fs::write(d.path().join("log"), log).unwrap();
         std::fs::write(d.path().join("hung"), hung).unwrap();
         let script = format!(
-            "set -uo pipefail\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\ncd \"$HOME\"\ntest_phase_red unit-tests log 101 7 hung out.txt unit.json true\ncat out.txt",
+            "set -uo pipefail\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\ncd \"$HOME\"\ntest_phase_red unit-tests log 101 7 hung unit-tests.out unit.json true\ncat unit-tests.out",
             script_fn("last_binary"),
             script_fn("nextest_reds"),
+            script_fn("nextest_fail_blocks"),
             script_fn("cargo_test_reds"),
             script_fn("long_running"),
             script_fn("long_running_end"),
@@ -4056,6 +4072,38 @@ mod tests {
         let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", std::env::var("PATH").unwrap()).output().unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         (String::from_utf8(out.stdout).unwrap(), std::fs::read_to_string(d.path().join("unit.json")).unwrap())
+    }
+
+    fn red_phase_failures(log: &str) -> Option<String> {
+        let d = TempDir::new();
+        std::fs::write(d.path().join("log"), log).unwrap();
+        std::fs::write(d.path().join("hung"), "").unwrap();
+        let fns: Vec<String> = ["last_binary", "nextest_reds", "nextest_fail_blocks", "cargo_test_reds", "long_running", "long_running_end", "test_phase_class", "json_str", "test_phase_red"].iter().map(|f| script_fn(f)).collect();
+        let script = format!("set -uo pipefail\n{}\ncd \"$HOME\"\ntest_phase_red integration-tests log 100 7 hung integration-tests.out integration.json false", fns.join("\n"));
+        let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", system_paths::SYSTEM_PATH_MIN).output().unwrap();
+        assert!(out.status.success() && out.stderr.is_empty(), "{}", String::from_utf8_lossy(&out.stderr));
+        std::fs::read_to_string(d.path().join("integration-tests-failures.out")).ok()
+    }
+
+    #[test_id(tqmq4at)]
+    #[test]
+    fn a_red_phase_keeps_each_failing_tests_nextest_block_and_nothing_of_the_passes() {
+        let log = "    Starting 4 tests across 1 binary\n        PASS [   0.007s] (1/4) fx t::quick\n\
+                   \x20       FAIL [   0.010s] (2/4) fx t::bad\n  stdout \u{2500}\u{2500}\u{2500}\n    running 1 test\n  stderr \u{2500}\u{2500}\u{2500}\n    thread 't::bad' panicked at fx/src/t.rs:9:5:\n    assertion `left == right` failed\n\
+                   \x20       PASS [   0.011s] (3/4) fx t::fine\n\
+                   \x20    TIMEOUT [   4.002s] (4/4) fx t::sleeper\n  stdout \u{2500}\u{2500}\u{2500}\n    waiting on the lock\n\
+                   ------------\n     Summary [   4.005s] 4 tests run: 2 passed, 1 failed, 1 timed out\n        FAIL [   0.010s] (2/4) fx t::bad\n     TIMEOUT [   4.002s] (4/4) fx t::sleeper\n";
+        let kept = red_phase_failures(log).expect("a red nextest phase keeps its failures");
+        assert_eq!(
+            kept,
+            "        FAIL [   0.010s] (2/4) fx t::bad\n  stdout \u{2500}\u{2500}\u{2500}\n    running 1 test\n  stderr \u{2500}\u{2500}\u{2500}\n    thread 't::bad' panicked at fx/src/t.rs:9:5:\n    assertion `left == right` failed\n     TIMEOUT [   4.002s] (4/4) fx t::sleeper\n  stdout \u{2500}\u{2500}\u{2500}\n    waiting on the lock\n"
+        );
+    }
+
+    #[test_id(tp3cxll)]
+    #[test]
+    fn a_red_phase_with_no_failing_nextest_test_keeps_no_failures_file() {
+        assert_eq!(red_phase_failures("error: could not compile `fx`\n"), None);
     }
 
     #[test_id(tba3wga)]
@@ -4763,10 +4811,16 @@ mod tests {
         let cfg = REMOTE_SCRIPT.find("spira-config get spira.unit_test_deadline_secs").unwrap();
         let run = REMOTE_SCRIPT.find("unit_nextest > ~/round-unit-tests.log 2>&1 &").unwrap();
         assert!(cfg < run && REMOTE_SCRIPT.contains("spira-config get spira.unit_test_deadline_periods"));
-        assert!(script_fn("write_round_nextest_config").contains("write_unit_nextest_config \"$secs\" \"$periods\" \"$HOME/round-nextest.toml\""));
+        let round = script_fn("write_round_nextest_config");
+        for key in ["spira.integration_test_deadline_secs", "spira.integration_test_deadline_periods"] {
+            assert!(round.contains(&format!("spira-config get {key}")), "{round}");
+        }
+        let call = REMOTE_SCRIPT[..run].rfind("\nwrite_round_nextest_config\n").expect("the keys are read before unit_nextest runs");
+        assert!(call < run);
+        assert!(round.contains("write_unit_nextest_config \"$secs\" \"$periods\" \"$tsecs\" \"$tperiods\" \"$HOME/round-nextest.toml\""));
         let body = script_fn("unit_nextest");
         let words = spira_config::unit_tier::unit_words("\"$HOME/round-nextest.toml\"", Some("unittest"), "--workspace", spira_config::unit_tier::LIB_BINS);
-        assert!(body.contains(&format!("unit_env {words}")), "the definition's words: {body}");
+        assert!(body.contains(&format!("test_env {words}")), "the definition's words: {body}");
         assert!(body.contains("--cargo-profile unittest --features integration --config profile.unittest.incremental=false --workspace"), "same profile and flags as the compile: {body}");
         let cfg = REMOTE_SCRIPT.split("write_unit_nextest_config() {").nth(1).and_then(|a| a.split("\n}\n").next()).unwrap();
         assert!(cfg.contains(spira_config::unit_tier_config_printf!()), "{cfg}");
@@ -5013,12 +5067,25 @@ mod tests {
         assert!(REMOTE_SCRIPT.contains("\"$HOME/round-nextest.toml\" \"$deny_filter_line\""));
     }
 
+    #[test_id(tt7rdl5)]
+    #[test]
+    fn the_rounds_test_runs_enter_the_sandbox_once_and_its_build_does_not() {
+        let enters = |name: &str| script_fn(name).contains("test_env ");
+        assert!(enters("unit_nextest") && enters("integ_cargo"));
+        let only = REMOTE_SCRIPT.split("    integration-tests)\n").nth(1).and_then(|a| a.split(";;").next()).unwrap();
+        assert!(only.contains("test_env ") && !only.contains("unit_env "), "--only integration-tests: {only}");
+        assert!(!script_fn("unit_cargo").contains("test_env"), "the build stays outside the sandbox");
+        let tail = |f: &str| UNIT_ENV_FN.split(f).nth(1).unwrap().lines().find(|l| l.contains("cargo \"$@\"")).unwrap().trim().to_string();
+        assert!(tail("test_env() {").ends_with("tools/test-sandbox/runner --around cargo \"$@\""));
+        assert_eq!(tail("unit_env() {"), "cargo \"$@\"");
+    }
+
     #[test_id(tlprmgr)]
     #[test]
     fn the_rounds_integration_command_is_nextest_over_the_rounds_config_and_passes_no_skips() {
         let body = script_fn("integ_cargo");
         let out = std::process::Command::new("bash")
-            .args(["-c", &format!("unit_env() {{ echo \"$*\"; }}\n{body}\ninteg_cargo", )])
+            .args(["-c", &format!("test_env() {{ echo \"$*\"; }}\n{body}\ninteg_cargo")])
             .output()
             .unwrap();
         let first = String::from_utf8_lossy(&out.stdout).lines().next().unwrap().to_string();
@@ -5037,11 +5104,44 @@ mod tests {
         let func = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap() + 3];
         let out = d.path().join("c.toml");
         let ok = std::process::Command::new("bash")
-            .args(["-c", &format!("{func}\nwrite_unit_nextest_config 7 3 \"$1\" \"$2\""), "bash", out.to_str().unwrap(), &deny.config_filter_line()])
+            .args(["-c", &format!("{func}\nwrite_unit_nextest_config 7 3 11 4 \"$1\" \"$2\""), "bash", out.to_str().unwrap(), &deny.config_filter_line()])
             .status()
             .unwrap();
         assert!(ok.success());
-        assert_eq!(std::fs::read_to_string(out).unwrap(), spira_config::unit_tier::nextest_config(7, 3, &deny));
+        assert_eq!(std::fs::read_to_string(out).unwrap(), spira_config::unit_tier::nextest_config((7, 3), (11, 4), &deny));
+    }
+
+    #[test_id(t319hcz)]
+    #[test]
+    fn the_round_config_writer_is_defined_before_the_script_first_calls_it() {
+        let defined = REMOTE_SCRIPT.find("\nwrite_round_nextest_config() {").expect("defined");
+        let called = REMOTE_SCRIPT.match_indices("write_round_nextest_config\n").map(|(i, _)| i).next().expect("called");
+        assert!(defined < called, "bash runs top down: the ONLY integration-tests step calls it first");
+    }
+
+    // Runs bash: the writer exists only as shell text. spira-config is stubbed so a test builds no binary.
+    #[test_id(ta7a5ym)]
+    #[test]
+    fn each_round_deadline_comes_from_its_own_config_key_and_an_unreadable_tests_key_refuses() {
+        let d = crate::testutil::TempDir::new();
+        std::fs::create_dir_all(d.path().join("target/release")).unwrap();
+        testkit::write_exe(
+            d.path().join("target/release/spira-config"),
+            "#!/bin/sh\n[ \"$2\" != \"$FAIL_KEY\" ] || exit 1\ncase \"$2\" in\nspira.unit_test_deadline_secs) echo 7 ;;\nspira.unit_test_deadline_periods) echo 3 ;;\nspira.integration_test_deadline_secs) echo 11 ;;\nspira.integration_test_deadline_periods) echo 4 ;;\n*) exit 1 ;;\nesac\n",
+        );
+        let body = format!("{}{}write_round_nextest_config", script_fn("write_unit_nextest_config"), script_fn("write_round_nextest_config"));
+        let run = |fail: &str| {
+            std::process::Command::new("bash").args(["-c", &body]).current_dir(d.path()).env("HOME", d.path()).env("FAIL_KEY", fail).env("deny_filter_line", "").output().unwrap()
+        };
+        assert!(run("").status.success());
+        let written = std::fs::read_to_string(d.path().join("round-nextest.toml")).unwrap();
+        assert_eq!(written, spira_config::unit_tier::nextest_config((7, 3), (11, 4), &Default::default()));
+        for key in ["spira.integration_test_deadline_secs", "spira.integration_test_deadline_periods"] {
+            let out = run(key);
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(out.status.code(), Some(2), "{key}: {err}");
+            assert!(err.contains("spira.integration_test_deadline_secs") && err.contains("spira.integration_test_deadline_periods"), "{err}");
+        }
     }
 
     /// A rerun checks the survivors' tree out over `round-work`, so layers that name files

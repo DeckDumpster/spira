@@ -10,8 +10,12 @@ name = "gate"
 path = "src/main.rs"
 test = false
 
+# The stop test signals a real supervisor, to read back the record testenv writes.
+[package.metadata.spira]
+test-bins = ["testenv"]
+
 [features]
-integration = ["incident/integration", "spira-config/integration", "spira-desired-state/integration", "spira-otel/integration", "suite-select/integration", "system-paths/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration"]
+integration = ["incident/integration", "ports/integration", "spira-pub/integration", "spira-config/integration", "spira-desired-state/integration", "spira-otel/integration", "strand/integration", "suite-select/integration", "system-paths/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration"]
 [dependencies]
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
@@ -20,6 +24,7 @@ sha2 = "0.10"
 toml = "0.8"
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
+spira-pub = { path = "../spira-pub" }
 tsd = { path = "../tsd" }
 spira-desired-state = { path = "../desired-state" }
 suite-select = { path = "../suite-select" }
@@ -27,13 +32,10 @@ incident = { path = "../incident" }
 system-paths = { path = "../system-paths" }
 
 [dev-dependencies]
+ports = { path = "../ports" }
 spira-test-id = { path = "../spira-test-id" }
+strand = { path = "../strand" }
 testkit = { path = "../testkit" }
-
-[[test]]
-name = "warm_build"
-path = "tests/warm_build.rs"
-required-features = ["integration"]
 
 [[test]]
 name = "spira_scripts"

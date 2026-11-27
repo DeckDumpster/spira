@@ -10,6 +10,8 @@ integration = ["system-paths/integration", "spira-test-id/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 libc = "0.2"
+# TLS off: the broker is a Unix socket.
+rumqttc = { version = "0.25.1", default-features = false }
 toml = "0.8"
 
 [dev-dependencies]

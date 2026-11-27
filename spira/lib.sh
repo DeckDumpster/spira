@@ -1301,12 +1301,7 @@ all_partition_members() {
 # for a structural reason the harness cannot resolve on its own. "Nothing ready" and "beads
 # ready but stuck" look identical to the sentinel; this check names each bead and why.
 #
-# FOUR CATEGORIES, each found by a different predicate:
-#
-#   unclaimable          no persona can claim it: rune: preference does not match the
-#                        partition, or the bead carries no partition label at all. The
-#                        sentinel reports every queue empty, truthfully; this names which
-#                        beads are responsible. (Reuses detect_unclaimable_ready logic.)
+# THREE CATEGORIES, each found by a different predicate:
 #
 #   ask-no-overseer      carries SPIRA_ASK_LABEL (excluded from every rune predicate) but
 #                        lacks overseer (the label the decisions pane selects on). The bead

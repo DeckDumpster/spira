@@ -104,7 +104,7 @@ It belongs to whoever runs the harness. No shared repository holds it, and no be
 
 ```sh
 make build     # cargo build --release --workspace
-make test      # cargo test --workspace --features integration
+make test      # cargo test --workspace --features integration, inside tools/test-sandbox/runner --around
 make dist      # build + spira/build-tarball.sh build --workspace .
 ```
 
@@ -117,7 +117,7 @@ pinned by `rust-toolchain.toml`.
 
 ## Tests
 
-The tree carries no shell suite: tests are Rust (`cargo test`, `tests/` under `--features
+The tree carries no shell suite: tests are Rust (`tools/test-sandbox/runner --around cargo test`, `tests/` under `--features
 integration`, and `sim/` for behaviour over time). `no-new-shell-suite` refuses a new
 `spira/test-*.sh`, and an empty suite corpus selects nothing rather than refusing.
 `testenv` stages the tree and runs a corpus in a podman container; never run a suite directly
@@ -129,12 +129,12 @@ testenv status [--json] <results-dir>
 ```
 
 `testenv testdb …` manages throwaway Dolt instances for suites that need the real engine.
-Rust unit tests run with `cargo test -p <crate>`; `work crates` prints the `-p` words for your
+Rust unit tests run with `tools/test-sandbox/runner --around cargo test -p <crate>`; `work crates` prints the `-p` words for your
 branch's diff.
 
 Integration tests are opt-in. Every `tests/` target is declared `[[test]]` with
 `required-features = ["integration"]` and its package sets `autotests = false`, so plain
-`cargo test -p <crate>` runs unit tests only and `cargo test -p <crate> --features integration`
+`tools/test-sandbox/runner --around cargo test -p <crate>` runs unit tests only and the same with `--features integration`
 runs both. The gate, the round, `make test` and `work checks` pass the feature. `spira-lint`'s
 `integration-opt-in` rule refuses a `tests/` target that is undeclared, declared without the
 feature, or declared at a path that is not on disk; a new `tests/` file needs its `[[test]]`.

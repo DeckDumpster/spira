@@ -834,7 +834,7 @@ pub fn ask(e: &crate::Effects, input: &str) -> Result<String, String> {
     let leg = leg_of(input, ASK)?;
     let env = e.concierge_mail.as_deref().or(e.mail.as_deref()).ok_or("no mail environment configured")?;
     let args = mail::cmds::SendArgs { mailbox: "concierge", from: Some("landing <landing@spira>"), subject: &leg.cause, kind: "question", default: ROUND_LOSER_DEFAULT, class: "", bead: &leg.id, urgent: false, digest: false, dry_run: false, requested_by: "" };
-    let bd = mail::bead::BdCli { bdq: String::new(), conn_retries: 1 };
+    let bd = mail::bead::BdCli { conn_retries: 1 };
     let body = format!("## Question\n{}. Its pull request keeps falling behind {} without landing. Rebase it by hand, or let it go?\n\n## Default\n{ROUND_LOSER_DEFAULT}\n", leg.cause, leg.base_fq);
     mail::cmds::send(&bd, env, &args, body).map(|o| o.delivered_path.display().to_string())
 }

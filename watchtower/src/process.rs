@@ -103,8 +103,10 @@ pub fn sweep_cfg() -> Result<sweep::Cfg, String> {
         Duration::from_secs(reg_i64("SPIRA_WATCHTOWER_PROBE_TIMEOUT_S")?.max(1) as u64),
         Duration::from_secs(start_s.saturating_sub(30).max(30)),
     );
+    let run = PathBuf::from(reg("SPIRA_RUN")?);
+    let yields = strand::yield_report::Sources::resolve(&run, getenv);
     Ok(sweep::Cfg {
-        spira_run: PathBuf::from(reg("SPIRA_RUN")?),
+        spira_run: run,
         cockpit_view_dir: getenv("XDG_RUNTIME_DIR").map(|d| spira_config::cockpit_view_dir(std::path::Path::new(&d))),
         lib_sh_dir: lib_sh_dir(),
         db: reg("SPIRA_DB")?,
@@ -117,8 +119,8 @@ pub fn sweep_cfg() -> Result<sweep::Cfg, String> {
         gate_log: getenv("SPIRA_GATE_LOG").map(PathBuf::from),
         noverdict_window_s: reg_i64("SPIRA_NOVERDICT_WINDOW")?,
         noverdict_max: reg_i64("SPIRA_NOVERDICT_MAX")?,
-        yield_window_s: getenv_i64("SPIRA_YIELD_WINDOW", 86400),
-        yield_sh: getenv("SPIRA_YIELD_SH"),
+        yield_window_s: yields.window_s as i64,
+        yield_dir: yields.dir,
         disk_warn_pct: getenv_i64("SPIRA_DISK_WARN_PCT", 90),
         mem_warn_mb: getenv_i64("SPIRA_MEM_WARN_MB", 1500),
         meminfo_path: meminfo_path(),
@@ -131,7 +133,6 @@ pub fn sweep_cfg() -> Result<sweep::Cfg, String> {
         closed_stranded_warn_h: getenv_i64("SPIRA_CLOSED_STRANDED_WARN_H", 48),
         drain_warn_mins: getenv_i64("SPIRA_DRAIN_WARN_MINS", 15),
         idle_while_ready_n: getenv_i64("SPIRA_IDLE_WHILE_READY_N", 5).max(0) as usize,
-        systemctl: getenv("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()),
         units: runtime::units::host(getenv("SPIRA_SYSTEMCTL").as_deref()),
         prompt_file: getenv("SPIRA_WATCH_PROMPT_FILE").map(PathBuf::from),
         lapsed_dir: getenv("SPIRA_LAPSED_DIR").map(PathBuf::from),
@@ -147,7 +148,6 @@ pub fn sweep_cfg() -> Result<sweep::Cfg, String> {
             None => spira_config::release_env::tool("resolve")?,
         },
         lc: spira_store::lc_call::LcClient::configured()?,
-        branch_guard_sh: getenv("SPIRA_BRANCH_GUARD_SH"),
         lc_bin: spira_store::lifecycle_row::lc_bin()?,
     })
 }

@@ -4,6 +4,13 @@
 //! files, so it carries its own trait rather than widening that one under every implementor.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+/// [`RealSystemctl::running_exe`] over `systemctl`'s `(succeeded, stdout, stderr)`.
+fn running_exe_via(unit: &str, systemctl: impl FnOnce(&[&str]) -> (bool, String, String)) -> Option<PathBuf> {
+    let (ok, out, _) = systemctl(&["show", unit, "-p", "MainPID", "--value"]);
+    release::systemctl::main_pid_exe(&out).filter(|_| ok)
+}
 
 pub trait Systemctl {
     fn daemon_reload(&self) -> Result<(), String>;
@@ -34,6 +41,11 @@ pub trait Systemctl {
     fn start(&self, unit: &str) -> Result<(), String>;
     /// `systemctl kill` — bypasses job control, for a unit that refuses a restart job.
     fn kill(&self, unit: &str) -> Result<(), String>;
+    /// The executable the unit's main process runs now (`/proc/<MainPID>/exe`, readable even
+    /// after its path was replaced), or `None` when it has no main process.
+    fn running_exe(&self, _unit: &str) -> Option<PathBuf> {
+        None
+    }
     /// `Type=` (empty when the unit cannot be shown).
     fn unit_type(&self, unit: &str) -> String;
     /// Names from `list-unit-files --no-legend <glob>` union `list-units --all --no-legend
@@ -174,6 +186,9 @@ impl Systemctl for RealSystemctl {
             Err(err)
         }
     }
+    fn running_exe(&self, unit: &str) -> Option<PathBuf> {
+        running_exe_via(unit, |args| self.run(args))
+    }
     fn unit_type(&self, unit: &str) -> String {
         self.run(&["show", "-p", "Type", "--value", unit]).1.trim().to_string()
     }
@@ -218,6 +233,9 @@ pub struct FakeSystemctl {
     pub batched_queries: std::cell::Cell<u32>,
     /// A running unit that reads inactive after this many more `is_active` polls.
     pub finishes_after_polls: std::cell::RefCell<BTreeMap<String, u32>>,
+    /// `enable` and `enable_now` refuse these units.
+    pub enable_fails: std::cell::RefCell<std::collections::BTreeSet<String>>,
+    pub running_exes: std::cell::RefCell<BTreeMap<String, PathBuf>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -265,10 +283,16 @@ impl Systemctl for FakeSystemctl {
         units.iter().map(|u| m.get(u).and_then(|u| u.enabled.clone())).collect()
     }
     fn enable(&self, unit: &str) -> Result<(), String> {
+        if self.enable_fails.borrow().contains(unit) {
+            return Err(format!("{unit}: simulated enable failure"));
+        }
         self.units.borrow_mut().entry(unit.to_string()).or_default().enabled = Some("enabled".into());
         Ok(())
     }
     fn enable_now(&self, unit: &str) -> Result<(), String> {
+        if self.enable_fails.borrow().contains(unit) {
+            return Err(format!("{unit}: simulated enable failure"));
+        }
         self.enabled_now.borrow_mut().push(unit.to_string());
         self.order.borrow_mut().push(format!("enable_now {unit}"));
         let mut m = self.units.borrow_mut();
@@ -311,6 +335,9 @@ impl Systemctl for FakeSystemctl {
         self.kills.borrow_mut().push(unit.to_string());
         self.units.borrow_mut().entry(unit.to_string()).or_default().active = true;
         Ok(())
+    }
+    fn running_exe(&self, unit: &str) -> Option<PathBuf> {
+        self.running_exes.borrow().get(unit).cloned()
     }
     fn unit_type(&self, unit: &str) -> String {
         self.units.borrow().get(unit).map(|u| u.kind.clone()).unwrap_or_default()
@@ -367,6 +394,19 @@ mod tests {
         assert_eq!(sc.is_active_many(&u), vec![true, false]);
         assert_eq!(sc.is_enabled_many(&u), vec![Some("enabled".into()), Some("disabled".into())]);
         assert_eq!(calls(&log), 2);
+    }
+
+    #[test_id(to3gnqj)]
+    #[test]
+    fn the_running_executable_comes_from_the_main_pid_systemctl_shows() {
+        let shown = |ok: bool| {
+            running_exe_via("a.service", |args| {
+                assert_eq!(args, ["show", "a.service", "-p", "MainPID", "--value"]);
+                (ok, "42\n".into(), String::new())
+            })
+        };
+        assert_eq!(shown(true), Some(std::path::Path::new(system_paths::PROC).join("42/exe")));
+        assert_eq!(shown(false), None, "a failed show names no process");
     }
 
     #[test_id(tuckxsb)]

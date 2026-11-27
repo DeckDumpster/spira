@@ -231,7 +231,7 @@ pub fn bootstrap_decision(prod: &str, releases_canon: &str) -> Result<(), String
 
 /// `_db_git_guard`: refuse a database inside a git checkout (any `.git` in a directory
 /// above it), or whose own repository has a remote. The database's own repository with no
-/// remote is allowed — `bd init` creates exactly that.
+/// remote is allowed.
 pub fn db_git_guard(db: &str, own_repo_remotes: &[String], ancestor_git_dir: Option<&str>) -> Result<(), String> {
     if db.is_empty() {
         return Ok(());
@@ -252,19 +252,28 @@ pub fn db_git_guard(db: &str, own_repo_remotes: &[String], ancestor_git_dir: Opt
     Ok(())
 }
 
-/// `_seed_when`: when phase 3 should run `seed.sh` — "now" unless the database is
-/// server-mode and its server is not yet up, in which case it defers to phase 4.
+/// `_seed_when`: when phase 3 should run `seed.sh` — "now" unless the database already
+/// existed and its server is not yet up, in which case it defers to phase 4.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SeedWhen {
     Now,
     Defer,
 }
 
-pub fn seed_when(fresh: bool, server_mode: bool, server_up: bool) -> SeedWhen {
-    if fresh || !server_mode || server_up {
+pub fn seed_when(fresh: bool, server_up: bool) -> SeedWhen {
+    if fresh || server_up {
         SeedWhen::Now
     } else {
         SeedWhen::Defer
+    }
+}
+
+/// The beads store is always a server's: with no data directory there is no server to create it
+/// on, so install refuses by the key's name.
+pub fn require_dolt_data(dolt_data: Option<&str>) -> Result<String, String> {
+    match dolt_data {
+        Some(dir) if !dir.is_empty() => Ok(dir.to_string()),
+        _ => Err("SPIRA_DOLT_DATA is unset — set spira.dolt_data to the directory the dolt server serves".into()),
     }
 }
 
@@ -421,11 +430,10 @@ mod tests {
 
     #[test_id(t3xr4jb)]
     #[test]
-    fn seed_when_defers_only_for_a_down_server_mode_database() {
-        assert_eq!(seed_when(true, true, false), SeedWhen::Now); // fresh always seeds now
-        assert_eq!(seed_when(false, false, false), SeedWhen::Now); // embedded mode
-        assert_eq!(seed_when(false, true, true), SeedWhen::Now); // server already up
-        assert_eq!(seed_when(false, true, false), SeedWhen::Defer);
+    fn seed_when_defers_only_for_an_existing_database_whose_server_is_down() {
+        assert_eq!(seed_when(true, false), SeedWhen::Now); // fresh always seeds now
+        assert_eq!(seed_when(false, true), SeedWhen::Now); // server already up
+        assert_eq!(seed_when(false, false), SeedWhen::Defer);
     }
 }
 
@@ -460,5 +468,15 @@ mod traverse_tests {
         assert_eq!(untraversable_ancestor(&bin, None), Some(closed.path().to_path_buf()));
         let open = dir_with(0o755);
         assert_eq!(untraversable_ancestor(&open.path().join("bin/spira-lc"), None), None);
+    }
+
+    #[test_id(tbohv7b)]
+    #[test]
+    fn an_unset_dolt_data_directory_is_refused_by_the_keys_name() {
+        for unset in [None, Some("")] {
+            let e = require_dolt_data(unset).unwrap_err();
+            assert!(e.contains("SPIRA_DOLT_DATA") && e.contains("spira.dolt_data"), "{e}");
+        }
+        assert_eq!(require_dolt_data(Some("d")), Ok("d".to_string()));
     }
 }

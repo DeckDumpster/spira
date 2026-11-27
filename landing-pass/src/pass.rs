@@ -75,6 +75,10 @@ struct Job {
     fix: bool,
 }
 
+fn carries_nothing_mark(bead: &BeadRow) -> bool {
+    bead.reason.as_deref() == Some(lifecycle::bead::CERTIFIES_NOTHING_MARK)
+}
+
 /// Per-repository walk state.
 pub(crate) struct Walk<'r> {
     pub repo: &'r RepoRow,
@@ -185,16 +189,16 @@ impl<'a> Pass<'a> {
         }
     }
 
-    /// A GatePass the row refused because it holds another tip: the gate judged the branch, so
-    /// the row takes the branch tip and the same pass is offered once more.
-    fn lc_certify_pass(&self, id: &str, tip: &str, detail: &str) -> bool {
-        if self.lc_certify(id, tip, "pass", detail) {
+    /// A verdict the row refused because it holds another tip: the gate judged the branch, so
+    /// the row takes the branch tip and the same verdict is offered once more.
+    fn lc_certify_at_tip(&self, id: &str, tip: &str, outcome: &str, detail: &str) -> bool {
+        if self.lc_certify(id, tip, outcome, detail) {
             return true;
         }
         match self.lc.resubmit_submitted(id, tip) {
             Ok(a) => {
                 self.log(&format!("CHECK6 {id}: lifecycle held another tip — resubmitted {tip}: {a}"));
-                self.lc_certify(id, tip, "pass", detail)
+                self.lc_certify(id, tip, outcome, detail)
             }
             Err(why) => {
                 self.log(&format!("CHECK6 {id}: LIFECYCLE: resubmit of {tip} did not happen ({why})"));
@@ -631,6 +635,12 @@ impl<'a> Pass<'a> {
             self.gate_provisional(w, br, id, bead);
             return Flow::Next;
         }
+        // A move that rewrote the reason (a closed batch's requeue) took the mark: only a new verdict restores it.
+        if self.files.marked(br, &tip) && !carries_nothing_mark(bead) {
+            self.log(&format!("CHECK6 {id}: {br} at {tip} no longer carries its certifies-nothing mark — gating it again"));
+            self.files.forget_marked(br);
+            self.files.clear_backoff(br);
+        }
         if self.s.gate_worker {
             return self.certify_queued(w, br, id, bead, &tip);
         }
@@ -755,10 +765,26 @@ impl<'a> Pass<'a> {
         let name = &repo.name;
         let tip = tip.to_string();
         if g.outcome == GateOutcome::NoVerdict && g.reason_or("unspecified") == spira_config::gate_source::CERTIFIES_NOTHING {
-            self.log(&format!("CHECK6 {id}: {br} in {name} at {tip} certifies nothing — its repository declares tests its gate does not run; the bead stays SUBMITTED"));
-            self.files.back_off(br, &tip, self.clock.now() + self.s.noverdict_class_window.max(0) as u64);
+            let mut window = self.s.noverdict_class_window;
+            if repo.mode == LandMode::Queue {
+                if self.git.rev_parse(&repo.path, br).unwrap_or_default() != tip {
+                    self.log(&format!("CHECK6 {id}: {br} moved during the gate — verdict on {tip} not recorded"));
+                    return Flow::Next;
+                }
+                let already = self.files.marked(br, &tip) && carries_nothing_mark(bead);
+                if already || self.lc_certify_at_tip(id, &tip, "nothing", spira_config::gate_source::CERTIFIES_NOTHING) {
+                    self.files.note_marked(br, &tip);
+                    self.log(&format!("CHECK6 {id}: {br} in {name} at {tip} certifies nothing — admitted to its batch provisionally; the batch PR's CI is its check"));
+                } else {
+                    window = self.s.gate_backoff;
+                }
+            } else {
+                self.log(&format!("CHECK6 {id}: {br} in {name} at {tip} certifies nothing — its repository declares tests its gate does not run; the bead stays SUBMITTED"));
+            }
+            self.files.back_off(br, &tip, self.clock.now() + window.max(0) as u64);
             return Flow::Next;
         }
+        self.files.forget_marked(br);
         if g.outcome != GateOutcome::Pass {
             let reason = g.reason_or("unspecified");
             self.log(&format!("CHECK6 {id}: certification gate {} on {br} in {name} ({reason})", g.outcome.word()));
@@ -855,7 +881,7 @@ impl<'a> Pass<'a> {
             self.log(&format!("CHECK6 {id}: bead is now {st} (was closed at scan time) — not certifying {br}"));
             return Flow::Next;
         }
-        if !self.lc_certify_pass(id, &tip, "gate") {
+        if !self.lc_certify_at_tip(id, &tip, "pass", "gate") {
             self.files.refuse_pass(br, &tip);
             self.log(&format!("CHECK6 {id}: lifecycle refused GatePass at {tip} — {br} stays uncertified"));
             return Flow::Next;
@@ -1132,7 +1158,7 @@ impl<'a> Pass<'a> {
             let (closed, _) = self.handed_on_now(id);
             if closed {
                 self.log(&format!("CHECK6 {id}: base-fix: {br} is green on {name}'s red suite {suite} — certifying"));
-                if !self.lc_certify_pass(id, tip, "base-fix") {
+                if !self.lc_certify_at_tip(id, tip, "pass", "base-fix") {
                     self.files.refuse_pass(br, tip);
                     self.log(&format!("CHECK6 {id}: lifecycle refused GatePass at {tip} — {br} stays uncertified"));
                     return;

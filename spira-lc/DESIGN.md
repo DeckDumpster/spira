@@ -20,6 +20,16 @@ it existed).
 `event`, the cutover verbs, `classify`, `work`, `serve`. Exit codes on `event`: 0 applied,
 3 refused, 2 cannot tell.
 
+**`admin-create-beads --prefix P --host H --port N --database D`** creates the beads store on
+that server from `beads-schema.sql`, the schema's source: the database, its tables and views,
+`issue_prefix`, one Dolt commit, then `<SPIRA_DB>/.beads/metadata.json`, written last. It runs in
+the caller's process. A database that already holds the whole store under that prefix is success
+and is not touched (a missing `metadata.json` is written). A database holding only part of one,
+another prefix, or a `metadata.json` naming another database is refused by name (3). A database
+that is absent or holds no table is created into, announced on stderr first
+(`spira_store::lifecycle_row::CREATING_BEADS_DATABASE`): only after that line may a caller drop
+the database a failed run left. 0 done · 3 refused · 2 cannot tell.
+
 **Caller verbs** — compositions of `show`/`list`/`event`, run client-side (callers.rs):
 
 | verb | replaces | exit |
@@ -32,7 +42,7 @@ it existed).
 | `holds <id>` · `held <id> <kind>` | `lc_holds` · `lc_held` | kinds one per line, 0 · 0 held / 1 not |
 | `list-held <kind>` · `list-state <state>` · `list-all` | `lc_list_*` | `id` · `id\tlease\tholds,` · refused (3): `list-all` reads every row ever filed; read by state, by `--ids`, or by `list --bare --after <id> --limit <n>`; the others always 0 |
 | `deliver pr-merged <repo> <id> <branch> <sha>` · `pr-closed <id>` · `push-delivered <id> <sha>` · `push-requeued <id> <tip>` · `push-returned <id>` | `lc_deliver_*` | 0 applied · 1 skipped (no delivery row / wrong state, logged) · 2/3 as `event`; lib.sh `log` lines on stdout |
-| `certify <id> <tip> <pass\|red\|infra> [detail] [actor=lifecycle-cert]` · `resubmit <id> <tip> [actor]` | `lc_certify` · `lc_resubmit` | 0 · 2 cannot tell · 3 refused/skipped; each outcome appended to `$SPIRA_RUN/lifecycle-cert.log` as before |
+| `certify <id> <tip> <pass\|red\|infra\|nothing> [detail] [actor=lifecycle-cert]` · `resubmit <id> <tip> [actor]` | `lc_certify` · `lc_resubmit` | 0 · 2 cannot tell · 3 refused/skipped; each outcome appended to `$SPIRA_RUN/lifecycle-cert.log` as before |
 | `renew <id> <holder> <lease-until>` | `bd heartbeat` (sp-2jf0a: the dwarf's heartbeat renews its lifecycle lease) | 0 renewed · 1 not this holder's WORKING row · 2 cannot tell · 3 refused (race, or a deadline that does not advance); the machine refuses a non-holder with `NotHolder` |
 
 **Two verbs release a claim or close an epic** (sp-hyo5e —

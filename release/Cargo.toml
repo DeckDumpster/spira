@@ -19,8 +19,18 @@ name = "round-recert"
 path = "src/bin/round-recert.rs"
 test = false
 
+[[test]]
+name = "acceptance_host"
+path = "tests/acceptance_host.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "pre_activate_store"
+path = "tests/pre_activate_store.rs"
+required-features = ["integration"]
+
 [features]
-integration = ["runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "state-store/integration", "system-paths/integration", "testkit/integration", "spira-test-id/integration"]
+integration = ["runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "state-store/integration", "system-paths/integration", "testkit/integration", "spira-test-id/integration", "bead/integration", "spira-pub/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 sha2 = "0.10"
@@ -33,7 +43,9 @@ spira-store = { path = "../spira-store" }
 spira-otel = { path = "../spira-otel" }
 state-store = { path = "../state-store" }
 runtime = { path = "../runtime" }
+spira-pub = { path = "../spira-pub" }
 
 [dev-dependencies]
+bead = { path = "../bead" }
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }

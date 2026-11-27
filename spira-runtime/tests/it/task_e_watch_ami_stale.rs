@@ -5,6 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use runtime::event::{EFFECT_FAILED, EFFECT_SUCCEEDED, EFFECT_TIMED_OUT};
 use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_ami_stale::*;
@@ -40,19 +41,83 @@ fn carry(r: &TaskRig) -> Carry {
     r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).unwrap_or_default()
 }
 
-#[test_id(tqfzkhv)]
+#[test_id(tsrut6a)]
 #[test]
-fn t1_the_row_is_registered_and_its_boot_arms_the_five_minute_tick() {
+fn t1_the_row_is_registered_and_its_boot_asks_once_and_arms_no_timer() {
     let t = acc::row(NAME);
     assert_eq!((t.stream(), t.effects, t.keys.concat()), (STREAM, EFFECTS, KEYS.to_vec()));
     let s = acc::pinned_settings(&[]).expect("settings from the complete fixture");
     assert_eq!((t.cadence_ms)(&s), CADENCE_MS);
     assert_eq!(Config::pinned().map(|_| ()), Ok(()), "every key resolves through the config door");
-    let mut r = TaskRig::new(1, (t.build)(&s)).unwrap();
+    let fresh = serde_json::to_string(&seen(Verdict::Fresh)).unwrap();
+    let mut r = TaskRig::new(1, (t.build)(&s)).unwrap().double(OBSERVE, move |_| Ok(fresh.clone()));
     let (_, stream, kind) = (t.boot)();
     r.tick(stream, kind).unwrap();
-    assert_eq!(r.engine().next_timer_at(), Some(CADENCE_MS));
+    assert_eq!(r.engine().next_timer_at(), None);
     assert_eq!(r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>(), [OBSERVE]);
+}
+
+fn observes(r: &TaskRig) -> usize {
+    r.requested().iter().filter(|q| q.name == OBSERVE).count()
+}
+
+const HOUR_MS: u64 = 3_600_000;
+
+#[test_id(tgfk9yb)]
+#[test]
+fn a_fresh_image_is_asked_about_once_at_boot_and_never_again_in_the_hour() {
+    let mut r = rig(1, Arc::new(Mutex::new(seen(Verdict::Fresh))));
+    let armed_by_the_fresh_answer = r.engine().next_timer_at();
+    r.advance(HOUR_MS).unwrap();
+    acc::assert_healthy(&r, STREAM);
+    assert_eq!((observes(&r), armed_by_the_fresh_answer), (1, None));
+}
+
+#[test_id(tpw9lxi)]
+#[test]
+fn a_stale_or_unreadable_image_is_asked_about_every_five_minutes_until_it_reads_fresh() {
+    for unfresh in [stale(STALE), seen(Verdict::Unreadable { rc: 2, out: "ExpiredToken".into() })] {
+        let w = Arc::new(Mutex::new(unfresh));
+        let mut r = rig(1, w.clone());
+        assert_eq!(r.engine().next_timer_at(), Some(CADENCE_MS));
+        r.advance(CADENCE_MS).unwrap();
+        assert_eq!((observes(&r), r.engine().next_timer_at()), (2, Some(2 * CADENCE_MS)), "an unchanged answer keeps asking");
+        *w.lock().unwrap() = seen(Verdict::Fresh);
+        r.advance(CADENCE_MS).unwrap();
+        assert_eq!((observes(&r), r.engine().next_timer_at()), (3, None), "fresh stops the asking");
+        r.advance(HOUR_MS).unwrap();
+        acc::assert_healthy(&r, STREAM);
+        assert_eq!(observes(&r), 3);
+    }
+}
+
+#[test_id(t2ve5eg)]
+#[test]
+fn a_failed_timed_out_or_garbled_observe_is_asked_again_in_five_minutes() {
+    let (_, stream, kind) = WatchAmiStale::boot();
+    let new = || TaskRig::new(1, registration()).unwrap();
+    for (what, tag, mut r) in [
+        ("failed", EFFECT_FAILED, new().double(OBSERVE, |_| Err("no credentials".into()))),
+        ("timed out", EFFECT_TIMED_OUT, new().timing_out()),
+        ("garbled", EFFECT_SUCCEEDED, new().double(OBSERVE, |_| Ok("not a snapshot".into()))),
+    ] {
+        r.tick(stream, kind.clone()).unwrap();
+        assert!(r.journaled().iter().all(|e| e.kind.tag != STATE), "{what}: nothing is concluded from it");
+        assert_eq!(r.engine().next_timer_at(), Some(CADENCE_MS), "{what} ({tag})");
+        r.advance(CADENCE_MS).unwrap();
+        assert_eq!((observes(&r), r.engine().next_timer_at()), (2, Some(2 * CADENCE_MS)), "{what}");
+    }
+}
+
+#[test_id(tmessgg)]
+#[test]
+fn spill_not_on_ec2_arms_no_timer() {
+    for verdict in [Verdict::Fresh, Verdict::Stale { line: STALE.into() }] {
+        let mut r = rig(1, Arc::new(Mutex::new(Snapshot { spill: "local".into(), verdict })));
+        assert_eq!(r.engine().next_timer_at(), None);
+        r.advance(HOUR_MS).unwrap();
+        assert_eq!(observes(&r), 1);
+    }
 }
 
 #[test_id(teu52bi)]
@@ -82,7 +147,8 @@ fn t3_a_stale_line_is_said_once_a_new_line_again_and_fresh_clears_the_latch() {
     r.advance(CADENCE_MS).unwrap();
     assert_eq!(carry(&r).said, None, "said(L) → quiet on fresh");
     *w.lock().unwrap() = stale(STALE);
-    r.advance(CADENCE_MS).unwrap();
+    let (_, stream, kind) = WatchAmiStale::boot();
+    r.tick(stream, kind).unwrap();
     acc::assert_healthy(&r, STREAM);
     assert_eq!(said(&r).len(), 3, "after clearing, the first line is said again");
 }

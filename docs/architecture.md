@@ -100,7 +100,7 @@ and the `spira-runtime serve` task that does it.
    sentinel) queues each done branch for `gate-worker` (the `gate.worker` task, every 30 s),
    which runs up to `certify_par` gates at once under host admission control and files each
    verdict. `landing-pass` applies it: `PASS` → `GatePass` (`CERTIFIED`), `FAIL` → `GateRed`
-   (`REWORK`, charged), `NO_VERDICT` → `GateInfra`, `BASE_FAIL` → one incident per repository. A gate that dies twice
+   (`REWORK`, charged), `NO_VERDICT` → `GateInfra` (`certifies-nothing`: `GateNothing` under `queue.forge`, nothing under `queue.local`), `BASE_FAIL` → one incident per repository. A gate that dies twice
    running on one branch, with no other branch's gate dying between, is that branch's `GateRed`
    (`REWORK`) carrying the dead gate's output tail.
    A round does not require a gate verdict: its full corpus is the stronger trial.

@@ -116,6 +116,8 @@ pub const RETIRED_VARS: &[&str] = &[
     "SPIRA_GATE_BUILDER_DIR_WAIT_SECS",
     "SPIRA_UNIT_TEST_DEADLINE_SECS",
     "SPIRA_UNIT_TEST_DEADLINE_PERIODS",
+    "SPIRA_INTEGRATION_TEST_DEADLINE_SECS",
+    "SPIRA_INTEGRATION_TEST_DEADLINE_PERIODS",
     "SPIRA_BATCH_MAXPAR",
     "SPIRA_PATH",
     // sp-xtdqi: the shared compilation cache's own address — a config-file-only setting
@@ -306,7 +308,7 @@ impl Real {
 
     fn build_in_bases(&self, tree: &Path, b: &crate::ports::Builder, bases: &[PathBuf]) -> Result<String, (BuilderMiss, String)> {
         use spira_config::build_dir as bd;
-        let lease = match bd::lease_dir(bases, &b.dir, &format!("gate {}", b.bead), b.wait).map_err(|e| (BuilderMiss::Unusable, format!("cannot lease it: {e}")))? {
+        let lease = match bd::lease_dir(bases, &b.dir, &format!("gate {}", b.bead), &b.bead, b.wait).map_err(|e| (BuilderMiss::Unusable, format!("cannot lease it: {e}")))? {
             Ok(l) => l,
             Err(bd::Refused::Held { holder }) => {
                 let miss = if holder == b.bead { BuilderMiss::Held } else { BuilderMiss::Taken };
@@ -809,6 +811,9 @@ impl World for Real {
     }
     fn push_metrics(&self, run: &crate::telemetry::GateRun) {
         crate::telemetry::push_metrics(&crate::telemetry::metrics_sink(), run);
+    }
+    fn publish(&self, messages: &[(String, serde_json::Value)]) {
+        crate::publish::send(spira_pub::Publisher::new("gate"), messages);
     }
     fn cgroup_mark(&self) -> Option<spira_otel::cgroup::Mark> {
         spira_otel::cgroup::Mark::own()
@@ -1369,6 +1374,17 @@ mod tests {
         assert!(missing.is_empty(), "RETIRED_VARS names keys the registry no longer declares: {missing:?}");
     }
 
+    #[test_id(tzhn31l)]
+    #[test]
+    fn every_per_test_deadline_key_the_engine_reads_is_resolved_into_the_gates_context() {
+        for tier in ["UNIT", "INTEGRATION"] {
+            for part in ["SECS", "PERIODS"] {
+                let key = format!("SPIRA_{tier}_TEST_DEADLINE_{part}");
+                assert!(crate::real::RETIRED_VARS.contains(&key.as_str()), "{key} never reaches ctx, so every unit gate is NOVERDICT config");
+            }
+        }
+    }
+
     struct Pool {
         t: testkit::TempDir,
         bases: Vec<std::path::PathBuf>,
@@ -1412,7 +1428,7 @@ mod tests {
     }
 
     fn lockable(p: &Pool) -> bool {
-        spira_config::build_dir::lease_dir(&p.bases, &p.slot, "probe", std::time::Duration::ZERO).unwrap().is_ok()
+        spira_config::build_dir::lease_dir(&p.bases, &p.slot, "probe", "", std::time::Duration::ZERO).unwrap().is_ok()
     }
 
     #[test_id(t1jwthh)]
@@ -1432,22 +1448,47 @@ mod tests {
         let _ = &p.t;
     }
 
+    #[test_id(tplaceh)]
+    #[test]
+    fn a_slot_released_reserved_for_the_bead_is_leased_by_its_gate() {
+        let p = pool("exit 0\n");
+        spira_config::build_dir::lease_dir(&p.bases, &p.slot, "sp-a", "sp-a", std::time::Duration::ZERO).unwrap().ok().unwrap().release_reserved("sp-a").1.unwrap();
+        let line = p.real.build_in_bases(&p.tree, &builder(&p), &p.bases).unwrap();
+        assert!(line.contains(&p.slot.display().to_string()), "{line}");
+    }
+
     #[test_id(ty70twa)]
     #[test]
     fn a_builder_directory_another_lease_holds_is_taken_and_one_the_bead_holds_is_held() {
         let other = pool("exit 0\n");
-        let _held = spira_config::build_dir::lease_dir(&other.bases, &other.slot, "sp-other", std::time::Duration::ZERO).unwrap().ok().unwrap();
+        let _held = spira_config::build_dir::lease_dir(&other.bases, &other.slot, "sp-other", "", std::time::Duration::ZERO).unwrap().ok().unwrap();
         let (miss, why) = other.real.build_in_bases(&other.tree, &builder(&other), &other.bases).unwrap_err();
         assert_eq!(miss, BuilderMiss::Taken, "{why}");
 
         let own = pool("exit 0\n");
-        let _held = spira_config::build_dir::lease_dir(&own.bases, &own.slot, "sp-a", std::time::Duration::ZERO).unwrap().ok().unwrap();
+        let _held = spira_config::build_dir::lease_dir(&own.bases, &own.slot, "sp-a", "sp-a", std::time::Duration::ZERO).unwrap().ok().unwrap();
         let (miss, why) = own.real.build_in_bases(&own.tree, &builder(&own), &own.bases).unwrap_err();
         assert_eq!(miss, BuilderMiss::Held, "{why}");
 
         let gone = pool("exit 0\n");
         let b = crate::ports::Builder { dir: gone.t.path().join("pool/dir.99"), ..builder(&gone) };
         assert_eq!(gone.real.build_in_bases(&gone.tree, &b, &gone.bases).unwrap_err().0, BuilderMiss::Gone);
+    }
+
+    // Exception to the no-binary, no-sleep unit rules: `pool()` runs git, and the owner is read only while a held lease is waited on.
+    #[test_id(tb7bl86)]
+    #[test]
+    fn a_gate_waits_for_the_beads_own_session_to_release_its_builder_directory() {
+        let p = pool("exit 0\n");
+        let held = spira_config::build_dir::lease_dir(&p.bases, &p.slot, "sp-a", "sp-a", std::time::Duration::ZERO).unwrap().ok().unwrap();
+        let holder = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200)); // clock-safe: a late gate finds the slot free and a late release is inside its 10s wait
+            drop(held);
+        });
+        let b = crate::ports::Builder { wait: std::time::Duration::from_secs(10), ..builder(&p) };
+        let line = p.real.build_in_bases(&p.tree, &b, &p.bases).unwrap();
+        assert!(line.contains(&p.slot.display().to_string()), "{line}");
+        holder.join().unwrap();
     }
 
     #[test_id(tpf4epi)]

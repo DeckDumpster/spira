@@ -1,13 +1,13 @@
 //! `render_memories`/`system_prompt_split`, ported from `spira/lib.sh` (wave4-decomposition.md
 //! row Q, wave 4.35, sp-kelr2). Pure string transforms; the cache read/write and the
-//! `SPIRA_MEMORIES_CMD`/`bdq` seam that fills `mem_json` live in `main.rs` (I/O at the edge,
+//! `SPIRA_MEMORIES_CMD` seam or content read that fills `mem_json` live in `main.rs` (I/O at the edge,
 //! same split every crate in this workspace draws). `groom_claims_verified`/
 //! `bead_named_paths`, row Q's other two functions, are a separate bead's scope (dwarf-only,
 //! wave4-decomposition.md bead 34) and are not touched here.
 
 use std::collections::BTreeMap;
 
-/// `render_memories <prefixes> [budget] [core]` over `bd memories --json`'s object (already
+/// `render_memories <prefixes> [budget] [core]` over `content memories --json`'s object (already
 /// read, as a string, by the caller). Core statutes render in full (budget allowing); every
 /// other matching key becomes a slug in its namespace's index. Trailing newline stripped —
 /// `main.rs` feeds this straight to `println!`, which adds its own.

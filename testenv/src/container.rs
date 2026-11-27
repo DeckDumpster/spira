@@ -131,7 +131,6 @@ pub trait Host {
 pub struct Conf {
     /// The harness root: `<root>/spira/testenv/Containerfile`. None = not found.
     pub harness: Option<PathBuf>,
-    pub bd_pin: PathBuf,
     pub registry: String,
     pub max_concurrent: i64,
     pub cpus: Option<String>,
@@ -160,7 +159,6 @@ impl Conf {
             src.get(env).and_then(|v| v.trim().parse().ok())
         };
         Ok(Conf {
-            bd_pin: PathBuf::from(cfg("SPIRA_BD_PIN")?),
             registry: cfg("SPIRA_TESTENV_REGISTRY")?,
             max_concurrent: cfg_parse("SPIRA_TESTENV_MAX_CONCURRENT")?,
             cpus: valid_cpus(&cfg("SPIRA_TESTENV_CPUS")?),
@@ -279,7 +277,7 @@ impl Driver<'_> {
         }
     }
 
-    /// The build-closure hash: Containerfile (by content), the bd pin, and the slice of
+    /// The build-closure hash: Containerfile (by content) and the slice of
     /// deps.toml the image build actually consumes — never by path, so every checkout of
     /// one commit computes one tag. None when the closure cannot be read or deps.toml
     /// cannot be summarized (D18a).
@@ -331,10 +329,6 @@ impl Driver<'_> {
             Err(_) => cf_bytes.clone(),
         };
         let mut closure = sha256sum_line(&cf_text);
-        let pin = &self.conf.bd_pin;
-        if self.host.is_file(pin) {
-            closure.extend(self.host.read(pin).unwrap_or_default());
-        }
         closure.extend(sha256sum_line(deps_text.as_bytes()));
         closure.extend(sha256sum_line(self.rust_channel(&dir)?.as_bytes()));
         Some(crate::verdict::sha256_hex(&closure)[..12].to_string())
@@ -530,7 +524,7 @@ impl Driver<'_> {
         };
         let hb = self.conf.heartbeat;
         self.err(&format!(
-            "testenv: COLD build of {img} — the tag is a hash of testenv/Containerfile, the bd pin"
+            "testenv: COLD build of {img} — the tag is a hash of testenv/Containerfile"
         ));
         self.err("testenv: and deps.toml, so this VM has nothing to pull and must build it. Cold");
         self.err("testenv: builds compile a Go and a Rust toolchain from source and have taken");

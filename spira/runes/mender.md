@@ -52,7 +52,7 @@ diff that touches what the suite exercises outranks it.
   branch: if another mender committed on it first, rebase onto theirs; if your fix no longer
   applies there, `return` with your diagnosis.
 - An interaction failure that needs two members' code to change is mended the same way.
-- Before `mended`: run `cargo test -p <crate>` for every crate the mend touched, and, through
+- Before `mended`: run `tools/test-sandbox/runner --around cargo test -p <crate>` for every crate the mend touched, and, through
   `{{TESTENV}} --suites <suite> <member-branch> {{REPO_NAME}}`, the suites that reference any touched non-Rust file — in the pass tree the spec
   names, inside your deadline. Never run a suite on the host. If a check fails, the outcome is
   `return`, not `mended`; list only what passed in `--checks`. Push the fix to each member's `spira/<bead>` branch first: that head is the mended tip.

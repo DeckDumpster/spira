@@ -15,6 +15,7 @@ use state_store::{
     Backend, Compare, Contract, Deleted, Error, Fence, Item, Object, Request, Result, Rev, Txn,
 };
 
+use super::bridge;
 use super::keys;
 use super::records::{decode, encode, Audit, LifecycleRecord, Readiness};
 use spira_config::edges::Gate;
@@ -64,10 +65,16 @@ pub struct Store<B: Backend> {
     claim_floor_ms: u64,
     /// What [`Store::dwell`] has read of the audit log so far, kept for the store's life.
     pub(super) dwell_index: std::sync::Mutex<super::dwell::LastIndex>,
+    /// The most revisions one dwell request folds forward.
+    pub(super) dwell_forward_revs: u64,
+    /// Revisions per chunk of [`Store::warm_dwell`]'s backward scan.
+    pub(super) dwell_chunk_revs: u64,
     /// Where every applied transition is shipped once its txn commits.
     shipper: Option<spira_otel::vlogs::Shipper>,
     /// A bead's external reference, read when it reaches a terminal state; `None` reads none.
     refs: Option<ExternalRefs>,
+    /// Where every applied transition and claim goes to be published to the broker.
+    bridge: std::sync::OnceLock<bridge::Outbox>,
 }
 
 /// `Ok(None)` when the bead has no reference; `Err` when the content store could not answer.
@@ -249,8 +256,11 @@ impl<B: Backend> Store<B> {
             contract,
             claim_floor_ms,
             dwell_index: Default::default(),
+            dwell_forward_revs: super::dwell::FORWARD_REVS,
+            dwell_chunk_revs: super::dwell::CHUNK_REVS,
             shipper: None,
             refs: None,
+            bridge: Default::default(),
         }
     }
 
@@ -264,6 +274,11 @@ impl<B: Backend> Store<B> {
     pub fn with_shipper(mut self, shipper: spira_otel::vlogs::Shipper) -> Self {
         self.shipper = Some(shipper);
         self
+    }
+
+    /// This store hands each transition and claim it commits to `outbox`; the first one set stays.
+    pub(super) fn set_bridge(&self, outbox: bridge::Outbox) {
+        let _ = self.bridge.set(outbox);
     }
 
     fn ship_transitions(&self, applied: &[Audit]) {
@@ -667,6 +682,9 @@ impl<B: Backend> Store<B> {
         let r = self.contract.txn(&t, &sub)?;
         if r.succeeded && !r.already_applied {
             self.ship_transitions(then);
+            if let Some(bridge) = self.bridge.get() {
+                bridge.transitions(r.rev, then);
+            }
         }
         Ok(r)
     }
@@ -766,15 +784,20 @@ impl<B: Backend> Store<B> {
     /// writes the record. The holder's fencing token is that lock's `create_rev`, returned as
     /// the txn's first fence. It also compares every blocker's gate as its readiness judged it
     /// and each stacked prerequisite at its stacked tip, so a blocker that moved since conflicts
-    /// the claim. A lost compare or a live lock writes nothing, so no lock is left
-    /// behind to give back.
+    /// the claim. A directed claim reads no readiness and compares no blocker. A lost compare
+    /// or a live lock writes nothing, so no lock is left behind to give back.
     pub fn claim(
         &self,
         id: &str,
         ev: &BeadEvent,
         req: &Request,
     ) -> Result<(Outcome, Option<Fence>)> {
-        let BeadEventKind::Claim { lease_until, .. } = &ev.kind else {
+        let BeadEventKind::Claim {
+            lease_until,
+            directed,
+            ..
+        } = &ev.kind
+        else {
             return Err(Error::Backend(format!(
                 "claim of {id} with a {:?} event",
                 ev.kind
@@ -816,7 +839,10 @@ impl<B: Backend> Store<B> {
         }
         let next = self.next_record(ev, &cur, out.row);
         let (mut applied, lost) = self.audits(id, ev, &cur.value, &next);
-        let judged_read = self.readiness(id)?;
+        let judged_read = match directed {
+            Some(_) => None,
+            None => self.readiness(id)?,
+        };
         let judged_rev = judged_read.as_ref().map(|r| r.mod_rev);
         let judged = judged_read.map(|r| r.value);
         if let Some(j) = judged
@@ -826,17 +852,19 @@ impl<B: Backend> Store<B> {
             let (blocked_by, verdict) = (j.blocked_by.clone(), j.verdict.clone());
             return Ok((Outcome::JudgedUnclaimable { blocked_by, verdict }, None));
         }
-        let edges = claim_edges(judged.as_ref(), &next.row.stack);
+        let edges = match directed {
+            Some(_) => Vec::new(),
+            None => claim_edges(judged.as_ref(), &next.row.stack),
+        };
         if let Some(j) = &judged {
             if let Some(Value::Object(claim)) = applied[0].evidence.get_mut("Claim") {
                 claim.insert("judged".into(), judged_evidence(j)?);
             }
         }
         let mut t = Txn::new().when(Compare::ModRev(key.clone(), Some(cur.mod_rev)));
-        t = t.when(Compare::ModRev(
-            keys::readiness(id),
-            judged_rev,
-        ));
+        if directed.is_none() {
+            t = t.when(Compare::ModRev(keys::readiness(id), judged_rev));
+        }
         for (blocker, gate) in &edges {
             t = t.when(gate_compare(blocker, gate.as_ref())?);
         }
@@ -848,6 +876,9 @@ impl<B: Backend> Store<B> {
         if r.succeeded {
             let fence = r.fences.into_iter().next();
             let record = self.record_at(id, r.rev)?.map_or(next, |r| r.value);
+            if let (false, Some(bridge)) = (r.already_applied, self.bridge.get()) {
+                bridge.claim(r.rev, &record.row, ev.at);
+            }
             return Ok((
                 Outcome::Applied {
                     rev: r.rev,

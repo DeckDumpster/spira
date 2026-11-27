@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=runtime
+DOC=How long a session may keep running after its item has left WORKING before its wrapper publishes session/<bead>/state = lingering.
+SCHEMA=REQUIRED: Seconds after the first refused lease renewal at which a still-running session is published as lingering. spira-config init writes it on a fresh install and activation's config delta declares it on an upgrade; a reader never defaults it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_SESSION_LINGER_SECS:=300}"
+SPIRA_CONF_DEFAULT_EOF

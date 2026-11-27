@@ -40,14 +40,7 @@ pub fn looks_like_bead_id(s: &str) -> bool {
 }
 
 /// A `[[check]]` row's command, run from the worktree root with no shell.
-pub fn is_unit_build(run: &str) -> bool {
-    run.trim() == UNIT_BUILD
-}
-
 pub fn done_argv(run: &str) -> Vec<String> {
-    if is_unit_build(run) {
-        return vec!["cargo".to_string()];
-    }
     habits::config::argv(run, &[])
 }
 
@@ -91,8 +84,6 @@ pub fn declared_rows(root: &std::path::Path) -> Result<Vec<habits::config::Check
 pub const CHECKS_PASS_FILE: &str = "spira-checks.pass";
 /// The token in a `[[check]]` row's `run` that becomes the crates the diff affects.
 pub const AFFECTED: &str = "{affected}";
-/// A row whose `run` is exactly this token runs the unit gate's own build line over the affected crates.
-pub const UNIT_BUILD: &str = "{unit-build}";
 
 /// The file under the worktree's git directory a row's record is written to.
 pub const CHECKS_RECORD_FILE: &str = "spira-check-record.json";
@@ -120,41 +111,11 @@ pub fn affected_scope(diff_raw: &[u8], metadata_json: &str) -> Result<Affected, 
     select_crates(diff_raw, metadata_json, true).map(Affected::Crates)
 }
 
-/// The `{unit-build}` row's argv: the gate's own build commands ([`gate::compose::unit_build_argvs`])
-/// over the affected crates, `test_bins` being the test-bins the gate selects for them, run as one
-/// `sh -c` chain so the first failure ends the row under its one budget. `None`: no crate is affected.
-pub fn unit_build_row(affected: &Affected, test_bins: &[String]) -> Option<Vec<String>> {
-    let argvs = match affected {
-        Affected::Workspace(members) if members.is_empty() => {
-            let mut words = gate::compose::unit_build_words(&[]);
-            words.push("--workspace".into());
-            vec![words]
-        }
-        Affected::Workspace(members) => gate::compose::unit_build_argvs(members, test_bins),
-        Affected::Crates(c) if c.is_empty() => return None,
-        Affected::Crates(c) => gate::compose::unit_build_argvs(c, test_bins),
-    };
-    let [one] = &argvs[..] else {
-        let chain: Vec<String> = argvs.iter().map(|a| a.join(" ")).collect();
-        return Some(vec!["sh".into(), "-c".into(), chain.join(" && ")]);
-    };
-    Some(one.clone())
-}
-
-/// The test-bins the gate selects for `affected`.
-pub fn scope_test_bins(affected: &Affected, metadata_json: &str) -> Vec<String> {
-    let (Affected::Workspace(c) | Affected::Crates(c)) = affected;
-    gate::compose::parse_metadata(metadata_json).map(|m| gate::compose::test_bins_of(c, &m)).unwrap_or_default()
-}
-
 /// A row's argv with `{branch}` expanded to `branch`, `{record}` to `record` and `{affected}` to
 /// `--workspace` or `-p <crate>` words. `None`: the row names `{affected}` and the diff affects no
 /// crate, so there is nothing for it to check.
 pub fn check_argv(run: &str, affected: &Affected, branch: &str, record: &std::path::Path) -> Option<Vec<String>> {
     let argv = habits::config::argv(run, &[("branch", branch), ("record", &record.to_string_lossy())]);
-    if is_unit_build(run) {
-        return unit_build_row(affected, &[]);
-    }
     if !argv.iter().any(|t| t == AFFECTED) {
         return Some(argv);
     }
@@ -232,6 +193,33 @@ pub fn run_row(exe: &Path, args: &[String], dir: &Path, path_env: &OsStr, shell_
 /// repository has a dev shell, otherwise the release dirs.
 pub fn row_dirs(shell: Option<&repo_contract::shell::ShellEnv>, dirs: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf> {
     shell.map_or(dirs, |s| s.path_dirs())
+}
+
+/// A row's program among `dirs`, or why it is not run.
+pub fn resolve_row_program(prog: &str, dirs: &[std::path::PathBuf]) -> Result<std::path::PathBuf, String> {
+    trusted::resolve(prog, dirs).ok_or_else(|| unresolved_reason(prog, dirs))
+}
+
+fn unresolved_reason(prog: &str, dirs: &[std::path::PathBuf]) -> String {
+    if prog.starts_with('{') && prog.ends_with('}') {
+        format!("{prog} is not a check token this release knows; the row was written for another release, so rebase onto local/main")
+    } else {
+        format!("{prog} resolves in none of the row's directories: {}", trusted::join_path(dirs))
+    }
+}
+
+/// [`resolve_row_program`] for a row of the repository at `root`: a relative path is read from
+/// there, where the row runs, and in a flake shell the reason names the shell.
+pub fn row_program(root: &Path, prog: &str, shell: Option<&repo_contract::shell::ShellEnv>, dirs: &[std::path::PathBuf]) -> Result<std::path::PathBuf, String> {
+    let found = if prog.contains('/') {
+        trusted::resolve(&root.join(prog).to_string_lossy(), dirs).ok_or_else(|| unresolved_reason(prog, dirs))
+    } else {
+        resolve_row_program(prog, dirs)
+    };
+    found.map_err(|why| match shell {
+        Some(s) => format!("{prog} is not supplied by the flake dev shell of {} ({})", root.join("flake.nix").display(), s.key),
+        None => why,
+    })
 }
 
 /// One row's facts, as `<run>/checks.log` states them.
@@ -908,46 +896,46 @@ mod tests {
         assert_eq!(check_argv("spira-lint --diff x", &scope, "spira/sp-x", rec_path()).unwrap(), v(&["spira-lint", "--diff", "x"]));
     }
 
-    #[test_id(tq7tuxu)]
-    #[test]
-    fn the_unit_build_row_is_the_gates_own_build_line_over_the_affected_crates() {
-        let scope = Affected::Crates(vec!["batcher-cut".into()]);
-        let want = gate::compose::unit_build_words(&["batcher-cut".to_string()]);
-        assert_eq!(check_argv(UNIT_BUILD, &scope, "spira/sp-x", rec_path()).unwrap(), want);
-        let bins = vec!["gate".to_string()];
-        let argvs = gate::compose::unit_build_argvs(&["batcher-cut".to_string()], &bins);
-        assert_eq!(argvs.len(), 2);
-        let row = unit_build_row(&scope, &bins).unwrap();
-        assert_eq!(row, v(&["sh", "-c", &argvs.iter().map(|a| a.join(" ")).collect::<Vec<_>>().join(" && ")]));
+    /// The names of `root`'s rows that build or run test programs.
+    fn test_building_rows(root: &Path) -> Vec<String> {
+        let builds_tests = |r: &habits::config::Check| {
+            let argv = habits::config::argv(&r.run, &[]);
+            let mut words = argv.iter().map(String::as_str);
+            let cargo = words.next() == Some("cargo");
+            let mut subcommand = None;
+            while let Some(w) = words.next() {
+                if w == "--config" {
+                    words.next();
+                } else if !w.starts_with(['-', '+']) {
+                    subcommand = Some(w);
+                    break;
+                }
+            }
+            r.name == "unit-build"
+                || r.run.trim() == concat!("{unit", "-build}")
+                || cargo && (matches!(subcommand, Some("test" | "nextest")) || argv.iter().any(|w| w == "--no-run"))
+        };
+        declared_rows(root).unwrap().into_iter().filter(|r| builds_tests(r)).map(|r| r.name).collect()
     }
 
-    #[test_id(tn32pix)]
+    #[test_id(twdnj7u)]
     #[test]
-    fn the_unit_build_row_is_skipped_for_no_crate_and_spans_every_member_for_a_workspace() {
-        assert_eq!(check_argv(UNIT_BUILD, &Affected::Crates(vec![]), "spira/sp-x", rec_path()), None);
-        let scope = affected_scope(&raw(&["Cargo.lock"]), META).unwrap();
-        assert_eq!(
-            check_argv(UNIT_BUILD, &scope, "spira/sp-x", rec_path()).unwrap(),
-            gate::compose::unit_build_words(&["a".to_string(), "b".to_string(), "c".to_string()])
-        );
-    }
+    fn this_repository_declares_no_row_that_builds_test_programs() {
+        let t = testkit::TempDir::new("work-no-test-build-row");
+        std::fs::create_dir_all(t.join(".spira")).unwrap();
+        let declare = |rows: &[(&str, &str)]| {
+            let text: String = rows.iter().map(|(name, run)| format!("[[check]]\nname = \"{name}\"\nrun = \"{run}\"\nbudget_ms = 1000\n")).collect();
+            std::fs::write(t.join(".spira/checks.toml"), text).unwrap();
+            test_building_rows(t.path())
+        };
+        let token = concat!("{unit", "-build}");
+        assert_eq!(declare(&[("compile", "cargo test --no-run -p x"), ("token", token)]), ["compile", "token"]);
+        assert_eq!(declare(&[("nextest", "cargo --config a=b nextest run"), ("bench", "cargo bench --no-run")]), ["nextest", "bench"]);
+        assert_eq!(declare(&[("plain", "cargo test -p x"), ("unit-build", "true")]), ["plain", "unit-build"]);
+        assert!(declare(&[("clippy", &repo_clippy_row())]).is_empty());
 
-    #[test_id(trv20hs)]
-    #[test]
-    fn an_unreadable_workspace_builds_the_whole_workspace_and_a_padded_run_still_expands() {
-        let words = check_argv(" {unit-build} ", &Affected::Workspace(vec![]), "b", rec_path()).unwrap();
-        assert_eq!(&words[..2], ["cargo", "test"]);
-        assert_eq!(words.last().unwrap(), "--workspace");
-        assert_eq!(done_argv(" {unit-build} "), v(&["cargo"]));
-    }
-
-    #[test_id(t2n3aqs)]
-    #[test]
-    fn this_repository_declares_a_unit_build_row_deferred_to_the_gate() {
         let root = testkit::manifest_dir().parent().unwrap().to_path_buf();
-        let row = declared_rows(&root).unwrap().into_iter().find(|r| r.name == "unit-build").expect("a unit-build row");
-        assert_eq!(row.run, UNIT_BUILD);
-        assert_eq!(row.deferred_to.as_deref(), Some("gate"));
+        assert_eq!(test_building_rows(&root), Vec::<String>::new());
     }
 
     #[test_id(tqob5q8)]
@@ -1196,5 +1184,53 @@ mod row_dirs_tests {
     fn without_a_flake_shell_the_dirs_are_unchanged() {
         let release = vec![PathBuf::from("r/bin"), PathBuf::from("usr/bin")];
         assert_eq!(row_dirs(None, release.clone()), release);
+    }
+
+    #[test_id(tv7gdfx)]
+    #[test]
+    fn a_row_program_present_in_a_dir_resolves_to_that_path() {
+        let d = testkit::TempDir::new("work-row-program");
+        let exe = d.join("row-tool");
+        testkit::write_exe(&exe, "");
+        let dirs = vec![PathBuf::from("r/bin"), d.to_path_buf()];
+        assert_eq!(resolve_row_program("row-tool", &dirs), Ok(exe));
+    }
+
+    #[test_id(t0zlqif)]
+    #[test]
+    fn an_unknown_check_token_says_the_row_is_for_another_release() {
+        let why = resolve_row_program("{unit-build}", &[PathBuf::from("r/bin")]).unwrap_err();
+        assert!(why.starts_with("{unit-build} is not a check token"), "{why}");
+        assert!(why.contains("rebase onto local/main"), "{why}");
+    }
+
+    #[test_id(thw22px)]
+    #[test]
+    fn an_unresolved_row_program_names_itself_and_every_dir_searched() {
+        let why = resolve_row_program("no-such-row-tool", &[PathBuf::from("r/bin"), PathBuf::from("usr/bin")]).unwrap_err();
+        assert_eq!(why, "no-such-row-tool resolves in none of the row's directories: r/bin:usr/bin");
+    }
+
+    #[test_id(ti1v36g)]
+    #[test]
+    fn a_relative_row_program_is_read_from_the_root_not_the_cwd() {
+        let root = testkit::TempDir::new("work-row-root");
+        testkit::write_exe(root.join("row-script"), "");
+        assert_eq!(row_program(&root, "./row-script", None, &[]), Ok(root.join("./row-script")));
+    }
+
+    #[test_id(tqudloe)]
+    #[test]
+    fn an_unresolved_relative_row_program_is_named_as_the_row_wrote_it() {
+        let why = row_program(Path::new("r"), "./absent", None, &[PathBuf::from("usr/bin")]).unwrap_err();
+        assert_eq!(why, "./absent resolves in none of the row's directories: usr/bin");
+    }
+
+    #[test_id(tgfryfh)]
+    #[test]
+    fn in_a_flake_shell_an_unresolved_row_program_names_the_shell() {
+        let s = shell();
+        let why = row_program(Path::new("r"), "no-such-row-tool", Some(&s), &s.path_dirs()).unwrap_err();
+        assert_eq!(why, format!("no-such-row-tool is not supplied by the flake dev shell of r/flake.nix ({})", s.key));
     }
 }

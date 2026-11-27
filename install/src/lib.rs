@@ -12,19 +12,17 @@
 extern crate spira_test_id;
 #[cfg(test)]
 mod cells;
-/// The task name of the garbage-collection unit an install starts; no scheduler task owns it, so every task
-/// ignores its `unit.ran`.
-pub const NIX_GC_UNIT_TASK: &str = "nix-gc";
+pub use release::spira_env::NIX_GC_UNIT_TASK;
 
 pub mod bootstrap;
+pub mod broker;
+pub mod checkout_drift;
 pub mod checks;
 pub mod decide;
 pub mod ensure;
 pub mod guards;
 pub mod install_units;
 pub mod kit_bump;
-/// Install's lifecycle-store phase (sp-xfqnr) lives in `release` since sp-880u4, so
-/// `release stage up` builds the stage's store with the same code install does.
 pub mod manifest;
 pub mod orchestrate;
 pub mod round_records;

@@ -132,14 +132,12 @@ compose_brief() {
         "$(rune_get "$RUNE" RUNE_MEMORY_PREFIXES law-)" "" \
         "$core_merged")" || statutes=""
     if [ -z "$statutes" ]; then
-        # render_memories swallows bd's stderr, so empty output means either "bd could not
-        # reach the store" or "the store answered and there is genuinely nothing" — and
-        # those call for opposite diagnoses. `bd ping` tells them apart before either is
-        # reported: a down database and an empty statute book cost a whole session to
-        # distinguish by hand once (sp-n93br).
-        local ping_err
-        if ! ping_err="$(bd -C "${SPIRA_DB:?}" ping 2>&1 >/dev/null)"; then
-            echo "concierge: cannot reach the statute book database at $SPIRA_DB: $ping_err" >&2
+        # render_memories swallows the read's stderr, so empty output means either "the book
+        # could not be reached" or "it answered and holds nothing", which call for opposite
+        # diagnoses. One content read tells them apart before either is reported.
+        local read_err
+        if ! read_err="$(spira-lc content memories --json 2>&1 >/dev/null)"; then
+            echo "concierge: cannot reach the statute book: $read_err" >&2
             return 1
         fi
         echo "concierge: the statute book rendered empty — refusing to start without it" >&2
@@ -297,8 +295,7 @@ concierge_fd_holders() {
 # process ever sees a different `tmux` than the one already installed.
 tmux_shim_dir() { printf '%s' "$SPIRA_RUN/concierge-tmux-shim"; }
 
-# The session's own hooks: Stop refuses idle without a live inbox waiter
-# (hooks/concierge-waiter-stop.sh); StopFailure hands a failed turn's delivery back
+# The session's own hooks: StopFailure hands a failed turn's delivery back
 # (hooks/concierge-turn-failed.sh); PreToolUse refuses a raw PR against a registered repo
 # (hooks/concierge-raw-pr-fence.sh) and shows the statutes governing a decision command
 # first (hooks/statute-check-hook.sh).
@@ -307,7 +304,6 @@ session_settings() {
 import json, sys
 h = lambda p, t: [{"hooks": [{"type": "command", "command": p, "timeout": t}]}]
 print(json.dumps({"hooks": {
-    "Stop": h(sys.argv[1] + "/concierge-waiter-stop.sh", 10),
     "StopFailure": h(sys.argv[1] + "/concierge-turn-failed.sh", 30),
     "PreToolUse": [{"matcher": "Bash", "hooks": h(sys.argv[1] + "/concierge-raw-pr-fence.sh", 30)[0]["hooks"] + h(sys.argv[1] + "/statute-check-hook.sh", 30)[0]["hooks"]}]}}))' \
         "$SPIRA_HOME/hooks"

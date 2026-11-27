@@ -46,7 +46,7 @@ const FILES: &[&str] = &["spira/lib.sh", "spira/conf.sh"];
 /// cover a shim parsing one line of a delegate's own output into a legacy global.
 const DELEGATES: &[&str] = &[
     "dwarf", "strand", "spira-claim", "spira-lc", "landing-pass", "hel", "queue",
-    "queue-helpers", "gh-intake", "mimir-trigger", "rule", "census", "spira-config", "bead", "bdq",
+    "queue-helpers", "gh-intake", "mimir-trigger", "rule", "census", "spira-config", "bead",
     "bd", "ghq", "tsd-write", "rebase-stale", "suite-select", "command",
 ];
 const TRIVIAL: &[&str] = &[

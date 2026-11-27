@@ -123,7 +123,7 @@ pub static TASKS: &[Task] = &[
         effects: batcher_forge::EFFECTS,
         runners: {
             use batcher_forge::{edge as x, *};
-            &[(OBSERVE, x::observe), (ARM, x::arm), (FETCH, x::fetch), (ASSEMBLE, x::assemble), (CORPUS, x::corpus), (WITHDRAW, x::withdraw), (SHOTS, x::shots), (BATCH_OPEN, x::batch_open), (FILE, x::file), (VERDICT_WRITE, x::verdict_write)]
+            &[(OBSERVE, x::observe), (ARM, x::arm), (FETCH, x::fetch), (ASSEMBLE, x::assemble), (CORPUS, x::corpus), (WITHDRAW, x::withdraw), (SHOTS, x::shots), (BATCH_OPEN, x::batch_open), (FILE, x::file), (VERDICT_WRITE, x::verdict_write), (NOTE_LEFT_OUT, x::note_left_out)]
         },
         keys: &[batcher_forge::KEYS],
         build: |s| batcher_forge::BatcherForge::from_settings(s).registration(),
@@ -195,7 +195,7 @@ pub static TASKS: &[Task] = &[
         effects: gate_check::EFFECTS,
         runners: {
             use gate_check::*;
-            &[(OBSERVE, |e, _, _| observe(e)), (DISCOVER, |e, k, s| discover(e, k, &s.input)), (RESOLVE, |e, k, s| resolve(e, k, &s.input)), (CI_FAILED, |e, _, s| ci_failed(e, &s.input))]
+            &[(OBSERVE, |_, _, _| observe()), (RESOLVE, |e, k, s| resolve(e, k, &s.input)), (CI_FAILED, |e, _, s| ci_failed(e, &s.input))]
         },
         keys: &[gate_check::KEYS],
         build: |s| gate_check::GateCheck::from_settings(s).registration(),

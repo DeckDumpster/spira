@@ -26,7 +26,7 @@ spira_require bd || exit 1
 # database the working directory happens to resolve to.
 [ -d "$SPIRA_DB/.beads" ] || {
     echo "seed: $SPIRA_DB has no .beads — refusing to guess a database." >&2
-    echo "      Set SPIRA_DB in ${SPIRA_CONF_FILE:-spira.conf}, or run: bd -C $SPIRA_DB init" >&2
+    echo "      Set SPIRA_DB in ${SPIRA_CONF_FILE:-spira.conf}, or run spira-install to create the store" >&2
     exit 1; }
 
 # Every key in force, one per line. Asked once: `bd recall` per statute is a round trip each,

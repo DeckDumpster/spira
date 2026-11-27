@@ -284,7 +284,7 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
         "deliver" => deliver(args, m),
         "certify" => {
             if !need(3) {
-                return usage("certify <bead-id> <tip> <pass|red|infra> [detail] [actor] [step] [message]");
+                return usage("certify <bead-id> <tip> <pass|red|infra|nothing> [detail] [actor] [step] [message]");
             }
             let red_at = RedAt { step: a(5), message: a(6) };
             certify(m, &a(0), &a(1), &a(2), &a(3), &actor_or(args.get(4), "lifecycle-cert"), &red_at)
@@ -791,21 +791,26 @@ fn certify(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str
         a.stderr = format!("spira-lc certify: {id} is {state}, not SUBMITTED; gated {tip} — nothing recorded\n");
         return a;
     }
-    if outcome == "infra" && state == "SUBMITTED" {
+    if matches!(outcome, "infra" | "nothing") && state == "SUBMITTED" {
         // The stale-tip check is a read: one that could not tell refuses to apply, never skips
         // the check (sp-cxfgj5).
         let Some((_, _, row)) = state_version(m, id) else {
-            return Answer::cert(CANNOT_TELL, "cannot-tell", format!("infra tip={tip} — the row's tip could not be read"));
+            return Answer::cert(CANNOT_TELL, "cannot-tell", format!("{outcome} tip={tip} — the row's tip could not be read"));
         };
         let row_tip = bead_field(&row, "tip");
         if row_tip != tip {
-            return Answer::cert(REFUSED, "skip", format!("infra tip={tip} — stale, row is at {row_tip}"));
+            return Answer::cert(REFUSED, "skip", format!("{outcome} tip={tip} — stale, row is at {row_tip}"));
+        }
+        let reason = bead_field(&row, "reason");
+        if outcome == "nothing" && lifecycle::bead::certifies_nothing(BeadState::Submitted, Some(&reason)) {
+            return Answer::cert(APPLIED, "already", format!("nothing tip={tip} — already recorded"));
         }
     }
     let kind = match outcome {
         "pass" => BeadEventKind::GatePass { tip: tip.into(), gate_key: detail.into() },
         "red" => BeadEventKind::GateRed { tip: tip.into(), reason: gate_red_reason(detail), step: RedAt::bounded(&red_at.step), message: RedAt::bounded(&red_at.message) },
         "infra" => BeadEventKind::GateInfra { tip: tip.into() },
+        "nothing" => BeadEventKind::GateNothing { tip: tip.into() },
         other => return Answer::cert(CANNOT_TELL, "cannot-tell", format!("unknown outcome {other}")),
     };
     if event(m, "bead", id, &state, &version, actor, &serde_json::to_string(&kind).unwrap_or_default()).0 == 0 {

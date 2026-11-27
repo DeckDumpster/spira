@@ -67,21 +67,16 @@ SPIRA_BATCH_SUITE_DIR suite-select/src/gate.rs
 SPIRA_BATCH_SUITE_DIR suite-select/src/main.rs
 SPIRA_BATCH_SUITE_DIR testenv/src/settings.rs
 SPIRA_BATCH_TIERS testenv/src/settings.rs
-SPIRA_BDJSON_FIXTURE bead/src/bin/bdq.rs
 SPIRA_BDJSON_FIXTURE cockpit-collect/src/io.rs
 SPIRA_BDJSON_FIXTURE dwarf/src/main.rs
 SPIRA_BDJSON_FIXTURE dwarf/src/seam.rs
 SPIRA_BDJSON_FIXTURE landing-pass/src/main.rs
-SPIRA_BDQ_CONN_BACKOFF_MS bead/src/bin/bdq.rs
 SPIRA_BDQ_STATE_WRITE bead/src/guard.rs
-SPIRA_BDQ_WRITERS bead/src/bin/bdq.rs
-SPIRA_BDQ_WRITER_WAIT_S bead/src/bin/bdq.rs
 SPIRA_BD_LOG testenv/src/bd_meter_main.rs
 SPIRA_BD_LOG testenv/src/fixture.rs
 SPIRA_BD_TIMING_LOG testenv/src/fixture.rs
 SPIRA_BEAD_LANE_OVERRIDE bead/src/main.rs
 SPIRA_BOUNDARY spira/boundary.sh
-SPIRA_BRANCH_GUARD_SH watchtower/src/process.rs
 SPIRA_BROKER loom/src/lib.rs
 SPIRA_BROKER_BIN spira-config/src/convert.rs
 SPIRA_BROKER_GH broker/src/read.rs
@@ -89,7 +84,6 @@ SPIRA_BUILD_CACHE gate/src/real.rs
 SPIRA_BUILD_CACHE spira-config/src/build.rs
 SPIRA_CALL dwarf/src/main.rs
 SPIRA_CALL dwarf/src/seam.rs
-SPIRA_CALL release/src/stage.rs
 SPIRA_CALL spira/acceptance-local.sh
 SPIRA_CALL strand/src/config.rs
 SPIRA_CAPACITY_BACKOFF archivist/src/seam.rs
@@ -120,11 +114,8 @@ SPIRA_COCKPIT_STALE_S spira/ready.sh
 SPIRA_COCKPIT_WINDOW_HOURS cockpit-collect/src/probes/mod.rs
 SPIRA_CONCIERGE bead/src/main.rs
 SPIRA_CONCIERGE spira/hooks/concierge-raw-pr-fence.sh
-SPIRA_CONCIERGE spira/hooks/concierge-waiter-stop.sh
 SPIRA_CONCIERGE spira/hooks/concierge-turn-failed.sh
 SPIRA_CONCIERGE spira/hooks/session.sh
-SPIRA_CONCIERGE_ALLOW_IDLE spira/hooks/concierge-waiter-stop.sh
-SPIRA_CONCIERGE_SESSION_PID spira/hooks/concierge-waiter-stop.sh
 SPIRA_CONCIERGE_SESSION_PID spira/hooks/concierge-turn-failed.sh
 SPIRA_CONF cockpit/ops/src/layout.rs
 SPIRA_CONF spira-lint/src/rules/config_literal_fallback.rs
@@ -173,8 +164,6 @@ SPIRA_DEPLOY_RERUN_TIMEOUT spira/deploy.sh
 SPIRA_DESTROY_ERR spira/held.sh
 SPIRA_DEV_RENDERER cockpit/ops/src/layout.rs
 SPIRA_DISK_WARN_PCT watchtower/src/process.rs
-SPIRA_DOCTOR spira-config/src/main.rs
-SPIRA_DOCTOR spira/conf.sh
 SPIRA_DOCTOR_INSTALLING doctor/src/lib.rs
 SPIRA_DOCTOR_INSTALLING install/src/bin/install.rs
 SPIRA_DOCTOR_SH spira/deploy.sh
@@ -234,7 +223,6 @@ SPIRA_GATE_BEAD gate/src/engine.rs
 SPIRA_GATE_BEAD gate/src/real.rs
 SPIRA_GATE_BEAD landing-pass/src/real.rs
 SPIRA_GATE_BEAD queue/src/real.rs
-SPIRA_GATE_BEAD spira-lint/src/rules/test_id_row_orphan.rs
 SPIRA_GATE_BEAD spira-runtime/src/tasks/a/gate_worker.rs
 SPIRA_GATE_BEAD spira/yield.sh
 SPIRA_GATE_BRANCH gate/src/engine.rs
@@ -252,6 +240,7 @@ SPIRA_GATE_IN_UNIT gate/src/main.rs
 SPIRA_GATE_LOG gate/src/engine.rs
 SPIRA_GATE_LOG gate/src/real.rs
 SPIRA_GATE_LOG spira/yield.sh
+SPIRA_GATE_LOG strand/src/yield_report.rs
 SPIRA_GATE_LOG watchtower/src/process.rs
 SPIRA_GATE_NOVERDICT spira-config/src/resolve.rs
 SPIRA_GATE_NOVERDICT spira/escape-classify.sh
@@ -278,7 +267,6 @@ SPIRA_HOME archivist/src/main.rs
 SPIRA_HOME batcher-cut/src/io.rs
 SPIRA_HOME batcher-cut/src/main.rs
 SPIRA_HOME batcher-cut/src/vm.rs
-SPIRA_HOME bead/src/bin/bdq.rs
 SPIRA_HOME bead/src/main.rs
 SPIRA_HOME broker/src/main.rs
 SPIRA_HOME broker/src/repo_map.rs
@@ -308,7 +296,6 @@ SPIRA_HOME rebase-stale/src/main.rs
 SPIRA_HOME release/src/activate.rs
 SPIRA_HOME release/src/main.rs
 SPIRA_HOME release/src/repo.rs
-SPIRA_HOME release/src/stage.rs
 SPIRA_HOME release/src/units.rs
 SPIRA_HOME release/src/verify.rs
 SPIRA_HOME round-vm/src/config.rs
@@ -321,7 +308,6 @@ SPIRA_HOME spira-lint/src/rules/config_literal_fallback.rs
 SPIRA_HOME spira-lint/src/rules/script_callers.rs
 SPIRA_HOME spira-otel/src/fixture.rs
 SPIRA_HOME spira-runtime/src/tasks/a/batcher_local.rs
-SPIRA_HOME spira-runtime/src/tasks/a/gate_check.rs
 SPIRA_HOME spira-runtime/src/tasks/a/gate_worker.rs
 SPIRA_HOME spira-runtime/src/tasks/a/sentinel_pass.rs
 SPIRA_HOME spira-runtime/src/tasks/d/acceptance.rs
@@ -388,7 +374,6 @@ SPIRA_INCIDENT_UNIT incident/src/intake.rs
 SPIRA_INFERENCE_EVERY spira-runtime/src/tasks/a/sentinel_pass.rs
 SPIRA_INFLOW_WINDOW_MIN cockpit-collect/src/probes/core_detail.rs
 SPIRA_INSTALL_AERC_CONSIDERED install/src/bin/install.rs
-SPIRA_INSTALL_BD_INIT_TRIES install/src/bin/install.rs
 SPIRA_INSTALL_CONFLICT_CONSIDERED install/src/bin/install.rs
 SPIRA_INSTALL_DB_READY_WAIT install/src/install_units.rs
 SPIRA_INSTALL_DB_WAIT install/src/bin/install.rs
@@ -418,7 +403,6 @@ SPIRA_LAND_UNGATED_EVIDENCE queue/src/ops/land.rs
 SPIRA_LAND_UNIT spira-runtime/src/tasks/a/sentinel_pass.rs
 SPIRA_LAPSED_DIR watchtower/src/process.rs
 SPIRA_LAPSED_MARKER watchtower/src/process.rs
-SPIRA_LAUNCH release/src/stage.rs
 SPIRA_LC_ADMIN_PASSWORD spira-lc/src/admin_drop.rs
 SPIRA_LC_ADMIN_PASSWORD_FILE spira-config/src/resolve.rs
 SPIRA_LC_ADMIN_PASSWORD_FILE spira-lc/src/admin_drop.rs
@@ -491,7 +475,6 @@ SPIRA_POISON_AT spira-claim/src/cli.rs
 SPIRA_POISON_AT spira/capacity.sh
 SPIRA_PREFLIGHT_BASE_IMAGE spira/round-image-preflight.sh
 SPIRA_PREFLIGHT_TIMEOUT spira/round-image-preflight.sh
-SPIRA_PROC_ROOT spira/hooks/concierge-waiter-stop.sh
 SPIRA_PROC_ROOT spira/hooks/concierge-turn-failed.sh
 SPIRA_PROC_ROOT spira/script-running-guard.sh
 SPIRA_PROD_COCK install/src/values.rs
@@ -546,7 +529,6 @@ SPIRA_REPO install/src/values.rs
 SPIRA_REPO queue/src/ops/simple.rs
 SPIRA_REPO release/src/activate.rs
 SPIRA_REPO release/src/main.rs
-SPIRA_REPO release/src/stage.rs
 SPIRA_REPO release/src/units.rs
 SPIRA_REPO release/src/vm_repro.rs
 SPIRA_REPO sentinel/src/tower.rs
@@ -562,9 +544,7 @@ SPIRA_REPO spira/branch-sweep.sh
 SPIRA_REPO spira/build.sh
 SPIRA_REPO spira/conf.sh
 SPIRA_REPO spira/deploy.sh
-SPIRA_REPO spira/drift.sh
 SPIRA_REPO spira/first-run.sh
-SPIRA_REPO spira/inbox-keeper.sh
 SPIRA_REPO spira/lib.sh
 SPIRA_REPO spira/overrides.sh
 SPIRA_REPO spira/pre-activate.sh
@@ -732,7 +712,6 @@ SPIRA_TOML release/src/config.rs
 SPIRA_TOML release/src/config_delta.rs
 SPIRA_TOML release/src/main.rs
 SPIRA_TOML release/src/round_recert.rs
-SPIRA_TOML release/src/stage.rs
 SPIRA_TOML release/src/verify.rs
 SPIRA_TOML release/src/vm_repro.rs
 SPIRA_TOML spira-config/src/init.rs
@@ -803,11 +782,10 @@ SPIRA_WORLD_SH spira/deploy.sh
 SPIRA_WORLD_STOP_SKIP dwarf/src/run.rs
 SPIRA_WORLD_STOP_SKIP dwarf/src/seam.rs
 SPIRA_YIELD spira/yield.sh
+SPIRA_YIELD strand/src/yield_report.rs
 SPIRA_YIELD_BY spira/yield.sh
 SPIRA_YIELD_KEEP_DAYS spira/yield.sh
-SPIRA_YIELD_SH watchtower/src/process.rs
 SPIRA_YIELD_WINDOW spira/yield.sh
-SPIRA_YIELD_WINDOW watchtower/src/process.rs
-SPIRA_YIELD_WINDOW watchtower/src/sweep/collect.rs
+SPIRA_YIELD_WINDOW strand/src/yield_report.rs
 SPIRA_TOML spira-runtime/src/tasks/a/batcher_local.rs
 SPIRA_UNIT_USER install/src/values.rs

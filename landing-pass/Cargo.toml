@@ -19,12 +19,13 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["bead/integration", "hel/integration", "incident/integration", "mail/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "tsd/integration", "system-paths/integration", "spira-test-id/integration"]
+integration = ["bead/integration", "lifecycle/integration", "hel/integration", "incident/integration", "mail/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "tsd/integration", "system-paths/integration", "spira-test-id/integration"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 libc = "0.2"
 regex = "1"
+lifecycle = { path = "../lifecycle" }
 spira-config = { path = "../spira-config" }
 spira-store = { path = "../spira-store" }
 spira-otel = { path = "../spira-otel" }

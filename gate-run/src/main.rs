@@ -253,8 +253,8 @@ fn run_exec(world: &dyn World, home: &Path, run: &Path, branch: &str, repo_name:
 }
 
 fn stop_run(world: &dyn World, paths: &Paths) {
-    if let Some(pid) = world.read(&paths.pid).and_then(|s| s.trim().parse::<i64>().ok()) {
-        let group = world.proc_pgid(pid) == Some(pid);
+    let target = world.read(&paths.pid).and_then(|s| engine::stop_target(&s, |p| world.proc_pgid(p)));
+    if let Some((pid, group)) = target {
         world.kill(pid, group);
     }
     world.remove_dir_all(&paths.dir);

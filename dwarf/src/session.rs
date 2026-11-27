@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::decide::{hb_tick, HbTick};
+use crate::session_feed::{Renewal, SessionFeed};
 use crate::util;
 
 /// Shared between the main thread, the heartbeat and the signal watcher.
@@ -211,6 +212,14 @@ pub trait Beat: Send + Sync {
     /// The row's state and reason when the bead is claimable again (READY or REWORK) after
     /// the last renewal; `None` while this session still holds it or the row cannot be read.
     fn sent_back(&self) -> Option<String>;
+    /// What the last renewal said about the row.
+    fn renewal_outcome(&self) -> Renewal {
+        Renewal::Unjudged
+    }
+    /// The session's published facts, evaluated on each beat.
+    fn feed(&self) -> Option<&SessionFeed> {
+        None
+    }
     /// Record how this session was cut short on the bead's lifecycle row (`spira-lc
     /// disposition`); the teardown reads it from there.
     fn disposition(&self, status: &str, note: &str);
@@ -356,6 +365,9 @@ impl Heartbeat {
             let now = b.now();
             let fuse = b.fuse();
             self.renew_identity(now);
+            if let Some(feed) = b.feed() {
+                feed.beat(now);
+            }
             if crate::stop::requested(&self.run, &self.bead) {
                 let why = crate::stop::reason(&self.run, &self.bead);
                 crate::stop::clear(&self.run, &self.bead);
@@ -403,6 +415,9 @@ impl Heartbeat {
                 stop.trip(libc::SIGTERM);
                 return None;
             }
+            if let Some(feed) = b.feed() {
+                feed.renewal(now, b.renewal_outcome());
+            }
         }
     }
 }
@@ -439,8 +454,22 @@ mod tests {
         /// The still file's text as each renewal found it.
         still_seen: Mutex<Vec<Option<String>>>,
         run: PathBuf,
+        feed: Option<Arc<SessionFeed>>,
+        /// The beat (1-based) from which the renewal is refused (0: never).
+        refused_at: usize,
     }
     impl Beat for FakeBeat {
+        fn feed(&self) -> Option<&SessionFeed> {
+            self.feed.as_deref()
+        }
+        fn renewal_outcome(&self) -> Renewal {
+            match *self.beats.lock().unwrap() as usize {
+                n if self.refused_at == 0 || n < self.refused_at => Renewal::Applied,
+                // Every other refused beat cannot be judged: an unsteady store.
+                n if (n - self.refused_at) % 2 == 1 => Renewal::Unjudged,
+                _ => Renewal::Refused,
+            }
+        }
         fn descendant_ticks(&self, agent: i32) -> Option<u64> {
             if self.real_ticks {
                 return descendant_ticks(agent);
@@ -573,6 +602,78 @@ mod tests {
         assert!(r.windows(2).all(|w| w[1] > w[0]), "every renewal advances: {r:?}");
         assert!(*r.last().unwrap() - r[0] > 120 * 5, "the session outlived several leases: {r:?}");
         assert!(r.iter().all(|&u| u % 60 == 0 && u >= 120 + 60), "each deadline is that beat's now + lease: {r:?}");
+    }
+
+    #[derive(Clone, Default)]
+    struct Recording(Arc<Mutex<Vec<(String, serde_json::Value)>>>);
+    impl crate::session_feed::Outlet for Recording {
+        fn publish(&self, topic: &str, payload: &serde_json::Value) {
+            self.0.lock().unwrap().push((topic.into(), payload.clone()));
+        }
+    }
+    impl Recording {
+        /// (topic below `session/sp-a/`, the state word, `at`) in publish order.
+        fn seen(&self) -> Vec<(String, String, i64)> {
+            let all = self.0.lock().unwrap();
+            all.iter()
+                .map(|(t, p)| (t.trim_start_matches("session/sp-a/").to_string(), p["state"].as_str().unwrap_or("").to_string(), p["at"].as_i64().or(p["started_at"].as_i64()).unwrap_or(-1)))
+                .collect()
+        }
+    }
+
+    fn feed(out: &Recording) -> (Arc<SessionFeed>, crate::session_feed::Retained) {
+        let mut retained = None;
+        let feed = SessionFeed::new("sp-a", "builder", 300, |r| {
+            retained = Some(r);
+            Box::new(out.clone())
+        });
+        (Arc::new(feed), retained.unwrap())
+    }
+
+    /// Beats once a virtual minute until `beats` renewals have run.
+    fn beat_for(d: &testkit::TempDir, feed: &Arc<SessionFeed>, from: i64, beats: usize, refused_at: usize) {
+        let hb = Heartbeat { bead: "sp-a".into(), rune: "builder".into(), run: d.to_path_buf(), lease_s: 600, every: Duration::from_millis(1), wall_min: 10_000 };
+        let b = FakeBeat { now: Mutex::new(from), mtimes: Mutex::new((1..=200).collect()), fuse: "?".into(), stop_after: beats, feed: Some(Arc::clone(feed)), refused_at, ..Default::default() };
+        assert_eq!(hb.run(&b, &Stop::default(), &AtomicBool::new(false)), None);
+    }
+
+    fn row(topic: &str, state: &str, at: i64) -> (String, String, i64) {
+        (topic.into(), state.into(), at)
+    }
+
+    #[test_id(tj5ty6p)]
+    #[test]
+    fn a_session_publishes_each_age_once_when_it_reaches_it_then_ended_and_nothing_after() {
+        let d = tmp("ages");
+        let out = Recording::default();
+        let (feed, retained) = feed(&out);
+        beat_for(&d, &feed, 0, 3, 0);
+        assert_eq!(out.seen(), [], "nothing is published before the session launches");
+        let t = 600;
+        feed.started(t, Some(4));
+        beat_for(&d, &feed, t, 70, 0);
+        feed.ended(t + 4300, 0, 4300);
+        beat_for(&d, &feed, t + 4300, 70, 1);
+        assert_eq!(
+            out.seen(),
+            [row("state", "started", t), row("age/15m", "", t + 900), row("age/30m", "", t + 1800), row("age/60m", "", t + 3600), row("state", "ended", t + 4300)]
+        );
+        assert_eq!(out.0.lock().unwrap()[2].1, serde_json::json!({"at": t + 1800, "sessions": 4}));
+        let again: Vec<String> = retained.messages().into_iter().map(|(t, p)| format!("{t} {}", p["state"].as_str().unwrap_or(""))).collect();
+        assert_eq!(again, ["session/sp-a/state ended", "session/sp-a/age/15m ", "session/sp-a/age/30m ", "session/sp-a/age/60m "], "what a reconnect republishes");
+    }
+
+    #[test_id(t7x5qxw)]
+    #[test]
+    fn a_session_still_running_five_minutes_after_its_renewal_is_first_refused_is_published_lingering_once() {
+        let d = tmp("linger");
+        let out = Recording::default();
+        let (feed, retained) = feed(&out);
+        feed.started(0, None);
+        // Beats at 120, 180, ...; the third renewal, at 240, is the first refused.
+        beat_for(&d, &feed, 0, 12, 3);
+        assert_eq!(out.seen(), [row("state", "started", 0), row("state", "lingering", 240 + 300)]);
+        assert_eq!(retained.messages()[0].1["state"], "lingering");
     }
 
     #[test_id(tq0039v)]

@@ -13,11 +13,15 @@ use fixture::*;
 #[test]
 fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_reads() {
     let f = fixture(testkit::env);
+    for shared in [&f.local, &f.pr] {
+        per_worktree_config(shared);
+    }
     spira_config::process::with_fresh(|| {
     assert_traps_and_double_are_live(&f);
     assert_stubs_log(&f);
     let warm = START + 10 * MINUTE;
     let (mut at_warm, mut at_idle, mut at_commit, mut at_branch, mut at_quiet_a, mut at_quiet_b) = (0, 0, 0, 0, 0, 0);
+    let (mut validated_at_quiet_a, mut validated_at_quiet_b) = (0, 0);
     let (mut programs_at_warm, mut programs_at_idle, mut programs_at_ready, mut idle_passes, mut rows_before_ready) = (0, Vec::new(), Vec::new(), 0, Vec::new());
     let (mut tower_at_warm, mut tower_at_idle, mut tower_at_edit, mut tower_at_boundary, mut level_before) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
     let spec = f.overrides.join("round-vm-spill-ec2-always.override");
@@ -29,7 +33,9 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     }
     let runs = || std::fs::read_to_string(&ran).unwrap_or_default().lines().count();
     let mut applied: std::collections::BTreeMap<&str, usize> = Default::default();
-    let names = ["watch.throughput.observe", "landing.observe", "overrides.apply", "inbox.notify.observe", "asks.ideas.observe", "batcher.local.observe", "cockpit-tier-60s.observe", "cr-cadence.observe"];
+    let (mut sweep_at_warm, mut sweep_at_idle, mut guard_at_warm, mut towers_at_warm, mut towers_at_idle) = (Vec::new(), Vec::new(), (0, 0), 0, 0);
+    let towers = |f: &Fixture| f.seen.lock().unwrap().iter().filter(|(n, _)| n == spira_runtime::tasks::d::watch_tower::OBSERVE).count();
+    let names = ["watch.throughput.observe", "landing.observe", "overrides.apply", "inbox.notify.observe", "asks.ideas.observe", "batcher.local.observe", "cockpit-tier-60s.observe", "cr-cadence.observe", spira_runtime::tasks::d::watch_tower::OBSERVE];
     let sentinel = ["sentinel-pass.observe"];
     let reads = ["test-registry", "podman", "date", "timeout 5 date"];
     let counts = |f: &Fixture| reads.map(|p| started(f, p));
@@ -51,14 +57,19 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
             applied.insert("warm", runs());
             (at_warm, programs_at_warm) = (logged(&f).len(), logged_programs(&f).len());
             reads_at_warm = counts(&f);
+            sweep_at_warm = started_by_the_sweep(&f);
+            guard_at_warm = (guard_reads(&logged(&f), &f.local), guard_reads(&logged(&f), &f.pr));
+            towers_at_warm = towers(&f);
         }
         t if t == before_hour => drop(applied.insert("idle", runs())),
         t if t == quiet_a => {
             tower_at_warm = started_by_the_watchtower_checks(&f);
             at_quiet_a = logged(&f).len();
+            validated_at_quiet_a = spira_config::documents_validated();
         }
         t if t == quiet_b => {
             at_quiet_b = logged(&f).len();
+            validated_at_quiet_b = spira_config::documents_validated();
             tower_at_idle = started_by_the_watchtower_checks(&f);
             level_before = (host_level(&f, "certify_par"), host_level(&f, "stale_targets"));
             std::fs::write(&f.watchers, "a\nb\n").unwrap();
@@ -92,6 +103,8 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
         t if t == warm + HOUR => {
             applied.insert("boundary", runs());
             tower_at_boundary = started_by_the_watchtower_checks(&f);
+            sweep_at_idle = started_by_the_sweep(&f);
+            towers_at_idle = towers(&f);
             at_idle = logged(&f).len();
             programs_at_idle = logged_programs(&f);
             reads_at_idle = counts(&f);
@@ -118,6 +131,12 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
         }
     });
     assert_only_the_double_answered(&f);
+    assert!(towers_at_idle >= towers_at_warm + 2, "the watchtower swept {towers_at_warm} then {towers_at_idle} times, so the idle hour proves nothing");
+    assert_eq!(sweep_at_idle, sweep_at_warm, "an idle hour of sweeps started programs:\n{}", sweep_at_idle[sweep_at_warm.len().min(sweep_at_idle.len())..].join("\n"));
+    let sweep_output: serde_json::Value = serde_json::from_str(&last_output(&f, spira_runtime::tasks::d::watch_tower::OBSERVE)).unwrap_or_else(|e| panic!("the sweep answered no snapshot ({e}): {}", last_output(&f, spira_runtime::tasks::d::watch_tower::OBSERVE)));
+    assert!(sweep_output["rendered"].as_str().unwrap_or_default().contains("branch-guard: clean"), "the guard answered: {sweep_output}");
+    assert_eq!(guard_at_warm, (1, 1), "warm-up read each checkout's base tip once");
+    assert_eq!((guard_reads(&logged(&f), &f.local), guard_reads(&logged(&f), &f.pr)), (2, 1), "the commit on the landing ref is one more guard read of that repo, and none of the other");
     let c = |k: &str| applied[k];
     assert!(c("warm") >= 1, "the override was never applied: {applied:?}");
     assert_eq!(c("idle"), c("warm"), "idle minutes started overrides.sh: {applied:?}");
@@ -133,6 +152,11 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     let first_read = &all[at_warm..at_idle];
     assert!(first_read.len() == 1 && status_of_local(&first_read[0]), "an idle virtual hour's only git is the drift check's first status read:\n{}", first_read.join("\n"));
     assert_eq!(at_quiet_a, at_quiet_b, "a quiet stretch logged git:\n{}", all[at_quiet_a..at_quiet_b].join("\n"));
+    assert!(validated_at_quiet_a > 0, "no document was ever counted, so the quiet stretch proves nothing");
+    assert!(spira_config::documents_validated() > validated_at_quiet_b, "the rewritten config was not validated again");
+    assert!(started(&f, "gh") > 0, "the new spira/* branch asked no gh stub, so landing may have reached the host's gh");
+    let validated = validated_at_quiet_b - validated_at_quiet_a;
+    assert_eq!(validated, QUIET_STRETCH_CONFIG_VALIDATIONS, "3 quiet virtual minutes validated the unchanged config {validated} times, over the ceiling of {QUIET_STRETCH_CONFIG_VALIDATIONS}");
     assert!(!f.worktrees.parent().unwrap().join("conditions/drift-unreadable-units.count").exists(), "the units half was blind in the fixture");
     assert!(idle_passes >= 5, "the sentinel pass observed {idle_passes} times by the end of the idle hour");
     assert_eq!(programs_at_idle.len(), programs_at_warm, "an idle hour started programs:\n{}", programs_at_idle[programs_at_warm..].join("\n"));
@@ -175,6 +199,30 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     })
     .unwrap();
 }
+#[test_id(tbsxtno)]
+#[test]
+fn the_sweeps_in_process_reads_reach_its_snapshot() {
+    let f = fixture(testkit::env);
+    spira_config::process::with_fresh(|| {
+        let rune = spira_config::process::cfg("SPIRA_RUNES").unwrap().split_whitespace().next().expect("a rune").to_string();
+        let idle: String = (0..5).map(|i| format!("2026-01-01T00:00:0{i}Z awake {rune} idle\n")).collect();
+        let run = process_run();
+        std::fs::write(run.join("dwarf-ledger.log"), idle).unwrap();
+        std::fs::create_dir_all(run.join("release")).unwrap();
+        let sha = "a".repeat(40);
+        std::fs::write(run.join("release/hotfix"), format!("sha {sha}\nreason urgent\nat 2020-01-01T00:00:00Z\n")).unwrap();
+        let bead = format!("{{\"bead_id\":\"sp-zzzzzz\",\"verdict\":\"claimable\",\"runes\":[\"{rune}\"],\"row\":{},\"content\":{}}}", lc_row("sp-zzzzzz"), plan_row("sp-zzzzzz"));
+        *f.claimable.lock().unwrap() = format!("{{\"beads\":[{bead}]}}");
+        let observe = spira_runtime::tasks::d::watch_tower::OBSERVE;
+        let out = runtime::host::EffectRunner::run(f.effects.as_ref(), "k", &runtime::EffectSpec::keyed(observe, "k", String::new(), 60_000)).expect("the sweep ran");
+        let snap: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(snap["hotfix"].as_str().is_some_and(|h| h.contains(&format!("RUNNING UNLANDED {sha}: urgent"))), "release status: {}", snap["hotfix"]);
+        let references: Vec<&str> = snap["escalations"].as_array().unwrap().iter().filter_map(|e| e["reference"].as_str()).collect();
+        assert!(references.contains(&format!("incident:idle-while-ready:{rune}").as_str()), "ready by rune: {references:?}");
+    })
+    .unwrap();
+}
+
 #[test_id(trx3p6f)]
 #[test]
 fn a_podman_that_fails_to_list_images_is_asked_again_on_the_next_pass() {
@@ -213,7 +261,186 @@ fn a_store_with_no_images_file_asks_podman_on_every_pass() {
     assert_eq!(std::fs::read_to_string(&asked).unwrap().lines().count(), 2, "with no images.json there is nothing to key a held count on");
 }
 
+#[test_id(t0ikhij)]
+#[test]
+fn an_idle_hour_of_the_cockpit_drift_probe_starts_no_drift_script_and_reads_a_dirtied_checkout_once() {
+    let mut f = fixture(testkit::env);
+    f.cockpit_input = COCKPIT_DRIFT;
+    spira_config::process::with_fresh(|| {
+    assert_traps_and_double_are_live(&f);
+    assert_stubs_log(&f);
+    let warm = START + 11 * MINUTE;
+    let idle = warm + HOUR;
+    let statuses = |f: &Fixture| logged(f).iter().filter(|l| l.ends_with(&format!("-C {} status --porcelain", f.local.display()))).count();
+    let drift_scripts = |f: &Fixture| std::fs::read_to_string(&f.started).unwrap_or_default().lines().filter(|l| l.starts_with("bash ") && l.contains("drift.sh")).count();
+    let fragment = |f: &Fixture| {
+        let out: serde_json::Value = serde_json::from_str(&last_output(f, "cockpit-tier-600s.observe")).unwrap_or_default();
+        out["fragments"]["cockpit.drift"]["kv"].to_string()
+    };
+    let path = spira_config::release_env::child_path_env_for_process().unwrap();
+    std::process::Command::new("bash").envs(path).args(["drift.sh", "checkout"]).stdout(std::process::Stdio::null()).status().unwrap();
+    assert_eq!(drift_scripts(&f), 1, "a bash start naming drift.sh is seen, so a count of zero means none ran");
+    let (mut statuses_at_warm, mut statuses_at_idle, mut scripts_at_warm, mut scripts_at_idle) = (0, 0, 0, 0);
+    let (mut at_warm, mut at_idle) = (String::new(), String::new());
+    run_hours(&f, &["cockpit-tier-600s.observe"], (&[], 0), &[warm, idle, idle + 11 * MINUTE], &mut |t| {
+        if t == warm {
+            (statuses_at_warm, scripts_at_warm, at_warm) = (statuses(&f), drift_scripts(&f), fragment(&f));
+        } else if t == idle {
+            (statuses_at_idle, scripts_at_idle, at_idle) = (statuses(&f), drift_scripts(&f), fragment(&f));
+            std::fs::write(f.local.join("stray"), "stray").unwrap();
+        }
+    });
+    assert_eq!(scripts_at_idle - scripts_at_warm, 0, "an idle hour started drift.sh");
+    let passes = f.seen.lock().unwrap().len();
+    assert!(passes >= 7, "the drift probe was observed {passes} times, so the idle hour proves nothing");
+    assert_eq!(statuses_at_warm, 1, "the warm-up reads the checkout, so the idle hour proves something: {:?}", logged(&f));
+    assert_eq!(statuses_at_idle, statuses_at_warm, "an idle hour ran git status: {:?}", logged(&f));
+    assert!(at_warm.contains(r#""SP_CHECKOUT_DRIFT":"OK""#) && at_idle == at_warm, "{at_warm} then {at_idle}");
+    assert_eq!(statuses(&f), statuses_at_idle + 1, "a new untracked file is one git status: {:?}", logged(&f));
+    assert!(fragment(&f).contains(r#""SP_CHECKOUT_DRIFT":"DIRTY:1""#), "{}", fragment(&f));
+    })
+    .unwrap();
+}
+
 fn conditions_check_refusal(f: &Fixture) -> String {
     let snap: serde_json::Value = serde_json::from_str(&last_output(f, "sentinel-pass.observe")).unwrap_or_default();
     snap["tower"].as_array().into_iter().flatten().filter_map(|t| t.as_str()).find(|t| t.starts_with("watchtower: conditions-check")).unwrap_or("no conditions-check entry in the last sentinel pass").to_string()
+}
+
+#[test_id(tnd8kl4)]
+#[test]
+fn the_livelock_probe_starts_no_bash_over_an_idle_hour_and_still_reports_an_ask_without_overseer() {
+    let mut f = fixture(testkit::env);
+    f.cockpit_input = COCKPIT_LIVELOCK;
+    spira_config::process::with_fresh(|| {
+    assert_traps_and_double_are_live(&f);
+    assert_stubs_log(&f);
+    let extra = spira_config::release_env::child_path_env_for_process().unwrap();
+    std::process::Command::new("bash").args(["-c", "true"]).envs(extra).output().unwrap();
+    assert_eq!(started(&f, "bash"), 1, "a bash started the way a probe starts one is counted");
+    let lib = std::path::PathBuf::from(std::env::var("SPIRA_HOME").unwrap()).join("lib.sh");
+    assert!(lib.is_file(), "no lib.sh at SPIRA_HOME, so a probe that sources it would be skipped: {}", lib.display());
+    let ask = spira_config::process::cfg("SPIRA_ASK_LABEL").unwrap();
+    let (warm, idle, asked) = (START + HOUR, START + 2 * HOUR, START + 2 * HOUR + 11 * MINUTE);
+    let (mut at_warm, mut at_idle) = (0, 0);
+    let observed = |f: &Fixture| f.seen.lock().unwrap().len();
+    let (mut seen_at_warm, mut seen_at_idle) = (0, 0);
+    run_hours(&f, &["cockpit-tier-600s.observe"], (&[], 0), &[warm, idle, asked], &mut |t| match t {
+        t if t == warm => (at_warm, seen_at_warm) = (started(&f, "bash"), observed(&f)),
+        t if t == idle => {
+            (at_idle, seen_at_idle) = (started(&f, "bash"), observed(&f));
+            let rows = format!(r#"[{{"id":"sp-zzzzzz","title":"q","status":"open","labels":["{ask}"]}}]"#);
+            *f.labelled.lock().unwrap() = Some((ask.clone(), rows));
+        }
+        _ => {}
+    });
+    assert_only_the_double_answered(&f);
+    assert!(seen_at_idle - seen_at_warm >= 5, "the probe ran {} times in the idle hour", seen_at_idle - seen_at_warm);
+    assert_eq!(at_idle - at_warm, 0, "an idle virtual hour started bash");
+    let out: serde_json::Value = serde_json::from_str(&last_output(&f, "cockpit-tier-600s.observe")).unwrap();
+    let kv = out["fragments"]["cockpit.livelock"]["kv"].to_string();
+    assert!(kv.contains("SP_LIVELOCK0") && kv.contains("LIVELOCK sp-zzzzzz ask-no-overseer"), "{kv}");
+    })
+    .unwrap();
+}
+
+fn age(tree: &std::path::Path, by: std::time::Duration) {
+    let old = std::time::SystemTime::now() - by;
+    let dotgit = std::fs::read_to_string(tree.join(".git")).unwrap();
+    let admin = std::path::PathBuf::from(dotgit.trim().strip_prefix("gitdir:").unwrap().trim());
+    for p in [admin.join("HEAD"), admin.join("index"), tree.to_path_buf()] {
+        std::fs::File::open(&p).unwrap().set_modified(old).unwrap();
+    }
+}
+
+#[test_id(tx3aih0)]
+#[test]
+fn the_stale_reaper_asks_git_only_about_a_tree_its_cheap_rules_leave_undecided() {
+    let f = fixture(testkit::env);
+    spira_config::process::with_fresh(|| {
+    use spira_runtime::tasks::c::hel_reap_stale as task;
+    let names = ["hel.reap_stale.observe"];
+    let root = f.effects.world.run_dir.join("worktree");
+    std::fs::create_dir_all(&root).unwrap();
+    git(&f.local, &["worktree", "add", "-q", "--detach", root.join(".testbatch-1").to_str().unwrap()], 1);
+    for id in ["sp-young01", "sp-done01", "sp-open01", "sp-merged01"] {
+        git(&f.local, &["worktree", "add", "-q", "-b", &format!("spira/{id}"), root.join(id).to_str().unwrap(), "local/main"], 1);
+    }
+    commit(&root.join("sp-open01"), "sp-open01 unmerged work", LANDED_S + 5);
+    for id in ["sp-done01", "sp-open01", "sp-merged01"] {
+        age(&root.join(id), std::time::Duration::from_secs(3 * 3600));
+    }
+    *f.checkout_rows.lock().unwrap() = [("sp-young01", "READY"), ("sp-done01", "LANDED"), ("sp-open01", "READY"), ("sp-merged01", "READY")].map(|(i, s)| (i.to_string(), s.to_string())).to_vec();
+    let marks = [START + 30 * MINUTE, START + 90 * MINUTE, START + 150 * MINUTE];
+    let passes = || f.seen.lock().unwrap().iter().filter(|(n, _)| n == names[0]).count();
+    let mut at = Vec::new();
+    let (mut snapshot, mut decided_snapshot) = (String::new(), String::new());
+    run_hours(&f, &names, (&[], 0), &marks, &mut |t| {
+        at.push((logged(&f).len(), passes()));
+        if t == marks[1] {
+            let lc = spira_store::lc_call::LcClient::configured().unwrap();
+            let real = task::world(&f.effects.world.run_dir, f.release.to_str().unwrap(), &lc).unwrap();
+            snapshot = task::observe(&real, &lc, &f.proc_root).unwrap();
+            let after_first = logged(&f).len();
+            for id in ["sp-open01", "sp-merged01"] {
+                git(&f.local, &["worktree", "remove", "--force", root.join(id).to_str().unwrap()], 1);
+            }
+            let detached = root.join("sp-detach01");
+            git(&f.local, &["worktree", "add", "-q", "--detach", detached.to_str().unwrap(), "local/main"], 1);
+            age(&detached, std::time::Duration::from_secs(3 * 3600));
+            f.checkout_rows.lock().unwrap().push(("sp-detach01".into(), "READY".into()));
+            decided_snapshot = task::observe(&real, &lc, &f.proc_root).unwrap();
+            at.push((after_first, logged(&f).len()));
+        }
+    });
+    let all = logged(&f);
+    let (first_at, second_at, direct, third_at) = (at[0], at[1], at[2], at[3]);
+    assert_eq!((first_at.1, second_at.1, third_at.1), (1, 2, 3), "one pass ends at each mark: {at:?}");
+    let first = &all[..first_at.0];
+    let second = &all[first_at.0..second_at.0];
+    let variant = &all[direct.1..third_at.0];
+    let report = |lines: &[String]| format!("{}\n{}", argv_counts(lines), lines.join("\n"));
+    assert!(!first.iter().any(|l| l.contains("merge-base")), "the pass asked merge-base: {}", report(first));
+    assert_eq!(second.len(), first.len(), "a pass with nothing moved starts as many git processes as the first:\n{}\n---\n{}", report(first), report(second));
+    let landrefs = ["local/main", "main"];
+    let local = f.local.display().to_string();
+    let list = |repo: &str| format!("-C {repo} worktree list --porcelain");
+    let merge_read = |base: &str| format!("-C {local} for-each-ref --merged={base} --format=%(refname:short) refs/heads");
+    assert!(first.iter().any(|l| l.ends_with(&merge_read("local/main"))), "an undecided tree is read: {}", report(first));
+    for b in landrefs {
+        assert!(first.iter().filter(|l| l.ends_with(&merge_read(b))).count() <= 1, "{b} is read once: {}", report(first));
+    }
+    let repos = [local.clone(), f.pr.display().to_string()];
+    assert!(first.iter().all(|l| repos.iter().any(|r| l.ends_with(&list(r))) || landrefs.iter().any(|b| l.ends_with(&merge_read(b)))), "{}", report(first));
+    assert_eq!(variant.len(), repos.len(), "with no undecided tree: {}", report(variant));
+    for r in &repos {
+        for lines in [first, variant] {
+            assert_eq!(lines.iter().filter(|l| l.ends_with(&list(r))).count(), 1, "one worktree list of {r}: {}", report(lines));
+        }
+    }
+
+    let snap: task::Snapshot = serde_json::from_str(&snapshot).unwrap();
+    let tree = |id: &str| snap.repos.iter().flat_map(|r| &r.worktrees).find(|t| t.id == id).unwrap_or_else(|| panic!("{id} not scanned: {snapshot}"));
+    assert_eq!(tree("sp-merged01").merged_into.as_deref(), Some("local/main"));
+    assert_eq!(tree("sp-open01").merged_into, None);
+    assert_eq!(tree("sp-done01").bead_state.as_deref(), Some("LANDED"));
+    let resolved = |json: &str| -> std::collections::BTreeMap<String, (usize, Vec<String>)> {
+        serde_json::from_str::<task::Snapshot>(json).unwrap().repos.into_iter().map(|r| (r.name, (r.worktrees.len(), r.landrefs))).collect()
+    };
+    let refs: Vec<String> = landrefs.map(String::from).to_vec();
+    assert_eq!(resolved(&snapshot)["spira"], (4, refs));
+    assert_eq!(resolved(&snapshot)["prrepo"], (0, vec![]), "a repository with no tree resolves no land ref");
+    assert_eq!(resolved(&decided_snapshot)["spira"], (3, vec![]), "nor does one whose trees are decided, a detached one included");
+    use spira_runtime::tasks::b::kit::{testing, Input};
+    let handler = testing::handler::<task::HelReapStale>(&[(task::CADENCE_KEY, "3600"), (task::IDLE_HOURS_KEY, "48")]);
+    let (_, acts) = task::decide(&handler.cfg, &task::Carry { phase: task::Phase::Observing }, &Input::Observed(snap), START).unwrap();
+    let mut destroyed: Vec<(String, String)> = acts.iter().map(|a| {
+        assert_eq!(a.name, task::DESTROY_WORKTREE);
+        let d: task::Destroy = serde_json::from_str(&a.input).unwrap();
+        (d.id, d.why)
+    }).collect();
+    destroyed.sort();
+    assert_eq!(destroyed, [("sp-done01".to_string(), "reaper: bead is LANDED".to_string()), ("sp-merged01".to_string(), "reaper: branch is merged into local/main".to_string())]);
+    })
+    .unwrap();
 }

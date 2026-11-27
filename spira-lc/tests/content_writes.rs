@@ -43,14 +43,25 @@ struct Store {
 
 impl Store {
     fn up() -> Option<Store> {
+        Store::loading(&testkit::manifest_dir().join("beads-schema.sql"))
+    }
+
+    /// A private server holding no beads store: only the one empty database testdb makes.
+    fn empty() -> Option<Store> {
+        let dir = testkit::TempDir::new("lcw-empty");
+        let schema = dir.join("empty.sql");
+        std::fs::write(&schema, "SELECT 1;\n").unwrap();
+        Store::loading(&schema)
+    }
+
+    fn loading(schema: &Path) -> Option<Store> {
         let dir = testkit::TempDir::new("lcw");
         let Some(dolt) = std::env::var("TESTDB_DOLT").ok().filter(|b| !b.is_empty()).or_else(|| tool("dolt")) else {
             eprintln!("SKIP: no dolt on PATH, spira.path or ~/spira-env/bin");
             return None;
         };
-        let schema = testkit::manifest_dir().join("../testenv/fixtures/beads-schema.sql");
         let mut up = Command::new(testkit::bin_exe("testenv"));
-        up.args(["testdb", "up", "--tag", "content-writes", "--dolt", &dolt]).arg("--schema").arg(&schema);
+        up.args(["testdb", "up", "--tag", "content-writes", "--dolt", &dolt]).arg("--schema").arg(schema);
         let root = std::env::var("TESTDB_ROOT").ok().filter(|r| !r.is_empty()).unwrap_or_else(|| dir.join("db").display().to_string());
         up.args(["--root", &root]);
         let out = up.output().expect("testenv runs");
@@ -142,6 +153,7 @@ impl Lc {
         let (runes, guards) = (harness.join("runes").display().to_string(), guards.display().to_string());
         let (d, r, ctl, sock) = (dir.display().to_string(), run.display().to_string(), dir.join("control.db").display().to_string(), dir.join("s").display().to_string());
         let (rf, db) = (reader.display().to_string(), store.db.clone());
+        let (mail, index, kinds) = (dir.join("mail").display().to_string(), dir.join("mail/index").display().to_string(), harness.join("mail/kinds").display().to_string());
         let toml = spira_config::process::fixture_toml(
             &dir,
             &[
@@ -159,6 +171,9 @@ impl Lc {
                 ("SPIRA_BEADS_SQL_WRITER_PASSWORD_FILE", writer_file),
                 ("SPIRA_RUNES_DIR", &runes),
                 ("SPIRA_STATUTE_GUARDS", &guards),
+                ("SPIRA_MAIL", &mail),
+                ("SPIRA_MAIL_INDEX", &index),
+                ("SPIRA_MAIL_KINDS", &kinds),
             ],
         );
         let home = spira_config::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
@@ -168,7 +183,7 @@ impl Lc {
 
     fn command(&self) -> Command {
         let mut c = Command::new(testkit::bin_exe("spira-lc"));
-        c.env_clear().env("PATH", std::env::var("PATH").unwrap_or_default()).env("SPIRA_TOML", &self.toml).env("SPIRA_HOME", &self.home).env("SPIRA_RELEASE", self.dir.join("release")).env("HOME", self.dir.join("home"));
+        c.env_clear().env("PATH", std::env::var("PATH").unwrap_or_default()).env("SPIRA_TOML", &self.toml).env("SPIRA_HOME", &self.home).env("SPIRA_RELEASE", self.dir.join("release")).env("HOME", self.dir.join("home")).env("SPIRA_MAIL_SH", testkit::bin_exe("mail"));
         c
     }
 
@@ -813,6 +828,42 @@ fn purge_alerts_deletes_the_alerts_rows_in_sql_and_unblocks_what_they_blocked() 
     }
 }
 
+#[test_id(tl0szaj)]
+#[test]
+fn purge_alerts_with_no_writer_key_is_refused_by_the_key_and_starts_no_process() {
+    let Some(store) = Store::up() else { return };
+    let alert = store.create_bead();
+    store.sql(&format!("INSERT INTO labels (issue_id, label) VALUES ('{alert}', 'alert')"));
+    let mut lc = Lc::new(&store, "pu", "");
+    let bdq_log = lc.dir.join("bdq-argv.log");
+    recording_program(&lc.dir.join("release/bin/bdq"), &bdq_log);
+    provision(&lc);
+
+    // Direct mode (an empty socket) first: no process guard hides a delete that forks.
+    let direct = lc.dir.join("direct.toml");
+    let served = std::fs::read_to_string(&lc.toml).unwrap();
+    let socket = format!("\"{}\"", lc.dir.join("s").display());
+    assert!(served.contains(&socket), "no socket to empty in {served}");
+    std::fs::write(&direct, served.replace(&socket, "\"\"")).unwrap();
+    let ran = lc.command().env("SPIRA_TOML", &direct).args(["content", "purge-alerts", "--apply"]).output().expect("spira-lc runs");
+    let said = String::from_utf8_lossy(&ran.stderr).into_owned();
+    assert!(!bdq_log.exists(), "bdq was started for the delete: {said}");
+    assert!(!ran.status.success() && said.contains("spira.beads_sql_writer_password_file"), "not refused by the key: {said}");
+
+    // The export is named to the second and never overwritten, so the next leg needs it gone.
+    for export in std::fs::read_dir(lc.dir.join("run")).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with("purge-alerts-")) {
+        std::fs::remove_file(export.path()).unwrap();
+    }
+
+    lc.serve();
+    let (rc, out, children) = lc.refused_of("content", &["content", "purge-alerts", "--apply"], None);
+    assert_ne!(rc, 0, "the purge was accepted: {out}");
+    assert_eq!(children, 0, "the purge started a process: {out}");
+    assert!(!bdq_log.exists(), "bdq was started for a refused purge");
+    assert!(out.contains("spira.beads_sql_writer_password_file"), "the refusal did not name the key: {out}");
+    assert!(lc.shows(&alert).contains(&alert), "a refused purge deleted the alert");
+}
+
 /// Two beads whose `is_blocked` flags disagree with the graph: `blocked` has a blocker and a
 /// flag of 0, `free` has no blocker and a flag of 1.
 fn stale_pair(store: &Store, lc: &Lc) -> (String, String, String) {
@@ -853,8 +904,122 @@ fn a_gate_check_over_a_github_gate_is_refused_rather_than_forked() {
 /// A `bd` that records every argv it is run with and refuses: nothing under test may start it.
 fn recording_bd(dir: &Path, log: &Path) -> String {
     let path = dir.join("recording-bd");
-    testkit::write_exe(&path, &format!("#!/bin/sh\necho \"$@\" >> '{}'\nexit 1\n", log.display()));
+    recording_program(&path, log);
     path.display().to_string()
+}
+
+fn recording_program(path: &Path, log: &Path) {
+    testkit::write_exe(path, &format!("#!/bin/sh\necho \"$@\" >> '{}'\nexit 1\n", log.display()));
+}
+
+/// One `admin-store` run as an operator or script makes it: `(exit, stdout, stderr)`.
+fn admin_store(lc: &Lc, args: &[&str], stdin: &str) -> (i32, String, String) {
+    let mut child = lc.command().arg("admin-store").args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().expect("spira-lc runs");
+    std::io::Write::write_all(&mut child.stdin.take().unwrap(), stdin.as_bytes()).unwrap();
+    let out = child.wait_with_output().expect("spira-lc runs");
+    (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+}
+
+#[test_id(t8g40bl)]
+#[test]
+fn admin_store_sql_ping_and_config_answer_from_the_server_and_start_no_bd() {
+    let Some(store) = Store::up() else { return };
+    let lc = Lc::new(&store, "as", "");
+    assert!(Command::new(&lc.bd).args(["sql", "planted"]).output().is_ok());
+    assert!(std::fs::read_to_string(&lc.bd_log).unwrap_or_default().contains("planted"), "the recorder must see a planted bd before its silence means anything");
+    std::fs::remove_file(&lc.bd_log).unwrap();
+
+    let bead = store.create_bead();
+    let ping = admin_store(&lc, &["ping"], "");
+    let one = admin_store(&lc, &["sql"], &format!("select count(*) from issues where id = '{bead}';\n"));
+    let table = admin_store(&lc, &["sql"], &format!("select id, defer_until, 'two\\nlines' as t from issues where id = '{bead}'"));
+    let json = admin_store(&lc, &["sql", "--json"], &format!("select id, defer_until from issues where id = '{bead}'"));
+    let none = admin_store(&lc, &["sql"], "select id from issues where id = 'sp-absent'");
+    let none_json = admin_store(&lc, &["sql", "--json"], "select id from issues where id = 'sp-absent'");
+    let ddl = admin_store(&lc, &["sql"], "alter table issues add constraint spira_priority_range check (priority between 0 and 4);");
+    let unset = admin_store(&lc, &["config", "get", "status.custom"], "");
+    let set_status = admin_store(&lc, &["config", "set", "status.custom", "approved,retired"], "");
+    let status = admin_store(&lc, &["config", "get", "status.custom"], "");
+    let set_first = admin_store(&lc, &["config", "set", "types.custom", "event,gate"], "");
+    let set_types = admin_store(&lc, &["config", "set", "types.custom", "gate, proposal,it's"], "");
+    let types = admin_store(&lc, &["config", "get", "types.custom"], "");
+    let argv = std::fs::read_to_string(&lc.bd_log).unwrap_or_default();
+    assert!(argv.is_empty(), "admin-store started bd: {argv}");
+
+    for (name, (rc, _, err)) in [("ping", &ping), ("one", &one), ("table", &table), ("json", &json), ("none", &none), ("none_json", &none_json), ("ddl", &ddl), ("unset", &unset), ("set_status", &set_status), ("status", &status), ("set_first", &set_first), ("set_types", &set_types), ("types", &types)] {
+        assert_eq!(*rc, 0, "{name}: {err}");
+    }
+    assert_eq!(ping.1.lines().nth(2), Some("1"), "{}", ping.1);
+    assert_eq!(one.1.lines().count(), 3, "{}", one.1);
+    assert_eq!(one.1.lines().nth(2), Some("1"), "{}", one.1);
+    let lines: Vec<&str> = table.1.lines().collect();
+    assert_eq!(lines.len(), 3, "a header, a rule, one line per row: {}", table.1);
+    assert_eq!(lines[0].split('|').map(str::trim).collect::<Vec<_>>(), ["id", "defer_until", "t"]);
+    assert!(!lines[1].is_empty() && lines[1].chars().all(|c| c == '-' || c == '+'), "{}", table.1);
+    assert_eq!(lines[2].split('|').map(str::trim).collect::<Vec<_>>(), [bead.as_str(), "", "two lines"]);
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&json.1).unwrap(), serde_json::json!([{ "id": bead, "defer_until": null }]));
+    assert_eq!((none.1.as_str(), none_json.1.trim(), ddl.1.as_str()), ("", "[]", ""));
+    assert!(store.sql_said("select constraint_name from information_schema.table_constraints where constraint_type = 'CHECK'").contains("spira_priority_range"));
+    assert_eq!(unset.1, "status.custom (not set)\n");
+    assert_eq!(status.1, "approved,retired\n");
+    assert_eq!(types.1, "gate, proposal,it's\n");
+    let listed = store.dolt_sql("SELECT name FROM custom_types ORDER BY name", &["-r", "csv"]);
+    assert_eq!(listed.lines().skip(1).collect::<Vec<_>>(), ["gate", "it's", "proposal"], "{listed}");
+
+    store.sql("DROP TABLE custom_types");
+    let (rc, _, err) = admin_store(&lc, &["config", "set", "types.custom", "event"], "");
+    assert_eq!(rc, 0, "a store with no custom_types table: {err}");
+    assert_eq!(admin_store(&lc, &["config", "get", "types.custom"], "").1, "event\n");
+}
+
+#[test_id(toqt39a)]
+#[test]
+fn admin_store_check_names_each_column_the_reads_or_writer_lack_and_cannot_tell_without_a_server() {
+    let Some(store) = Store::up() else { return };
+    let lc = Lc::new(&store, "ac", "");
+    let whole = admin_store(&lc, &["check"], "");
+    assert_eq!((whole.0, whole.1.as_str()), (0, ""), "{}", whole.2);
+
+    store.sql("ALTER TABLE comments DROP COLUMN author");
+    let read = admin_store(&lc, &["check"], "");
+    assert_eq!((read.0, read.1.as_str()), (1, "comments.author\n"), "a column the reads need: {}", read.2);
+    store.sql("ALTER TABLE issues DROP COLUMN row_lock");
+    let both = admin_store(&lc, &["check"], "");
+    assert_eq!((both.0, both.1.as_str()), (1, "comments.author\nissues.row_lock\n"), "and one only the writer needs: {}", both.2);
+
+    let toml = std::fs::read_to_string(&lc.toml).unwrap();
+    let closed = toml.replace(&store.port, "1");
+    assert_ne!(closed, toml, "the config names the server's port");
+    std::fs::write(&lc.toml, closed).unwrap();
+    let (rc, out, err) = admin_store(&lc, &["check"], "");
+    assert_eq!((rc, out.as_str()), (2, ""), "{err}");
+    assert!(err.contains("unreachable at 127.0.0.1:1:"), "{err}");
+    assert!(!lc.bd_log.exists(), "the check started bd");
+}
+
+#[test_id(tjofiw4)]
+#[test]
+fn a_failed_admin_store_statement_exits_non_zero_with_the_servers_error() {
+    let Some(store) = Store::up() else { return };
+    let lc = Lc::new(&store, "af", "");
+    let (rc, out, err) = admin_store(&lc, &["sql"], "select * from no_such_table");
+    assert_eq!(rc, 3, "the server refused it: {out}{err}");
+    assert!(err.contains("no_such_table") && err.contains("Error "), "{err}");
+    assert_eq!(out, "");
+}
+
+#[test_id(ttzsfev)]
+#[test]
+fn the_exporters_event_query_answers_rows_it_can_parse_and_stamp() {
+    let Some(store) = Store::up() else { return };
+    let lc = Lc::new(&store, "ax", "");
+    let bead = store.create_bead();
+    store.sql(&format!("INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES (UUID(), '{bead}', 'claimed', 'dwarf-1', NULL, '2026-09-15 10:00:00'), (UUID(), '{bead}', 'closed', 'dwarf-1', 'done', '2026-09-15 11:00:00')"));
+    let (rc, out, err) = admin_store(&lc, &["sql", "--json"], &tsd_lifecycle_export::legacy_events_query("2026-09-15T10:30:00Z"));
+    assert_eq!(rc, 0, "{err}");
+    let events: Vec<tsd_lifecycle_export::BdAuditEvent> = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
+    assert_eq!(events.iter().map(|e| (e.event_type.as_str(), e.created_at.as_str())).collect::<Vec<_>>(), [("closed", "2026-09-15T11:00:00Z")]);
+    assert!(tsd::parse_ts(&events[0].created_at).is_some());
 }
 
 #[test_id(tu3jyzu)]
@@ -1204,4 +1369,134 @@ fn a_dep_add_bd_would_refuse_says_which_condition_and_leaves_the_edges_unchanged
         }
     }
     assert_eq!(edges(), before);
+}
+
+#[test_id(tc4xb9l)]
+#[test]
+fn admin_create_beads_makes_a_store_the_content_verbs_work_on_and_a_second_run_changes_nothing() {
+    let Some(mut store) = Store::empty() else { return };
+    let beads = store.dir.join("fresh_db");
+    std::fs::create_dir_all(&beads).unwrap();
+    store.db = beads.display().to_string();
+    let writer = store.dir.join("writer.credential");
+    let mut lc = Lc::new(&store, "n", &writer.display().to_string());
+    let create = |lc: &Lc, prefix: &str, database: &str| {
+        let out = lc.command().args(["admin-create-beads", "--prefix", prefix, "--host", "127.0.0.1", "--port", &store.port, "--database", database]).output().expect("spira-lc runs");
+        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+    let (rc, out) = create(&lc, "sp", "fresh_db");
+    assert_eq!(rc, 0, "{out}");
+    let metadata = beads.join(".beads/metadata.json");
+    let wrote = std::fs::read_to_string(&metadata).expect("metadata.json is written");
+    assert!(wrote.contains("\"dolt_database\": \"fresh_db\"") && wrote.contains(&format!("\"dolt_server_port\": {}", store.port)), "{wrote}");
+    // The DDL's own seed row says `sp`, so only another prefix shows the verb sets it.
+    let elsewhere = store.dir.join("other_db");
+    store.db = elsewhere.display().to_string();
+    let other = Lc::new(&store, "o", "");
+    let (rc, out) = create(&other, "zz", "other_db");
+    assert_eq!(rc, 0, "{out}");
+    let said = store.dolt_sql("SELECT value FROM other_db.config WHERE `key` = 'issue_prefix'", &["-r", "csv"]);
+    assert_eq!(said.lines().nth(1), Some("zz"), "{said}");
+
+    let state = || {
+        store.dolt_sql("SELECT (SELECT commit_hash FROM fresh_db.dolt_log LIMIT 1) AS head, (SELECT COUNT(*) FROM fresh_db.dolt_status) AS dirty, (SELECT value FROM fresh_db.config WHERE `key` = 'issue_prefix') AS prefix", &["-r", "csv"])
+    };
+    let first = state();
+    assert!(first.trim_end().ends_with(",0,sp"), "committed, with its prefix: {first}");
+
+    let (rc, out) = create(&lc, "sp", "fresh_db");
+    assert_eq!(rc, 0, "{out}");
+    assert!(out.contains("nothing changed"), "{out}");
+    assert_eq!(state(), first);
+    assert_eq!(std::fs::read_to_string(&metadata).unwrap(), wrote);
+
+    let (rc, out) = create(&lc, "yy", "fresh_db");
+    assert_eq!(rc, 3, "another prefix is not this store: {out}");
+    assert!(out.contains("\"sp\"") && out.contains("\"yy\""), "{out}");
+    store.sql("CREATE DATABASE half_made; CREATE TABLE half_made.issues (id varchar(255) PRIMARY KEY)");
+    let (rc, out) = create(&lc, "zz", "half_made");
+    assert_eq!(rc, 3, "{out}");
+    assert!(out.contains("half_made") && out.contains("partial") && out.contains("comments"), "{out}");
+    assert_eq!(std::fs::read_to_string(&metadata).unwrap(), wrote);
+
+    // The two calls install makes on a store: its wait, and its bead count.
+    let asks = |args: &[&str], stdin: &str| {
+        let mut child = lc.command().args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().expect("spira-lc runs");
+        std::io::Write::write_all(&mut child.stdin.take().unwrap(), stdin.as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success(), "{args:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    asks(&["admin-store", "ping"], "");
+    assert_eq!(asks(&["admin-store", "sql", "--json"], "SELECT COUNT(*) AS n FROM issues"), r#"[{"n":"0"}]"#);
+
+    provision(&lc);
+    lc.admin("admin-provision-writer");
+    lc.serve();
+    let make = |title: &str| first_line(&lc.children_of("content", &["content", "create", title, "--type", "task", "--labels", "repo:spira", "--silent", "--body-file", "-"], Some("a body\n")).0);
+    let (a, b) = (make("the first"), make("the second"));
+    assert!(a.starts_with("sp-") && b.starts_with("sp-") && a != b, "{a} {b}");
+    lc.children_of("content", &["content", "note", &a, "a note on the new store"], None);
+    lc.children_of("content", &["content", "dep", "add", &a, &b], None);
+    let shown = lc.shows(&a);
+    assert!(shown.contains("a note on the new store") && shown.contains(&b), "{shown}");
+    lc.children_of("close", &["close", &b, "--reason", "done"], None);
+    assert!(lc.shows(&b).contains("closed"), "{}", lc.shows(&b));
+    lc.children_of("content", &["content", "remember", "--key", "a-key"], Some("what is remembered"));
+    let kept = lc.children_of("content", &["content", "memories", "--json"], None).0;
+    assert!(kept.contains("what is remembered"), "{kept}");
+}
+
+#[test_id(tvrt4wg)]
+#[test]
+fn work_blocked_delivers_a_classed_sectioned_ask_and_holds_the_bead_ask() {
+    let Some(store) = Store::up() else { return };
+    let lc = writer_lc(&store, "wb");
+    // mail resolves `spira-lc` in its release before it takes the declared socket.
+    std::os::unix::fs::symlink(testkit::bin_exe("spira-lc"), lc.dir.join("release/bin/spira-lc")).unwrap();
+    let (rc, out) = lc.run(&["content", "create", "the bead that gets blocked", "--silent"], None);
+    assert_eq!(rc, 0, "{out}");
+    let id = first_line(&out);
+    let (rc, out) = lc.run(&["create-bead", &id, "--ready"], None);
+    assert_eq!(rc, 0, "{out}");
+    let claim = r#"{"Claim":{"holder":"dwarf-1","lease_until":4102444800,"persona":"builder"}}"#;
+    let (rc, out) = lc.run(&["event", "bead", &id, "--expect", "READY", "--version", "0", "--actor", "test", "--kind", claim], None);
+    assert_eq!(rc, 0, "claiming: {out}");
+    let holds = || -> Vec<String> {
+        let (rc, out) = lc.run(&["show", &id], None);
+        assert_eq!(rc, 0, "{out}");
+        let shown: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
+        serde_json::from_str(shown["bead"]["holds"].as_str().unwrap_or_else(|| panic!("no holds: {out}"))).unwrap()
+    };
+    assert!(holds().is_empty(), "held before it asked: {:?}", holds());
+
+    let (question, default, why) = ("Should retired branches be kept for a week?", "keep them for a week", "it sets how long work is retained");
+    let (rc, out) = lc.settled(&["work", &id, "blocked", question, "--default", default, "--class", "policy", "--class-basis", why, "--actor", "builder"], None);
+    let (rc, out) = lc.finished(rc, out);
+    assert_eq!((rc, out.trim()), (0, format!("ask filed; hold applied for {id}").as_str()), "{out}");
+
+    let delivered: Vec<PathBuf> = std::fs::read_dir(lc.dir.join("mail/operator/new")).expect("an operator mailbox").map(|e| e.unwrap().path()).collect();
+    assert_eq!(delivered.len(), 1, "{delivered:?}");
+    let message = std::fs::read_to_string(&delivered[0]).unwrap();
+    let (headers, body) = message.split_once("\n\n").expect("headers, then a body");
+    let header = |name: &str| headers.lines().find_map(|l| l.strip_prefix(&format!("{name}: "))).unwrap_or_else(|| panic!("no {name}: {headers}"));
+    assert_eq!(header("X-Spira-Kind"), "question");
+    assert_eq!(header("X-Spira-Default"), default);
+    assert_eq!(header("X-Spira-Work-Bead"), id);
+    let sections = format!("## Question\n{question}\n\n## Default\n{default}\n\n## Class basis\n{why}\n");
+    assert!(body.contains(&sections), "{body}");
+
+    let decision = header("X-Spira-Bead");
+    assert_ne!(decision, id, "the thread bead is the ask's own");
+    let shown: serde_json::Value = serde_json::from_str(&lc.shows(decision)).unwrap();
+    let shown = shown.as_array().map_or(&shown, |a| &a[0]);
+    let description = shown["description"].as_str().unwrap_or_default();
+    assert!(description.lines().any(|l| l == "Class: policy"), "{description}");
+    let configured = std::fs::read_to_string(&lc.toml).unwrap();
+    let ask_label = configured.lines().find_map(|l| l.strip_prefix("ask_label = ")).expect("the fixture declares ask_label").trim_matches('"').to_string();
+    let labels: Vec<&str> = shown["labels"].as_array().expect("labels").iter().filter_map(|l| l.as_str()).collect();
+    for want in [ask_label, format!("work-bead:{id}")] {
+        assert!(labels.contains(&want.as_str()), "no {want} in {labels:?}");
+    }
+    assert_eq!(holds(), ["ask"]);
 }

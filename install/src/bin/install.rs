@@ -15,10 +15,11 @@
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
-use install::bootstrap::{self, nonempty_env};
+use install::bootstrap::{self, nonempty_env, refuse_root_owner};
 use install::checks;
 use install::install_units::{self, Ctx};
 use install::systemctl::RealSystemctl;
+use install::telemetry::Endpoint;
 use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -238,20 +239,12 @@ fn set_dolt_metrics_disabled(path: &Path) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|e| format!("install {}: {e}", path.display()))
 }
 
-/// The flake reference for the release's `spira-env`. The root is resolved through its symlinks:
-/// nix copies a symlinked `path:` root into the store as a symlink, and a relative target (the
-/// `current` link to `spira-<name>`) then resolves against `/nix/store`, which pure evaluation refuses.
-fn spira_env_target(root: &Path) -> String {
-    let resolved = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    format!("path:{}#spira-env", resolved.display())
-}
-
 /// Builds the pinned tool environment (`flake.nix` at the release root) into
 /// `~/.local/lib/spira-env`; every unit's PATH and `dolt-beads.service`'s ExecStart resolve
 /// dolt and bd from it. Idempotent: an unchanged lock rebuilds to the same store path. Once the
 /// previous env is rooted it starts a garbage collection, which the install does not wait for.
 fn build_spira_env(dry: bool, home: &str, release_root: Option<&Path>) -> Result<(), String> {
-    let Some(root) = release_root.filter(|r| r.join("flake.nix").is_file() && r.join("flake.lock").is_file()) else {
+    let Some(root) = release_root.filter(|r| release::spira_env::has_flake(r)) else {
         info("skipping spira-env: no flake.nix/flake.lock in this release");
         return Ok(());
     };
@@ -277,70 +270,32 @@ fn build_spira_env(dry: bool, home: &str, release_root: Option<&Path>) -> Result
     build_spira_env_with(dry, home, root, &run_ok, units.as_deref(), gc.as_ref())
 }
 
-/// What the collection unit needs besides the env: where `nix-collect-garbage` may live, where its
-/// output goes, and the key that makes one install start one unit.
-struct GcPlan {
-    profile_bin: PathBuf,
-    log: PathBuf,
-    key: String,
-}
-
-fn gc_plan(profile_bin: Result<String, String>, run_dir: Result<String, String>, root: &Path) -> Result<GcPlan, String> {
-    Ok(GcPlan { profile_bin: PathBuf::from(profile_bin?), log: Path::new(&run_dir?).join("nix-gc.log"), key: root_key(root) })
-}
-
-fn root_key(root: &Path) -> String {
-    std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
-}
-
-type Runner<'a> = &'a dyn Fn(&str, &[&str]) -> Result<(), String>;
+use release::spira_env::{collect_nix_garbage, gc_plan, GcPlan, Runner};
 
 fn build_spira_env_with(dry: bool, home: &str, root: &Path, run: Runner, units: Option<&dyn runtime::units::Units>, gc: Option<&GcPlan>) -> Result<(), String> {
     let out = Path::new(home).join(spira_config::SPIRA_ENV_REL);
-    let target = spira_env_target(root);
     if dry {
+        let target = release::spira_env::target(root);
         would(&format!("run: nix build {target} -o {}", out.display()));
         would("start nix-collect-garbage as a background unit once the previous spira-env is rooted");
         return Ok(());
     }
-    if let Some(parent) = out.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
-    }
-    let before = std::fs::canonicalize(&out).ok();
-    run("nix", &["--extra-experimental-features", "nix-command flakes", "build", &target, "-o", &out.display().to_string()])
-        .map_err(|e| format!("cannot build spira-env (is nix installed?): {e}"))?;
-    if let (Some(old), Ok(new)) = (before, std::fs::canonicalize(&out)) {
-        if old != new {
-            let prev = Path::new(home).join(spira_config::SPIRA_ENV_PREV_REL);
-            run("nix-store", &["--add-root", &prev.display().to_string(), "--indirect", "--realise", &old.display().to_string()])
-                .map_err(|e| format!("cannot root the previous spira-env {}: {e}", old.display()))?;
-            info(&format!("kept previous spira-env {} as a GC root at {}", old.display(), prev.display()));
-        }
+    let run = |prog: &str, args: &[&str]| {
+        run(prog, args).map_err(|e| if prog == "nix" { format!("cannot build spira-env (is nix installed?): {e}") } else { e })
+    };
+    let built = release::spira_env::build(&release::spira_env::Argv(&run), root, Path::new(home))?;
+    if let Some(old) = built.replaced() {
+        let prev = Path::new(home).join(spira_config::SPIRA_ENV_PREV_REL);
+        info(&format!("kept previous spira-env {} as a GC root at {}", old.display(), prev.display()));
     }
     info(&format!("built spira-env at {}", out.display()));
     if let (Some(units), Some(gc)) = (units, gc) {
-        collect_nix_garbage(units, gc, &out);
+        match collect_nix_garbage(units, gc, &out) {
+            Ok(name) => info(&format!("started nix garbage collection as {name}")),
+            Err(w) => warn(&w),
+        }
     }
     Ok(())
-}
-
-/// Starts `nix-collect-garbage` as a background unit and returns at once. Without `-d` it removes
-/// only store paths no GC root reaches, so the current env, the rooted previous env and every
-/// path a running process holds survive. A failure to start costs only a warning.
-fn collect_nix_garbage(units: &dyn runtime::units::Units, gc: &GcPlan, env: &Path) {
-    use runtime::units::{UnitProps, UnitSpec};
-    use std::os::unix::fs::PermissionsExt;
-    let executable = |p: &Path| std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
-    let Some(bin) = [gc.profile_bin.clone(), env.join("bin")].into_iter().map(|d| d.join("nix-collect-garbage")).find(|p| executable(p)) else {
-        warn("nix garbage will not be collected: nix-collect-garbage was found neither in the profile nor in the spira-env");
-        return;
-    };
-    let spec = UnitSpec { task: install::NIX_GC_UNIT_TASK.into(), key: gc.key.clone(), argv: vec![bin.display().to_string()], env: vec![], cwd: None };
-    let props = UnitProps { cpu_quota_pct: Some(20), nice: Some(10), io_class: Some("idle".into()), runtime_max_ms: Some(1_800_000), output_append: Some(gc.log.clone()), ..UnitProps::default() };
-    match units.start_with(&spec, &props) {
-        Ok(h) => info(&format!("started nix garbage collection as {}", h.name)),
-        Err(e) => warn(&format!("nix garbage collection did not start: {e}")),
-    }
 }
 
 fn bd_config_path() -> Option<PathBuf> {
@@ -776,21 +731,29 @@ fn require_declared_config_and_release() -> Result<(), String> {
 }
 
 fn main() -> ExitCode {
-    install::telemetry::metered_exit("install", run_main)
+    install::telemetry::metered_exit_to("install", run_main)
 }
 
-fn run_main() -> ExitCode {
-    if let Err(e) = require_declared_config_and_release() {
-        eprintln!("install: {e}");
-        return ExitCode::from(2);
-    }
+fn run_main() -> (ExitCode, Endpoint) {
     let opts = match parse_args() {
         Ok(o) => o,
         Err(e) => {
             eprintln!("install: {e}");
-            return ExitCode::from(2);
+            return (ExitCode::from(2), Endpoint::Process);
         }
     };
+    match proc_starts_or_declared(opts.proc_starts, opts.system_user, require_declared_config_and_release) {
+        Ok(true) => standalone_proc_starts(opts.instance.as_deref(), opts.dry),
+        Ok(false) => (run_declared(opts), Endpoint::Process),
+        Err(e) => {
+            eprintln!("install: {e}");
+            (ExitCode::from(2), Endpoint::Process)
+        }
+    }
+}
+
+/// Every mode that runs in the declared environment.
+fn run_declared(opts: Opts) -> ExitCode {
     let requested = opts.instance.clone().or_else(|| nonempty_env("SPIRA_INSTANCE"));
     let ephemeral = opts.ephemeral && requested.is_none();
     if let Some(p) = nonempty_env("CONFIGURE_PROD") {
@@ -808,9 +771,6 @@ fn run_main() -> ExitCode {
 
     if opts.system_user {
         return standalone_system_user(&instance, opts.dry);
-    }
-    if opts.proc_starts {
-        return standalone_proc_starts(&instance, opts.dry);
     }
     // ---- phase -1: dependencies ----------------------------------------------------------
     // Install provides what its own doctor demands BEFORE the preflight judges the host
@@ -955,7 +915,13 @@ fn run_main() -> ExitCode {
     // ---- phase 3: database --------------------------------------------------------------
     phase("phase 3: database");
     let db = nonempty_env("SPIRA_DB").unwrap_or_default();
-    let dolt_data = nonempty_env("SPIRA_DOLT_DATA");
+    let dolt_data = match install::guards::require_dolt_data(nonempty_env("SPIRA_DOLT_DATA").as_deref()) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("install: phase database failed — {e}");
+            return ExitCode::from(2);
+        }
+    };
     {
         let own_remotes = git_remotes(&db.to_string());
         let ancestor_git = ancestor_git_dir(Path::new(&db).parent());
@@ -967,53 +933,34 @@ fn run_main() -> ExitCode {
     let mut seed_deferred = false;
     let mut db_fresh = false;
     let mut dolt_bg: Option<std::process::Child> = None;
-    let mut dolt_port: u16 = 3307;
-    if let Some(dd) = &dolt_data {
-        if !Path::new(dd).is_dir() {
-            if opts.dry {
-                would(&format!("create Dolt data directory: {dd}"));
-            } else {
-                info(&format!("create Dolt data directory: {dd}"));
-                let _ = std::fs::create_dir_all(dd);
-                changes += 1;
-            }
+    if !Path::new(&dolt_data).is_dir() {
+        if opts.dry {
+            would(&format!("create Dolt data directory: {dolt_data}"));
         } else {
-            skip(&format!("Dolt data directory exists: {dd}"));
+            info(&format!("create Dolt data directory: {dolt_data}"));
+            let _ = std::fs::create_dir_all(&dolt_data);
+            changes += 1;
         }
-        let yaml_dest = format!("{dd}/dolt-server.yaml");
-        let yaml_tpl = format!("{}/dolt-server.yaml", bootstrap::templates_dir().display());
-        changes += place_dolt_yaml(&yaml_tpl, &yaml_dest, &[("@SPIRA_DOLT_DATA@", dd)], opts.dry);
-        dolt_port = read_yaml_port(&yaml_dest).unwrap_or(3307);
-
+    } else {
+        skip(&format!("Dolt data directory exists: {dolt_data}"));
     }
+    let yaml_dest = format!("{dolt_data}/dolt-server.yaml");
+    let yaml_tpl = format!("{}/dolt-server.yaml", bootstrap::templates_dir().display());
+    changes += place_dolt_yaml(&yaml_tpl, &yaml_dest, &[("@SPIRA_DOLT_DATA@", &dolt_data)], opts.dry);
+    let dolt_port: u16 = read_yaml_port(&yaml_dest).unwrap_or(3307);
     if Path::new(&db).join(".beads").is_dir() {
         if let Ok(meta) = std::fs::read_to_string(Path::new(&db).join(".beads/metadata.json")) {
             if meta.contains("\"dolt_mode\"") && meta.contains("\"embedded\"") {
-                eprintln!("install: phase database failed — existing store at {db} is embedded (one lock, all clients queue); set SPIRA_DOLT_DATA in spira.conf and re-run install");
+                eprintln!("install: phase database failed — existing store at {db} is embedded (one lock, all clients queue), and install serves server stores only; move {db}/.beads aside (its beads are not migrated) and re-run install to create one");
                 return ExitCode::from(2);
             }
         }
-        // A bead count, not just an existence check (original: `bd -C $SPIRA_DB list --limit
-        // 0 --json`, 10s timeout, length of the JSON array, "?" on any failure to parse or
-        // to run at all). This ALSO proves the post-init skip check keeps -C — only the
-        // fresh-init call below lost it.
-        let bead_count = Command::new("timeout")
-            .args([FIRST_RUN_SECS, "bd", "-C", &db, "list", "--limit", "0", "--json"])
-            .output()
-            .ok()
-            .and_then(|o| o.status.success().then_some(o.stdout))
-            .and_then(|out| serde_json::from_slice::<serde_json::Value>(&out).ok())
-            .and_then(|v| v.as_array().map(|a| a.len().to_string()))
-            .unwrap_or_else(|| "?".to_string());
+        let bead_count = store_bead_count();
         skip(&format!("database exists at {db} ({bead_count} bead(s))"));
     } else {
         db_fresh = true;
         if opts.dry {
-            if dolt_data.is_some() {
-                would(&format!("start dolt server and run: (cd {db} && bd init --server --external)"));
-            } else {
-                would(&format!("run: (cd {db} && bd init)"));
-            }
+            would(&format!("start dolt server and run: spira-lc admin-create-beads (the beads store at {db})"));
         } else {
             info(&format!("initialising database at {db}"));
             let _ = std::fs::create_dir_all(&db);
@@ -1028,62 +975,51 @@ fn run_main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            if let Some(_dd) = &dolt_data {
-                if which_prog("dolt").is_none() {
-                    eprintln!("install: phase database failed — dolt is not on PATH — required to init the database");
+            let lc = match spira_store::lifecycle_row::lc_bin() {
+                Ok(lc) => lc,
+                Err(e) => {
+                    eprintln!("install: phase database failed — {e}");
                     return ExitCode::from(2);
                 }
-                if !tcp_up(dolt_port) {
-                    info(&format!("starting dolt server on port {dolt_port} for database init"));
-                    let yaml = format!("{}/dolt-server.yaml", dolt_data.clone().unwrap());
-                    // batch-job: child is spawned or exec-replaced, not awaited under a deadline
-                    dolt_bg = Command::new("dolt").args(["sql-server", "--config", &yaml]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok();
-                    if !wait_tcp(dolt_port, 30) {
-                        if let Some(mut c) = dolt_bg.take() {
-                            let _ = c.kill();
-                        }
-                        eprintln!("install: phase database failed — dolt server did not start on port {dolt_port} within 30s");
-                        return ExitCode::from(2);
-                    }
-                }
-                let ready_max: u64 = nonempty_env("SPIRA_INSTALL_DOLT_READY_WAIT").and_then(|v| v.parse().ok()).unwrap_or(120);
-                if !wait_dolt_query(dolt_port, ready_max) {
+            };
+            if which_prog("dolt").is_none() {
+                eprintln!("install: phase database failed — dolt is not on PATH — required to init the database");
+                return ExitCode::from(2);
+            }
+            if !tcp_up(dolt_port) {
+                info(&format!("starting dolt server on port {dolt_port} for database init"));
+                let yaml = format!("{dolt_data}/dolt-server.yaml");
+                // batch-job: child is spawned or exec-replaced, not awaited under a deadline
+                dolt_bg = Command::new("dolt").args(["sql-server", "--config", &yaml]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok();
+                if !wait_tcp(dolt_port, 30) {
                     if let Some(mut c) = dolt_bg.take() {
                         let _ = c.kill();
                     }
-                    eprintln!("install: phase database failed — dolt server on port {dolt_port} did not answer queries within {ready_max}s");
+                    eprintln!("install: phase database failed — dolt server did not start on port {dolt_port} within 30s");
                     return ExitCode::from(2);
                 }
-                let dbname = Path::new(&db).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                let max_tries: u32 = nonempty_env("SPIRA_INSTALL_BD_INIT_TRIES").and_then(|v| v.parse().ok()).unwrap_or(3).max(1);
-                let mut tries = 0;
-                loop {
-                    tries += 1;
-                    let (rc, out) = bd_output(&db, &["init", "--non-interactive", "--prefix", &id_prefix, "--skip-agents", "--skip-hooks", "--server", "--server-host", "127.0.0.1", "--server-port", &dolt_port.to_string(), "--database", &dbname, "--external", "-q"]);
-                    if rc == 0 {
-                        break;
-                    }
-                    clean_partial_init(&db, &dbname, dolt_port);
-                    if tries < max_tries && out.contains("invalid connection") {
-                        info(&format!("  bd init hit an invalid connection — removed the partial database, retrying: {}", out.trim().lines().last().unwrap_or("")));
-                        std::thread::sleep(std::time::Duration::from_secs(2 * tries as u64));
-                        continue;
-                    }
-                    eprint!("{out}");
-                    if let Some(mut c) = dolt_bg.take() {
-                        let _ = c.kill();
-                    }
-                    eprintln!("install: phase database failed — bd init (server mode) failed");
-                    return ExitCode::from(2);
+            }
+            let ready_max: u64 = nonempty_env("SPIRA_INSTALL_DOLT_READY_WAIT").and_then(|v| v.parse().ok()).unwrap_or(120);
+            if !wait_dolt_query(dolt_port, ready_max) {
+                if let Some(mut c) = dolt_bg.take() {
+                    let _ = c.kill();
                 }
-                let _ = spira_config::bounded::bounded("git").args(["-C", &db, "config", "beads.role", "maintainer"]).status();
-            } else {
-                // cwd == SPIRA_DB, not -C: see bd_output's doc comment above for why.
-                if !bd_init_bounded().current_dir(&db).args(["init", "--prefix", &id_prefix]).status().map(|s| s.success()).unwrap_or(false) {
-                    eprintln!("install: phase database failed — bd init failed");
-                    return ExitCode::from(2);
+                eprintln!("install: phase database failed — dolt server on port {dolt_port} did not answer queries within {ready_max}s");
+                return ExitCode::from(2);
+            }
+            let dbname = Path::new(&db).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let created = install::orchestrate::create_beads(
+                &HostDeps,
+                &mut || create_beads_store(&lc, &id_prefix, dolt_port, &dbname),
+                &mut || clean_partial_init(&db, &dbname, dolt_port),
+            );
+            if let Err(out) = created {
+                eprint!("{out}");
+                if let Some(mut c) = dolt_bg.take() {
+                    let _ = c.kill();
                 }
-                let _ = spira_config::bounded::bounded("git").args(["-C", &db, "config", "beads.role", "maintainer"]).status();
+                eprintln!("install: phase database failed — spira-lc admin-create-beads failed");
+                return ExitCode::from(2);
             }
             changes += 1;
         }
@@ -1118,11 +1054,10 @@ fn run_main() -> ExitCode {
     }
 
     if Path::new(&db).join(".beads").is_dir() || !opts.dry {
-        let server_mode = dolt_data.is_some();
-        let server_up = server_mode && tcp_up(dolt_port);
+        let server_up = tcp_up(dolt_port);
         if opts.dry {
             would("run: spira/seed.sh (skips statutes already in force)");
-        } else if install::guards::seed_when(db_fresh, server_mode, server_up) == install::guards::SeedWhen::Defer {
+        } else if install::guards::seed_when(db_fresh, server_up) == install::guards::SeedWhen::Defer {
             seed_deferred = true;
             info("seeding statutes after phase 4 — the database server is not running yet");
         } else {
@@ -1132,10 +1067,8 @@ fn run_main() -> ExitCode {
             if let Some(mut c) = dolt_bg.take() {
                 let _ = c.kill();
             }
-            if dolt_data.is_some() {
-                let close_wait: u64 = nonempty_env("SPIRA_INSTALL_DOLT_CLOSE_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30);
-                wait_tcp_down(dolt_port, close_wait);
-            }
+            let close_wait: u64 = nonempty_env("SPIRA_INSTALL_DOLT_CLOSE_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30);
+            wait_tcp_down(dolt_port, close_wait);
             if rc != 0 && db_fresh {
                 eprintln!("install: phase database failed — seed.sh failed — statutes not seeded on fresh database");
                 return ExitCode::from(2);
@@ -1250,23 +1183,27 @@ fn run_main() -> ExitCode {
             println!("installed {u}");
         }
         changes += 1;
-        if let Some(dd) = &dolt_data {
-            let bp = read_yaml_port(&format!("{dd}/dolt-server.yaml")).unwrap_or(3307);
-            info(&format!("waiting for dolt-beads.service on port {bp}"));
-            let pwt: u64 = nonempty_env("SPIRA_INSTALL_DOLT_WAIT").and_then(|v| v.parse().ok()).unwrap_or(60);
-            if !wait_tcp(bp, pwt) {
-                eprintln!("install: phase units failed — dolt-beads.service is active but not listening on {bp} after {pwt}s");
-                return ExitCode::from(2);
-            }
-            info(&format!("dolt-beads.service listening on port {bp}"));
-            let _ = spira_config::bounded::bounded_for("bd", FIRST_RUN_SECS).args(["-C", &db, "doctor", "--fix", "--yes"]).env("BD_NON_INTERACTIVE", "1").status();
-            let db_max: u64 = nonempty_env("SPIRA_INSTALL_DB_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30);
-            if !wait_bd_list(&db, db_max) {
-                eprintln!("install: phase units failed — bd did not accept connections within {db_max}s after dolt-beads.service started");
-                return ExitCode::from(2);
-            }
-            info("bd store accepting connections");
+        let bp = read_yaml_port(&format!("{dolt_data}/dolt-server.yaml")).unwrap_or(3307);
+        info(&format!("waiting for dolt-beads.service on port {bp}"));
+        let pwt: u64 = nonempty_env("SPIRA_INSTALL_DOLT_WAIT").and_then(|v| v.parse().ok()).unwrap_or(60);
+        if !wait_tcp(bp, pwt) {
+            eprintln!("install: phase units failed — dolt-beads.service is active but not listening on {bp} after {pwt}s");
+            return ExitCode::from(2);
         }
+        info(&format!("dolt-beads.service listening on port {bp}"));
+        let db_max: u64 = nonempty_env("SPIRA_INSTALL_DB_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30);
+        let answered = spira_store::lifecycle_row::lc_bin().and_then(|lc| {
+            if install::orchestrate::wait_for_store(&HostDeps, &lc, db_max) {
+                Ok(())
+            } else {
+                Err(format!("the beads store did not answer spira-lc admin-store ping within {db_max}s after dolt-beads.service started"))
+            }
+        });
+        if let Err(e) = answered {
+            eprintln!("install: phase units failed — {e}");
+            return ExitCode::from(2);
+        }
+        info("beads store accepting connections");
     }
 
     if seed_deferred {
@@ -1681,45 +1618,28 @@ fn wait_dolt_query(port: u16, max_secs: u64) -> bool {
     }
 }
 
-fn wait_bd_list(db: &str, max_secs: u64) -> bool {
-    let start = std::time::Instant::now();
-    let mut attempt: u64 = 0;
-    loop {
-        let ok = spira_config::bounded::bounded_for("bd", FIRST_RUN_SECS).args(["-C", db, "list", "--json"]).env("BD_NON_INTERACTIVE", "1").output().map(|o| o.status.success()).unwrap_or(false);
-        if ok {
-            return true;
-        }
-        if start.elapsed().as_secs() >= max_secs {
-            return false;
-        }
-        attempt += 1;
-        info(&format!("  db probe: attempt {attempt} of {max_secs}: retrying"));
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
+/// The existing store's bead count for the skip line, `?` when the store cannot be asked.
+fn store_bead_count() -> String {
+    let ask = || -> Option<String> {
+        let lc = spira_store::lifecycle_row::lc_bin().ok()?;
+        let mut child = spira_config::bounded::bounded(&lc).args(["admin-store", "sql", "--json"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+        child.stdin.take()?.write_all(b"SELECT COUNT(*) AS n FROM issues").ok()?;
+        let o = child.wait_with_output().ok()?;
+        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+    };
+    install::orchestrate::bead_count(&ask().unwrap_or_default())
 }
 
-/// `bd`, bounded for `bd init`: creating a fresh database's schema takes far longer than the
-/// 5 s a call that must merely answer gets — under that bound `bd init` was killed mid-schema
-/// on every fresh install ("failed to initialize schema: context canceled").
-const BD_INIT_SECS: &str = "300";
-fn bd_init_bounded() -> Command {
-    let mut c = Command::new("timeout");
-    c.arg(BD_INIT_SECS).arg("bd");
-    c
-}
+/// Creating a store's schema takes far longer than a call that must merely answer.
+const CREATE_BEADS_SECS: &str = "300";
 
-/// Runs `bd <args>` with `db` as cwd, not `-C db` — `bd init`'s own remote-less repository
-/// is allowed (db_git_guard, above), and `-C` makes a fresh `bd init` look inside a
-/// directory that does not have a beads project yet, which is exactly what `bd` refuses
-/// (original: `( cd "$SPIRA_DB" && ... bd init ... )`, install.sh lines ~639/~660 before
-/// retirement). Only the init call needs this; every other `bd` call in this binary keeps
-/// `-C` for the already-initialised database it is allowed to name from outside.
-fn bd_output(db: &str, args: &[&str]) -> (i32, String) {
-    let mut c = bd_init_bounded();
-    c.current_dir(db).args(args).env("BD_NON_INTERACTIVE", "1");
-    match c.output() {
+fn create_beads_store(lc: &str, prefix: &str, port: u16, dbname: &str) -> (i32, String) {
+    let o = spira_config::bounded::bounded_for(lc, CREATE_BEADS_SECS)
+        .args(["admin-create-beads", "--prefix", prefix, "--host", "127.0.0.1", "--port", &port.to_string(), "--database", dbname])
+        .output();
+    match o {
         Ok(o) => (o.status.code().unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
-        Err(e) => (127, format!("cannot run bd: {e}")),
+        Err(e) => (127, format!("cannot run {lc}: {e}\n")),
     }
 }
 
@@ -1946,58 +1866,124 @@ fn standalone_system_user(instance: &str, dry: bool) -> ExitCode {
 
 /// The one root step proc-starts needs: its system unit, run as the owner of the harness home,
 /// holding CAP_BPF and CAP_PERFMON and nothing else. Creates no user.
-fn refuse_root_owner(uid: u32, home: &str) -> Result<(), String> {
-    if uid == 0 {
-        return Err(format!("{home} is owned by root; proc-starts must run as the operator's own user, not root"));
-    }
-    Ok(())
-}
-
-fn proc_starts_phase(host: &install::values::HostValues) -> Result<(), String> {
-    use std::os::unix::fs::MetadataExt;
-    let uid = std::fs::metadata(&host.home).map_err(|e| format!("cannot stat {}: {e}", host.home))?.uid();
+fn proc_starts_phase(host: &install::values::HostValues, user: &str, owner: bootstrap::Owner, dest_dir: &Path, run: RunCmd) -> Result<(), String> {
+    let uid = owner(Path::new(&host.home))?;
     refuse_root_owner(uid, &host.home)?;
-    let out = spira_config::bounded::bounded("getent").args(["passwd", &uid.to_string()]).output().map_err(|e| format!("cannot run getent: {e}"))?;
-    let user = String::from_utf8_lossy(&out.stdout).split(':').next().map(str::trim).filter(|u| !u.is_empty()).map(str::to_string).ok_or_else(|| format!("no user has uid {uid}, the owner of {}", host.home))?;
-    let host = install::values::HostValues { unit_user: user, ..host.clone() };
+    let host = install::values::HostValues { unit_user: user.to_string(), ..host.clone() };
     let unit = "spira-proc-starts.service";
-    let text = install::values::render_file(&Path::new(&host.home).join("systemd").join(unit), &host, None)?;
-    let dest = format!("{}/{unit}", system_paths::ETC_SYSTEMD_SYSTEM);
+    let templates = bootstrap::templates_dir_from(Some(host.home.clone()), None, None);
+    let text = install::values::render_file(&templates.join(unit), &host, None)?;
+    let dest = dest_dir.join(unit).display().to_string();
     std::fs::write(format!("{dest}.tmp"), text).map_err(|e| e.to_string())?;
-    run_ok("install", &["-m", "0644", &format!("{dest}.tmp"), &dest])?;
+    run("install", &["-m", "0644", &format!("{dest}.tmp"), &dest])?;
     let _ = std::fs::remove_file(format!("{dest}.tmp"));
     info(&format!("install {dest}"));
-    run_ok("systemctl", &["daemon-reload"])?;
+    run("systemctl", &["daemon-reload"])?;
     info("reload systemd");
-    run_ok("systemctl", &["enable", "--now", unit])?;
+    run("systemctl", &["enable", "--now", unit])?;
     info(&format!("enable {unit}"));
     Ok(())
 }
 
-fn standalone_proc_starts(instance: &str, dry: bool) -> ExitCode {
+/// True for the standalone proc-starts mode, which never meets the declared-environment
+/// check: under plain sudo it derives its own. Every other mode must pass it.
+fn proc_starts_or_declared(proc_starts: bool, system_user: bool, declared: impl FnOnce() -> Result<(), String>) -> Result<bool, String> {
+    if proc_starts && !system_user {
+        return Ok(true);
+    }
+    declared().map(|()| false)
+}
+
+type RunCmd<'a> = &'a dyn Fn(&str, &[&str]) -> Result<(), String>;
+
+const PROC_STARTS_PHASE_FAILED: &str = "phase proc-starts failed — ";
+
+fn standalone_proc_starts(instance: Option<&str>, dry: bool) -> (ExitCode, Endpoint) {
     phase("proc-starts: system unit");
-    let host = match bootstrap::host_from_env(instance) {
-        Ok(h) => h,
-        Err(e) => {
-            eprintln!("install: {e}");
-            return ExitCode::from(1);
-        }
-    };
-    if dry {
-        would("would install and start spira-proc-starts.service");
-        return ExitCode::SUCCESS;
-    }
-    if !is_root() {
-        eprintln!("install: --proc-starts requires root and runs only the proc-starts phase");
-        return ExitCode::from(1);
-    }
-    match proc_starts_phase(&host) {
+    let argv0 = bootstrap::argv0_path().unwrap_or_default();
+    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let pin = |home: &Path| spira_config::registry::pin_for_process(home).map(|_| ());
+    let dest = Path::new(system_paths::ETC_SYSTEMD_SYSTEM);
+    proc_starts_report(standalone_proc_starts_with(instance, &argv0, &env, &bootstrap::stat_owner, &bootstrap::getent_passwd, &pin, is_root(), dest, &run_ok, dry))
+}
+
+fn proc_starts_report((got, endpoint): (Result<(), String>, Option<String>)) -> (ExitCode, Endpoint) {
+    let code = match got {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("install: phase proc-starts failed — {e}");
-            ExitCode::from(2)
+            eprintln!("install: {e}");
+            ExitCode::from(proc_starts_exit(&e))
         }
+    };
+    (code, Endpoint::Derived(endpoint))
+}
+
+/// 2 for a phase that failed, 1 for a refusal before it.
+fn proc_starts_exit(error: &str) -> u8 {
+    if error.starts_with(PROC_STARTS_PHASE_FAILED) {
+        2
+    } else {
+        1
     }
+}
+
+/// The second value is the run's metrics endpoint: `None` only when the run refused before
+/// its config resolved.
+#[allow(clippy::too_many_arguments)]
+fn standalone_proc_starts_with(
+    instance: Option<&str>,
+    argv0: &Path,
+    env: &std::collections::BTreeMap<String, String>,
+    owner: bootstrap::Owner,
+    passwd: bootstrap::Passwd,
+    pin: &dyn Fn(&Path) -> Result<(), String>,
+    is_root: bool,
+    dest_dir: &Path,
+    run: RunCmd,
+    dry: bool,
+) -> (Result<(), String>, Option<String>) {
+    let resolve = || {
+        let (env, user) = bootstrap::proc_starts_env(argv0, env, owner, passwd)?;
+        pin(Path::new(&env["SPIRA_HOME"]))?;
+        let (host, endpoint) = proc_starts_host(instance, &env).map_err(|e| {
+            let release = &env[spira_config::RELEASE_ENV];
+            let toml = &env[spira_config::process::TOML_ENV];
+            format!(
+                "{e}; the config is {toml}, named by the installed spira-runtime unit: as the operator fix it or re-render the units (SPIRA_TOML={toml} SPIRA_RELEASE={release} {release}/bin/units-install), then run: sudo {release}/bin/spira-install --proc-starts"
+            )
+        })?;
+        Ok::<_, String>((host, user, endpoint))
+    };
+    let (host, user, endpoint) = match resolve() {
+        Ok(resolved) => resolved,
+        Err(e) => return (Err(e), None),
+    };
+    let apply = || {
+        if dry {
+            would("would install and start spira-proc-starts.service");
+            return Ok(());
+        }
+        if !is_root {
+            return Err(format!("--proc-starts requires root and runs only the proc-starts phase: sudo {} --proc-starts", argv0.display()));
+        }
+        proc_starts_phase(&host, &user, owner, dest_dir, run).map_err(|e| format!("{PROC_STARTS_PHASE_FAILED}{e}"))
+    };
+    (apply(), Some(endpoint))
+}
+
+/// The host values and the metrics endpoint, both from the config `env` names.
+fn proc_starts_host(instance: Option<&str>, env: &std::collections::BTreeMap<String, String>) -> Result<(install::values::HostValues, String), String> {
+    let home = PathBuf::from(&env["SPIRA_HOME"]);
+    let instance = match instance {
+        Some(i) => i.to_string(),
+        None => spira_config::resolve::resolve_instance(env, &home)?,
+    };
+    let resolved = spira_config::resolve::resolve_for_process(&home, &spira_config::resolve::derive_home_repo(&home, env), env)?;
+    // Not `resolve_key`: it refuses a declared-empty value, which several host keys may hold.
+    let cfg = |k: &str| resolved.values.get(k).cloned().ok_or_else(|| format!("{k} is not a registered config key — refusing"));
+    let path_tail = install::orchestrate::checked_tail(cfg("SPIRA_PATH")?)?;
+    let host = bootstrap::host_from(&instance, env, &cfg, env[spira_config::process::TOML_ENV].clone(), path_tail)?;
+    Ok((host, cfg("SPIRA_METRICS_ENDPOINT")?))
 }
 
 fn group_gid(group: &str) -> Option<u32> {
@@ -2134,17 +2120,6 @@ fn base64_no_pad(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod dependency_fetch_tests {
     use super::*;
-
-    #[test_id(tlfrwew)]
-    #[test]
-    fn spira_env_target_names_the_release_directory_not_the_symlink_to_it() {
-        let td = testkit::TempDir::new("env-target");
-        let real = td.path().join("spira-daily");
-        std::fs::create_dir_all(&real).unwrap();
-        std::os::unix::fs::symlink("spira-daily", td.path().join("current")).unwrap();
-        let want = format!("path:{}#spira-env", std::fs::canonicalize(&real).unwrap().display());
-        assert_eq!(spira_env_target(&td.path().join("current")), want);
-    }
 
     #[test_id(tm868ki)]
     #[test]
@@ -2526,6 +2501,151 @@ mod proc_starts_phase_tests {
     fn a_home_that_cannot_be_read_is_refused() {
         let td = testkit::TempDir::new("proc-starts-phase");
         let host = install::values::HostValues { home: td.path().join("absent").display().to_string(), ..Default::default() };
-        assert!(proc_starts_phase(&host).unwrap_err().contains("cannot stat"));
+        let none = |_: &str, _: &[&str]| Ok(());
+        assert!(proc_starts_phase(&host, "operator", &bootstrap::stat_owner, td.path(), &none).unwrap_err().contains("cannot stat"));
+    }
+
+    #[test_id(ttsyx67)]
+    #[test]
+    fn only_the_proc_starts_mode_skips_the_declared_environment_check() {
+        let unset = || Err("SPIRA_TOML is not set".to_string());
+        assert_eq!(proc_starts_or_declared(true, false, unset), Ok(true));
+        for (proc_starts, system_user) in [(false, false), (false, true), (true, true)] {
+            assert_eq!(proc_starts_or_declared(proc_starts, system_user, unset), unset().map(|()| false));
+            assert_eq!(proc_starts_or_declared(proc_starts, system_user, || Ok(())), Ok(false));
+        }
+    }
+
+    #[derive(Default)]
+    struct Case {
+        dry: bool,
+        not_root: bool,
+        failing_program: Option<&'static str>,
+        metrics_endpoint: Option<String>,
+    }
+
+    fn plain_sudo(case: Case) -> (testkit::TempDir, Vec<String>, String, Result<(), String>) {
+        let (td, calls, unit, (got, _)) = plain_sudo_metered(case);
+        (td, calls, unit, got)
+    }
+
+    /// What `standalone_proc_starts_with` returns.
+    type Ran = (Result<(), String>, Option<String>);
+
+    fn plain_sudo_metered(case: Case) -> (testkit::TempDir, Vec<String>, String, Ran) {
+        let td = testkit::TempDir::new("proc-starts-sudo");
+        let release = spira_config::process::fixture_release(td.path(), true);
+        std::fs::create_dir_all(release.join("systemd")).unwrap();
+        let template = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/spira-proc-starts.service");
+        std::fs::copy(template, release.join("systemd/spira-proc-starts.service")).unwrap();
+        let (run_dir, prod) = (td.path().join("run").display().to_string(), release.join("spira").display().to_string());
+        let workspaces = td.path().display().to_string();
+        // An empty cache root is a declared value, not a missing one.
+        let mut declare = vec![("SPIRA_RUN", run_dir.as_str()), ("SPIRA_PROD", &prod), ("SPIRA_WORKSPACES", &workspaces), ("SPIRA_SCCACHE_DAV_ROOT", "")];
+        declare.extend(case.metrics_endpoint.as_deref().map(|e| ("SPIRA_METRICS_ENDPOINT", e)));
+        let toml = spira_config::process::fixture_toml(td.path(), &declare);
+        let home = td.path().join("operator-home");
+        std::fs::create_dir_all(home.join(".config/systemd/user")).unwrap();
+        std::fs::write(home.join(".config/systemd/user/spira-runtime-prod.service"), format!("[Service]\nEnvironment=SPIRA_TOML={}\nExecStart={}/bin/spira-runtime serve\n", toml.display(), release.display())).unwrap();
+        let dest = td.path().join("etc");
+        std::fs::create_dir_all(&dest).unwrap();
+        let env = std::collections::BTreeMap::from([("PATH".to_string(), format!("{}:{}", system_paths::USR_BIN, system_paths::BIN))]);
+        let passwd = move |_: u32| Ok(("operator".to_string(), home.clone()));
+        let calls = std::cell::RefCell::new(Vec::new());
+        let rendered = std::cell::RefCell::new(String::new());
+        let run = |prog: &str, args: &[&str]| {
+            if prog == "install" {
+                *rendered.borrow_mut() = std::fs::read_to_string(args[2]).unwrap();
+            }
+            calls.borrow_mut().push(format!("{prog} {}", args.join(" ")));
+            match case.failing_program {
+                Some(p) if p == prog => Err(format!("{prog} failed")),
+                _ => Ok(()),
+            }
+        };
+        let pinned = std::cell::RefCell::new(None);
+        let pin = |home: &Path| {
+            *pinned.borrow_mut() = Some(home.to_path_buf());
+            Ok(())
+        };
+        let owner = |_: &Path| Ok(1000);
+        let got = standalone_proc_starts_with(None, &release.join("bin/spira-install"), &env, &owner, &passwd, &pin, !case.not_root, &dest, &run, case.dry);
+        assert_eq!(pinned.into_inner(), Some(release.join("spira")));
+        (td, calls.into_inner(), rendered.into_inner(), got)
+    }
+
+    /// The push of one plain-sudo run, metered as `main` meters it.
+    fn metered_plain_sudo(case: Case) -> String {
+        let (addr, sink) = spira_otel::metrics::run::fixture_sink_within(std::time::Duration::from_secs(2));
+        install::telemetry::metered_exit_to("install", || {
+            let (_td, _, _, ran) = plain_sudo_metered(Case { metrics_endpoint: Some(addr), ..case });
+            proc_starts_report(ran)
+        });
+        let body = sink.join().unwrap().expect("no push reached the fixture sink");
+        for want in ["spira_component_invocations", "spira_component_duration_seconds", "install"] {
+            assert!(body.contains(want), "{want} missing from the push");
+        }
+        body
+    }
+
+    #[test_id(ttyki5d)]
+    #[test]
+    fn under_plain_sudo_the_run_is_metered_to_the_endpoint_of_the_derived_config() {
+        assert!(metered_plain_sudo(Case { dry: true, ..Case::default() }).contains("ok"));
+    }
+
+    #[test_id(tttj7jo)]
+    #[test]
+    fn a_refusal_after_the_config_resolved_is_metered_as_an_error() {
+        assert!(metered_plain_sudo(Case { not_root: true, ..Case::default() }).contains("error"));
+    }
+
+    #[test_id(t1jlih1)]
+    #[test]
+    fn under_plain_sudo_the_unit_is_rendered_for_the_operator_installed_and_started() {
+        let (td, calls, unit, got) = plain_sudo(Case::default());
+        assert_eq!(got, Ok(()));
+        let at = |p: &str| td.path().join(p).display().to_string();
+        let dest = at("etc/spira-proc-starts.service");
+        assert_eq!(calls, [format!("install -m 0644 {dest}.tmp {dest}"), "systemctl daemon-reload".to_string(), "systemctl enable --now spira-proc-starts.service".to_string()]);
+        let lines: Vec<&str> = unit.lines().map(str::trim).collect();
+        for want in [
+            format!("ExecStart={}/bin/proc-starts", at("release")),
+            format!("Environment=SPIRA_TOML={}", at(spira_config::FILE_NAME)),
+            "User=operator".to_string(),
+            format!("StandardOutput=append:{}/proc-starts.log", at("run")),
+        ] {
+            assert!(lines.contains(&want.as_str()), "{want} missing:\n{unit}");
+        }
+        let path = lines.iter().find(|l| l.starts_with("Environment=PATH=")).unwrap();
+        assert!(path.contains(&at("operator-home/.local/lib/spira-env/bin")) && !path.contains("/root"), "{path}");
+    }
+
+    #[test_id(t4iqu4l)]
+    #[test]
+    fn a_dry_run_says_what_it_would_do_and_runs_nothing() {
+        let (_td, calls, _, got) = plain_sudo(Case { dry: true, ..Case::default() });
+        assert_eq!(got, Ok(()));
+        assert!(calls.is_empty(), "{calls:?}");
+    }
+
+    #[test_id(thpxvo5)]
+    #[test]
+    fn without_root_it_refuses_with_the_sudo_command_and_runs_nothing() {
+        let (td, calls, _, got) = plain_sudo(Case { not_root: true, ..Case::default() });
+        let e = got.unwrap_err();
+        assert!(e.contains(&format!("sudo {}/release/bin/spira-install --proc-starts", td.path().display())), "{e}");
+        assert_eq!(proc_starts_exit(&e), 1);
+        assert!(calls.is_empty(), "{calls:?}");
+    }
+
+    #[test_id(tfohatf)]
+    #[test]
+    fn a_command_that_fails_in_the_phase_exits_as_a_phase_failure() {
+        let (_td, calls, _, got) = plain_sudo(Case { failing_program: Some("systemctl"), ..Case::default() });
+        let e = got.unwrap_err();
+        assert!(e.contains("systemctl failed"), "{e}");
+        assert_eq!(proc_starts_exit(&e), 2);
+        assert_eq!(calls.len(), 2, "nothing runs after the failure: {calls:?}");
     }
 }

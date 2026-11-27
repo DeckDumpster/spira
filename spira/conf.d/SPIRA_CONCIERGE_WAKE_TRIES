@@ -1,6 +1,0 @@
-TYPE=u32
-GROUP=concierge
-DOC=Undelivered Concierge wakes in a row after which the inbox-keeper stops waking and mails the operator one note.
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    : "${SPIRA_CONCIERGE_WAKE_TRIES:=5}"
-SPIRA_CONF_DEFAULT_EOF

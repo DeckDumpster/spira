@@ -6,6 +6,8 @@
 
 use crate::manifest::{self, Manifest};
 use crate::values::HostValues;
+use spira_config::process::TOML_ENV;
+use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -138,6 +140,7 @@ pub fn host_from(instance: &str, env_map: &std::collections::BTreeMap<String, St
         return Err("SPIRA_RUN is unset and spira.run resolved empty — refusing to render units that would log to the filesystem root".to_string());
     }
     let sccache_dav_root = Some(cfg("SPIRA_SCCACHE_DAV_ROOT")?).filter(|r| !r.is_empty()).unwrap_or_else(|| format!("{run}/sccache-dav"));
+    let broker_socket = spira_config::broker::socket_path(&run, cfg)?;
     Ok(HostValues {
         home,
         lc_password_file,
@@ -159,7 +162,119 @@ pub fn host_from(instance: &str, env_map: &std::collections::BTreeMap<String, St
         env_bin,
         sccache_dav_addr: dav_addr,
         sccache_dav_root,
+        broker_socket,
     })
+}
+
+/// A root-owned harness would make the proc-starts unit run as root.
+pub fn refuse_root_owner(uid: u32, home: &str) -> Result<(), String> {
+    if uid == 0 {
+        return Err(format!("{home} is owned by root; proc-starts must run as the operator's own user, not root"));
+    }
+    Ok(())
+}
+
+/// The uid that owns a path. A seam because a round's test sandbox maps uid 0 alone, so no
+/// fixture there can be anything but root-owned.
+pub type Owner<'a> = &'a dyn Fn(&Path) -> Result<u32, String>;
+
+/// [`Owner`] from the filesystem.
+pub fn stat_owner(path: &Path) -> Result<u32, String> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).map(|m| m.uid()).map_err(|e| format!("cannot stat {}: {e}", path.display()))
+}
+
+/// A uid's `(user name, home directory)`.
+pub type Passwd<'a> = &'a dyn Fn(u32) -> Result<(String, PathBuf), String>;
+
+/// [`Passwd`] from the host's own user database.
+pub fn getent_passwd(uid: u32) -> Result<(String, PathBuf), String> {
+    let out = spira_config::bounded::bounded("getent").args(["passwd", &uid.to_string()]).output().map_err(|e| format!("cannot run getent: {e}"))?;
+    let line = String::from_utf8_lossy(&out.stdout);
+    let fields: Vec<&str> = line.trim_end().split(':').collect();
+    match (fields.first(), fields.get(5)) {
+        (Some(user), Some(home)) if !user.is_empty() && !home.is_empty() => Ok((user.to_string(), PathBuf::from(home))),
+        _ => Err(format!("getent passwd {uid} names no user with a home directory")),
+    }
+}
+
+/// The environment `spira-install --proc-starts` runs under, and the user its unit runs as,
+/// derived from the path it was invoked by: plain `sudo` hands it nothing else. Each value has
+/// this one source; an inherited one is only checked against it.
+pub fn proc_starts_env(argv0: &Path, env: &BTreeMap<String, String>, owner: Owner, passwd: Passwd) -> Result<(BTreeMap<String, String>, String), String> {
+    let release = argv0
+        .parent()
+        .filter(|bin| bin.file_name().is_some_and(|n| n == "bin"))
+        .and_then(Path::parent)
+        .filter(|r| r.join("spira/conf.d").is_dir() && r.join("systemd/spira-proc-starts.service").is_file())
+        .ok_or_else(|| format!("{} is not a release's bin/; run it by its release path: sudo <release>/bin/spira-install --proc-starts", argv0.display()))?;
+    let again = format!("sudo {}/bin/spira-install --proc-starts", release.display());
+
+    let home = release.join("spira");
+    let uid = owner(&home).map_err(|e| format!("{e}; run it from a readable release: {again}"))?;
+    refuse_root_owner(uid, &home.display().to_string()).map_err(|e| format!("{e}; run it from a release the operator owns: sudo <release>/bin/spira-install --proc-starts"))?;
+    let (user, user_home) = passwd(uid).map_err(|e| format!("cannot name the owner of {}: {e}; give uid {uid} a passwd entry, then run: {again}", home.display()))?;
+
+    let toml = installed_spira_toml(&user_home, release)?;
+    let (release_s, user_home_s) = (release.display().to_string(), user_home.display().to_string());
+    for (key, derived) in [(TOML_ENV, &toml), (spira_config::RELEASE_ENV, &release_s)] {
+        if let Some(inherited) = env.get(key).filter(|v| !v.is_empty() && *v != derived) {
+            return Err(format!("{key} is {inherited} in the environment but this release and its installed units say {derived}; run it without: {again}"));
+        }
+    }
+    let mut out = env.clone();
+    out.insert(spira_config::RELEASE_ENV.into(), release_s);
+    out.insert("SPIRA_HOME".into(), home.display().to_string());
+    out.insert(TOML_ENV.into(), toml);
+    out.insert("HOME".into(), user_home_s);
+    Ok((out, user))
+}
+
+fn runs_the_scheduler(line: &str) -> bool {
+    let Some(command) = line.trim().strip_prefix("ExecStart=") else { return false };
+    let mut words = command.split_whitespace();
+    words.next().is_some_and(|exe| Path::new(exe).file_name().is_some_and(|n| n == "spira-runtime")) && words.next() == Some("serve")
+}
+
+/// The one `SPIRA_TOML` the operator's installed `spira-runtime-*.service` units declare. A
+/// unit is the scheduler's by what it runs, not by its file name.
+fn installed_spira_toml(user_home: &Path, release: &Path) -> Result<String, String> {
+    let home = user_home.display().to_string();
+    let dir = crate::orchestrate::default_unit_dir(&|k| (k == "HOME").then(|| home.clone())).ok_or("no unit directory for the operator")?;
+    let unlisted = |e: std::io::Error| format!("cannot list {}: {e}; as the operator make it a readable directory, then run: sudo {}/bin/spira-install --proc-starts", dir.display(), release.display());
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries.collect::<Result<Vec<_>, _>>().map_err(unlisted)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(unlisted(e)),
+    };
+    let mut values = std::collections::BTreeSet::new();
+    for entry in entries {
+        let path = entry.path();
+        if path.extension().is_none_or(|x| x != "service") || !path.is_file() {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| format!("cannot read {}: {e}; repair or remove it, then run: sudo {}/bin/spira-install --proc-starts", path.display(), release.display()))?;
+        if !text.lines().any(runs_the_scheduler) {
+            continue;
+        }
+        let declared = text.lines().filter_map(|l| l.trim().strip_prefix("Environment=")?.strip_prefix(TOML_ENV)?.strip_prefix('='));
+        values.extend(declared.filter(|v| !v.is_empty()).map(str::to_string));
+    }
+    let (bin, dir, rel) = (release.join("bin"), dir.display(), release.display());
+    let mut values = values.into_iter();
+    match (values.next(), values.next()) {
+        (Some(one), None) => Ok(one),
+        (None, _) => Err(format!(
+            "no spira-runtime-*.service (a unit running `spira-runtime serve`) naming SPIRA_TOML in {dir}; as the operator run the normal install first (SPIRA_TOML=<your config file> SPIRA_RELEASE={rel} {bin}/spira-install), then sudo {bin}/spira-install --proc-starts",
+            bin = bin.display()
+        )),
+        (Some(a), Some(b)) => Err(format!(
+            "the spira-runtime units in {dir} name different SPIRA_TOML values: {}; as the operator re-render them (SPIRA_TOML=<the one you mean> SPIRA_RELEASE={rel} {bin}/units-install) or remove the stale unit, then sudo {bin}/spira-install --proc-starts",
+            [a, b].into_iter().chain(values).collect::<Vec<_>>().join(", "),
+            bin = bin.display()
+        )),
+    }
 }
 
 /// `SPIRA_SCCACHE_DAV_ADDR`, a registered key — through the one door, never the bare
@@ -324,7 +439,7 @@ pub fn refuse_if_stale_release(tool: &str) -> Option<String> {
     stale_release_refusal(tool, &std::env::current_exe().ok()?)
 }
 
-pub(crate) fn argv0_path() -> Option<PathBuf> {
+pub fn argv0_path() -> Option<PathBuf> {
     let arg0 = env::args_os().next()?;
     let p = PathBuf::from(&arg0);
     if p.components().count() > 1 {
@@ -473,15 +588,25 @@ mod stale_release_tests {
         assert_eq!(stale_release_refusal("unit-ensure", &d.join("missing/bin/unit-ensure")), None);
     }
 
-    fn rendered_cache_root(configured: &str) -> String {
+    fn host_over_fixture(cfg: &dyn Fn(&str) -> Result<String, String>) -> Result<HostValues, String> {
         let t = testkit::TempDir::new("host-from-root");
         let toml = spira_config::resolve::locate_home_for_process().unwrap().join("testlib/complete.toml");
         let env: std::collections::BTreeMap<String, String> = [("SPIRA_HOME", t.path().join("h")), ("SPIRA_REPO", t.path().join("h")), ("SPIRA_TOML", toml)]
             .into_iter()
             .map(|(k, v)| (k.to_string(), v.display().to_string()))
             .collect();
-        let cfg = |k: &str| Ok(if k == "SPIRA_SCCACHE_DAV_ROOT" { configured.to_string() } else { String::new() });
-        let host = host_from("prod", &env, &cfg, "t/cfg".into(), String::new()).expect("host values");
+        host_from("prod", &env, cfg, "t/cfg".into(), String::new())
+    }
+
+    fn rendered_cache_root(configured: &str) -> String {
+        let cfg = |k: &str| {
+            Ok(match k {
+                "SPIRA_SCCACHE_DAV_ROOT" => configured.to_string(),
+                "SPIRA_BROKER_SOCKET" => "broker.sock".to_string(),
+                _ => String::new(),
+            })
+        };
+        let host = host_over_fixture(&cfg).expect("host values");
         let tmpl = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/sccache-dav.service");
         let unit = crate::values::render_file(&tmpl, &host, None).expect("render");
         let line = unit.lines().find(|l| l.starts_with("Environment=SCCACHE_DAV_ROOT=")).expect("root line").to_string();
@@ -493,6 +618,21 @@ mod stale_release_tests {
     fn the_cache_root_in_the_unit_is_the_configured_key_or_the_run_directory() {
         assert_eq!(rendered_cache_root("mnt/other-disk/store"), "mnt/other-disk/store");
         assert_eq!(rendered_cache_root(""), std::path::Path::new(std::path::MAIN_SEPARATOR_STR).join("fixture/userhome/spira/run/sccache-dav").display().to_string());
+    }
+
+    #[test_id(t9ig6fu)]
+    #[test]
+    fn the_broker_socket_install_renders_is_under_the_run_dir_unless_absolute() {
+        let socket = |configured: &str| {
+            let cfg = |k: &str| Ok(if k == "SPIRA_BROKER_SOCKET" { configured.to_string() } else { String::new() });
+            host_over_fixture(&cfg).map(|h| (h.run, h.broker_socket))
+        };
+        let (run, relative) = socket("nested/b.sock").expect("host values");
+        assert_eq!(relative, format!("{run}/nested/b.sock"));
+        let absolute = format!("{}b.sock", std::path::MAIN_SEPARATOR);
+        assert_eq!(socket(&absolute).expect("host values").1, absolute);
+        let err = socket("").expect_err("an empty socket must refuse");
+        assert!(err.contains("SPIRA_BROKER_SOCKET"), "{err}");
     }
 
     #[test_id(thfj3gy)]
@@ -575,5 +715,116 @@ mod watch_names_tests {
             assert!(e.contains("malformed") && e.contains("bad row"), "{e}");
             assert_eq!(calls(&r), n);
         }
+    }
+}
+
+#[cfg(test)]
+mod proc_starts_env_tests {
+    use super::*;
+
+    struct Rig {
+        td: testkit::TempDir,
+        release: PathBuf,
+        units: PathBuf,
+    }
+
+    fn rig(runtime_units: &[(&str, &str)]) -> Rig {
+        let td = testkit::TempDir::new("proc-starts-env");
+        let release = td.path().join("release");
+        for d in ["spira/conf.d", "systemd", "bin"] {
+            std::fs::create_dir_all(release.join(d)).unwrap();
+        }
+        std::fs::write(release.join("systemd/spira-proc-starts.service"), "[Service]\n").unwrap();
+        let units = td.path().join("home/.config/systemd/user");
+        std::fs::create_dir_all(&units).unwrap();
+        for (instance, toml) in runtime_units {
+            std::fs::write(units.join(format!("spira-runtime-{instance}.service")), format!("[Service]\nEnvironment=SPIRA_TOML={toml}\nExecStart=rel/bin/spira-runtime serve\n")).unwrap();
+        }
+        Rig { td, release, units }
+    }
+
+    fn derive(r: &Rig, argv0: &Path, env: &[(&str, &str)]) -> Result<(BTreeMap<String, String>, String), String> {
+        derive_owned_by(1000, r, argv0, env)
+    }
+
+    fn derive_owned_by(uid: u32, r: &Rig, argv0: &Path, env: &[(&str, &str)]) -> Result<(BTreeMap<String, String>, String), String> {
+        let env = env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let home = r.td.path().join("home");
+        let harness = r.release.join("spira");
+        let owner = move |p: &Path| if p == harness { Ok(uid) } else { Err(format!("asked who owns {}", p.display())) };
+        proc_starts_env(argv0, &env, &owner, &move |_| Ok(("operator".to_string(), home.clone())))
+    }
+
+    #[test_id(tex5q96)]
+    #[test]
+    fn the_owner_read_from_the_filesystem_is_the_uid_that_made_the_file() {
+        let td = testkit::TempDir::new("proc-starts-owner");
+        assert_eq!(stat_owner(td.path()), Ok(spira_config::resolve::current_uid()));
+    }
+
+    #[test_id(tnmuczz)]
+    #[test]
+    fn a_release_whose_harness_root_owns_is_refused_with_the_way_past_it() {
+        let r = rig(&[("prod", "cfg/a.toml")]);
+        let e = derive_owned_by(0, &r, &r.release.join("bin/spira-install"), &[]).unwrap_err();
+        assert!(e.contains("owned by root") && e.contains(&r.release.join("spira").display().to_string()) && e.contains("sudo <release>/bin/spira-install --proc-starts"), "{e}");
+    }
+
+    #[test_id(tkm5zmi)]
+    #[test]
+    fn a_binary_outside_a_release_bin_is_refused_with_the_command_that_works() {
+        let r = rig(&[("prod", "cfg/a.toml")]);
+        let stray = r.td.path().join("target/debug/spira-install");
+        let e = derive(&r, &stray, &[]).unwrap_err();
+        assert!(e.contains(&stray.display().to_string()) && e.contains("sudo <release>/bin/spira-install --proc-starts"), "{e}");
+    }
+
+    #[test_id(tt6we6a)]
+    #[test]
+    fn with_no_installed_runtime_unit_the_refusal_names_the_unit_directory() {
+        let r = rig(&[]);
+        let e = derive(&r, &r.release.join("bin/spira-install"), &[]).unwrap_err();
+        assert!(e.contains(&r.units.display().to_string()) && e.contains("--proc-starts"), "{e}");
+        let rel = r.release.display();
+        assert!(e.contains(&format!("SPIRA_TOML=<your config file> SPIRA_RELEASE={rel} {rel}/bin/spira-install")), "{e}");
+    }
+
+    #[test_id(tiabljm)]
+    #[test]
+    fn a_unit_directory_that_cannot_be_listed_is_reported_as_that_and_not_as_missing_units() {
+        let r = rig(&[]);
+        std::fs::remove_dir(&r.units).unwrap();
+        std::fs::write(&r.units, "").unwrap();
+        let e = derive(&r, &r.release.join("bin/spira-install"), &[]).unwrap_err();
+        assert!(e.contains("cannot list") && e.contains(&r.units.display().to_string()) && e.contains("--proc-starts"), "{e}");
+    }
+
+    #[test_id(tm2w4a0)]
+    #[test]
+    fn runtime_units_that_disagree_on_the_config_are_refused_naming_each() {
+        let r = rig(&[("prod", "cfg/a.toml"), ("two", "cfg/b.toml")]);
+        let e = derive(&r, &r.release.join("bin/spira-install"), &[]).unwrap_err();
+        assert!(e.contains("cfg/a.toml") && e.contains("cfg/b.toml"), "{e}");
+        let rel = r.release.display();
+        assert!(e.contains(&format!("SPIRA_TOML=<the one you mean> SPIRA_RELEASE={rel} {rel}/bin/units-install")), "{e}");
+    }
+
+    #[test_id(t1xmxv8)]
+    #[test]
+    fn an_inherited_value_is_checked_against_the_derived_one_and_never_preferred() {
+        let r = rig(&[("prod", "cfg/a.toml")]);
+        let argv0 = r.release.join("bin/spira-install");
+        // A unit that runs something else has no say in which config is installed.
+        std::fs::write(r.units.join("other.service"), "[Service]\nEnvironment=SPIRA_TOML=cfg/neighbour.toml\nExecStart=rel/bin/other serve\n").unwrap();
+        for key in ["SPIRA_TOML", "SPIRA_RELEASE"] {
+            let e = derive(&r, &argv0, &[(key, "cfg/other")]).unwrap_err();
+            let derived = if key == "SPIRA_TOML" { "cfg/a.toml".to_string() } else { r.release.display().to_string() };
+            assert!(e.contains("cfg/other") && e.contains(&derived), "{e}");
+        }
+        let release = r.release.display().to_string();
+        let (env, user) = derive(&r, &argv0, &[("SPIRA_TOML", "cfg/a.toml"), ("SPIRA_RELEASE", &release), ("HOME", "root-home")]).unwrap();
+        assert_eq!(user, "operator");
+        assert_eq!(env["SPIRA_HOME"], format!("{release}/spira"));
+        assert_eq!(env["HOME"], r.td.path().join("home").display().to_string());
     }
 }

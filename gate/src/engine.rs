@@ -12,6 +12,7 @@ use crate::machine::{self, GateState, Run};
 use crate::parse::{self, Attribution};
 use crate::ports::{Ctx, Merge, World};
 use crate::stall;
+use crate::stopped::Stopped;
 use crate::tier::{self, Tier};
 use crate::toolkey;
 use spira_config::GateMode;
@@ -42,7 +43,7 @@ pub struct Verdict {
 /// A build directory is sound to reuse when the gate judged the tree or was cut at a cap; a
 /// refusal means the target itself is suspect.
 pub(crate) fn hands_on_build(vd: &Verdict) -> bool {
-    vd.status != NOVERDICT || matches!(vd.reason.as_str(), "phase-cap" | "budget" | "deadline" | "timeout")
+    vd.status != NOVERDICT || crate::publish::is_cap_reason(&vd.reason)
 }
 
 fn v(status: i32, reason: &str, msg: impl Into<String>) -> Verdict {
@@ -114,6 +115,10 @@ struct State {
     slowest_step: Option<(String, u64)>,
     /// `<test>:<red|timeout>/<green|red|timeout|unrun>` per test the gate ran once more.
     reruns: Vec<String>,
+    /// The tests the branch trial saw red, as the finish publishes them.
+    red_tests: Vec<crate::publish::RedTest>,
+    /// A command the trial ran calls testenv, so a `VERDICT` line in its output is testenv's.
+    ran_testenv: bool,
     /// The branch trial's whole output, kept as a file when the verdict is not a PASS.
     gate_out: String,
     changed: Vec<String>,
@@ -174,6 +179,11 @@ struct State {
     ran: String,
 }
 
+/// The most flips one gate records: past it the box is the problem, not the tests
+/// (law-a-detector-files-a-bounded-batch). The round's own bound is `MAX_FLIP_TESTS` in
+/// `batcher/src/drive.rs`.
+const MAX_GATE_FLIPS: usize = 3;
+
 /// The one discriminating rerun of a red unit test phase (DESIGN.md "The rerun of a red test"):
 /// the failing tests run once more on the same tree under the same nextest config. A test
 /// green on the rerun is a flip: fix bead filed, registry row written, verdict stands without
@@ -225,7 +235,17 @@ fn rerun_red_tests<W: World>(w: &W, at: RerunScope, name: &str, cmd: &str) -> Re
     }
     let mut notes = String::new();
     let bead = if at.bead.is_empty() { "an unnamed branch".to_string() } else { at.bead.to_string() };
+    let mut held = Vec::new();
     for t in std::mem::take(&mut flipped) {
+        if flipped.len() == MAX_GATE_FLIPS {
+            let first = parse::red_kind(at.out, &t);
+            let green = format!("{t}:{first}/green");
+            for e in at.reruns.iter_mut().filter(|e| **e == green) {
+                *e = format!("{t}:{first}/held");
+            }
+            held.push(t);
+            continue;
+        }
         let Some(id) = crate::ports::flip_test_id(&t) else {
             unrecorded.push(t);
             continue;
@@ -247,7 +267,7 @@ fn rerun_red_tests<W: World>(w: &W, at: RerunScope, name: &str, cmd: &str) -> Re
         notes.push('\n');
         flipped.push(t);
     }
-    if twice.is_empty() && unproven.is_empty() && unrecorded.is_empty() {
+    if twice.is_empty() && unproven.is_empty() && unrecorded.is_empty() && held.is_empty() {
         return Err(v(PASS, "pass", format!("gate: {name}'s own gate failed: {cmd}\n{}\n{notes}", at.out)));
     }
     let spaced = |l: &[String]| l.join(" ");
@@ -261,6 +281,12 @@ fn rerun_red_tests<W: World>(w: &W, at: RerunScope, name: &str, cmd: &str) -> Re
     }
     if !unrecorded.is_empty() {
         tail.push_str(&format!("gate: flipped but carries no test id, so no registry row can hold it: {}\n", spaced(&unrecorded)));
+    }
+    if !held.is_empty() {
+        let line = format!("gate: held back by the flip cap ({MAX_GATE_FLIPS}): {} — more flips than the cap in one gate is the box, not the tests; no row, no bead", spaced(&held));
+        w.eprint(&line);
+        tail.push_str(&line);
+        tail.push('\n');
     }
     Ok(format!("\n{}", tail.trim_end()))
 }
@@ -941,6 +967,7 @@ impl<'w, W: World> Trial<'w, W> {
                 e("SPIRA_GATE_REPO_NAME", &name),
                 e("SPIRA_GATE_BRANCH", branch),
                 e("SPIRA_GATE_BASE", &base_rev),
+                e("SPIRA_GATE_BEAD", &self.s.bead),
                 e("SPIRA_GATE_SELECT_HEAD", &br),
                 e(
                     "SPIRA_GATE_FILES",
@@ -1022,17 +1049,24 @@ impl<'w, W: World> Trial<'w, W> {
         ) else {
             return v(NOVERDICT, "config", "gate: SPIRA_UNIT_TEST_DEADLINE_SECS and SPIRA_UNIT_TEST_DEADLINE_PERIODS must be positive numbers — refusing to run unit tests with no per-test deadline.");
         };
+        let (Some(test_secs), Some(test_periods)) = (
+            key::digits(ctx.var("SPIRA_INTEGRATION_TEST_DEADLINE_SECS")).filter(|n| *n > 0),
+            key::digits(ctx.var("SPIRA_INTEGRATION_TEST_DEADLINE_PERIODS")).filter(|n| *n > 0),
+        ) else {
+            return v(NOVERDICT, "config", "gate: SPIRA_INTEGRATION_TEST_DEADLINE_SECS and SPIRA_INTEGRATION_TEST_DEADLINE_PERIODS must be positive numbers — refusing to run the tests/ targets with no per-test deadline.");
+        };
         self.s.deny_label = format!("{at}/{}", &key::sha256_hex(deny_text.as_bytes())[..12]);
         w.eprint(&format!("gate: deny list {} ({} rows)", self.s.deny_label, deny.render().lines().count()));
-        let limits = Limits { deadline, budget, stall, unit_deadline: (secs, periods), deny, deny_text, test_bin_files: self.s.test_bin_files.clone() };
+        let limits = Limits { deadline, budget, stall, unit_deadline: (secs, periods), integration_deadline: (test_secs, test_periods), deny, deny_text, test_bin_files: self.s.test_bin_files.clone() };
         let by_deadline = key::digits(&timeout).is_none_or(|t| deadline <= t);
         let eff = |spent: u64| {
             let rem = deadline.saturating_sub(spent).max(1);
             key::digits(&timeout).map_or(rem, |t| t.min(rem)).to_string()
         };
-        let fkey = self.fences_key(&want_tree);
+        let fkey = self.fences_key(&want_tree, &limits.deny);
         let mut mark_err: Option<String> = None;
         let tiers_file = self.s.tiers_file.clone();
+        self.s.ran_testenv = build_phase.is_some() || !re.required.is_empty() || compose::gate_string(&comp, &cmd).0.contains("testenv");
         let (rc, out, ph, tiers) = {
             let (run_dir, machine, op_marks) = (Path::new(&self.s.run), &mut self.s.machine, &mut self.s.op_marks);
             let mut mark = |to: GateState, why: &str| {
@@ -1091,6 +1125,8 @@ impl<'w, W: World> Trial<'w, W> {
             self.s.slowest_step = parse::longest(steps);
         }
         self.s.gate_out = out.clone();
+        // Read now: the base trial checks the base out over this tree.
+        self.s.red_tests = self.red_tests(&out, &ctx, &repo, &base_rev, &rev, &tree);
         self.s.tools_from = match tools.as_ref() {
             Some(t) if t.release => "release",
             Some(_) => "tree",
@@ -1371,7 +1407,7 @@ impl<'w, W: World> Trial<'w, W> {
             } else {
                 base_cmd
             };
-            let base_fkey = self.fences_key(&base_tree);
+            let base_fkey = self.fences_key(&base_tree, &limits.deny);
             let (r, o, ph) = run_composed(
                 w,
                 &tree,
@@ -1864,9 +1900,11 @@ impl<'w, W: World> Trial<'w, W> {
             .and_then(|j| compose::parse_metadata(&j))
     }
 
-    fn fences_key(&self, tree: &str) -> Option<crate::fencecache::Key> {
+    fn fences_key(&self, tree: &str, deny: &spira_config::unit_tier::DenyList) -> Option<crate::fencecache::Key> {
+        let owns_a_row = deny.test_rows().iter().any(|(_, _, owner)| *owner == self.s.bead);
+        let exempt = if owns_a_row { self.s.bead.clone() } else { String::new() };
         crate::fencecache::path(&self.s.verdict_dir, &self.s.repo_name, tree)
-            .map(|path| crate::fencecache::Key { path, harness: self.s.harness_h.clone() })
+            .map(|path| crate::fencecache::Key { path, harness: self.s.harness_h.clone(), exempt })
     }
 
     /// `gate_at`: through the port, which proves HEAD == want.
@@ -1878,6 +1916,33 @@ impl<'w, W: World> Trial<'w, W> {
             ));
         }
         self.w.checkout(repo, tree, rev, want)
+    }
+
+    /// Each test `out` shows red that carries a test id, once.
+    fn red_tests(&self, out: &str, ctx: &Ctx, repo: &Path, base: &str, rev: &str, tree: &Path) -> Vec<crate::publish::RedTest> {
+        let failed = parse::failed_test_packages(out);
+        if failed.is_empty() {
+            return Vec::new();
+        }
+        let w = self.w;
+        let changed = w.diff_raw(repo, base, rev).ok();
+        let members = crate::telemetry::members(w, ctx, tree).ok();
+        let mut reds: Vec<crate::publish::RedTest> = Vec::new();
+        for (test, package) in failed {
+            let Some(id) = crate::ports::flip_test_id(&test).and_then(|i| i.strip_prefix("test:").map(String::from)) else {
+                w.eprint(&format!("gate: red test {test} carries no test id; no test/ topic for it"));
+                continue;
+            };
+            if reds.iter().any(|r| r.id == id) {
+                continue;
+            }
+            let touches_crate = package.and_then(|p| {
+                let members = members.as_deref().filter(|m| m.iter().any(|m| m.name == p))?;
+                Some(crate::publish::touches(changed.as_deref()?, members, &p))
+            });
+            reds.push(crate::publish::RedTest { id, touches_crate });
+        }
+        reds
     }
 
     /// `self.s.changed` entries are `<status>\t<path>`; the ejection record keys on paths alone.
@@ -2304,6 +2369,9 @@ impl<'w, W: World> Trial<'w, W> {
                 crate::telemetry::keep_report(w, &self.s.run, &ts, html);
             }
             crate::telemetry::append(w, &self.s.run, &ts, &run);
+            // The branch's own run names its sender ahead of a later base run's.
+            let killed_by = self.s.ran_testenv.then(|| Stopped::in_verdict(&self.s.gate_out).or_else(|| Stopped::in_verdict(&vd.msg))).flatten();
+            w.publish(&crate::publish::messages(&run, killed_by.as_ref(), &self.s.branch_tree, &self.s.red_tests, w.stamp()));
             w.push_metrics(&run);
             self.emit_ops(&run);
             if let Some(y) = w.which("yield.sh") {
@@ -2493,6 +2561,8 @@ pub struct Limits {
     pub stall: u64,
     /// One unit test's deadline: the period in seconds and the periods before it is terminated.
     pub unit_deadline: (u64, u64),
+    /// The same pair for one test of a `tests/` target.
+    pub integration_deadline: (u64, u64),
     pub deny: spira_config::unit_tier::DenyList,
     /// The registry's own text of that list, beads kept: what the lint's row rules read.
     pub deny_text: String,
@@ -2884,7 +2954,7 @@ pub fn run_composed<W: World>(
     let mut fences_rc = 0;
     let proved = fences
         .filter(|_| comp.suites_off())
-        .and_then(|k| w.read(&k.path).and_then(|e| crate::fencecache::fresh(&e, &k.harness, &cmd)));
+        .and_then(|k| w.read(&k.path).and_then(|e| crate::fencecache::fresh(&e, &k.harness, &k.exempt, &cmd)));
     let declared = build_phase.is_some();
     let share_key: String = tree
         .file_name()
@@ -2929,7 +2999,7 @@ pub fn run_composed<W: World>(
                 if fence::silent(&fence::expected(cmd), &out).is_empty() {
                     if let (Some(dir), Some(name)) = (k.path.parent(), k.path.file_name().and_then(|n| n.to_str())) {
                         w.mkdir_p(dir);
-                        w.write_atomic(dir, name, &crate::fencecache::render(&k.harness, cmd, &out));
+                        w.write_atomic(dir, name, &crate::fencecache::render(&k.harness, &k.exempt, cmd, &out));
                     }
                 }
             }
@@ -2982,7 +3052,7 @@ pub fn run_composed<W: World>(
             let file = tree.join(compose::NEXTEST_CONFIG);
             if let (Some(dir), Some(name)) = (file.parent(), file.file_name().and_then(|n| n.to_str())) {
                 w.mkdir_p(dir);
-                w.write_atomic(dir, name, &spira_config::unit_tier::nextest_config(limits.unit_deadline.0, limits.unit_deadline.1, &limits.deny));
+                w.write_atomic(dir, name, &spira_config::unit_tier::nextest_config(limits.unit_deadline, limits.integration_deadline, &limits.deny));
             }
         }
         let hermetic;

@@ -1,11 +1,7 @@
 //! The stranded-work detectors (wave4-decomposition.md family T, row 29, sp-8ofmt):
 //! `detect_livelocked`, `detect_incident_needs_builder`, `detect_invalid_closed` and
 //! `all_partition_members` (`detect_landed_but_open`, `detect_closed_unlanded_states` and
-//! `detect_false_blockers` were deleted in sp-mve9i — see their section below). The sentinel-side half of family T (`detect_unclaimable_ready`,
-//! `file_unclaimable_incidents`, `detect_branch_collisions`, `park_branch_collisions`) is a
-//! different bead ("two beads", decomposition table row T) and stays a lib.sh seam here —
-//! [`unclaimable_lines`] reaches it the same way `sentinel`'s own Rust crate still does
-//! (`bash -c '. lib.sh; detect_unclaimable_ready'`), never re-derived.
+//! `detect_false_blockers` were deleted in sp-mve9i — see their section below).
 //!
 //! OUTPUT IS BYTE-COMPATIBLE with the lib.sh functions this replaces: `groomer`,
 //! `mimir-trigger` and `cockpit-collect` parse `LIVELOCK …`/`STATE …`/`INVALID-CLOSED …`/
@@ -185,29 +181,8 @@ pub fn unfinished_incidents(beads: Vec<Bead>, lc: &std::collections::HashMap<Str
 // detect_livelocked
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// The sentinel-side half of family T (decomposition table: "Yes, in two beads") — not
-/// ported here. `detect_unclaimable_ready` stays in lib.sh until that bead lands; this
-/// reaches it exactly as `sentinel`'s own Rust crate still does (`seams::DETECT_UNCLAIMABLE`).
-fn unclaimable_lines(cfg: &Config) -> String {
-    let Some(home) = cfg.home.as_ref() else { return String::new() };
-    let lib = home.join("lib.sh");
-    if !lib.is_file() {
-        return String::new();
-    }
-    let script = r#". "$0" >/dev/null 2>&1 || exit 97; detect_unclaimable_ready"#;
-    let lib_s = lib.to_string_lossy().into_owned();
-    let Ok(extra) = spira_config::release_env::child_path_env_for_process() else { return String::new() };
-    let extra: Vec<(&str, &str)> = extra.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    let o = probe::run("bash", &["-c", script, lib_s.as_str()], None, &extra);
-    if !o.ok {
-        return String::new();
-    }
-    o.stdout
-}
-
-/// lib.sh `detect_livelocked`: one `LIVELOCK <id> <category> — <reason>` line per row, four
-/// categories — `unclaimable` (reused, see [`unclaimable_lines`]), `ask-no-overseer`,
-/// `ci-stuck`, `unmapped-repo`. Never fails outright: a sub-query that cannot run reads as
+/// lib.sh `detect_livelocked`: one `LIVELOCK <id> <category> — <reason>` line per row, three
+/// categories — `ask-no-overseer`, `ci-stuck`, `unmapped-repo`. Never fails outright: a sub-query that cannot run reads as
 /// "nothing in that category", matching every bash `2>/dev/null` guard in the original.
 pub fn detect_livelocked(cfg: &Config, door: &LcClient) -> String {
     let reg = registry(cfg);
@@ -218,22 +193,14 @@ pub fn detect_livelocked(cfg: &Config, door: &LcClient) -> String {
         cfg,
         &reg,
         &held,
-        &unclaimable_lines(cfg),
         &list_beads(door, &["--label", cfg.vocab.ask.as_str()]),
         &list_beads(door, &["--label", cfg.ci_label.as_str()]),
         &list_beads(door, &[]),
     )
 }
 
-fn livelock_rows(cfg: &Config, reg: &Registry, held: &HashSet<String>, unclaimable: &str, asks: &[Bead], ci_labelled: &[Bead], all: &[Bead]) -> String {
+fn livelock_rows(cfg: &Config, reg: &Registry, held: &HashSet<String>, asks: &[Bead], ci_labelled: &[Bead], all: &[Bead]) -> String {
     let mut out = Vec::new();
-
-    for line in unclaimable.lines() {
-        let Some(rest) = line.strip_prefix("UNCLAIMABLE ") else { continue };
-        let bid = rest.split(' ').next().unwrap_or("");
-        let reason = rest.split_once(" — ").map(|(_, r)| r).unwrap_or("");
-        out.push(format!("LIVELOCK {bid} unclaimable — {reason}"));
-    }
 
     for b in asks {
         if !b.has(&cfg.vocab.ask) || b.has("overseer") {
@@ -598,12 +565,12 @@ mod tests {
         assert_eq!(allowed, "ALLOWED-IC zz-cr-1 — follow-up filed");
     }
 
-    fn livelock_report(map: &str, held: &[&str], unclaimable: &str, asks: &str, ci: &str, all: &str) -> String {
+    fn livelock_report(map: &str, held: &[&str], asks: &str, ci: &str, all: &str) -> String {
         let cfg = Config { ci_label: "ci-wait".into(), groom_ask_label: "groomed-ask".into(), ..Config::test_fixture() };
         let reg = Registry::new(Some(map), &Default::default(), std::path::Path::new("nonexistent"));
         let held = held.iter().map(|h| h.to_string()).collect();
         let beads = |j: &str| model::parse_beads(j).unwrap();
-        livelock_rows(&cfg, &reg, &held, unclaimable, &beads(asks), &beads(ci), &beads(all))
+        livelock_rows(&cfg, &reg, &held, &beads(asks), &beads(ci), &beads(all))
     }
 
     const MAP: &str = "pushrepo | /opt/pushrepo | push | origin/main | | \nprerepo | /opt/prerepo | pr | origin/main | | \n";
@@ -612,15 +579,7 @@ mod tests {
     #[test_id(tko4dyt)]
     #[test]
     fn an_empty_store_reports_no_livelock() {
-        assert_eq!(livelock_report(MAP, &[], "", "[]", "[]", "[]"), "");
-    }
-
-    // covers: UC-ops-detection-remediation-29
-    #[test_id(tw2krei)]
-    #[test]
-    fn an_unclaimable_ready_bead_is_reported_by_id_and_category() {
-        let out = livelock_report(MAP, &[], "UNCLAIMABLE sp-u1 — no persona matches\n", "[]", "[]", "[]");
-        assert_eq!(out, "LIVELOCK sp-u1 unclaimable — no persona matches");
+        assert_eq!(livelock_report(MAP, &[], "[]", "[]", "[]"), "");
     }
 
     // covers: UC-ops-detection-remediation-29
@@ -629,7 +588,7 @@ mod tests {
     fn an_ask_without_overseer_is_reported_and_one_with_it_is_not() {
         // literal-ok: fixture bead labelled with the fixture config's own ask label
         let asks = r#"[{"id":"sp-a1","title":"q","labels":["needs-operator"]},{"id":"sp-a2","title":"q","labels":["needs-operator","overseer"]}]"#;
-        let out = livelock_report(MAP, &[], "", asks, "[]", "[]");
+        let out = livelock_report(MAP, &[], asks, "[]", "[]");
         assert!(out.contains("LIVELOCK sp-a1 ask-no-overseer"), "{out}");
         assert!(!out.contains("sp-a2"), "{out}");
     }
@@ -639,7 +598,7 @@ mod tests {
     #[test]
     fn a_ci_wait_is_stuck_on_a_push_repo_and_waiting_on_a_pr_repo() {
         let ci = r#"[{"id":"sp-c1","status":"open","labels":["ci-wait","repo:pushrepo"]},{"id":"sp-c2","status":"open","labels":["ci-wait","repo:prerepo"]},{"id":"sp-c3","status":"closed","labels":["ci-wait","repo:pushrepo"]}]"#;
-        let out = livelock_report(MAP, &[], "", "[]", ci, "[]");
+        let out = livelock_report(MAP, &[], "[]", ci, "[]");
         assert!(out.contains("LIVELOCK sp-c1 ci-stuck"), "{out}");
         assert!(!out.contains("sp-c2") && !out.contains("sp-c3"), "{out}");
     }
@@ -654,7 +613,7 @@ mod tests {
             {"id":"sp-m3","labels":["repo:bogus"]},
             {"id":"sp-m4","labels":["repo:bogus","groomed-ask"]},
             {"id":"sp-m5","labels":["plan"]}]"#;
-        let out = livelock_report(MAP, &["sp-m3"], "", "[]", "[]", all);
+        let out = livelock_report(MAP, &["sp-m3"], "[]", "[]", all);
         assert_eq!(out.lines().count(), 1, "{out}");
         assert!(out.contains("LIVELOCK sp-m2 unmapped-repo — repo:bogus"), "{out}");
     }
@@ -666,7 +625,7 @@ mod tests {
         let cfg = Config::test_fixture();
         let reg = Registry::new(None, &Default::default(), std::path::Path::new("nonexistent"));
         let all = model::parse_beads(r#"[{"id":"sp-n1","labels":["repo:bogus"]}]"#).unwrap();
-        assert_eq!(livelock_rows(&cfg, &reg, &HashSet::new(), "", &[], &[], &all), "");
+        assert_eq!(livelock_rows(&cfg, &reg, &HashSet::new(), &[], &[], &all), "");
     }
 
     fn classify(reason: &str) -> String {
@@ -720,7 +679,7 @@ mod tests {
             {"id":"sp-good","status":"open","labels":["plan","repo:pushrepo"]},
             {"id":"sp-blocked","status":"open","labels":["plan","repo:pushrepo"],"dependency_count":1},
             {"id":"sp-bad","status":"open","labels":["plan","repo:bogus"]}]"#;
-        let out = livelock_report(MAP, &[], "", "[]", "[]", all);
+        let out = livelock_report(MAP, &[], "[]", "[]", all);
         assert_eq!(out.lines().count(), 1, "{out}");
         assert!(out.contains("sp-bad unmapped-repo"), "{out}");
     }

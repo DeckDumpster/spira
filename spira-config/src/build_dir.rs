@@ -13,7 +13,11 @@
 //! - **Warm start.** A new lease takes the most recently idled directory that holds anything
 //!   (the lock file's mtime is the idle time: a release stamps it), and the shared selective clean
 //!   ([`CLEAN_SCRIPT`]) then cleans only the workspace crates whose bytes differ from the tree that
-//!   directory was last made consistent with. A release judges every crate changed since that
+//!   directory was last made consistent with. Any clean but a release's also drops each workspace
+//!   unit built after that last recorded run (`.unit-tests-built-stamp`): the record cannot name
+//!   what such a build was made from. A submitted builder's release reserves its slot
+//!   (`dir.<n>.gate`, naming the bead) for that bead's gate: a reserved idle slot is taken only
+//!   when no unreserved one is idle, and any take or eviction removes the reservation. A release judges every crate changed since that
 //!   record by unit: a `.fingerprint` unit stamped after the newest mtime and ctime of the crate's
 //!   changed files is kept, any other is removed, and a crate left with no kept unit (or with a
 //!   deleted file) is cleaned, before the new record is written, so the record never names bytes
@@ -43,13 +47,23 @@ pub const CLEAN_SCRIPT: &str = "target-clean.sh";
 pub const CLEAN_DEADLINE_SECS: &str = "900";
 
 /// A live lease on one owned build directory. Dropping it releases the directory without
-/// stamping it; [`Lease::release`] is the teardown path.
+/// stamping it; [`Lease::release`] is the teardown path. Either way the lock goes by `LOCK_UN`,
+/// not by the close: a forked child shares the open file description until it execs.
 pub struct Lease {
     dir: PathBuf,
+    base: PathBuf,
+    n: u64,
     lock: std::fs::File,
     /// True when the directory held a previous session's build (a warm start).
     pub reused: bool,
     started: SystemTime,
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        // SAFETY: unlocking our own fd; closing alone would leave a forked child holding it.
+        unsafe { libc::flock(self.lock.as_raw_fd(), libc::LOCK_UN) };
+    }
 }
 
 impl std::fmt::Debug for Lease {
@@ -71,6 +85,18 @@ impl Lease {
     /// Trim the directory ([`trim`]), then release it to idle, stamping now as its idle time so
     /// the next lease prefers it.
     pub fn release(self) -> Trimmed {
+        self.release_stamped()
+    }
+
+    /// [`Lease::release`], leaving the slot reserved for `bead`'s gate: [`lease`] takes a
+    /// reserved idle slot only when no unreserved one is idle. The second value is the result of
+    /// writing the reservation; the slot is released either way.
+    pub fn release_reserved(self, bead: &str) -> (Trimmed, std::io::Result<()>) {
+        let reserved = std::fs::write(gate_path(&self.base, self.n), bead);
+        (self.release_stamped(), reserved)
+    }
+
+    fn release_stamped(self) -> Trimmed {
         let trimmed = trim(&self.dir, self.started, SystemTime::now());
         let _ = self.lock.set_len(0);
         let _ = self.lock.set_modified(SystemTime::now());
@@ -90,6 +116,10 @@ pub fn configured_bases() -> Vec<PathBuf> {
 
 fn lock_path(base: &Path, n: u64) -> PathBuf {
     base.join(format!("dir.{n}.lock"))
+}
+
+fn gate_path(base: &Path, n: u64) -> PathBuf {
+    base.join(format!("dir.{n}.gate"))
 }
 
 fn dir_path(base: &Path, n: u64) -> PathBuf {
@@ -125,17 +155,18 @@ fn holds_anything(dir: &Path) -> bool {
     std::fs::read_dir(dir).is_ok_and(|mut rd| rd.next().is_some())
 }
 
-/// One scanned slot: holds a build, idle since, index of its base, its number.
-type ScannedSlot = (bool, SystemTime, usize, u64);
+/// One scanned slot: not reserved for a gate, holds a build, idle since, index of its base, its number.
+type ScannedSlot = (bool, bool, SystemTime, usize, u64);
 
-/// The order to try idle slots in: warm ones first, most recently idled first; then empty ones.
+/// The order to try idle slots in: unreserved before reserved; within each, warm ones first, most
+/// recently idled first, then empty ones.
 fn lease_order(mut scanned: Vec<ScannedSlot>) -> Vec<ScannedSlot> {
     scanned.sort_by(|a, b| b.cmp(a));
     scanned
 }
 
 /// Lease a build directory under `bases` for `who`: the most recently idled one that holds a
-/// build, else an empty idle one, else a new one on the base holding the fewest slots (the
+/// build, else an empty idle one (a slot reserved for a gate after both), else a new one on the base holding the fewest slots (the
 /// first listed on a tie). Never waits and never touches a live one.
 pub fn lease(bases: &[PathBuf], who: &str) -> std::io::Result<Lease> {
     for b in bases {
@@ -145,10 +176,10 @@ pub fn lease(bases: &[PathBuf], who: &str) -> std::io::Result<Lease> {
     let scanned: Vec<ScannedSlot> = bases
         .iter()
         .enumerate()
-        .flat_map(|(i, b)| slots(b).into_iter().map(move |n| (holds_anything(&dir_path(b, n)), idle_since(b, n), i, n)))
+        .flat_map(|(i, b)| slots(b).into_iter().map(move |n| (!gate_path(b, n).exists(), holds_anything(&dir_path(b, n)), idle_since(b, n), i, n)))
         .collect();
     let order = lease_order(scanned);
-    let mut won = order.iter().find_map(|&(warm, _, i, n)| try_lock(&bases[i], n).map(|f| (i, n, f, warm)));
+    let mut won = order.iter().find_map(|&(_, warm, _, i, n)| try_lock(&bases[i], n).map(|f| (i, n, f, warm)));
     if won.is_none() {
         let mut fewest: Vec<(usize, usize)> = bases.iter().enumerate().map(|(i, b)| (slots(b).len(), i)).collect();
         fewest.sort();
@@ -183,8 +214,8 @@ pub enum Refused {
 }
 
 /// Lease the one named slot `dir` (`<base>/dir.<n>`, strictly under a configured base): waits at
-/// most `wait` for a live holder, naming it on stderr. The lease is a warm one.
-pub fn lease_dir(bases: &[PathBuf], dir: &Path, who: &str, wait: std::time::Duration) -> std::io::Result<Result<Lease, Refused>> {
+/// most `wait` for a live holder that is `owner`, naming it on stderr; any other holder is refused at once. The lease is a warm one.
+pub fn lease_dir(bases: &[PathBuf], dir: &Path, who: &str, owner: &str, wait: std::time::Duration) -> std::io::Result<Result<Lease, Refused>> {
     let Some((base, n)) = dir.parent().zip(dir.file_name().and_then(|f| f.to_str()).and_then(|f| f.strip_prefix("dir.")).and_then(|n| n.parse::<u64>().ok())) else {
         return Ok(Err(Refused::NotASlot));
     };
@@ -201,8 +232,9 @@ pub fn lease_dir(bases: &[PathBuf], dir: &Path, who: &str, wait: std::time::Dura
         if let Some(f) = try_lock(base, n) {
             break f;
         }
-        if std::time::Instant::now() >= until {
-            return Ok(Err(Refused::Held { holder: holder() }));
+        let now_holder = holder();
+        if std::time::Instant::now() >= until || (!now_holder.is_empty() && now_holder != owner) {
+            return Ok(Err(Refused::Held { holder: now_holder }));
         }
         if !named {
             named = true;
@@ -235,9 +267,10 @@ fn take(base: &Path, n: u64, mut lock: std::fs::File, reused: bool, who: &str) -
     std::fs::create_dir_all(&dir)?;
     // The holder's name, for whoever reads the base; writing it stamps the lock file, so a
     // holder that dies without releasing reads as idle since it leased.
+    let _ = std::fs::remove_file(gate_path(base, n));
     let _ = lock.set_len(0);
     let _ = lock.write_all(who.as_bytes());
-    Ok(Lease { dir, lock, reused, started: SystemTime::now() })
+    Ok(Lease { dir, base: base.to_path_buf(), n, lock, reused, started: SystemTime::now() })
 }
 
 /// Empty `dir` in place: everything under it goes, the directory stays. Only for a directory
@@ -383,6 +416,7 @@ pub fn evict_idle_in(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path) 
         Kind::Slot(i, n) => {
             let Some(_held) = try_lock(&bases[i], n) else { return false };
             empty(&c.path);
+            let _ = std::fs::remove_file(gate_path(&bases[i], n));
             true
         }
         // Read at the removal, not before the age scan: a process may have started standing here since.
@@ -522,6 +556,7 @@ pub fn owned(var: Option<std::ffi::OsString>, bases: &[PathBuf]) -> Option<PathB
 }
 
 const BUILT_RECORD: &str = ".unit-tests-built-manifest";
+const BUILT_STAMP: &str = ".unit-tests-built-stamp";
 
 /// Run the shared selective clean (`script`, [`CLEAN_SCRIPT`]) for the tree at `root` against
 /// the build directory `dir`: only the workspace crates whose bytes differ from the tree the
@@ -532,6 +567,7 @@ pub fn clean(script: &Path, root: &Path, dir: &Path, path: &str, release: bool) 
     let r = run_clean(script, root, dir, path, release);
     if release && r.is_err() {
         let _ = std::fs::remove_file(dir.join(BUILT_RECORD));
+        let _ = std::fs::remove_file(dir.join(BUILT_STAMP));
     }
     r
 }
@@ -711,11 +747,54 @@ mod tests {
         let first = lease(&bases, "builder").unwrap();
         let dir = first.dir().to_path_buf();
         first.release();
-        let got = lease_dir(&bases, &dir, "gate", std::time::Duration::ZERO).unwrap().expect("idle slot is leased");
+        let got = lease_dir(&bases, &dir, "gate", "builder", std::time::Duration::ZERO).unwrap().expect("idle slot is leased");
         assert_eq!(got.dir(), dir);
         assert!(got.reused);
         got.release();
-        assert!(lease_dir(&bases, &dir, "gate", std::time::Duration::ZERO).unwrap().is_ok());
+        assert!(lease_dir(&bases, &dir, "gate", "builder", std::time::Duration::ZERO).unwrap().is_ok());
+    }
+
+    /// Whether a slot given up by `give_up` is leasable while a forked child, not yet exec'd,
+    /// still shares the lock's open file description.
+    fn lockable_beside_a_forked_child(tag: &str, give_up: fn(Lease)) -> Result<(), Refused> {
+        let d = testkit::TempDir::new(tag);
+        let bases = vec![d.path().join("base")];
+        let l = lease(&bases, "builder").unwrap();
+        let dir = l.dir().to_path_buf();
+        // SAFETY: the child calls only the async-signal-safe sleep and _exit.
+        let child = unsafe { libc::fork() };
+        if child == 0 {
+            // SAFETY: as above.
+            unsafe {
+                // clock-safe: nothing waits on it; the parent kills the child, and this only caps an orphan's life
+                libc::sleep(5);
+                libc::_exit(0);
+            }
+        }
+        assert!(child > 0, "fork failed");
+        give_up(l);
+        let got = lease_dir(&bases, &dir, "probe", "", std::time::Duration::ZERO).unwrap().map(drop);
+        // SAFETY: `child` is our own unreaped child.
+        unsafe {
+            libc::kill(child, libc::SIGKILL);
+            libc::waitpid(child, std::ptr::null_mut(), 0);
+        }
+        got
+    }
+
+    #[test_id(tam523y)]
+    #[test]
+    fn a_released_lease_is_lockable_while_a_forked_child_still_shares_its_lock() {
+        let got = lockable_beside_a_forked_child("bdir-fork-release", |l| {
+            l.release();
+        });
+        assert_eq!(got, Ok(()));
+    }
+
+    #[test_id(t30qgon)]
+    #[test]
+    fn a_dropped_lease_is_lockable_while_a_forked_child_still_shares_its_lock() {
+        assert_eq!(lockable_beside_a_forked_child("bdir-fork-drop", drop), Ok(()));
     }
 
     #[test_id(t0ujgqv)]
@@ -725,14 +804,99 @@ mod tests {
         let bases = vec![d.path().join("base")];
         let held = lease(&bases, "builder").unwrap();
         let dir = held.dir().to_path_buf();
-        assert!(lease_dir(&bases, &dir, "gate", std::time::Duration::ZERO).unwrap().is_err());
-        assert!(lease_dir(&bases, &dir, "gate", std::time::Duration::from_millis(150)).unwrap().is_err(), "held for the whole wait");
+        assert!(lease_dir(&bases, &dir, "gate", "builder", std::time::Duration::ZERO).unwrap().is_err());
+        assert!(lease_dir(&bases, &dir, "gate", "builder", std::time::Duration::from_millis(150)).unwrap().is_err(), "held for the whole wait");
         let waiter = {
             let (b, d) = (bases.clone(), dir.clone());
-            std::thread::spawn(move || lease_dir(&b, &d, "gate", std::time::Duration::from_secs(10)).unwrap().is_ok())
+            std::thread::spawn(move || lease_dir(&b, &d, "gate", "builder", std::time::Duration::from_secs(10)).unwrap().is_ok())
         };
         held.release();
         assert!(waiter.join().unwrap(), "the waiter took the slot once its holder released");
+    }
+
+    #[test_id(tplace1)]
+    #[test]
+    fn a_slot_reserved_for_a_gate_is_leased_after_an_older_warm_one_and_the_take_clears_it() {
+        let d = testkit::TempDir::new("bdir-reserved");
+        let bases = vec![d.path().join("base")];
+        let (one, two) = (lease(&bases, "a").unwrap(), lease(&bases, "b").unwrap());
+        let (d1, d2) = (one.dir().to_path_buf(), two.dir().to_path_buf());
+        fill(&d1.join("x"), 8);
+        fill(&d2.join("x"), 8);
+        two.release();
+        one.release_reserved("sp-a").1.unwrap();
+        let older = std::fs::OpenOptions::new().write(true).open(lock_path(&bases[0], 2)).unwrap();
+        older.set_modified(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1)).unwrap();
+        let got = lease(&bases, "c").unwrap();
+        assert_eq!(got.dir(), d2);
+        assert!(gate_path(&bases[0], 1).exists());
+        drop(got);
+        let got = lease(&bases, "c").unwrap();
+        assert_eq!(got.dir(), d2, "still idle and unreserved");
+        let _held = got;
+        let only = lease(&bases, "d").unwrap();
+        assert_eq!(only.dir(), d1, "a reserved slot is taken when nothing else is idle");
+        assert!(!gate_path(&bases[0], 1).exists());
+    }
+
+    #[test_id(tkjsqrr)]
+    #[test]
+    fn an_empty_unreserved_slot_is_leased_before_a_warm_reserved_one() {
+        let d = testkit::TempDir::new("bdir-reserved-empty");
+        let bases = vec![d.path().join("base")];
+        let (one, two) = (lease(&bases, "a").unwrap(), lease(&bases, "b").unwrap());
+        let (d1, d2) = (one.dir().to_path_buf(), two.dir().to_path_buf());
+        fill(&d1.join("x"), 8);
+        two.release();
+        one.release_reserved("sp-a").1.unwrap();
+        assert_eq!(lease(&bases, "c").unwrap().dir(), d2);
+    }
+
+    #[test_id(tztffqp)]
+    #[test]
+    fn a_reservation_that_cannot_be_written_is_returned_and_the_slot_is_still_released() {
+        for blocked in [true, false] {
+            let d = testkit::TempDir::new("bdir-reserve-write");
+            let bases = vec![d.path().join("base")];
+            let one = lease(&bases, "a").unwrap();
+            let dir = one.dir().to_path_buf();
+            if blocked {
+                std::fs::create_dir(gate_path(&bases[0], 1)).unwrap();
+            }
+            let (_, written) = one.release_reserved("sp-a");
+            assert_eq!(written.is_err(), blocked, "{written:?}");
+            if !blocked {
+                assert_eq!(std::fs::read_to_string(gate_path(&bases[0], 1)).unwrap(), "sp-a");
+            }
+            assert!(lease_dir(&bases, &dir, "gate", "", std::time::Duration::ZERO).unwrap().is_ok(), "the slot is released");
+        }
+    }
+
+    #[test_id(tplace2)]
+    #[test]
+    fn lease_dir_refuses_a_slot_held_by_another_session_at_once() {
+        let d = testkit::TempDir::new("bdir-not-owner");
+        let bases = vec![d.path().join("base")];
+        let held = lease(&bases, "sp-b").unwrap();
+        let (b, dir) = (bases.clone(), held.dir().to_path_buf());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || tx.send(lease_dir(&b, &dir, "gate", "sp-a", std::time::Duration::from_secs(3600)).unwrap().err()));
+        // clock-safe: the cap only bounds a wait for the refusal, which arrives at once
+        let refused = rx.recv_timeout(std::time::Duration::from_secs(30)).expect("a slot another session holds is refused without waiting");
+        assert_eq!(refused, Some(Refused::Held { holder: "sp-b".into() }));
+    }
+
+    #[test_id(tplace3)]
+    #[test]
+    fn evicting_a_reserved_idle_slot_removes_its_reservation() {
+        let d = testkit::TempDir::new("bdir-evict-reserved");
+        let base = d.path().join("base");
+        let l = lease(std::slice::from_ref(&base), "sp-a").unwrap();
+        fill(&l.dir().join("x"), 64);
+        l.release_reserved("sp-a").1.unwrap();
+        assert!(gate_path(&base, 1).exists());
+        evict_idle_in(std::slice::from_ref(&base), 0, &crate::build::size_of, &empty_proc(d.path()));
+        assert!(!gate_path(&base, 1).exists());
     }
 
     #[test_id(t0dlx6z)]
@@ -742,7 +906,7 @@ mod tests {
         let bases = vec![d.path().join("base")];
         let held = lease(&bases, "sp-other").unwrap();
         let dir = held.dir().to_path_buf();
-        let why = |p: &Path| lease_dir(&bases, p, "gate", std::time::Duration::ZERO).unwrap().err();
+        let why = |p: &Path| lease_dir(&bases, p, "gate", "", std::time::Duration::ZERO).unwrap().err();
         assert_eq!(why(&dir), Some(Refused::Held { holder: "sp-other".into() }));
         assert_eq!(why(&bases[0].join("dir.99")), Some(Refused::Gone));
         assert_eq!(why(&d.path().join("elsewhere/dir.1")), Some(Refused::NotASlot));
@@ -757,7 +921,7 @@ mod tests {
         let l = lease(&bases, "builder").unwrap();
         let dir = l.dir().to_path_buf();
         l.release();
-        let none = |p: &Path| lease_dir(&bases, p, "gate", std::time::Duration::ZERO).unwrap().is_err();
+        let none = |p: &Path| lease_dir(&bases, p, "gate", "", std::time::Duration::ZERO).unwrap().is_err();
         let outside = d.path().join("elsewhere/dir.1");
         std::fs::create_dir_all(&outside).unwrap();
         std::fs::write(d.path().join("elsewhere/dir.1.lock"), "").unwrap();
@@ -932,21 +1096,21 @@ mod tests {
     }
 
     fn numbers(order: &[ScannedSlot]) -> Vec<u64> {
-        order.iter().map(|s| s.3).collect()
+        order.iter().map(|s| s.4).collect()
     }
 
     #[test_id(t2q7yd4)]
     #[test]
     fn the_most_recently_idled_warm_slot_is_tried_first_then_the_rest_then_the_empty_ones() {
-        let scanned = vec![(false, at(100), 0, 1), (true, at(10), 0, 2), (true, at(50), 1, 3), (false, at(200), 0, 4)];
+        let scanned = vec![(true, false, at(100), 0, 1), (true, true, at(10), 0, 2), (true, true, at(50), 1, 3), (true, false, at(200), 0, 4)];
         assert_eq!(numbers(&lease_order(scanned)), [3, 2, 4, 1]);
     }
 
     #[test_id(twxgvig)]
     #[test]
     fn a_single_idle_warm_slot_is_first_in_the_lease_order_on_its_own_base() {
-        let order = lease_order(vec![(true, at(5), 1, 7)]);
-        assert_eq!(order.first().map(|s| (s.2, s.3)), Some((1, 7)));
+        let order = lease_order(vec![(true, true, at(5), 1, 7)]);
+        assert_eq!(order.first().map(|s| (s.3, s.4)), Some((1, 7)));
     }
 
     #[test_id(t5z21a3)]

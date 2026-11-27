@@ -26,7 +26,7 @@ const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const PORT_ATTEMPTS: u32 = 5;
 
-const USAGE: &str = "usage: testenv testdb template (--bd B | --schema F) --dolt D [--root R] [--cache C]\n       testenv testdb up --tag T (--bd B | --schema F) --dolt D [--root R] [--owner PID]\n       testenv testdb dump-schema --bd B --dolt D --out F [--root R]\n       testenv testdb reset --fixture F\n       testenv testdb down --fixture F\n       testenv testdb reap --fixture F --owner PID\n       testenv testdb embedded-check --bd B\n       testenv testdb embedded-up --tag T --bd B\n       testenv testdb embedded-borrow --baseline BASE\n       testenv testdb embedded-reset --dir D --baseline BASE\n       testenv testdb embedded-down [--dir D] [--baseline BASE] [--bin BIN]";
+const USAGE: &str = "usage: testenv testdb template (--bd B | --schema F) --dolt D [--root R] [--cache C]\n       testenv testdb up --tag T (--bd B | --schema F) --dolt D [--root R] [--owner PID]\n       testenv testdb reset --fixture F\n       testenv testdb down --fixture F\n       testenv testdb reap --fixture F --owner PID\n       testenv testdb embedded-check --bd B\n       testenv testdb embedded-up --tag T --bd B\n       testenv testdb embedded-borrow --baseline BASE\n       testenv testdb embedded-reset --dir D --baseline BASE\n       testenv testdb embedded-down [--dir D] [--baseline BASE] [--bin BIN]";
 
 // ---- pure pieces ---------------------------------------------------------------------
 
@@ -45,9 +45,8 @@ pub fn resolve_exe(name: &str, path_var: &str) -> Option<PathBuf> {
 
 /// The `bd` a fixture's callers should run, as an absolute path **without** resolving links:
 /// the first `name` on `path_var` (a name with `/` is made absolute). Not canonicalised, so
-/// inside a metered suite it stays the meter's link and the calls stay metered. conf.sh keys
-/// its `bd migrate schema` cache on `stat "$SPIRA_BD"`; a bare `bd` never stats, so every
-/// conf.sh source re-ran the check (DESIGN-testdb.md §2.4, sp-34ru2).
+/// inside a metered suite it stays the meter's link and the calls stay metered
+/// (DESIGN-testdb.md §2.4).
 pub fn locate_exe(name: &str, path_var: &str) -> Option<PathBuf> {
     if name.contains('/') {
         let p = Path::new(name);
@@ -815,40 +814,6 @@ fn build_template(tmp: &Path, tools: &Tools) -> Result<(), String> {
     fs::write(tmp.join("READY"), "").map_err(|e| e.to_string())
 }
 
-/// The header of the schema file `dump-schema` writes.
-const SCHEMA_HEADER: &str = "-- The beads schema and its seed rows, as a bd init leaves them. Do not edit.\n-- Regenerate: testenv testdb dump-schema --bd bd --dolt dolt --root <scratch dir outside any git checkout> --out testenv/fixtures/beads-schema.sql\n";
-
-/// Write `out`: a dolt dump of a `bd init` template, under [`SCHEMA_HEADER`].
-pub fn dump_schema(root: &Path, tools: &Tools, out: &Path) -> Result<(), String> {
-    let tpl = ensure_template(root, tools)?;
-    let scratch = root.join(format!("dump-{}", std::process::id()));
-    let work = scratch.join(DATABASE);
-    remove_tree(&scratch);
-    copy_tree(&tpl.join("data").join(DATABASE), &work).map_err(|e| format!("copy template: {e}"))?;
-    let dumped = scratch.join("beads-schema.sql");
-    // batch-job: a dump runs as long as the database takes
-    let r = Command::new(&tools.dolt)
-        .args(["dump", "-r", "sql", "--file-name"])
-        .arg(&dumped)
-        .current_dir(&work)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("spawn {}: {e}", tools.dolt.display()))
-        .and_then(|o| {
-            if o.status.success() {
-                fs::read_to_string(&dumped).map_err(|e| format!("{}: {e}", dumped.display()))
-            } else {
-                Err(format!("dolt dump failed:\n{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)))
-            }
-        });
-    remove_tree(&scratch);
-    let body: String = r?.lines().filter(|l| !l.starts_with("CREATE DATABASE IF NOT EXISTS")).map(|l| format!("{l}\n")).collect();
-    if let Some(dir) = out.parent() {
-        fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
-    }
-    fs::write(out, format!("{SCHEMA_HEADER}{body}")).map_err(|e| format!("{}: {e}", out.display()))
-}
-
 // ---- fixtures ------------------------------------------------------------------------
 
 pub struct Up {
@@ -1260,7 +1225,6 @@ pub struct Args {
     pub tag: Option<String>,
     pub bd: Option<String>,
     pub schema: Option<String>,
-    pub out: Option<String>,
     pub dolt: Option<String>,
     pub root: Option<String>,
     pub owner: Option<u32>,
@@ -1287,7 +1251,6 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
         a.cmd.as_str(),
         "template"
             | "up"
-            | "dump-schema"
             | "reset"
             | "down"
             | "reap"
@@ -1309,7 +1272,6 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
             "--tag" => a.tag = Some(v()?),
             "--bd" => a.bd = Some(v()?),
             "--schema" => a.schema = Some(v()?),
-            "--out" => a.out = Some(v()?),
             "--dolt" => a.dolt = Some(v()?),
             "--root" => a.root = Some(v()?),
             "--fixture" => a.fixture = Some(v()?),
@@ -1336,11 +1298,6 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
         "template" => {
             need_source(&a)?;
             need(&a.dolt, "--dolt")?;
-        }
-        "dump-schema" => {
-            need(&a.bd, "--bd")?;
-            need(&a.dolt, "--dolt")?;
-            need(&a.out, "--out")?;
         }
         "up" => {
             need(&a.tag, "--tag")?;
@@ -1414,13 +1371,6 @@ pub fn main(args: &[String]) -> i32 {
         1
     };
     match a.cmd.as_str() {
-        "dump-schema" => {
-            let (bd, dolt) = (a.bd.as_deref().unwrap_or("bd"), a.dolt.as_deref().unwrap_or("dolt"));
-            match Tools::resolve(bd, dolt).and_then(|t| dump_schema(&root_of(&a), &t, Path::new(a.out.as_deref().unwrap_or("")))) {
-                Ok(()) => 0,
-                Err(e) => fail(e),
-            }
-        }
         "template" | "up" => {
             let dolt = a.dolt.as_deref().unwrap_or("dolt");
             let tools = match match a.schema.as_deref() {

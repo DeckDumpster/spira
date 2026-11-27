@@ -31,7 +31,7 @@ Every refusal must name the rule, the correct path and the override. Every fence
 | UC-safety-fences-01 | In a dwarf session, queue- and landing-operating commands (`batch.sh`, `git push`, `gh pr create`, `queue.sh flush`, `verdict.sh`, `landing.sh`) are refused. `queue.sh stats` is allowed. A blocked script's name used as a git file argument or as a suite name is not treated as an invocation, but a compound that also invokes it is. | C, O | T1 | cert |
 | UC-safety-fences-02 | In a dwarf session, writes under `SPIRA_PROD` or `SPIRA_RUN/queue` are refused: redirect, rm, mv, tee, `sed -i`, and `git -C` add/commit/reset/checkout/clean. Reads and exec from prod, rendered brief commands (sop/incident/mail/suites/groomer), `census.sh`, and prod paths in heredoc/prose are allowed. | C, FC | T1 | cert |
 | UC-safety-fences-03 | dwarf-fence carries no `bd create` rule: in a dwarf session of any persona, `bd create` passes the fence. No dwarf persona has bd: the model PATH holds only `work` (sp-zf4q3) and bead operations are `work` verbs (sp-st0mm). Removed by sp-j7l3q. | C | T1 | cert / batch |
-| UC-safety-fences-13 | `DELETE FROM schema_migrations` is refused at `bdq create` (case- and whitespace-insensitive) even when the bead carries needs-ryan. The refusal points at `bd migrate schema`. | C, FC | T1 | cert |
+| UC-safety-fences-13 | `DELETE FROM schema_migrations` is refused at `bdq create` (case- and whitespace-insensitive) even when the bead carries needs-ryan. The refusal points at `spira-lc admin-store check`. | C, FC | T1 | cert |
 | UC-safety-fences-15 | **Shared PreToolUse contract:** every guard blocks through one documented protocol and names guard, remedy and override. The override works from env and inline. The guard is inert outside its session scope, for tools it does not own, and for single-quoted/heredoc prose. Behaviour on an empty or malformed payload is defined and tested. | K, FC, O, TI | T1 (one table) | cert |
 | UC-safety-fences-16 | **Dwarf sessions actually carry the fences:** `dwarf_settings` registers every guard meant for dwarves, identically for the sweep and the claimed launch. A guard that is missing or not executable is reported, never silently dropped. | FC, K, O | T1 | cert |
 | UC-safety-fences-17 | A dwarf commit that stages a path already dirty before the session began is refused, naming the path. Own-path commits succeed. `SPIRA_ALLOW_DIRTY_STAGE=1` overrides. | C, O | T2 (tmp git) | batch |
@@ -368,7 +368,7 @@ UC-safety-fences-16 is marked `[use_case.uncovered]` in the TOML catalogue, citi
 Also retired dead in the same bead, outside this area's own catalogue: `dwarf_claude_argv`
 (table moved to `dwarf/src/run.rs`, already exercised end to end by
 `test-dwarf-prompt-layers.sh`'s T3 and `test-persona-model.sh`'s real-binary rows) and
-`rune_fenced` (now `dwarf/src/conf.rs` and `release/src/stage.rs`; `test-scope-label.sh`
+`rune_fenced` (now `dwarf/src/conf.rs`; `test-scope-label.sh`
 and `test-dwarf-elastic-concurrency.sh` keep their still-live `rune_get`/elastic-pool rows
 and lose only the direct `rune_fenced` calls, neither of which carried a UC id here).
 
