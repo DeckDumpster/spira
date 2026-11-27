@@ -190,7 +190,7 @@ fn start<B: Backend + Send + Sync + 'static>(store: &Arc<Store<B>>, socket: Path
         "lc-topic-flush",
         Box::new(move || {
             flush_every(&flushing, flushed.contract(), &writer, |pause| {
-                std::thread::sleep(pause);
+                std::thread::sleep(pause); // waits-on: nothing; FLUSH is the least time between two writes
                 true
             })
         }),
