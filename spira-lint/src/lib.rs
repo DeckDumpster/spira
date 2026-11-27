@@ -19,6 +19,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub mod args;
 pub mod lex;
 pub mod record;
 pub mod rules;
