@@ -5699,6 +5699,7 @@ mod pool_parity_tests {
     fn each_cut_cause_line_names_what_readmits_the_bead() {
         let causes = [
             (Cause::Refused { kind: "integration".into() }, "refused-integration", "(integration)", "a new tip"),
+            (Cause::Refused { kind: "image-absent".into() }, "refused-image-absent", "(image-absent)", "the host's store holding its testenv image"),
             (Cause::NoSift, "no-sift", "no sift pass", "a sift pass at t1"),
             (Cause::RoundFull { cap: 7 }, "round-full", "full at 7", "a later round"),
             (Cause::OutsideFeature { root: "sp-f".into() }, "outside-feature", "feature sp-f", "the next cut"),

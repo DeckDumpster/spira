@@ -816,6 +816,9 @@ pub struct ImageWant {
     pub failed: bool,
     #[serde(default)]
     pub at_ms: u64,
+    /// Each member's refused tip: a moved base drops its refusal, and the want must outlive that.
+    #[serde(default)]
+    pub tips: BTreeMap<String, String>,
 }
 
 /// The unit key of the build of `tag`; [`image_of_key`] reads it back.
@@ -2259,15 +2262,23 @@ impl Machine<'_> {
     }
 
     /// Lifts the image-absent refusals of the wants whose tag is present, then forgets every want
-    /// no remaining refusal waits on.
-    fn readmit_imaged(&mut self, present: &[String]) {
+    /// no refusal names and whose members' tips have all moved: forgetting one over a moved base
+    /// would build its tag again.
+    fn readmit_imaged(&mut self, repo: &Repo) {
+        let (name, acts) = (self.repo, &mut self.acts);
         let RepoCarry { refused, images, .. } = &mut self.rc;
         images.retain(|tag, want| {
-            let built = present.contains(tag);
+            let built = repo.images_present.contains(tag);
             if built {
                 refused.retain(|id, (_, _, kind)| kind != IMAGE_ABSENT || !want.members.contains(id));
             }
-            !built && want.members.iter().any(|id| refused.get(id).is_some_and(|(_, _, kind)| kind == IMAGE_ABSENT))
+            let waited_on = want.members.iter().any(|id| refused.get(id).is_some_and(|(_, _, kind)| kind == IMAGE_ABSENT) || repo.pool.iter().any(|m| &m.id == id && want.tips.get(id) == Some(&m.tip)));
+            let keep = !built && waited_on;
+            // Its result may never be read once the want is gone; the clean spares a running build.
+            if !keep && want.unit.is_some() {
+                acts.push(image_clean(name, tag));
+            }
+            keep
         });
     }
 
@@ -2275,14 +2286,16 @@ impl Machine<'_> {
     fn want_image(&mut self, tag: &str, id: &str, tip: &str) {
         for (_, other) in self.rc.images.iter_mut().filter(|(t, _)| *t != tag) {
             other.members.retain(|m| m != id);
+            other.tips.remove(id);
         }
         if let Some(want) = self.rc.images.get_mut(tag) {
+            want.tips.insert(id.to_string(), tip.to_string());
             if !want.members.iter().any(|m| m == id) {
                 want.members.push(id.to_string());
             }
             return;
         }
-        let want = ImageWant { tip: tip.to_string(), members: vec![id.to_string()], unit: Some(image_unit_key(self.repo, tag)), failed: false, at_ms: self.now_ms };
+        let want = ImageWant { tip: tip.to_string(), members: vec![id.to_string()], unit: Some(image_unit_key(self.repo, tag)), failed: false, at_ms: self.now_ms, tips: [(id.to_string(), tip.to_string())].into() };
         self.acts.push(image_leg(self.repo, tag, &want).act(IMAGE_BUILD));
         self.rc.images.insert(tag.to_string(), want);
     }
@@ -2304,6 +2317,7 @@ impl Machine<'_> {
         let overdue: Vec<(String, String)> = self.rc.images.iter().filter(|(tag, w)| !repo.images_present.contains(tag) && self.now_ms.saturating_sub(w.at_ms) > policy.wall_ms + LEG_GRACE_MS).filter_map(|(tag, w)| Some((tag.clone(), w.unit.clone()?))).collect();
         for (tag, unit) in overdue {
             self.stop_unit(&unit);
+            self.acts.push(image_clean(self.repo, &tag));
             self.image_failed(&tag, "no result within the wall", "");
         }
     }
@@ -2312,7 +2326,7 @@ impl Machine<'_> {
     /// a line naming each; a refusal whose tip or base has moved since is forgotten.
     fn without_refused(&mut self, repo: &Repo) -> (Repo, Vec<String>, Vec<batcher_cut::io::LeftOut>) {
         self.rc.refused.retain(|id, (tip, base, _)| repo.pool.iter().any(|m| &m.id == id && &m.tip == tip) && base == &repo.base_sha);
-        self.readmit_imaged(&repo.images_present);
+        self.readmit_imaged(repo);
         let refused = &self.rc.refused;
         let why = repo.pool.iter().filter_map(|m| refused.get(&m.id).map(|(_, _, kind)| format!("{}: queue round open refused it ({kind}) at this tip and base", m.id))).collect();
         let left = repo.pool.iter().filter_map(|m| refused.get(&m.id).map(|(tip, _, kind)| batcher_cut::io::LeftOut { id: m.id.clone(), tip: tip.clone(), cause: batcher_cut::io::Cause::Refused { kind: kind.clone() } })).collect();
@@ -2887,6 +2901,9 @@ pub fn on_outcome(carry: &Carry, effect: &str, ok: bool, body: &str, leg: &Leg, 
         return (next, vec![]);
     }
     if effect == IMAGE_CLEAN {
+        if !ok {
+            eprintln!("{NAME} {}: the checkout of image {} was not removed; the next build of the tag clears it: {body}", leg.repo, leg.image);
+        }
         return (next, vec![]);
     }
     if effect == IMAGE_BUILD {
@@ -3353,8 +3370,8 @@ pub mod edge {
     }
 
     /// The check round-vm makes of the host store before it places a round there.
-    fn host_holds_image(tag: &str) -> bool {
-        spira_config::bounded::bounded("podman").args(["image", "exists", &format!("localhost/spira-testenv:{tag}")]).output().is_ok_and(|o| o.status.success())
+    pub fn host_holds_image(tag: &str) -> bool {
+        spira_config::bounded::bounded("podman").args(round_vm::host::image_exists_args(tag)).output().is_ok_and(|o| o.status.success())
     }
 
     fn unit_running(e: &Effects, task: &str, key: &str) -> bool {
@@ -3568,10 +3585,15 @@ pub mod edge {
                     eprintln!("{} {}: queue round open refused {} ({}): {} — cutting without it", super::NAME, repo.name, r.id, r.kind, r.why);
                 }
                 eprintln!("{} {}: {line}", super::NAME, repo.name);
-                let images = refused.iter().filter_map(|r| Some((r.id.clone(), r.image.clone()?))).collect();
-                json(&Opened { refused: refused.into_iter().map(|r| (r.id, r.kind, r.why)).collect(), images, ..Opened::default() })
+                json(&opened_refusing(refused))
             }
         }
+    }
+
+    /// What the machine is told of a refused open.
+    pub fn opened_refusing(refused: Vec<io::Refused>) -> Opened {
+        let images = refused.iter().filter_map(|r| Some((r.id.clone(), r.image.clone()?))).collect();
+        Opened { refused: refused.into_iter().map(|r| (r.id, r.kind, r.why)).collect(), images, ..Opened::default() }
     }
 
     /// The corpus leg: `round-vm run` on the round tree, as a unit; it ends on its `unit.ran`.

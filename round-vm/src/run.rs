@@ -1783,7 +1783,7 @@ impl Host for GitHost {
     }
 
     fn image_present(&self, tag: &str) -> bool {
-        command("podman").args(["image", "exists", &format!("localhost/spira-testenv:{tag}")]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
+        command("podman").args(crate::host::image_exists_args(tag)).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
     }
 
     fn suites_in(&self, tree: &Path) -> Result<Vec<String>, String> {

@@ -1440,6 +1440,7 @@ fn sp_4pne6q_a_build_past_the_wall_with_no_result_is_stopped_and_failed() {
     assert!(!acts.iter().any(|a| a.effect == runtime::units::UNIT_STOP), "{acts:?}");
     let (next, acts) = decide(&carry_idle(&carry), &at(wall + 1));
     assert!(acts.iter().any(|a| a.effect == runtime::units::UNIT_STOP), "{acts:?}");
+    assert!(acts.iter().any(|a| a.effect == IMAGE_CLEAN), "{acts:?}");
     assert!(acts.iter().any(|a| a.effect == INBOX_APPEND && a.input.contains("tagz")), "{acts:?}");
     assert_eq!(image_wants(&next)["tagz"]["failed"], true);
 }
@@ -2708,4 +2709,52 @@ fn a_refused_landing_page_lands_again_before_a_conditional_eject() {
     let at = |s: &str| page.find(s).unwrap_or_else(|| panic!("{s:?} missing: {page}"));
     assert!(at("queue round land r9") < at("only if the refusing line names a member's change"), "{page}");
     assert!(at("only if the refusing line names a member's change") < at("queue round eject r9 <member>"), "{page}");
+}
+
+#[test_id(t70zf3w)]
+#[test]
+fn sp_4pne6q_a_moved_base_neither_forgets_a_failed_tag_nor_builds_it_again() {
+    let (carry, unit) = building();
+    let (failed, _) = image_ran(&carry, &unit, 1, "");
+    let mut moved = observing(&[]);
+    moved.repos.get_mut("spira").unwrap().base_sha = "b2".into();
+    let (next, acts) = decide(&carry_idle(&failed), &moved);
+    assert!(next.repos["spira"].refused.is_empty() && assembled_ids(&acts).contains(&"sp-b".to_string()), "a moved base tries the member again");
+    assert_eq!(image_wants(&next)["tagz"]["failed"], true);
+    let mut reopened = next.clone();
+    let rc = reopened.repos.get_mut("spira").unwrap();
+    (rc.state, rc.members) = (State::Opened, vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())]);
+    let (_, acts) = refusing_image(&reopened, &[("sp-b", "tagz")]);
+    assert!(builds(&acts).is_empty(), "{acts:?}");
+}
+
+#[test_id(t6pz8nw)]
+#[test]
+fn sp_4pne6q_a_build_whose_result_was_never_read_still_loses_its_checkout_on_readmit() {
+    let (carry, _) = building();
+    let (_, acts) = decide(&carry_idle(&carry), &observing(&["tagz"]));
+    assert!(acts.iter().any(|a| a.effect == IMAGE_CLEAN), "{acts:?}");
+}
+
+#[test_id(ttpsql1)]
+#[test]
+fn sp_4pne6q_a_tick_reads_a_building_image_through_unit_facts() {
+    use runtime::units::{UnitFacts, UnitState, UNIT_FACTS};
+    let facts = serde_json::to_string(&UnitFacts { state: UnitState::Failed, main_pid: None, exit: Some(runtime::units::Exit::Code(2)), since_ms: Some(1) }).unwrap();
+    let (carry, _) = building();
+    let mut r = TaskRig::new(1, registration()).unwrap().double(UNIT_FACTS, move |_| Ok(facts.clone()));
+    r.tick(STREAM, EventKind::new(STATE, &serde_json::to_string(&carry_idle(&carry)).unwrap())).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    let asked: Vec<&str> = r.requested().iter().map(|q| q.name.as_str()).collect();
+    assert!(asked.contains(&UNIT_FACTS) && asked.contains(&INBOX_APPEND) && asked.contains(&IMAGE_CLEAN), "{asked:?}");
+}
+
+#[test_id(t52r8ul)]
+#[test]
+fn sp_4pne6q_a_refused_open_record_reaches_the_machine_with_its_tag() {
+    use spira_runtime::tasks::a::batcher_local::edge::opened_refusing;
+    let record = "refused=sp-b kind=image-absent image=tagz why=sp-b: build it\nrefused=sp-c kind=held why=sp-c: held\n";
+    let opened = opened_refusing(batcher_cut::io::parse_refused(record));
+    let (_, acts) = on_outcome(&opening(), ROUND_OPEN, true, &serde_json::to_string(&opened).unwrap(), &open_leg(), NOW);
+    assert_eq!(builds(&acts).iter().map(|l| l.image.as_str()).collect::<Vec<_>>(), ["tagz"]);
 }

@@ -54,3 +54,15 @@ fn sp_4pne6q_the_build_unit_runs_testenv_on_a_checkout_of_the_tip_which_goes_whe
     assert!(!git_in(&src, &["worktree", "list"]).contains(".image-"));
     edge::remove_image_tree(&e, &repo, &run, &leg).expect("nothing there is not an error");
 }
+
+#[test_id(turif59)]
+#[test]
+fn sp_4pne6q_the_store_is_asked_for_the_tag_by_image_exists() {
+    use spira_runtime::tasks::a::batcher_local::edge::host_holds_image;
+    let dir = testkit::TempDir::new("image-exists");
+    testkit::write_exe(&dir.path().join("podman"), "#!/bin/sh\n[ \"$*\" = 'image exists localhost/spira-testenv:tagz' ]\n");
+    let path = format!("{}:{}", dir.path().display(), std::env::var("PATH").unwrap());
+    let _env = testkit::env(&[("PATH", Some(path.as_str()))]);
+    assert!(host_holds_image("tagz"));
+    assert!(!host_holds_image("tagy"));
+}
