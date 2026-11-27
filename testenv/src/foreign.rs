@@ -559,7 +559,8 @@ fn move_into(from: &Path, to: &Path) -> Result<(), (PathBuf, std::io::Error)> {
     Ok(())
 }
 
-/// Removes every extended attribute of `path` itself: a rootless overlay may leave
+/// Removes every extended attribute of `path` itself but the host's `security.*` labels, which
+/// an unprivileged process may not remove: a rootless overlay may leave
 /// `user.overlay.*` on a file it copied up, which must not reach the next run's lower layer.
 fn strip_xattrs(path: &Path) -> std::io::Result<()> {
     let c = CString::new(path.as_os_str().as_bytes())?;
@@ -582,7 +583,7 @@ fn strip_xattrs(path: &Path) -> std::io::Result<()> {
     if read_only {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(meta.permissions().mode() | 0o200))?;
     }
-    for name in names[..got].split_inclusive(|b| *b == 0) {
+    for name in names[..got].split_inclusive(|b| *b == 0).filter(|n| !n.starts_with(b"security.")) {
         let name = CStr::from_bytes_with_nul(name).map_err(std::io::Error::other)?;
         // SAFETY: both strings are NUL-terminated.
         if unsafe { libc::lremovexattr(c.as_ptr(), name.as_ptr()) } != 0 {
@@ -1103,6 +1104,26 @@ mod tests {
         let want = format!("c: warm cache publish failed (not a verdict; the warm target is stale): {}: ", upper.join("clash").display());
         assert!(text.contains(&want), "{text}");
         assert!(text.contains("warm cache merge held the lock"), "{text}");
+        assert!(!cache.run_dir("c").exists());
+    }
+
+    #[test_id(tsleyqk)]
+    #[test]
+    fn a_publish_never_moves_a_file_through_a_symlink_out_of_the_target() {
+        let root = testkit::TempDir::new("foreign-publish-symlink");
+        let cache = Cache::new(root.path(), "r");
+        cache.prepare().unwrap();
+        let upper = cache.run_dir("c").join("upper");
+        let outside = root.path().join("outside");
+        std::fs::create_dir_all(upper.join("d")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(upper.join("d/f"), "x").unwrap();
+        std::os::unix::fs::symlink(&outside, cache.dir.join("target/d")).unwrap();
+
+        let text = published(&cache);
+
+        assert!(text.contains(&format!("the warm target is stale): {}: ", upper.join("d").display())), "{text}");
+        assert!(!outside.join("f").exists());
         assert!(!cache.run_dir("c").exists());
     }
 
