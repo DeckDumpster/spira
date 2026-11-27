@@ -126,7 +126,7 @@
 //! (`should_judge` with the carry's cooldown, the leg `spira-runtime reflect <ids>` — `reflect.sh`
 //! ported into `sentinel::reflect` — started as a unit appending to `reflect.log`).
 //!
-//! The label, note and close writes go through the store's content door; `recompute-blocked`
+//! The label and note writes go through the store's doors; `recompute-blocked`
 //! has no door yet, so CHECK 3's act refuses naming the verb rather than fork bd. CHECK 1's
 //! subscribers are `SPIRA_DEFAULT_WATCHERS` (else the operator): the per-epic `spira.watch.*`
 //! keys lived in bd's kv, which the store does not serve, so an epic silenced there is not
