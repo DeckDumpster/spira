@@ -838,10 +838,13 @@ impl Engine {
         Ok(Some(req))
     }
 
-    /// Requests a held write: it leaves the held list as it is requested.
+    /// Requests a held write: it leaves the held list as it is requested. The request is placed
+    /// with the resume, so no event queued ahead of it sees the write neither held nor requested.
     fn release(&mut self, held: &Event, at: u64) -> Result<()> {
         let b: HeldBody = serde_json::from_str(&held.kind.body).map_err(|e| RuntimeError::new(format!("bad held effect {}: {e}", held.id.0)))?;
-        self.request(&b.task, &b.stream, derive_id(format!("{}/released", held.id.0)), b.spec, held, at)?;
+        if let Some(req) = self.request(&b.task, &b.stream, derive_id(format!("{}/released", held.id.0)), b.spec, held, at)? {
+            self.wrote(true, req, false);
+        }
         Ok(())
     }
 
