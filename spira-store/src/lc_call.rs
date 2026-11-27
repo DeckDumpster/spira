@@ -1388,7 +1388,7 @@ pub mod fake {
 
     pub struct Content {
         pub rows: Vec<Value>,
-        /// What `list --live` answers: lifecycle rows.
+        /// Lifecycle rows: what `list --live` and `list --ids` answer from.
         pub live: Vec<Value>,
         pub seen: Mutex<Vec<Vec<String>>>,
     }
@@ -1424,6 +1424,11 @@ pub mod fake {
             }
             if argv == ["list", "--live"] {
                 return Ok(Reply { code: 0, out: Value::Array(self.live.clone()).to_string(), err: String::new(), read_ended: false });
+            }
+            if argv.get(..2) == Some(&["list".to_string(), "--ids".to_string()][..]) {
+                let ids: Vec<&str> = argv.get(2).map(|v| v.split(',').collect()).unwrap_or_default();
+                let rows: Vec<&Value> = self.live.iter().filter(|r| r["bead_id"].as_str().is_some_and(|id| ids.contains(&id))).collect();
+                return Ok(Reply { code: 0, out: serde_json::to_string(&rows).unwrap_or_default(), err: String::new(), read_ended: false });
             }
             if argv.first().map(String::as_str) == Some("show") {
                 let row = self.live.iter().find(|r| argv.get(1).map(String::as_str) == r["bead_id"].as_str());

@@ -445,33 +445,23 @@ mod tests {
         assert_eq!(lists.len(), 1, "{seen:?}");
     }
 
-    /// The shared content door, also answering `list --ids` from its lifecycle rows.
-    struct DoorWithRows(spira_store::lc_call::fake::Content);
-
-    impl spira_store::lc_call::Transport for DoorWithRows {
-        fn exchange(&self, argv: &[String], body: Option<&str>, t: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
-            let mut reply = self.0.exchange(argv, body, t)?;
-            if argv.get(..2) == Some(&["list".to_string(), "--ids".to_string()][..]) { // BDQ_READ_CONSIDERED="a test of the store door against its fake, not a bd read"
-                reply.out = serde_json::Value::Array(self.0.live.clone()).to_string();
-            }
-            Ok(reply)
-        }
-    }
-
     #[test_id(tihykg4)]
     #[test]
     fn a_list_by_reference_asks_the_door_for_that_reference_in_both_scopes() {
-        for (scope, state) in [(Scope::Unfinished, "WORKING"), (Scope::HandedOn, "LANDED")] {
-            let rows = vec![serde_json::json!({"id": "sp-1", "external_ref": "incident:x", "closed_at": "2026-01-02"})];
+        for (scope, state, label, since) in [(Scope::Unfinished, "WORKING", None, None), (Scope::HandedOn, "LANDED", Some("incident"), Some("2026-01-01"))] {
+            let rows = vec![
+                serde_json::json!({"id": "sp-1", "external_ref": "incident:x", "labels": ["incident"], "closed_at": "2026-01-02"}),
+                serde_json::json!({"id": "sp-2", "external_ref": "incident:y", "labels": ["incident"], "closed_at": "2026-01-02"}),
+            ];
             let live = vec![serde_json::json!({"bead_id": "sp-1", "state": state})];
-            let door = std::sync::Arc::new(DoorWithRows(spira_store::lc_call::fake::Content::new(rows).with_live(live)));
-            let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(door.clone(), true)) };
-            let found = bd.list("", scope, None, None, Some("incident:x")).unwrap();
-            assert_eq!(found.len(), 1, "{scope:?}");
-            let seen = door.0.requests();
-            assert_eq!(seen[0], ["content", "list", "--all", "--limit", "0", "--json", "--external-ref", "incident:x"], "{seen:?}");
-            assert!(seen.iter().all(|r| r != &["list", "--live"]), "{seen:?}"); // BDQ_READ_CONSIDERED="a test of the store door against its fake, not a bd read"
-            assert!(seen.iter().any(|r| r.starts_with(&["list".to_string(), "--ids".to_string(), "sp-1".to_string()])), "{seen:?}"); // BDQ_READ_CONSIDERED="a test of the store door against its fake, not a bd read"
+            let fake = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows).with_live(live));
+            let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
+            let found = bd.list("", scope, label, since, Some("incident:x")).unwrap(); // BDQ_READ_CONSIDERED="a test of the store door against its fake, not a bd read"
+            assert_eq!(found.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["sp-1"], "{scope:?}");
+            let mut want = vec!["content", "list", "--all", "--limit", "0", "--json", "--external-ref", "incident:x"]; // BDQ_READ_CONSIDERED="the argv a test expects, not a read"
+            want.extend(since.iter().flat_map(|d| ["--closed-after", d]));
+            want.extend(label.iter().flat_map(|l| ["--label", l]));
+            assert_eq!(fake.requests(), [want, vec!["list", "--ids", "sp-1"]], "{scope:?}"); // BDQ_READ_CONSIDERED="the argv a test expects, not a read"
         }
     }
 
