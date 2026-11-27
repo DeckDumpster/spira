@@ -246,6 +246,8 @@ fn a_reattached_follow_and_a_restarted_run_deliver_nothing_already_delivered() {
     again.noted("went away");
     let _restarted = world.run(broker.socket());
     again.noted("following");
+    // Acknowledged after the restart's own subscribes, so r1 has reached `run` by now.
+    world.ok(&["add", "round/#"]);
     publish(&p, "gate/r/sp-b", json!({"rc": 0}));
     assert_eq!(again.next(), "[sub:s2] gate/r/sp-b rc=0", "the same stream carries on");
 }

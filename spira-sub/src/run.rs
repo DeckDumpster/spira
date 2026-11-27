@@ -519,7 +519,11 @@ mod tests {
                 server.apply(&mut state, out);
             });
             // Opening returns once the writer has the other end.
-            let mut pipe = std::fs::File::open(temp.to_str().unwrap()).unwrap();
+            let (opened, opening) = std::sync::mpsc::channel();
+            let path = temp.to_str().unwrap().to_string();
+            std::thread::spawn(move || opened.send(std::fs::File::open(path)));
+            let failsafe = Duration::from_secs(30);
+            let mut pipe = opening.recv_timeout(failsafe).expect("apply never wrote the set file's temp path").unwrap();
             let early = reader.try_recv().ok();
             let mut written = String::new();
             pipe.read_to_string(&mut written).unwrap();
