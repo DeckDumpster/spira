@@ -130,7 +130,9 @@ impl Server {
             let (code, out) = self.call(&["watch", "topics/", "--from-rev", &from.to_string(), "--wait-ms", &wait]);
             assert_eq!(code, 0, "{out}");
             let woke: Value = serde_json::from_str(&out).unwrap();
-            from = woke["through"].as_u64().unwrap_or_else(|| panic!("no write brought what was waited for ({out}): {rows:?}"));
+            // `list_rev` answers a revision already compacted away; the list is read again after it.
+            let next = woke["through"].as_u64().or_else(|| woke["list_rev"].as_u64());
+            from = next.unwrap_or_else(|| panic!("no write brought what was waited for ({out}): {rows:?}"));
         }
     }
 }
