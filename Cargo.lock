@@ -978,20 +978,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "idea-prompt"
-version = "0.1.0"
-dependencies = [
- "bead",
- "mail",
- "serde_json",
- "spira-config",
- "spira-otel",
- "spira-store",
- "spira-test-id",
- "testkit",
-]
-
-[[package]]
 name = "idna"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2595,7 +2581,6 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "idea-prompt",
  "inbox-rules",
  "incident",
  "inotify",

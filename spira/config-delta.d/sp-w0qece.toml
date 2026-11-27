@@ -1,0 +1,2 @@
+removed_tasks = ["asks.ideas"]
+removed = ["spira.runtime_asks_ideas_secs", "spira.ideas_idle_secs", "spira.ideas_wake_from", "spira.ideas_wake_until", "spira.ideas_tz", "spira.ideas_min_gap_secs"]

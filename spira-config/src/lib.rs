@@ -1002,6 +1002,12 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "reclaim_podman", bead: "sp-2x0czr" },
     RetiredKey { key: "reclaim_podman_dir", bead: "sp-2x0czr" },
     RetiredKey { key: "reclaim_podman_cap_gib", bead: "sp-2x0czr" },
+    RetiredKey { key: "runtime_asks_ideas_secs", bead: "sp-w0qece" },
+    RetiredKey { key: "ideas_idle_secs", bead: "sp-w0qece" },
+    RetiredKey { key: "ideas_wake_from", bead: "sp-w0qece" },
+    RetiredKey { key: "ideas_wake_until", bead: "sp-w0qece" },
+    RetiredKey { key: "ideas_tz", bead: "sp-w0qece" },
+    RetiredKey { key: "ideas_min_gap_secs", bead: "sp-w0qece" },
 ];
 
 /// A retired `batcher_bin` value that is not the batcher itself (e.g. "/bin/true", the old

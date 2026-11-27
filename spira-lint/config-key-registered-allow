@@ -451,7 +451,6 @@ SPIRA_NOTES_REPO spira/acceptance-ci.sh
 SPIRA_NOW bead/src/main.rs
 SPIRA_NOW census/src/real.rs
 SPIRA_NOW cockpit-collect/src/probes/mod.rs
-SPIRA_NOW idea-prompt/src/real.rs
 SPIRA_NOW spira-config/src/vtime.rs
 SPIRA_NOW spira/sim/scenarios/steps/claim-rank.sh
 SPIRA_NOW strand/src/timefmt.rs

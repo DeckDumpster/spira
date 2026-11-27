@@ -6,7 +6,7 @@ use serde_json::Value;
 use spira_store::lc_call::LcClient;
 use spira_store::lc_state::Row as LifecycleRow;
 
-use crate::{branch_candidate, branch_label, parse_list_ids, parse_show_row, IdeaRow, LintSource, ShowRow};
+use crate::{branch_candidate, branch_label, parse_list_ids, parse_show_row, LintSource, ShowRow};
 
 const CHUNK: usize = 500;
 
@@ -114,21 +114,6 @@ pub fn forks_a_bead_tool(source: &str) -> Vec<String> {
         })
         .map(|(n, l)| format!("{}: {}", n + 1, l.trim()))
         .collect()
-}
-
-/// The label a parked idea carries; `schema.sh name idea` declares the same name.
-pub const IDEA_LABEL: &str = "idea";
-
-/// The open ideas under `label`, newest first; `Err` carries the failing exit code.
-pub fn ideas(client: &LcClient, label: &str) -> Result<Vec<IdeaRow>, i32> {
-    let mut args = vec!["list".to_string()];
-    args.extend(spira_config::nonwork::status_args(spira_config::nonwork::Kind::Idea, spira_config::nonwork::Which::Open));
-    args.extend(["--label", label, "--limit", "0", "--json"].map(String::from));
-    let (code, out) = read(client, &args);
-    if code != 0 {
-        return Err(code);
-    }
-    Ok(crate::idea_rows(&out))
 }
 
 pub type LifecycleRows = Result<HashMap<String, LifecycleRow>, String>;
@@ -336,24 +321,6 @@ mod tests {
         let client = LcClient::over(Arc::new(Down), true);
         assert!(DoorSource::load(&client, Set::All, |_| Ok(HashMap::new())).is_err());
         assert!(DoorSource::load(&client, Set::Ids(vec!["sp-a".into()]), |_| Ok(HashMap::new())).is_err());
-    }
-
-    #[test_id(tj4n8cz)]
-    #[test]
-    fn the_idea_label_is_the_name_the_schema_declares() {
-        let schema = include_str!("../../spira/schema.sh");
-        let declared = schema.lines().find(|l| l.trim_start().starts_with("idea)") && l.contains("printf")).expect("schema.sh declares an idea name");
-        assert!(declared.contains(&format!("'{IDEA_LABEL}'")), "{declared}");
-    }
-
-    #[test_id(tmkdto9)]
-    #[test]
-    fn ideas_read_open_rows_under_the_label_with_no_limit() {
-        let fake = Arc::new(Content::new(vec![]));
-        let rows = ideas(&LcClient::over(fake.clone(), true), "idea-x").unwrap();
-        assert!(rows.is_empty());
-        let want: Vec<String> = ["content", "list", "--status", "open", "--label", "idea-x", "--limit", "0", "--json"].map(String::from).to_vec();
-        assert_eq!(fake.requests(), vec![want]);
     }
 
     struct Door(std::sync::Mutex<Vec<(Vec<String>, Option<String>)>>, Vec<(&'static str, i32, &'static str)>);

@@ -1,6 +1,6 @@
 //! bd status for a bead that is not a work bead. bd `status` is inert for *work* beads — a
 //! task, bug or feature a dwarf claims, whose state is the lifecycle machine's (`lc_state`) and
-//! whose bd status reconcile-content writes from it. An insight, an idea, an intake mirror of a
+//! whose bd status reconcile-content writes from it. An insight, an intake mirror of a
 //! GitHub issue or an epic is never claimed or delivered: the machine models none of its life,
 //! so bd's `status` is the state it has. An ask is the exception among these: its state is the
 //! control plane's ask record (`spira-lc list-asks`), and its decision bead's bd status is
@@ -24,8 +24,6 @@ pub enum Kind {
     Ask,
     /// A filed-closed observation (`bead file … insight`).
     Insight,
-    /// A parked idea (`bead file … --kind idea`): open until dropped or started.
-    Idea,
     /// gh-intake's mirror of a GitHub issue.
     Intake,
     /// A coordination or epic bead: closed by `spira-lc close-epic`, never delivered.
