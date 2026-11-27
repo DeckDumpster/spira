@@ -3,6 +3,7 @@
 
 use spira_runtime::tasks::a::batcher_local::{image_unit_key, Leg, NAME};
 
+#[macro_use]
 extern crate spira_test_id;
 
 fn git_in(dir: &std::path::Path, args: &[&str]) -> String {
