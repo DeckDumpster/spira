@@ -271,36 +271,77 @@ fn test_red_csv(out: &str) -> String {
     seen.join(",")
 }
 
-/// `(test, its line)` for each failing test the step log names; None when the log counts more
-/// failures than it names, so a rerun would leave some without a fix bead.
+/// The failed test a step-log line names: a pytest `FAILED <id>::<test>` or a nextest red.
+fn named_test(l: &str) -> Option<String> {
+    let pytest = l
+        .strip_prefix("FAILED ")
+        .map(|rest| rest.split_once(" - ").map_or(rest, |(id, _)| id).trim())
+        .filter(|id| id.contains("::"))
+        .map(str::to_string);
+    let test =
+        pytest.or_else(|| nextest_red_in(l).map(|(binary, test)| format!("{binary} {test}")))?;
+    // `flip_tests` is a CSV.
+    Some(test.replace(',', ";"))
+}
+
+/// How many failures a summary line counts (`2 failed, 1 error`, `1 timed out`).
+fn counted_failures(l: &str) -> usize {
+    let words: Vec<&str> = l.trim_start_matches('=').split_whitespace().collect();
+    words
+        .windows(2)
+        .filter(|w| {
+            ["failed", "error", "timed", "exec"]
+                .iter()
+                .any(|s| w[1].starts_with(s))
+        })
+        .filter_map(|w| w[0].parse::<usize>().ok())
+        .sum()
+}
+
+/// `(test, its line)` for each failing test of the red. None when any failed job names no test
+/// or counts more failures than it names: a rerun would leave some without a fix bead.
 fn named_failures(out: &str) -> Option<Vec<(String, String)>> {
+    // One block per `failed-step:`, after the lines that precede the first.
+    let mut jobs: Vec<Vec<&str>> = vec![Vec::new()];
+    for l in out.lines() {
+        if l.starts_with("failed-step: ") {
+            jobs.push(Vec::new());
+        } else if let (Some(line), Some(job)) = (l.strip_prefix("step-log: "), jobs.last_mut()) {
+            job.push(line.trim());
+        }
+    }
     let mut named: Vec<(String, String)> = Vec::new();
-    let mut counted = 0;
-    for l in tagged(out, "step-log: ") {
-        let l = l.trim();
-        let pytest = l
-            .strip_prefix("FAILED ")
-            .map(|rest| rest.split_once(" - ").map_or(rest, |(id, _)| id).trim())
-            .filter(|id| id.contains("::"))
-            .map(str::to_string);
-        if let Some(test) =
-            pytest.or_else(|| nextest_red_in(l).map(|(binary, test)| format!("{binary} {test}")))
-        {
-            // `flip_tests` is a CSV.
-            let test = test.replace(',', ";");
-            if !named.iter().any(|(t, _)| *t == test) {
-                named.push((test, l.to_string()));
+    for (i, job) in jobs.iter().enumerate() {
+        if i == 0 && job.is_empty() {
+            continue;
+        }
+        let mut here: Vec<(String, &str)> = Vec::new();
+        for l in job {
+            if let Some(test) = named_test(l) {
+                if !here.iter().any(|(t, _)| *t == test) {
+                    here.push((test, l));
+                }
             }
         }
-        let words: Vec<&str> = l.trim_start_matches('=').split_whitespace().collect();
-        let failures = words
-            .windows(2)
-            .filter(|w| ["failed", "timed", "exec"].iter().any(|s| w[1].starts_with(s)))
-            .filter_map(|w| w[0].parse::<usize>().ok())
-            .sum();
-        counted = counted.max(failures);
+        let counted = job.iter().map(|l| counted_failures(l)).max().unwrap_or(0);
+        if here.is_empty() || counted > here.len() {
+            return None;
+        }
+        for (test, line) in here {
+            if !named.iter().any(|(t, _)| *t == test) {
+                named.push((test, line.to_string()));
+            }
+        }
     }
-    (counted <= named.len()).then_some(named)
+    Some(named)
+}
+
+/// The failures of a red the flip rerun takes: named tests only, no more than the flip cap.
+pub fn flip_candidate(out: &str) -> Option<Vec<(String, String)>> {
+    if !red_suites_csv(out).is_empty() {
+        return None;
+    }
+    named_failures(out).filter(|f| (1..=gate::engine::MAX_GATE_FLIPS).contains(&f.len()))
 }
 
 fn publish_status(w: &World, c: &Ctx, path: &Path, kv: &Kv) -> String {
@@ -2306,11 +2347,19 @@ const FLIP_LINE_MAX: usize = 300;
 /// (law-a-flipping-test-is-disabled-by-a-registry-row). `None`: no rerun, judge the red.
 fn flip_rerun(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> Option<i32> {
     let (name, pr) = (b.name, &b.pr);
-    if b.kv.get(FLIP_RERUN).is_some() || !red_suites_csv(out).is_empty() {
+    if b.kv.get(FLIP_RERUN).is_some() {
+        // Red on both runs is a real defect, not a flip: no test is owed a flip bead.
+        if b.kv.get(FLIP_TESTS).is_some() {
+            if let Err(e) = rewrite(w, c, b, &[FLIP_TESTS], &[]) {
+                w.err(format!(
+                    "verdict {name}: PR {pr} cannot strike the tests that were red twice: {e}"
+                ));
+                return Some(FAIL);
+            }
+        }
         return None;
     }
-    let failures = named_failures(out)
-        .filter(|f| (1..=gate::engine::MAX_GATE_FLIPS).contains(&f.len()))?;
+    let failures = flip_candidate(out)?;
     let run = w.forge.run_id(&c.s.forge, b.path, &b.branch)?;
     let tests: Vec<&str> = failures.iter().map(|(t, _)| t.as_str()).collect();
     let tests = tests.join(",");

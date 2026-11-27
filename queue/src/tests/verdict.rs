@@ -816,12 +816,42 @@ fn a_red_with_more_failures_than_the_flip_cap_or_unnamed_ones_is_judged_without_
     let four: String = (0..4).map(|n| format!("step-log: FAILED t.py::t{n} - x\n")).collect();
     let truncated = "step-log: FAILED t.py::t0 - x\nstep-log: == 9 failed, 1 passed in 2s ==\n";
     let tier_only = "step-log: CI FAILED during step: unit\n";
-    for log in [four.as_str(), truncated, tier_only] {
+    let with_errors = "step-log: FAILED t.py::t0 - x\nstep-log: == 1 failed, 2 errors in 2s ==\n";
+    let second_job_cut = "failed-step: a / t\nstep-log: FAILED t.py::t0 - x\nstep-log: FAILED t.py::t1 - x\nstep-log: == 2 failed in 2s ==\nfailed-step: b / t\nstep-log: == 2 failed in 2s ==\n";
+    let a_job_naming_no_test = "failed-step: a / t\nstep-log: FAILED t.py::t0 - x\nfailed-step: b / lint\nstep-log: lint: refused\n";
+    for log in [four.as_str(), truncated, tier_only, with_errors, second_job_cut, a_job_naming_no_test] {
         let t = flip_world();
         assert_eq!(pass_on(&t, &format!("red\n{log}")), 0, "{}", t.err());
         assert_eq!(count(&t.forge.calls, "workflow-rerun"), 0, "{log}");
         assert_eq!(count(&t.scripts.calls, "judgement-ci"), 1, "{log}");
     }
+}
+
+#[test_id(trkks75)]
+#[test]
+fn tests_red_on_both_runs_are_owed_no_flip_bead_even_if_the_pr_then_merges() {
+    let t = flip_world();
+    assert_eq!(pass_on(&t, NEXTEST_RED), 0, "{}", t.err());
+    assert_eq!(pass_on(&t, NEXTEST_RED), 0, "{}", t.err());
+    assert!(!record(&t).contains("flip_tests="), "{}", record(&t));
+    *t.forge.pr_state.borrow_mut() = Some("merged".into());
+    *t.forge.merge_commit.borrow_mut() = Some("abc123".into());
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(!has_call(&t.lib.calls, "file_flip_fix"));
+}
+
+#[test_id(te9m6zh)]
+#[test]
+fn a_rebuild_on_a_moved_base_gives_the_new_head_its_own_flip_rerun() {
+    let t = flip_world();
+    assert_eq!(pass_on(&t, NEXTEST_RED), 0, "{}", t.err());
+    t.git.set("origin/main", "b1");
+    assert_eq!(pass_on(&t, "green\nhead-sha: h1\n"), 0, "{}", t.err());
+    assert!(t.out().contains("rebuilt on moved base"), "{}", t.out());
+    assert!(!record(&t).contains("flip_"), "{}", record(&t));
+    assert_eq!(pass_on(&t, NEXTEST_RED), 0, "{}", t.err());
+    assert_eq!(count(&t.forge.calls, "workflow-rerun 77 --flip"), 2);
+    assert!(!has_call(&t.scripts.calls, "judgement-ci"));
 }
 
 // ------------------------------------------------------------------ queue.forge batch

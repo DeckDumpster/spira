@@ -121,6 +121,15 @@ on as in the table.
   written.
 - `flip_first=<text>`: the first run's lines and URL, for the bead's body.
 
+`queue.step` neither judges nor pushes these itself. For a batcher-owned forge batch with a red
+the rerun takes or has taken, or a green that owes a fix bead (and for any such batch's merged
+PR), it runs `queue verdict` each tick (`queue_step::flip_hold`); once that pass has recorded a
+judgement the task leaves the red alone.
+
+A second red strikes `flip_tests`: red on both runs is a defect, not a flip. The keys are
+written before the forge is asked, so a pass that dies between the two leaves a later red read
+as the second one and judged; the other order could land a flip with no record.
+
 A rebuild on a moved base drops all three: the new head's run is a new one.
 
 After the pass the lock is dropped. A stashed `attributing-<pr>` record (§4 D2) is never

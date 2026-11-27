@@ -58,6 +58,7 @@
 //! | Observing | check `red`, batcher-owned | Judging | `queue.step.judgement` (unit.start) |
 //! | Observing | check `harness_fault` | Settling | `queue.step.rerun` or `queue.step.notify` |
 //! | Observing | PR `closed`/`merged` | Settling | `queue.step.reconcile` (`ops/reconcile.rs:22`) |
+//! | Observing | the flip rerun's check ([`Flip::VerdictPass`]) | Waiting | `queue.step.reconcile` (`queue verdict`), anew each tick |
 //! | Pushing | `effect.succeeded` | Landing | `queue.step.land` |
 //! | Pushing | `effect.failed` | Idle | `queue.step.notify` (ff refused, `:301-311`) |
 //! | Landing | `effect.succeeded` | Cutting | `queue.step.close_bead`, `queue.step.cut_wanted` |
@@ -218,6 +219,44 @@ pub struct OpenBatch {
     /// The batch was opened by the batcher (red goes to judgement), not by the Concierge.
     pub batcher_owned: bool,
     pub owner: String,
+    #[serde(default)]
+    pub flip: Flip,
+}
+
+/// What the flip rerun asks of this task for an open forge batch (queue/DESIGN-verdict.md §2.2).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Flip {
+    #[default]
+    No,
+    /// The queue's verdict pass owns this check: it reruns, files the fix beads, judges.
+    VerdictPass,
+    /// The verdict pass already judged this red.
+    Judged,
+}
+
+/// The batch record's side of [`flip_hold`]: `flip_rerun`, `flip_tests`, `judgement`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FlipRecord {
+    pub rerun: bool,
+    pub owed: bool,
+    pub judged: bool,
+}
+
+/// `check` is `check-status`'s whole answer.
+pub fn flip_hold(rec: &FlipRecord, merged: bool, check: &str) -> Flip {
+    if merged && rec.owed {
+        return Flip::VerdictPass;
+    }
+    let flipping = || rec.rerun || queue::ops::verdict::flip_candidate(check).is_some();
+    match Check::of(check) {
+        Check::Green if rec.owed => Flip::VerdictPass,
+        Check::Red if flipping() && rec.judged => Flip::Judged,
+        Check::Red if flipping() => Flip::VerdictPass,
+        // A judgement the verdict pass recorded for a flip it was refused.
+        Check::Red if rec.judged => Flip::Judged,
+        _ => Flip::No,
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -315,6 +354,8 @@ pub enum Trigger {
     CheckRedBatcherOwned,
     CheckHarnessFault,
     PrClosedOrMerged,
+    /// The flip rerun hands this check to the queue's verdict pass.
+    FlipDue,
     EffectSucceeded,
     EffectFailed,
     JudgementRanOk,
@@ -339,6 +380,8 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Observing, Trigger::CheckRedBatcherOwned, State::Judging),
     (State::Observing, Trigger::CheckHarnessFault, State::Settling),
     (State::Observing, Trigger::PrClosedOrMerged, State::Settling),
+    // Never settled: the batch stays open and the next tick observes it again.
+    (State::Observing, Trigger::FlipDue, State::Waiting),
     (State::Observing, Trigger::Nothing, State::Idle),
     (State::Pushing, Trigger::EffectSucceeded, State::Landing),
     (State::Pushing, Trigger::EffectFailed, State::Idle),
@@ -566,7 +609,20 @@ impl Machine<'_> {
         }
         self.rc.batch = Some(id);
         let at = Step { pr: b.pr, branch: b.branch.clone(), head: b.sealed_head.clone(), members: b.members.clone(), ..self.step_of() };
-        if matches!(repo.pr_state, PrState::Closed | PrState::Merged) {
+        let ended = matches!(repo.pr_state, PrState::Closed | PrState::Merged);
+        if b.flip == Flip::VerdictPass && (b.batcher_owned || repo.pr_state == PrState::Merged) {
+            self.go(Trigger::FlipDue);
+            self.acts.push(Step { key: format!("{}/flip/{}", b.id, self.now_ms), ..at }.act(RECONCILE));
+            self.rc.last_check = repo.check;
+            return;
+        }
+        if b.flip == Flip::Judged && !ended {
+            self.rc.batch = None;
+            self.go(Trigger::Nothing);
+            self.rc.last_check = repo.check;
+            return;
+        }
+        if ended {
             self.go(Trigger::PrClosedOrMerged);
             self.acts.push(Step { key: b.id.clone(), ..at }.act(RECONCILE));
             return;
@@ -851,7 +907,10 @@ pub mod edge {
         for name in reg.names().into_iter().filter(|n| reg.land_queued(n)) {
             let dir = root(&reg, &name)?;
             let mode = reg.land(&name);
-            let open_batch = view.batch_view(&name).map_err(|e| e.to_string())?.value.open.map(|r| OpenBatch {
+            let mut flip_record = super::FlipRecord::default();
+            let mut open_batch = view.batch_view(&name).map_err(|e| e.to_string())?.value.open.map(|r| {
+                flip_record = super::FlipRecord { rerun: r.get("flip_rerun").is_some(), owed: r.get("flip_tests").is_some(), judged: r.get("judgement").is_some() };
+                OpenBatch {
                 version: r.get("version").and_then(|v| v.parse().ok()).unwrap_or_default(),
                 pr: r.get("pr").and_then(|v| v.trim_start_matches('#').parse().ok()),
                 branch: r.get("branch").unwrap_or_default().to_string(),
@@ -859,10 +918,12 @@ pub mod edge {
                 members: r.get("members").unwrap_or_default().split([' ', ',']).filter(|m| !m.is_empty()).map(|m| m.split([':', '@']).next().unwrap_or(m).to_string()).collect(),
                 batcher_owned: r.get("owner") == Some("batcher"),
                 owner: r.get("owner").unwrap_or_default().to_string(),
+                flip: super::Flip::No,
                 id: r.id,
+                }
             });
             let (mut pr_state, mut check) = (PrState::None, Check::None);
-            if let Some(b) = &open_batch {
+            if let Some(b) = &mut open_batch {
                 if let Some(pr) = b.pr.map(|p| p.to_string()) {
                     pr_state = match forge_call(&dir, "pr-state", &[&pr], None)?.stdout().unwrap_or_default().trim() {
                         "OPEN" | "open" => PrState::Open,
@@ -870,7 +931,11 @@ pub mod edge {
                         "CLOSED" | "closed" => PrState::Closed,
                         _ => PrState::None,
                     };
-                    check = Check::of(&forge_call(&dir, "check-status", &[&pr, &b.branch], None)?.stdout().unwrap_or_default());
+                    let status = forge_call(&dir, "check-status", &[&pr, &b.branch], None)?.stdout().unwrap_or_default();
+                    check = Check::of(&status);
+                    if mode == "queue" {
+                        b.flip = super::flip_hold(&flip_record, pr_state == PrState::Merged, &status);
+                    }
                 }
             }
             let publish_rec = queue_kv(e, &name, "publish").and_then(|kv| Some(PublishRec { pr: kv.get("pr")?.trim_start_matches('#').parse().ok()?, head: kv.get("head").cloned().unwrap_or_default(), branch: kv.get("branch").cloned().unwrap_or_default() }));
