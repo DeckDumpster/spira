@@ -264,7 +264,7 @@ pub fn runner_touchers(members: &[MemberDiff]) -> Vec<&MemberDiff> {
 
 /// Whether the failure text is the merged tree's config refusing to resolve a key it reads.
 pub fn is_config_fault(err: &str) -> bool {
-    err.contains("is not declared")
+    err.contains("is not declared") || err.contains("is not in the registry being resolved against")
 }
 
 /// Whether the runner's failure text shows testenv killed by a signal (exit 128+n), which is

@@ -56,8 +56,8 @@ pub fn check(tree: &Path, base: Option<&str>) -> Result<usize, String> {
 
 /// The key a resolve refusal is about, when only the tree registers it.
 fn key_new_on_branch<'a>(refusal: &'a str, tree_conf_d: &Path, base_conf_d: &Path) -> Option<&'a str> {
-    let (before, _) = refusal.split_once(" is not in the registry being resolved against")?;
-    let key = before.rsplit(' ').next()?;
+    let (before, _) = refusal.split_once(spira_config::resolve::NOT_IN_REGISTRY)?;
+    let key = before.trim_end().rsplit(' ').next()?;
     (tree_conf_d.join(key).is_file() && !base_conf_d.join(key).exists()).then_some(key)
 }
 

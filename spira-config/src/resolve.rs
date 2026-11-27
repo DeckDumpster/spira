@@ -604,13 +604,16 @@ fn resolve_eq(
     }
 }
 
+/// What a refusal says of a hand-written step's key that the registry lacks; matched by consumers.
+pub const NOT_IN_REGISTRY: &str = "is not in the registry being resolved against";
+
 /// Rewords a hand-written step's refusal when the registry lacks its key: the config file is not at fault.
 fn hand_step(key: &str, registry: &BTreeMap<String, registry::RegistryKey>, result: Result<String, String>) -> Result<String, ResolveError> {
     result.map_err(|e| {
         ResolveError::Registry(if GENERATING.get() || registry.contains_key(key) {
             e
         } else {
-            format!("{key} is not in the registry being resolved against, yet resolve's hand-written step for {key} (spira-config/src/resolve.rs) asks for it unconditionally")
+            format!("{key} {NOT_IN_REGISTRY}, yet resolve's hand-written step for {key} (spira-config/src/resolve.rs) asks for it unconditionally")
         })
     })
 }
