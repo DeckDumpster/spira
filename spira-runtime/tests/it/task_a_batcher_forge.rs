@@ -214,7 +214,7 @@ fn a_tick_reads_every_leg_in_flight_through_unit_facts() {
         let rc = RepoCarry { state, leg: Some("spira.r9.leg.1".into()), ..RepoCarry::default() };
         let carry = Carry { repos: [("spira".to_string(), rc)].into() };
         let facts = facts.clone();
-        let mut r = runtime::taskrig::TaskRig::new(1, BatcherForge::new(BTreeMap::new()).registration()).unwrap().double(UNIT_FACTS, move |_| Ok(facts.clone()));
+        let mut r = TaskRig::new(1, BatcherForge::new(BTreeMap::new()).registration()).unwrap().double(UNIT_FACTS, move |_| Ok(facts.clone()));
         r.tick(STREAM, EventKind::new(STATE, &serde_json::to_string(&carry).unwrap())).unwrap();
         r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
         let asked: Vec<&str> = r.requested().iter().map(|q| q.name.as_str()).collect();
@@ -360,7 +360,7 @@ fn a_carried_assembling_round_with_nothing_in_flight_is_cut_through_the_handler(
     use spira_runtime::tasks::a::batcher_local::{Assembled, Leg};
     let snapshot = serde_json::to_string(&one_submitted_flying(None)).unwrap();
     let assembled = serde_json::to_string(&Assembled { merged: vec![("sp-0iavy8.1".into(), "t1".into())], suites: false, ..Assembled::default() }).unwrap();
-    let mut r = runtime::taskrig::TaskRig::new(1, BatcherForge::new(BTreeMap::new()).registration())
+    let mut r = TaskRig::new(1, BatcherForge::new(BTreeMap::new()).registration())
         .unwrap()
         .double(OBSERVE, move |_| Ok(snapshot.clone()))
         .double(ASSEMBLE, move |_| Ok(assembled.clone()));
@@ -378,21 +378,39 @@ fn a_carried_assembling_round_with_nothing_in_flight_is_cut_through_the_handler(
     assert_eq!(leg.members, [("sp-0iavy8.1".to_string(), "t1".to_string())]);
 }
 
-#[test_id(t77erau)]
-#[test]
-fn a_hanging_assemble_is_asked_once() {
-    let mut r = runtime::taskrig::TaskRig::new(1, BatcherForge::new(BTreeMap::new()).registration())
+/// The rig after three cadences with `hung` requested and never answered.
+fn waiting_out_a_hung(hung: &str) -> TaskRig {
+    let assembled = serde_json::to_string(&spira_runtime::tasks::a::batcher_local::Assembled { merged: vec![("dd-a".into(), "t1".into())], ..Default::default() }).unwrap();
+    let mut r = TaskRig::new(1, BatcherForge::new(BTreeMap::new()).registration())
         .unwrap()
-        .hanging(ASSEMBLE)
-        .double(OBSERVE, |_| Ok(serde_json::to_string(&busy()).unwrap()));
+        .hanging(hung)
+        .double(OBSERVE, |_| Ok(serde_json::to_string(&busy()).unwrap()))
+        .double(ASSEMBLE, move |_| Ok(assembled.clone()));
     for e in EFFECTS.iter().filter(|e| ![OBSERVE, ASSEMBLE].contains(e)) {
         r = r.double(e, |_| Ok("{}".into()));
     }
     r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
     r.advance(CADENCE_MS * 3).unwrap();
     kit::assert_unpoisoned(&r, STREAM);
-    let asked = |name: &str| r.requested().iter().filter(|q| q.name == name).count();
-    assert_eq!((asked(ASSEMBLE), asked(BATCH_OPEN)), (1, 0), "{:?}", r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>());
+    r
+}
+
+/// How often the cut's answered fetch, its assemble and its open were asked. The engine refuses
+/// a second ask of a hung effect, so only the fetch shows a re-cut under it.
+fn cut_asks(r: &TaskRig) -> [usize; 3] {
+    [FETCH, ASSEMBLE, BATCH_OPEN].map(|name| r.requested().iter().filter(|q| q.name == name).count())
+}
+
+#[test_id(t77erau)]
+#[test]
+fn a_hanging_assemble_is_asked_once() {
+    assert_eq!(cut_asks(&waiting_out_a_hung(ASSEMBLE)), [1, 1, 0]);
+}
+
+#[test_id(tl8l85j)]
+#[test]
+fn a_hanging_batch_open_is_asked_once() {
+    assert_eq!(cut_asks(&waiting_out_a_hung(BATCH_OPEN)), [1, 1, 1]);
 }
 
 #[test_id(t5n898r)]
