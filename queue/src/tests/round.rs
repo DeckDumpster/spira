@@ -8123,6 +8123,21 @@ fn a_declaration_landed_after_the_rounds_base_ejects_no_one_whose_ci_entry_never
     assert_eq!(paged, 1, "{calls:?}");
 }
 
+#[test_id(twkxbgs)]
+#[test]
+fn a_one_member_round_whose_started_ci_entry_left_no_verdict_twice_ejects_the_member() {
+    let t = two_passes_whose_ci_entry_never_ran(|t| {
+        t.scripts.repo_testenv.borrow_mut().rc = 2;
+        t.scripts.repo_ci_started.set(true);
+    });
+    assert!(t.lib.has("bead_reopen sp-a eject-red"), "{:?}", t.lib.calls.borrow());
+    assert!(!t.out().contains("fault=infra-fault"), "{}", t.out());
+    assert!(t.err().contains("the CI entry started"), "{}", t.err());
+    let calls = t.lib.calls.borrow();
+    assert!(calls.iter().any(|c| c.contains("consecutive passes") && c.contains("that ended without a verdict")), "{calls:?}");
+    assert!(!calls.iter().any(|c| c.contains("cannot be placed")), "{calls:?}");
+}
+
 #[test_id(t1bn5r8)]
 #[test]
 fn a_one_member_round_whose_changed_declaration_stops_the_entry_twice_ejects_the_member() {

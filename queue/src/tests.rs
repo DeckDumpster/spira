@@ -576,6 +576,8 @@ struct FScripts {
     repo_ci_status: RefCell<Option<String>>,
     /// The entry never reached its verdict, so no `ci.result` is left.
     repo_no_ci_result: Cell<bool>,
+    /// The entry's shell began, so `ci.started` is in the results.
+    repo_ci_started: Cell<bool>,
     /// The `round-fault.out` left beside the results.
     repo_round_fault: RefCell<Option<String>>,
     /// Files every `repo_round_vm` pass leaves in its results.
@@ -846,6 +848,9 @@ impl Scripts for FScripts {
         }
         for (name, body) in self.repo_files.borrow().iter() {
             fs::write(results.join(name), body).unwrap();
+        }
+        if self.repo_ci_started.get() {
+            fs::write(results.join("ci.started"), "").unwrap();
         }
         let status = self.repo_ci_status.borrow().clone().or_else(|| match out.rc {
             0 => Some("ok".into()),
