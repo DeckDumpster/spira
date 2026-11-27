@@ -721,19 +721,23 @@ fn remedy_step_deadline(args: &[&str]) -> &'static str {
     if args.contains(&WAIT_CANCEL_FLAG) { WAIT_CANCEL_STEP_SECS } else { spira_config::bounded::CALL_TIMEOUT_SECS }
 }
 
+pub fn remedy_step_failed(program: &str, args: &[&str], why: &str) -> String {
+    format!("reconciler: remedy step {program} {} failed: {why}", args.join(" "))
+}
+
 /// One remedy step, `Err` naming its program, args and how it failed.
 pub fn run_remedy_step(program: &str, args: &[&str]) -> Result<(), String> {
-    let said = |why: String| format!("reconciler: remedy step {program} {} failed: {why}", args.join(" "));
+    let said = |why: &str| remedy_step_failed(program, args, why);
     let status = spira_config::bounded::bounded_for(program, remedy_step_deadline(args))
         .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map_err(|e| said(e.to_string()))?;
+        .map_err(|e| said(&e.to_string()))?;
     match status.code() {
         Some(0) => Ok(()),
-        Some(c) => Err(said(format!("exit {c}"))),
-        None => Err(said("killed by a signal".into())),
+        Some(c) => Err(said(&format!("exit {c}"))),
+        None => Err(said("killed by a signal")),
     }
 }
 
@@ -3264,6 +3268,12 @@ mod tests {
         let argv: Vec<&str> = args.iter().map(String::as_str).collect();
         assert_eq!(remedy_step_deadline(&argv), "150");
         assert_eq!(remedy_step_deadline(&["workflow-rerun", "r", "7"]), spira_config::bounded::CALL_TIMEOUT_SECS);
+    }
+
+    #[test_id(tgfkd7k)]
+    #[test]
+    fn a_failed_remedy_step_names_its_program_args_and_reason() {
+        assert_eq!(remedy_step_failed("false", &["a", "--wait-cancel", "1"], "exit 1"), "reconciler: remedy step false a --wait-cancel 1 failed: exit 1");
     }
 
     #[test_id(tgi1l9l)]

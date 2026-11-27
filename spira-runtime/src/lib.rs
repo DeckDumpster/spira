@@ -374,20 +374,22 @@ impl Effects {
 
     fn reconcile_remedy(&self, key: &str, input: &str) -> Result<String, String> {
         let job: watchers::reconciler::RemedyJob = serde_json::from_str(input).map_err(|e| e.to_string())?;
-        self.once(key, || {
-            let mut all_ok = true;
-            for (program, args) in &job.steps {
-                if let Err(e) = reconciler::run_remedy_step(program, &args.iter().map(String::as_str).collect::<Vec<_>>()) {
-                    self.log_line(&e);
-                    all_ok = false;
-                }
+        self.once(key, || Ok(self.remedy_steps(&job, reconciler::run_remedy_step)))
+    }
+
+    fn remedy_steps(&self, job: &watchers::reconciler::RemedyJob, step: impl Fn(&str, &[&str]) -> Result<(), String>) -> String {
+        let mut all_ok = true;
+        for (program, args) in &job.steps {
+            if let Err(e) = step(program, &args.iter().map(String::as_str).collect::<Vec<_>>()) {
+                self.log_line(&e);
+                all_ok = false;
             }
-            if let Some(note) = &job.note {
-                let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-                queue::ops::landing_log(&self.world.run_dir, &format!("QUEUE STRANDED_RERUN {at} {note} ok={all_ok}"));
-            }
-            Ok(format!("{}: {} step(s)", job.key, job.steps.len()))
-        })
+        }
+        if let Some(note) = &job.note {
+            let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            queue::ops::landing_log(&self.world.run_dir, &format!("QUEUE STRANDED_RERUN {at} {note} ok={all_ok}"));
+        }
+        format!("{}: {} step(s)", job.key, job.steps.len())
     }
 
     fn reconcile_mail(&self, key: &str, input: &str) -> Result<String, String> {
@@ -431,32 +433,37 @@ fn stamp_answered_probe(run_dir: &std::path::Path, effect: &str, answered: &Resu
 mod remedy_note_tests {
     use super::*;
 
-    fn landing_log_after(program: &str) -> String {
+    fn effects_in(dir: &testkit::TempDir) -> Effects {
+        Effects { world: world::World { run_dir: dir.path().to_path_buf(), ..Default::default() }, ..Default::default() }
+    }
+
+    fn landing_log_after(step: impl Fn(&str, &[&str]) -> Result<(), String>) -> String {
         let dir = testkit::TempDir::new("remedy-note");
-        let fx = Effects { world: world::World { run_dir: dir.path().to_path_buf(), ..Default::default() }, ..Default::default() };
-        let job = watchers::reconciler::RemedyJob { key: "k".into(), steps: vec![(program.into(), vec![])], note: Some(r#"repo=r run=7 job="a b" label=ci-7-1 queued=400s runner=none"#.into()) };
-        fx.reconcile_remedy("k", &serde_json::to_string(&job).unwrap()).unwrap();
+        let job = watchers::reconciler::RemedyJob { key: "k".into(), steps: vec![("remedy".into(), vec![])], note: Some(r#"repo=r run=7 job="a b" label=ci-7-1 queued=400s runner=none"#.into()) };
+        effects_in(&dir).remedy_steps(&job, step);
         std::fs::read_to_string(dir.path().join("landing.log")).unwrap()
     }
 
     #[test_id(tnr0c01)]
     #[test]
     fn a_noted_remedy_leaves_its_landing_log_line_with_the_outcome_of_its_step() {
-        for (program, ok) in [("true", true), ("false", false)] {
-            let log = landing_log_after(program);
-            let line = log.trim_end();
-            assert!(line.starts_with("QUEUE STRANDED_RERUN "), "{line}");
-            assert!(line.ends_with(&format!(r#"repo=r run=7 job="a b" label=ci-7-1 queued=400s runner=none ok={ok}"#)), "{line}");
-        }
+        let ((), started) = spira_config::bounded::counting(|| {
+            for ok in [true, false] {
+                let log = landing_log_after(|p, a| if ok { Ok(()) } else { Err(reconciler::remedy_step_failed(p, a, "exit 1")) });
+                let line = log.trim_end();
+                assert!(line.starts_with("QUEUE STRANDED_RERUN "), "{line}");
+                assert!(line.ends_with(&format!(r#"repo=r run=7 job="a b" label=ci-7-1 queued=400s runner=none ok={ok}"#)), "{line}");
+            }
+        });
+        assert!(started.is_empty(), "programs started: {started:?}");
     }
 
     #[test_id(tqx3gs8)]
     #[test]
     fn a_failing_remedy_step_is_logged_with_its_program_and_args() {
         let dir = testkit::TempDir::new("remedy-step-log");
-        let fx = Effects { world: world::World { run_dir: dir.path().to_path_buf(), ..Default::default() }, ..Default::default() };
         let job = watchers::reconciler::RemedyJob { key: "k".into(), steps: vec![("false".into(), vec!["a".into(), "--wait-cancel".into(), "1".into()])], note: Some("repo=r run=7".into()) };
-        fx.reconcile_remedy("k", &serde_json::to_string(&job).unwrap()).unwrap();
+        effects_in(&dir).remedy_steps(&job, |p, a| Err(reconciler::remedy_step_failed(p, a, "exit 1")));
         let log = std::fs::read_to_string(dir.path().join("reconciler.log")).unwrap();
         assert!(log.contains("remedy step false a --wait-cancel 1 failed: exit 1"), "{log}");
         let landing = std::fs::read_to_string(dir.path().join("landing.log")).unwrap();
