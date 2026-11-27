@@ -52,7 +52,7 @@ jobs:
       AWS_REGION: ${{ vars.ROUND_AMI_REGION }}
       # Longest successful whole run of this workflow, 480s (2026-11-25), x 3. A phase cannot
       # outlast its run, so this bounds the setup command from above.
-      ROUND_AMI_SETUP_MAX: 1440
+      ROUND_AMI_SETUP_MAX: 60
       ROUND_AMI_SETUP_INTERVAL: 30
       # The same measurement (480s whole run, 2026-11-25, x 3), bounding the image wait.
       ROUND_AMI_WAIT_MAX: 1440
