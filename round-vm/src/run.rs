@@ -2992,7 +2992,7 @@ fn hold_foreign_cache(env: &RunEnv, args: &RunArgs, progress: &mut crate::progre
         } else {
             progress.tick(results_dir);
         }
-        std::thread::sleep(env.pool.wait_poll.max(Duration::from_millis(100)));
+        std::thread::sleep(env.pool.wait_poll.max(Duration::from_millis(5)));
     }
 }
 

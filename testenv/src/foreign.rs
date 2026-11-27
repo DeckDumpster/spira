@@ -977,13 +977,16 @@ mod tests {
             let root = testkit::TempDir::new(tag);
             let cache = Cache::new(root.path(), "r").polled(Duration::from_millis(1));
             cache.prepare().unwrap();
+            let rt = crate::fixture::fake::FakeRuntime::new();
+            // A red tier publishes nothing, so no test here spawns the merge.
+            rt.once_rc.lock().unwrap().extend([("a".to_string(), 1), ("b".to_string(), 1)]);
             Waiting {
                 cache,
                 _root: root,
                 tree: testkit::TempDir::new("foreign-wait-tree"),
                 results: testkit::TempDir::new("foreign-wait-results"),
                 decl: Decl::parse("image = \"i\"\n[tier.a]\nargv=[\"x\"]\n[tier.b]\nargv=[\"x\"]\n").unwrap(),
-                rt: crate::fixture::fake::FakeRuntime::new(),
+                rt,
             }
         }
 
@@ -1024,7 +1027,7 @@ mod tests {
         let log = frees_after_a_wait(&lock, &lines);
         let deadline = Instant::now() + Duration::from_secs(60);
         let (o, _) = w.run(deadline, &log).run("a");
-        assert_eq!(o, Outcome::Pass);
+        assert_eq!(o, Outcome::Red);
         assert_eq!(w.started(), 1, "the tier ran once");
         assert!(w.deadlines()[0] >= deadline + HELD, "short by {:?}", (deadline + HELD).duration_since(w.deadlines()[0])); // clock-safe: a lower bound set by the sleep inside the wait; load only adds to it
     }
@@ -1060,7 +1063,7 @@ mod tests {
         let (o, _) = w.run(Instant::now() + Duration::from_secs(60), &log).run("a");
         assert_eq!(*started_while_held.lock().unwrap(), Some(0), "the tier waited: {:?}", lines.lock().unwrap());
         assert!(lines.lock().unwrap().iter().any(|l| l.ends_with("held by round-vm y")), "{:?}", lines.lock().unwrap());
-        assert_eq!((o, w.started()), (Outcome::Pass, 1));
+        assert_eq!((o, w.started()), (Outcome::Red, 1));
     }
 
     #[test_id(tkm92d8)]
@@ -1074,7 +1077,7 @@ mod tests {
         let out = w.run(Instant::now() + Duration::from_secs(60), &log).run_all(&["a".to_string()]);
         let excused = armed.waited();
         armed.finish();
-        assert_eq!(out[0].0, Outcome::Pass);
+        assert_eq!(out[0].0, Outcome::Red);
         assert!(excused >= HELD, "{excused:?}");
     }
 
