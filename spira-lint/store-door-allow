@@ -3,25 +3,5 @@
 #
 # SHRINK-ONLY. A count goes down as callers move to spira-lc; nothing is raised for a NEW
 # executor. A count above the file's is refused; a count below it passes.
-3 census/src/real.rs
-1 cert-sweep/src/main.rs
-3 doctor/src/real.rs
-1 dwarf/src/session.rs
-1 dwarf/src/util.rs
-2 gh-intake/src/real.rs
-3 incident/src/real.rs
-1 incident/tests/no_fork_edges.rs
-1 landing-pass/src/land_verify.rs
-1 mail/tests/no_fork_edges.rs
-1 spira-claim/src/store.rs
-1 spira-world/src/bin/slay.rs
-1 spira/acceptance-ci.sh
-1 spira/confine.sh
-2 spira/first-run.sh
-1 spira/law-synth.sh
-10 spira/lib.sh
-7 spira/pilgrimage.sh
-1 spira/ready.sh
-2 spira/reflect.sh
-2 spira/seed.sh
-3 spira/verify-landed.sh
+1 docs/spikes/which-lever-halves-the-harness-bd-time-evidence/rerun.sh
+7 docs/spikes/why-a-bd-call-costs-250ms-evidence/rerun.sh

@@ -1,8 +1,0 @@
-TYPE=string
-GROUP=bd
-DOC=THE RELEASE TAG THIS HARNESS BUILDS. build-bd.sh targets it when it builds or downloads
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # THE RELEASE TAG THIS HARNESS BUILDS. build-bd.sh targets it when it builds or downloads
-    # the binary.
-    : "${SPIRA_BD_TAG:=v1.2.1}"
-SPIRA_CONF_DEFAULT_EOF
