@@ -101,6 +101,10 @@ async fn the_source_runs_on_the_scheduler_and_no_thread_carries_its_name() {
     }
     release.send(()).unwrap();
     planted.join().unwrap();
+    // join returns before the kernel unhashes the task from /proc/self/task
+    while thread_comms().iter().any(|c| c == COMM) {
+        std::thread::yield_now();
+    }
 
     let (ours, theirs) = UnixStream::pair().unwrap();
     let mut wire = theirs.try_clone().unwrap();
