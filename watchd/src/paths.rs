@@ -22,10 +22,6 @@ pub fn logfile(run: &str, name: &str, kind: Kind, target: &str) -> Option<PathBu
 
 pub use inbox_rules::cursorfile;
 
-pub fn deliveredfile(run: &str, name: &str) -> PathBuf {
-    watchd_dir(run).join(format!("{name}.delivered"))
-}
-
 pub fn tail_lockfile(run: &str, name: &str) -> PathBuf {
     watchd_dir(run).join(format!("{name}.tail.lock"))
 }
