@@ -106,14 +106,13 @@ impl<'a> SubmittedBranch<'a> {
 /// The request id a content create is sent under: the same actor, argv and body give the same id,
 /// so a resend or a second filing of the same bead is answered with the first one's result.
 pub fn create_request_id(actor: &str, argv: &[String], body: Option<&str>) -> String {
+    format!("file:{}", digest(&[actor, &argv.join("\0"), body.unwrap_or_default()]))
+}
+
+/// The hex SHA-256 of `parts`, NUL-separated.
+pub fn digest(parts: &[&str]) -> String {
     use sha2::{Digest, Sha256};
-    let mut h = Sha256::new();
-    h.update(actor.as_bytes());
-    h.update([0]);
-    h.update(argv.join("\0").as_bytes());
-    h.update([0]);
-    h.update(body.unwrap_or_default().as_bytes());
-    format!("file:{}", h.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>())
+    Sha256::digest(parts.join("\0").as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// The exit a store answers when it cannot tell whether a write committed.

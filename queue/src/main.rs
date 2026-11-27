@@ -37,6 +37,7 @@ fn main() -> ExitCode {
         home: home.clone(),
         store: RealLc::configured(spira_store::lifecycle_row::lc_bin().ok().map(Into::into)),
         warn: std::sync::Arc::new(|m: &str| eprintln!("{m}")),
+        retry: std::sync::Arc::new(spira_store::lifecycle_row::Retry::configured),
     };
     // spira-lc and the forge are configured by conf.sh; resolve once for them.
     let (bd, lc) = match queue::ports::Lib::context(&lib, None) {

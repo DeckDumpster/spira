@@ -20,6 +20,7 @@ use crate::ports::*;
 use crate::records::Kv;
 use crate::seam::{self, Op};
 use spira_store::lc_call::LcClient;
+use spira_store::lifecycle_row::{call_idempotent_noting, Retry};
 
 /// Close every fd >= 3 in the child before it execs. This process's own fds are already
 /// close-on-exec (Rust's std opens them that way), but a caller's lock fd this process
@@ -479,6 +480,8 @@ pub struct RealLib {
     pub store: RealLc,
     /// Where a store write that did not apply says why.
     pub warn: Arc<dyn Fn(&str) + Send + Sync>,
+    /// How long a filing the store could not answer is resent.
+    pub retry: Arc<dyn Fn() -> Result<Retry, String> + Send + Sync>,
 }
 
 impl RealLib {
@@ -545,6 +548,21 @@ impl RealLib {
             return Err(format!("exit {}: {}", r.code, r.why()));
         }
         Ok(r.out)
+    }
+
+    /// A write the filing contract judges, resent under one request id while the store cannot
+    /// tell, so a reply lost at its deadline neither files twice nor reads as a refusal.
+    fn file(&self, actor: &str, args: &[&str], body: &str) -> Result<String, NotFiled> {
+        let client = self.store.client().map_err(NotFiled::Unknown)?;
+        let retry = (self.retry)().map_err(NotFiled::Unknown)?;
+        let argv: Vec<String> = std::iter::once("content").chain(args.iter().copied()).map(str::to_string).collect();
+        let request = bead::filing::create_request_id(actor, &argv, Some(body));
+        let r = spira_store::lc_call::as_request(&request, || call_idempotent_noting(&client, &argv, Some(body), &retry, &mut || {}))
+            .map_err(NotFiled::Unknown)?;
+        match r.code {
+            0 => Ok(r.out),
+            _ => Err(NotFiled::Refused(r.text())),
+        }
     }
 
     fn answer(&self, op: Op, vals: &[&str]) -> (i32, String) {
@@ -893,10 +911,10 @@ impl Lib for RealLib {
             (self.warn)(&format!("queue: comment on {id} not recorded: {why}"));
         }
     }
-    fn notify(&self, mailbox: &str, repo: &str, subject: &str, body: &str) {
+    fn notify(&self, mailbox: &str, repo: &str, subject: &str, body: &str) -> bool {
         // In-process (sp-hwjsq, "wave 4.32"): queue owns this family now, so its own seam
         // call onto queue_notify_concierge is gone — lib.sh's copy is retired outright.
-        crate::ops::helpers::notify(mailbox, repo, subject, body);
+        crate::ops::helpers::notify(mailbox, repo, subject, body)
     }
     fn event(&self, kind: &str, title: &str, detail: &str) {
         self.call(Op::Event, &[kind, title, detail], false);
@@ -989,33 +1007,33 @@ impl Lib for RealLib {
         priority: &str,
         labels: &str,
         body: &str,
-    ) -> Option<String> {
+    ) -> Result<String, NotFiled> {
         // The store's writer is spira-lc whoever calls, so the actor is recorded in the text.
         let body = format!("Filed by {actor}.\n\n{body}");
-        let filed = self.content(
+        let filed = self.file(
+            actor,
             &["create", title, "--type", "bug", "--priority", priority, "--labels", labels, "--body-file", "-", "--silent"],
-            Some(&body),
+            &body,
         );
-        match filed.map(|out| out.trim().to_string()) {
-            Ok(id) if !id.is_empty() => Some(id),
-            Ok(_) => {
-                (self.warn)(&format!("queue: bug {title:?} not filed: the store named no id"));
-                None
-            }
-            Err(why) => {
-                (self.warn)(&format!("queue: bug {title:?} not filed: {why}"));
-                None
-            }
+        let filed = filed.and_then(|out| match out.trim() {
+            "" => Err(NotFiled::Unknown("the store named no id".into())),
+            id => Ok(id.to_string()),
+        });
+        if let Err(NotFiled::Refused(why) | NotFiled::Unknown(why)) = &filed {
+            (self.warn)(&format!("queue: bug {title:?} not filed: {why}"));
         }
+        filed
     }
-    fn amend_bug(&self, actor: &str, id: &str, note: &str) -> bool {
+    fn amend_bug(&self, actor: &str, id: &str, note: &str) -> Result<bool, NotFiled> {
         if !self.bead_live(id) {
-            return false;
+            return Ok(false);
         }
         let note = format!("Noted by {actor}.\n\n{note}");
-        self.content(&["note", id, "--stdin"], Some(&note))
-            .map_err(|why| (self.warn)(&format!("queue: note on {id} not recorded: {why}")))
-            .is_ok()
+        let noted = self.file(actor, &["note", id, "--stdin"], &note);
+        if let Err(NotFiled::Refused(why) | NotFiled::Unknown(why)) = &noted {
+            (self.warn)(&format!("queue: note on {id} not recorded: {why}"));
+        }
+        noted.map(|_| true)
     }
     fn bead_live(&self, id: &str) -> bool {
         let shown = self.store.client().and_then(|c| spira_store::lc_state::row_on(&c, id));

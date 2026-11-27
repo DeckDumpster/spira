@@ -8601,6 +8601,79 @@ fn open_files_one_integration_with_both_members_context_instead_of_skipping_one(
     );
 }
 
+#[test_id(thv2t27)]
+#[test]
+fn a_refused_integration_filing_mails_the_doors_text_once() {
+    let t = round_world();
+    *t.lib.bug_not_filed.borrow_mut() =
+        Some(crate::ports::NotFiled::Refused("bead: refusing: contradicts law-x".into()));
+    touches(&t, "ta", "child.rs");
+    touches(&t, "tb", "other.rs");
+    touches(&t, "tc", "child.rs");
+    t.git.merge_fail.borrow_mut().insert("tc".into());
+    t.git
+        .rebase_fail
+        .borrow_mut()
+        .insert("tc".into(), vec!["child.rs".into()]);
+    t.run(&["round", "open", "--members", "sp-a,sp-b,sp-c"]);
+    t.run(&["round", "open", "--members", "sp-a,sp-b,sp-c"]);
+    assert_eq!(integration_bugs(&t).len(), 2, "the filing is tried again");
+    let mails: Vec<(String, String)> = t
+        .lib
+        .mails
+        .borrow()
+        .iter()
+        .filter(|(s, _)| s == "filing refused")
+        .cloned()
+        .collect();
+    assert_eq!(mails.len(), 1, "{:?}", t.lib.mails.borrow());
+    assert!(
+        mails[0].1.contains("integrate sp-a + sp-c in spira")
+            && mails[0].1.contains(",integrate,repo:spira")
+            && mails[0].1.contains("bead: refusing: contradicts law-x"),
+        "{}",
+        mails[0].1
+    );
+    assert!(!t.lc.has("set-carrier"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test_id(tprgvaa)]
+#[test]
+fn a_refused_mender_filing_mails_the_doors_text_once() {
+    let mut t = round_world();
+    t.lib.s.verdict.mender_label = "mend-fixture".into();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    *t.lib.bug_not_filed.borrow_mut() =
+        Some(crate::ports::NotFiled::Refused("bead: refusing: contradicts law-x".into()));
+    for _ in 0..2 {
+        t.run(&["round", "failed", &batch, "--suite", "test-z.sh"]);
+    }
+    let mails: Vec<(String, String)> = t
+        .lib
+        .mails
+        .borrow()
+        .iter()
+        .filter(|(s, _)| s == "filing refused")
+        .cloned()
+        .collect();
+    assert_eq!(mails.len(), 1, "{:?}", t.lib.mails.borrow());
+    assert!(
+        mails[0].1.contains("mend test-z.sh red in pass")
+            && mails[0].1.contains("mend-fixture,repo:spira")
+            && mails[0].1.contains("bead: refusing: contradicts law-x"),
+        "{}",
+        mails[0].1
+    );
+}
+
 #[test_id(ttf695y)]
 #[test]
 fn filing_an_integration_marks_each_member_record_carried_by_it() {

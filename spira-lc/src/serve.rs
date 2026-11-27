@@ -142,7 +142,13 @@ impl Ledger {
             let ttl = self.0.ttl;
             slots.retain(|_, s| !matches!(s, Entry::Done(_, at) if at.elapsed() >= ttl));
             match slots.get(id) {
-                Some(Entry::Done(ans, _)) => return Some(Answer { owed: Box::new([]), cert_log: None, ..ans.clone() }),
+                Some(Entry::Done(ans, _)) => {
+                    let ans = Answer { owed: Box::new([]), cert_log: None, ..ans.clone() };
+                    if ans.rejudge {
+                        slots.remove(id);
+                    }
+                    return Some(ans);
+                }
                 Some(Entry::InFlight) => {
                     let left = end.saturating_duration_since(Instant::now());
                     if left.is_zero() {
@@ -156,11 +162,18 @@ impl Ledger {
         slots.insert(id.to_string(), Entry::InFlight);
         drop(slots);
         let mut settle = Settle { ledger: self.clone(), id: id.to_string(), recorded: false };
-        within(wait, move || {
+        let answer = within(wait, move || {
             let ans = work();
             settle.record(&ans);
             ans
-        })
+        });
+        if answer.as_ref().is_some_and(|a| a.rejudge) {
+            let mut slots = self.0.slots.lock().unwrap_or_else(|e| e.into_inner());
+            if matches!(slots.get(id), Some(Entry::Done(a, _)) if a.rejudge) {
+                slots.remove(id);
+            }
+        }
+        answer
     }
 }
 

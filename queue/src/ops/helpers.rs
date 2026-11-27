@@ -16,8 +16,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use super::Ctx;
 use crate::ports::{Divergence, Git, Lc, World};
 use crate::real::{RealGit, RealLc};
+use crate::records::write_atomic;
 
 /// `queue_certified_list <repo-path>`: every `spira/*` branch whose lifecycle row is
 /// CERTIFIED, as `(id, tip, epoch)` — the selection primitive any cutter (the batcher, the
@@ -249,14 +251,15 @@ pub fn cancel_branch_runs(forge: &Path, repo: &Path, branch: &str, tag: &str) ->
 /// merge). spira-mail-deliver.sh watches every registered mailbox and wakes its reader the
 /// moment new mail lands (law-machine-events-wake-in-real-time), so the Concierge learns of
 /// it within seconds — never by polling the queue by hand. Best-effort, as the bash body
-/// was (`|| true`): a mail failure never blocks the mutation it is reporting on.
-pub fn notify(mailbox: &str, name: &str, subject: &str, body: &str) {
+/// was (`|| true`): a mail failure never blocks the mutation it is reporting on. False, with
+/// `mail`'s own words on stderr, when nothing was delivered.
+pub fn notify(mailbox: &str, name: &str, subject: &str, body: &str) -> bool {
     #[cfg(test)]
     refuse_unless_mail_is_test_owned();
     let full_subject = format!("Merge queue: {name} {subject}");
     let full_body = format!("## Alert\n{body}\n");
     // FORK-EDGE: needs a mail library entry that is `mail send` (kind routing, the attempt record); the suites stub `mail` on PATH
-    if let Ok(mut child) = spira_config::bounded::bounded("mail")
+    let spawned = spira_config::bounded::bounded("mail")
         .args([
             "send",
             mailbox,
@@ -269,14 +272,46 @@ pub fn notify(mailbox: &str, name: &str, subject: &str, body: &str) {
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
-    {
-        use std::io::Write;
-        if let Some(mut si) = child.stdin.take() {
-            let _ = si.write_all(full_body.as_bytes());
-        }
-        let _ = child.wait();
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(mut si) = child.stdin.take() {
+                // A `mail` that refuses without reading says why on exit, not here.
+                let _ = si.write_all(full_body.as_bytes());
+            }
+            child.wait_with_output()
+        });
+    let why = match spawned {
+        Ok(out) if out.status.success() => return true,
+        Ok(out) => format!("{}: {}", out.status, String::from_utf8_lossy(&out.stderr).trim()),
+        Err(e) => format!("cannot run mail: {e}"),
+    };
+    eprintln!("queue: WARNING — mail {full_subject:?} was not delivered: {why}");
+    false
+}
+
+/// Mails the session mailbox what the content door refused, once delivered per title and refusal
+/// text: stderr goes to a journal nothing reads.
+pub fn report_refused_filing(w: &World, c: &Ctx, title: &str, labels: &str, why: &str) {
+    let stamp = bead::filing::digest(&[title, why]);
+    let file = c.queue_file("refused-filings");
+    let mut sent = std::fs::read_to_string(&file).unwrap_or_default();
+    if sent.lines().any(|l| l == stamp) {
+        return;
+    }
+    let delivered = w.lib.notify(
+        &c.s.mailbox,
+        &c.r.name,
+        "filing refused",
+        &format!("The content door refused a queue filing, so nothing was written.\n\nTitle: {title}\nLabels: {labels}\n\n{why}\n"),
+    );
+    if !delivered {
+        return;
+    }
+    sent.push_str(&format!("{stamp}\n"));
+    if let Err(e) = write_atomic(&file, &sent) {
+        w.err(format!("queue: WARNING — the refusal of {title:?} was mailed but not stamped, so it will be mailed again: {e}"));
     }
 }
 

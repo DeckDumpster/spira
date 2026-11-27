@@ -4,10 +4,11 @@
 use std::path::{Path, PathBuf};
 
 use super::forge_batch::{self, Open};
+use super::helpers::report_refused_filing;
 use super::{idents, landing_log, owner_refused, require_lc, resolve, Ctx, World, FAIL, OK, USAGE};
 use crate::lock::{self, Acquire, Guard};
 use crate::model::{LandMode, Member};
-use crate::ports::{ref_branch, Rerun};
+use crate::ports::{ref_branch, NotFiled, Rerun};
 use crate::records::{self, write_atomic, Kv};
 
 /// The publish settle's answer: red is left for the unlocked half (§2.1).
@@ -794,20 +795,38 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
         .ok()
         .flatten()
         .filter(|k| !suites.is_empty() && k.get("suites") == Some(suites.as_str()));
-    let amended = prior.as_ref().and_then(|k| k.get("fix_forward")).filter(|id| id.starts_with(|ch: char| ch.is_ascii_alphanumeric()) && !id.starts_with('<')).map(str::to_string).filter(|id| {
-        w.lib.amend_bug(&actor, id, &format!("Publish PR {pr} red again for the same suites ({suites}); {}. Range {}..{}; members: {}.{}", if run_url.is_empty() { "run link unavailable" } else { &run_url }, short(&forge_sha), short(&head), if member_ids.is_empty() { "<none>" } else { &member_ids }, if fail_lines.is_empty() { String::new() } else { format!("\nFailing lines:\n{fail_lines}") }))
-    });
     let mut labels = format!("spira,plan,repo:{name}");
     if !c.s.verdict.red_tracker_label.is_empty() {
         labels.push(',');
         labels.push_str(&c.s.verdict.red_tracker_label);
     }
+    let amended = prior.as_ref().and_then(|k| k.get("fix_forward")).filter(|id| id.starts_with(|ch: char| ch.is_ascii_alphanumeric()) && !id.starts_with('<')).map(str::to_string).filter(|id| {
+        let noted = w.lib.amend_bug(&actor, id, &format!("Publish PR {pr} red again for the same suites ({suites}); {}. Range {}..{}; members: {}.{}", if run_url.is_empty() { "run link unavailable" } else { &run_url }, short(&forge_sha), short(&head), if member_ids.is_empty() { "<none>" } else { &member_ids }, if fail_lines.is_empty() { String::new() } else { format!("\nFailing lines:\n{fail_lines}") }));
+        if let Err(NotFiled::Refused(why)) = &noted {
+            report_refused_filing(w, c, &format!("note on {id}: {title}"), &labels, why);
+        }
+        noted == Ok(true)
+    });
+    let mut not_filed = None;
     let fid = amended.clone().or_else(|| {
-        let id = w
+        match w
             .lib
-            .create_bug(&actor, &title, &c.s.publish_red_priority, &labels, &body)?;
-        w.lc.create_bead_in(&id, &c.r.name);
-        Some(id)
+            .create_bug(&actor, &title, &c.s.publish_red_priority, &labels, &body)
+        {
+            Ok(id) => {
+                w.lc.create_bead_in(&id, &c.r.name);
+                Some(id)
+            }
+            Err(NotFiled::Refused(why)) => {
+                report_refused_filing(w, c, &title, &labels, &why);
+                not_filed = Some(format!("not filed, the content door refused it: {why}"));
+                None
+            }
+            Err(NotFiled::Unknown(why)) => {
+                not_filed = Some(format!("unknown whether {title:?} was filed, look it up by that title: {why}"));
+                None
+            }
+        }
     });
     let fid_s = fid.clone().unwrap_or_else(|| "<create-failed>".into());
 
@@ -841,7 +860,7 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
         &format!("publish PR {pr} red"),
         &format!(
             "PR {pr} red (suites: {suites_s}). Fix-forward bead: {}.",
-            fid.clone().unwrap_or_else(|| "<create failed>".into())
+            fid.clone().or(not_filed).unwrap_or_default()
         ),
     );
     w.out(format!(

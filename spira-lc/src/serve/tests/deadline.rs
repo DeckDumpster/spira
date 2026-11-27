@@ -58,7 +58,7 @@ fn a_store_call_is_abandoned_at_the_configured_default_and_only_batch_verbs_wait
 fn watch_door(held: Duration) -> Arc<super::Door> {
     let work: super::Work = Arc::new(move |_| {
         std::thread::sleep(held); // clock-safe: the deadline under test is a real recv_timeout; the sleep only outlasts it
-        crate::callers::Answer { code: 0, stdout: "idle".into(), stderr: String::new(), cert_log: None, owed: Default::default() }
+        crate::callers::Answer { code: 0, stdout: "idle".into(), stderr: String::new(), cert_log: None, owed: Default::default(), rejudge: false }
     });
     let deadlines = super::Deadlines { default: Duration::from_millis(1000) };
     Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, personas: Default::default(), deadlines })
