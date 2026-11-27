@@ -106,6 +106,8 @@ type GitSeam = (Vec<Vec<String>>, Vec<(&'static str, i32, &'static str)>);
 #[cfg(test)]
 thread_local! {
     static TEST_GIT: std::cell::RefCell<GitSeam> = const { std::cell::RefCell::new((Vec::new(), Vec::new())) };
+    /// Stands in for schema.sh, which sources an installed release's conf.sh.
+    static TEST_SCHEMA_TYPE: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
     static TEST_SAID: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -508,9 +510,9 @@ fn schema_sh(home: &str) -> String {
 /// `schema.sh type-of <kind>` — `Ok(bd_type)` or `Err(())` (stderr discarded: `bead.sh`
 /// prints its own "unknown kind" message, never schema.sh's).
 fn schema_type_of(home: &str, kind: &str) -> Result<String, ()> {
-    // schema.sh sources an installed release's conf.sh, which a unit test has none of.
-    if cfg!(test) && kind == DEFAULT_KIND {
-        return Ok("task".to_string());
+    #[cfg(test)]
+    if let Some(t) = TEST_SCHEMA_TYPE.with(std::cell::Cell::get) {
+        return Ok(t.to_string());
     }
     let out = spira_config::bounded::bounded(schema_sh(home))
         .arg("type-of")
@@ -2558,6 +2560,7 @@ mod tests {
         let _env = testkit::env(&[("SPIRA_TOML", Some(&toml.to_string_lossy())), ("SPIRA_HOME", Some(&spira_home)), ("SPIRA_RELEASE", None), ("SPIRA_REPO_MAP", None), ("SPIRA_HOME_REPO", None), ("SPIRA_REPO", None), ("SPIRA_REPO_DERIVED", None), ("SPIRA_CONCIERGE", None), ("SPIRA_RUNES_DIR", Some(&format!("{spira_home}/runes")))]);
         let body = dir.join("body.md");
         std::fs::write(&body, "## Build\nthe thing").unwrap();
+        TEST_SCHEMA_TYPE.with(|t| t.set(Some("task")));
         let mut args = argv(&["T", "--for", "builder", "--repo", "home", "--body-file", &body.to_string_lossy()]);
         args.extend(argv(extra));
         spira_config::process::with_fresh(|| cmd_file(&spira_home, &args)).expect("the fixture resolves")
@@ -2584,6 +2587,19 @@ mod tests {
         assert_eq!(file_through_the_command(dir.path(), &[]), 0);
         assert!(sent(&d).iter().any(|a| a[1] == "create"), "{:?}", sent(&d));
         assert!(git_calls().is_empty(), "{:?}", git_calls());
+    }
+
+    #[test_id(tajh3l8)]
+    #[test]
+    fn a_submitted_filing_with_a_short_tip_files_the_full_sha_with_its_branch_in_the_registry_checkout() {
+        let dir = testkit::TempDir::new("bead-file-short-tip");
+        let d = install(vec![("content create", 0, "sp-new\n")]);
+        script_git(vec![("rev-parse", 0, "1111111111111111111111111111111111111111\n")]);
+        assert_eq!(file_through_the_command(dir.path(), &["--submitted", "--tip", "1111111"]), 0);
+        let row = argv(&["create-bead", "sp-new", "--submitted-tip", TIP]);
+        assert!(sent(&d).iter().any(|a| a.starts_with(&row)), "{:?}", sent(&d));
+        let root = dir.path().join("home").display().to_string();
+        assert_eq!(git_calls().last(), Some(&argv(&["-C", &root, "update-ref", "refs/heads/spira/sp-new", TIP, ""])));
     }
 
     #[test_id(t7bwbll)]

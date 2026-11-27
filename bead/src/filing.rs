@@ -610,6 +610,19 @@ mod tests {
         assert_eq!(calls, [["-C", "co", "update-ref", "refs/heads/spira/sp-x", TIP, ""].join("\u{1f}")]);
     }
 
+    #[test_id(tnep02i)]
+    #[test]
+    fn a_tip_resolves_to_the_one_full_sha_it_names_or_is_refused() {
+        let full = format!("{TIP}\n");
+        let mut calls = Vec::new();
+        assert_eq!(SubmittedBranch::new(&mut fake_git(&mut calls, &[("rev-parse", 0, full.as_str())])).resolve("co", "1111111"), Ok(TIP.into()));
+        assert_eq!(calls, [["-C", "co", "rev-parse", "--verify", "--quiet", "--end-of-options", "1111111^{commit}"].join("\u{1f}")]);
+        for (code, out) in [(1, TIP), (0, "1111111"), (0, "")] {
+            let mut calls = Vec::new();
+            assert!(SubmittedBranch::new(&mut fake_git(&mut calls, &[("rev-parse", code, out)])).resolve("co", "x").is_err(), "{code} {out:?}");
+        }
+    }
+
     #[test_id(tr6ld2y)]
     #[test]
     fn an_existing_branch_at_the_tip_is_success_and_one_elsewhere_is_never_moved() {
