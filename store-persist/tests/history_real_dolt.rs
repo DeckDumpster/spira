@@ -127,7 +127,8 @@ fn a_squash_leaves_keep_plus_one_commits_the_same_data_and_the_uncommitted_write
 fn a_squash_catches_up_commits_made_while_the_side_branch_was_built() {
     need_dolt!();
     let tmp = TempDir::new("store-persist-history-late");
-    let r = fixture(tmp.path(), "db");
+    let r = fixture_of(tmp.path(), "db", KEEP * 4);
+    assert_eq!(history::len(&r).unwrap(), KEEP * 4 + 2);
     r.run("CALL DOLT_COMMIT('-Am', 'before');\n", false).unwrap();
     let tip = history::squash(&r, KEEP).unwrap();
     r.run("INSERT INTO t VALUES (5000, 'late one'); CALL DOLT_COMMIT('-Am', 'late 1');\nINSERT INTO t VALUES (5001, 'late two'); CALL DOLT_COMMIT('-Am', 'late 2');\n", false).unwrap();
@@ -143,6 +144,7 @@ fn an_interrupted_rewrite_is_cleared_before_the_next_one_starts() {
     need_dolt!();
     let tmp = TempDir::new("store-persist-history-stale");
     let r = fixture_of(tmp.path(), "db", KEEP * 4);
+    assert_eq!(history::len(&r).unwrap(), KEEP * 4 + 2);
     let tip = history::squash(&r, KEEP).unwrap();
     assert!(!tip.is_empty());
     assert!(r.run("SELECT name FROM dolt_branches;\n", true).unwrap().contains("store_persist_squash"));
