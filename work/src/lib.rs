@@ -9,6 +9,7 @@ extern crate spira_test_id;
 pub mod contract;
 pub mod help;
 pub mod image;
+pub mod reads;
 pub mod review;
 pub mod scratch;
 pub mod trusted;

@@ -34,3 +34,8 @@ testkit = { path = "../testkit" }
 name = "scratch_gate"
 path = "tests/scratch_gate.rs"
 required-features = ["integration"]
+
+[[test]]
+name = "reads_gate"
+path = "tests/reads_gate.rs"
+required-features = ["integration"]

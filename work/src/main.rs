@@ -129,6 +129,13 @@ fn main() {
         }
     }
 
+    if verb == "submit" {
+        if let Err(e) = reads_gate() {
+            eprintln!("{}", refusal(R::SubmitReads, "submit", &[("err", &e)]));
+            { let code = REFUSED; spira_otel::run::finish(code); std::process::exit(code) };
+        }
+    }
+
     let tip = if verb == "submit" { read_tip(&bound) } else { None };
 
     let read_stdin = || {
@@ -675,6 +682,27 @@ fn scratch_gate() -> Result<(), String> {
     let land = spira_config::repos::landref(&reg, &checkout.to_string_lossy()).ok_or("the landing ref cannot be resolved, so the branch cannot be checked for session scratch")?;
     let root = git_line(&["rev-parse", "--show-toplevel"]).ok_or("not inside a git worktree")?;
     work::scratch::gate(std::path::Path::new(&root), &land)
+}
+
+/// Refuses a submit to the home repository whose branch removes something the active release
+/// reads; a release or landing ref that cannot be identified refuses.
+fn reads_gate() -> Result<(), String> {
+    let root = git_line(&["rev-parse", "--show-toplevel"]).ok_or("not inside a git worktree")?;
+    let common = git_line(&["rev-parse", "--path-format=absolute", "--git-common-dir"]).ok_or("cannot read the git dir")?;
+    let checkout = std::path::Path::new(&common).parent().ok_or("cannot find the checkout")?;
+    let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), checkout);
+    let checkout = checkout.to_string_lossy();
+    if reg.name_at(&checkout).as_deref() != Some(reg.home_repo()) {
+        return Ok(());
+    }
+    let land = spira_config::repos::landref(&reg, &checkout).ok_or("the landing ref cannot be resolved, so the branch cannot be checked for removals the active release reads")?;
+    let dir = std::env::var(spira_config::RELEASE_ENV).ok().filter(|v| !v.is_empty()).ok_or("SPIRA_RELEASE is not set, so what the active release reads cannot be known")?;
+    let dir = std::fs::canonicalize(&dir).map_err(|e| format!("SPIRA_RELEASE={dir} cannot be resolved: {e}"))?;
+    let sha = dir.file_name().ok_or_else(|| format!("the release directory {} has no name", dir.display()))?.to_string_lossy().into_owned();
+    if git_line(&["cat-file", "-e", &format!("{sha}^{{commit}}")]).is_none() {
+        return Err(format!("the active release directory {} is not named for a commit of this repository: git finds no commit {sha}", dir.display()));
+    }
+    work::reads::gate(std::path::Path::new(&root), &land, &sha)
 }
 
 /// Refuses a submit to a non-home repository whose diff against its landing ref edits a contract
