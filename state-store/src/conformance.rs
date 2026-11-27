@@ -481,6 +481,54 @@ pub fn a_watch_on_a_quiet_prefix_returns_progress_rev<R: Rig>(rig: &R) {
     );
 }
 
+/// A watch on a thread of its own, answered within a real second. The virtual clock never
+/// moves, so only the close can end a wait.
+fn answered_at_once<B: Backend + 'static>(c: &Arc<Contract<B>>, from: u64) -> Result<Watched> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let c = c.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(c.watch_any(&["lifecycle/"], from, 30_000));
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(1))
+        .expect("the watch is still held a second after the close")
+}
+
+pub fn closing_the_watches_answers_a_held_watch_and_every_later_one_with_progress<R: Rig>(rig: &R) {
+    let clock = VirtualClock::new(T0);
+    let c = Arc::new(open(rig.fresh(), &clock));
+    let head = put(&c, "lifecycle/a", obj(json!(1)), "1");
+    let (tx, rx) = std::sync::mpsc::channel();
+    let held = c.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(held.watch_any(&["lifecycle/"], head, 30_000));
+    });
+    c.close_watches();
+    let got = rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("the held watch is still held a second after the close");
+    assert_eq!(got, Ok(Watched::Progress { progress_rev: head }));
+    assert_eq!(
+        answered_at_once(&c, head),
+        Ok(Watched::Progress { progress_rev: head })
+    );
+}
+
+pub fn closing_the_watches_still_delivers_events_already_committed<R: Rig>(rig: &R) {
+    let clock = VirtualClock::new(T0);
+    let c = Arc::new(open(rig.fresh(), &clock));
+    let before = c.head().unwrap();
+    put(&c, "lifecycle/a", obj(json!(1)), "1");
+    c.close_watches();
+    let got = answered_at_once(&c, before);
+    let Ok(Watched::Events { events, .. }) = got else {
+        panic!("the commit is lost: {got:?}")
+    };
+    assert_eq!(
+        events.iter().map(|e| e.key.as_str()).collect::<Vec<_>>(),
+        ["lifecycle/a"]
+    );
+}
+
 pub fn watch_returns_too_old_after_compaction<R: Rig>(rig: &R) {
     let clock = VirtualClock::new(T0);
     let c = open(rig.fresh(), &clock);
@@ -1862,6 +1910,8 @@ scenarios!(
     list_pages_and_list_rev_come_from_one_snapshot_while_a_commit_lands_between_pages,
     watch_resumes_from_a_revision,
     a_watch_on_a_quiet_prefix_returns_progress_rev,
+    closing_the_watches_answers_a_held_watch_and_every_later_one_with_progress,
+    closing_the_watches_still_delivers_events_already_committed,
     watch_returns_too_old_after_compaction,
     a_value_overwritten_or_deleted_inside_the_ring_reads_as_of_a_revision_between_the_writes,
     get_many_answers_what_get_answers_per_key_at_the_head_and_below_it,

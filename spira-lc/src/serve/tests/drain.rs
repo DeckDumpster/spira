@@ -147,7 +147,7 @@ fn a_handler_that_never_finishes_is_answered_by_name_at_the_drain_bound() {
     stopping.store(true, Ordering::SeqCst);
     let (verdict_tx, verdict) = mpsc::channel();
     let drained = std::thread::spawn(move || {
-        let r = super::drain(&flights, stopping, &finished, std::time::Duration::from_millis(200));
+        let r = super::drain(&flights, stopping, &finished, std::time::Duration::from_millis(200), || {});
         verdict_tx.send(r).unwrap();
     });
     let (n, m) = verdict.recv_timeout(std::time::Duration::from_secs(5)).expect("the drain returns instead of joining a handler that never finishes");
@@ -170,4 +170,86 @@ fn sigterm_sets_the_stop_flag_instead_of_ending_the_process() {
     // SAFETY: the handler installed above only stores to an atomic.
     unsafe { raise(15) };
     assert!(super::STOPPING.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[test_id(ttfbbd2)]
+#[test]
+fn the_drain_calls_on_stop_once_before_it_waits_for_the_connections() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{mpsc, Arc};
+    let (done, finished) = mpsc::channel::<()>();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (verdict_tx, verdict) = mpsc::channel();
+    let counted = calls.clone();
+    std::thread::spawn(move || {
+        let flights = super::Flights::default();
+        let stopping = AtomicBool::new(true);
+        let r = super::drain(&flights, &stopping, &finished, super::DRAIN_BOUND, move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            done.send(()).unwrap();
+        });
+        let _ = verdict_tx.send(r);
+    });
+    let got = verdict.recv_timeout(std::time::Duration::from_secs(1)).expect("on_stop runs before the wait it ends");
+    assert_eq!(got, (0, 0));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[test_id(tsuq0xl)]
+#[test]
+fn a_held_watch_is_answered_when_the_server_is_told_to_stop() {
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{mpsc, Arc, Mutex};
+    let store = Arc::new(World::new().store);
+    let head = store.contract().head().unwrap().to_string();
+    let argv: Vec<String> = ["watch", "lifecycle/", "--from-rev", &head, "--wait-ms", "30000"].iter().map(|s| s.to_string()).collect();
+    let dir = testkit::TempDir::new("lc-drain-watch");
+    let path = dir.join("sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    let client = UnixStream::connect(&path).unwrap();
+    let asked = std::thread::spawn(move || crate::client::exchange(client, &argv, None));
+    let stopping = Arc::new(AtomicBool::new(false));
+    let flights = Arc::new(super::Flights::default());
+    let (began_tx, began) = mpsc::channel::<()>();
+    let began_tx = Mutex::new(began_tx);
+    let (done, finished) = mpsc::channel::<()>();
+    {
+        let (store, flights, stopping) = (store.clone(), flights.clone(), stopping.clone());
+        std::thread::spawn(move || {
+            std::thread::scope(|scope| {
+                super::accept_until_stopped(&listener, path.to_str().unwrap(), scope, &stopping, |stream| {
+                    flights.serve(stream, |stream| {
+                        let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                        let (req, _) = super::read_request(&mut reader).unwrap().unwrap();
+                        began_tx.lock().unwrap().send(()).unwrap();
+                        let (code, out) = crate::control::verbs::run(&*store, &req.argv);
+                        super::write_raw(&stream, code, &out, "", false).unwrap();
+                    })
+                })
+            });
+            let _ = done.send(());
+        });
+    }
+    began.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    stopping.store(true, Ordering::SeqCst);
+    let (verdict_tx, verdict) = mpsc::channel();
+    std::thread::spawn(move || {
+        let r = super::drain(&flights, &stopping, &finished, super::DRAIN_BOUND, || store.contract().close_watches());
+        let _ = verdict_tx.send(r);
+    });
+    let got = verdict.recv_timeout(std::time::Duration::from_secs(1)).expect("the drain does not wait out the watch's hold");
+    assert_eq!(got, (1, 0));
+    let (code, out, _) = asked.join().unwrap();
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("progress_rev"), "{out}");
+}
+
+#[test_id(t5ggz4r)]
+#[test]
+fn the_stop_lines_are_stamped_and_carry_the_drain_milliseconds() {
+    assert_eq!(super::stopping_line(2, 0), format!("spira-lc serve: {} stopping: 2 in flight", spira_lc::sections::rfc3339(0)));
+    let took = std::time::Duration::from_millis(37);
+    assert_eq!(super::stopped_line(2, took, 1, 0), format!("spira-lc serve: {} stopped after draining 2 in 37 ms, answered 1 at the bound", spira_lc::sections::rfc3339(0)));
+    assert!(spira_lc::sections::rfc3339(0).starts_with("1970-01-01T00:00:00"));
 }
