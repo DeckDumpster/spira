@@ -90,7 +90,7 @@ mod tests {
     fn a_home_that_cannot_be_located_is_refused_not_built_from_nothing() {
         let _env = testkit::env(&[("SPIRA_HOME", None), ("SPIRA_RELEASE", None)]);
 
-        let refusal = registry().err().expect("no home is named");
+        let Err(refusal) = registry() else { panic!("no home is named") };
 
         assert!(refusal.contains("SPIRA_HOME"), "{refusal}");
     }
