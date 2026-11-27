@@ -6608,11 +6608,10 @@ mod tests {
         let progress = fx.cfg.run_dir.join(crate::progress::FILE);
         std::thread::scope(|sc| {
             sc.spawn(|| {
-                // clock-safe: a cap on the wait for the round to say it is waiting
                 let said = (0..2000).any(|_| {
                     let waiting = fs::read_to_string(&progress).is_ok_and(|t| t.contains("waiting for the warm cache"));
                     if !waiting {
-                        std::thread::sleep(Duration::from_millis(5));
+                        std::thread::sleep(Duration::from_millis(5)); // clock-safe: a cap on the wait for the round to say it is waiting
                     }
                     waiting
                 });
