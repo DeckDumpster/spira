@@ -1,10 +1,10 @@
-//! `spira-pub --as <name> --topic <topic> < payload.json` — see `spira-pub -h`.
+//! `spira-pub --as <name> --topic <topic> --class <class> < payload.json` — see `spira-pub -h`.
 
 use std::io::Read;
 use std::time::Duration;
 
 use spira_pub::cli::{self, Args, Parsed};
-use spira_pub::{topics, PubError, Publisher};
+use spira_pub::{check_topic, PubError, Publisher};
 
 const FLUSH: Duration = Duration::from_secs(1);
 const NOT_DELIVERED: u8 = 1;
@@ -43,14 +43,14 @@ fn publish(args: Args) -> u8 {
         Err(e) => return refused(&format!("the payload on stdin is not JSON: {e}")),
     };
     // Judged before the broker is looked for, so a bad topic is refused with the broker down.
-    if let Err(e) = topics::check(&args.topic, args.class) {
+    if let Err(e) = check_topic(&args.topic) {
         return refused(&e);
     }
     let publisher = match Publisher::new(&args.name) {
         Ok(p) => p,
         Err(e) => return refused(&e),
     };
-    let sent = publisher.publish(&args.topic, &payload).and_then(|()| publisher.flush(FLUSH));
+    let sent = publisher.publish(args.class, &args.topic, &payload).and_then(|()| publisher.flush(FLUSH));
     match sent {
         Ok(()) => 0,
         Err(e) => report(&e),

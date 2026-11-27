@@ -1,10 +1,9 @@
-//! The topic table, `spira/topics.toml`: every family the broker carries, with its class.
+//! The topic table, `spira/topics.toml`: the families subscribers filter by. Publishing does
+//! not read it.
 
 use std::sync::OnceLock;
 
 use serde::Deserialize;
-
-use crate::PubError;
 
 const TABLE: &str = include_str!("../../spira/topics.toml");
 
@@ -140,17 +139,6 @@ pub fn filter_selects(filter: &str, topic: &str) -> bool {
     filter_meets(&filter, &topic.split('/').map(Segment::Literal).collect::<Vec<_>>())
 }
 
-/// The family of `topic`, refused when none is declared or when `as_class` is not its class.
-pub fn check(topic: &str, as_class: Option<Class>) -> Result<&'static Family, PubError> {
-    let family = family_of(topic).ok_or_else(|| PubError::UndeclaredFamily { topic: topic.to_string() })?;
-    match as_class {
-        Some(asked) if asked != family.class => {
-            Err(PubError::WrongClass { topic: topic.to_string(), declared: family.class, asked })
-        }
-        _ => Ok(family),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,23 +190,5 @@ mod tests {
             assert!(!f.publisher.is_empty() && !f.fields.is_empty(), "{}", f.family);
             assert!(seen.insert(&f.family), "{} is declared twice", f.family);
         }
-    }
-
-    #[test_id(toh33eq)]
-    #[test]
-    fn a_class_that_is_not_the_familys_is_refused_both_ways() {
-        let chatter_on_state = check("release/active", Some(Class::Chatter)).unwrap_err();
-        assert!(matches!(chatter_on_state, PubError::WrongClass { declared: Class::State, .. }), "{chatter_on_state}");
-        let state_on_chatter = check("progress/sp-a", Some(Class::State)).unwrap_err();
-        assert!(matches!(state_on_chatter, PubError::WrongClass { declared: Class::Chatter, .. }), "{state_on_chatter}");
-        assert!(check("progress/sp-a", Some(Class::Chatter)).is_ok());
-        assert!(check("release/active", None).is_ok());
-    }
-
-    #[test_id(txo6ywr)]
-    #[test]
-    fn an_undeclared_family_is_refused_naming_the_topic() {
-        let why = check("nosuch/thing", None).unwrap_err().to_string();
-        assert!(why.contains("nosuch/thing"), "{why}");
     }
 }

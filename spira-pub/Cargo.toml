@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 autotests = false
-description = "spira-pub — publishes a harness fact to the MQTT broker: the topic table, the library every component calls, and a thin CLI."
+description = "spira-pub — publishes a harness fact to the MQTT broker: the library every component calls, a thin CLI, and the subscribers' topic table."
 
 [lib]
 name = "spira_pub"

@@ -2,7 +2,7 @@
 //! `run/rounds/<batch>.event` so any process that connects can republish it.
 
 use serde_json::{json, Value};
-use spira_pub::{PubError, Publisher};
+use spira_pub::{Class, PubError, Publisher};
 use std::cell::OnceCell;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -105,7 +105,7 @@ impl RoundBus {
                 let run = run.to_path_buf();
                 publisher.on_connect(move |again| {
                     for k in kept(&run) {
-                        if let Err(e) = again.publish(&k.topic(), &k.event) {
+                        if let Err(e) = again.publish(Class::State, &k.topic(), &k.event) {
                             eprintln!("queue.sh: round {} was not republished: {e}", k.batch);
                         }
                     }
@@ -131,7 +131,7 @@ impl RoundBus {
         forget_ended(run, open);
         let now = Kept { repo: repo.into(), batch: batch.into(), event };
         if let Some(p) = self.publisher(run) {
-            let _ = p.publish(&now.topic(), &now.event);
+            let _ = p.publish(Class::State, &now.topic(), &now.event);
         }
         if !ENDING.contains(&kind) {
             keep(run, &now);

@@ -1,5 +1,4 @@
-# Every topic family the broker carries, read by the spira-pub library. A publish to a family
-# not listed here is refused, as is a publish whose class does not match the row.
+# Every topic family the broker carries, read by the spira-pub library.
 #
 #   family     topic pattern; `<name>` matches one segment, `<a|b>` one of those words
 #   class      state (retained: the broker keeps the last value) | chatter (not retained)

@@ -17,7 +17,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, OnceLock};
 
 use ports::{SeededRng, WallClock};
-use spira_pub::{Options, PubError, Publisher};
+use spira_pub::{Class, Options, PubError, Publisher};
 
 /// Strips the leading UTC timestamp token: up to and including the first space.
 pub fn strip_timestamp(line: &str) -> &str {
@@ -180,7 +180,7 @@ fn announce(inbox: &Path, cursor: &Path, publisher: impl FnOnce() -> Result<Publ
     };
     match publisher() {
         // A failed publish is logged by the publisher; dropping it flushes, and logs that.
-        Ok(p) => drop(p.publish("concierge/inbox", &serde_json::json!({ "unread": count, "oldest": oldest }))),
+        Ok(p) => drop(p.publish(Class::State, "concierge/inbox", &serde_json::json!({ "unread": count, "oldest": oldest }))),
         Err(e) => eprintln!("concierge/inbox not published: {e}"),
     }
 }

@@ -61,7 +61,7 @@ pub fn send(publisher: Result<Publisher, PubError>, messages: &[(String, Value)]
         Err(e) => return eprintln!("gate: nothing published: {e}"),
     };
     for (topic, payload) in messages {
-        if matches!(publisher.publish(topic, payload), Err(PubError::Unreachable { .. } | PubError::Timeout)) {
+        if matches!(publisher.publish(spira_pub::Class::State, topic, payload), Err(PubError::Unreachable { .. } | PubError::Timeout)) {
             break;
         }
     }

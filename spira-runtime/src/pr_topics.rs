@@ -5,7 +5,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use spira_pub::Publisher;
+use spira_pub::{Class, Publisher};
 
 use crate::watchers::pr_notify::{carried_topics, Carry, Topics};
 
@@ -26,7 +26,7 @@ impl PrTopics {
         publisher.on_connect(move |again| {
             for (topic, payload) in lock(&republish).iter() {
                 // A refusal is the publisher's to log; nothing here can mend it.
-                let _ = again.publish(topic, payload);
+                let _ = again.publish(Class::State, topic, payload);
             }
         });
         PrTopics { publisher, held, asked_to_connect: AtomicBool::new(false) }
@@ -49,7 +49,7 @@ impl PrTopics {
     /// publisher and is not the effect's failure: the state goes out on reconnect.
     pub fn publish(&self, input: &str) -> Result<String, String> {
         let topics: Topics = serde_json::from_str(input).map_err(|e| e.to_string())?;
-        let sent = topics.iter().filter(|(topic, payload)| self.publisher.publish(topic, payload).is_ok()).count();
+        let sent = topics.iter().filter(|(topic, payload)| self.publisher.publish(Class::State, topic, payload).is_ok()).count();
         let total = topics.len();
         // Held only after the publishes: the connect hook takes this lock while they wait.
         lock(&self.held).extend(topics);

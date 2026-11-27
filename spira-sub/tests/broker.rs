@@ -121,7 +121,7 @@ fn publisher(name: &str, socket: &Path) -> Publisher {
 }
 
 fn publish(p: &Publisher, topic: &str, value: Value) {
-    p.publish(topic, &value).unwrap();
+    p.publish(spira_pub::Class::State, topic, &value).unwrap();
     p.flush(FAILSAFE).unwrap();
 }
 
@@ -254,7 +254,7 @@ fn after_a_broker_restart_the_client_reconnects_and_holds_the_same_state_values(
     let _run = world.run(broker.socket());
     let follow = world.follow();
     let bridge = publisher("t", broker.socket());
-    bridge.on_connect(|again| again.publish("release/active", &json!({"release": "r1"})).unwrap());
+    bridge.on_connect(|again| again.publish(spira_pub::Class::State, "release/active", &json!({"release": "r1"})).unwrap());
     world.ok(&["add", "release/active"]);
     world.ok(&["add", "gate/#"]);
     bridge.connect().unwrap();

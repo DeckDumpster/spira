@@ -1,5 +1,5 @@
-//! Publishes a harness fact to the MQTT broker. Every component calls [`Publisher`] in-process;
-//! [`topics`] is the table of what may be published.
+//! Publishes a harness fact to the MQTT broker. Every component calls [`Publisher`] in-process,
+//! to any well-formed topic, stating the [`Class`] of what it publishes.
 //!
 //! A publish never blocks past [`CONNECT_DEADLINE`] and is never retried: it fails, is logged,
 //! and the caller carries on. A state topic recovers on the next publish or reconnect.
@@ -15,7 +15,7 @@ mod socket_watch;
 mod telemetry;
 pub mod topics;
 
-pub use publisher::{Log, Options, Publisher, Republish, CONNECT_DEADLINE, MAX_PAYLOAD};
+pub use publisher::{check_topic, Log, Options, Publisher, Republish, CONNECT_DEADLINE, MAX_PAYLOAD};
 pub use socket_watch::SocketWatch;
 pub use topics::Class;
 
@@ -24,8 +24,8 @@ pub enum PubError {
     /// The configuration does not name the broker.
     Config(String),
     BadName(String),
-    UndeclaredFamily { topic: String },
-    WrongClass { topic: String, declared: Class, asked: Class },
+    /// The topic is empty or holds a wildcard or NUL.
+    BadTopic(String),
     TooLarge { topic: String, bytes: usize },
     QueueFull { topic: String },
     /// The connect attempt failed.
@@ -42,8 +42,7 @@ impl PubError {
         match self {
             PubError::Config(_) => "config",
             PubError::BadName(_) => "bad_name",
-            PubError::UndeclaredFamily { .. } => "undeclared_family",
-            PubError::WrongClass { .. } => "wrong_class",
+            PubError::BadTopic(_) => "bad_topic",
             PubError::TooLarge { .. } => "too_large",
             PubError::QueueFull { .. } => "queue_full",
             PubError::Unreachable { .. } => "unreachable",
@@ -56,7 +55,7 @@ impl PubError {
     pub fn is_refusal(&self) -> bool {
         matches!(
             self,
-            PubError::Config(_) | PubError::BadName(_) | PubError::UndeclaredFamily { .. } | PubError::WrongClass { .. } | PubError::TooLarge { .. }
+            PubError::Config(_) | PubError::BadName(_) | PubError::BadTopic(_) | PubError::TooLarge { .. }
         )
     }
 }
@@ -66,10 +65,7 @@ impl std::fmt::Display for PubError {
         match self {
             PubError::Config(why) => write!(f, "{why}"),
             PubError::BadName(name) => write!(f, "{name:?} is not a publisher name: one topic segment, no /, + or #"),
-            PubError::UndeclaredFamily { topic } => write!(f, "topic {topic:?} belongs to no family in spira/topics.toml"),
-            PubError::WrongClass { topic, declared, asked } => {
-                write!(f, "topic {topic:?} is declared {}, not {}", declared.name(), asked.name())
-            }
+            PubError::BadTopic(topic) => write!(f, "{topic:?} is not a topic to publish to: it must be non-empty, with no +, # or NUL"),
             PubError::TooLarge { topic, bytes } => write!(f, "the payload for {topic:?} is {bytes} bytes, over {MAX_PAYLOAD}"),
             PubError::QueueFull { topic } => write!(f, "the publish queue is full; {topic:?} was not queued"),
             PubError::Unreachable { why } => write!(f, "the broker is unreachable: {why}"),
