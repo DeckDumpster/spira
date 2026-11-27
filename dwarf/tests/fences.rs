@@ -1696,7 +1696,7 @@ fn a_spike_branch_inside_the_allowed_trees_passes_and_a_plan_branch_is_not_confi
 #[test]
 fn the_bash_stdin_hook_reads_stdin_prints_the_rewrite_and_always_exits_zero() {
     let run = |payload: &str| -> (Option<i32>, String) {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_dwarf"))
+        let mut child = Command::new(testkit::bin_exe("dwarf"))
             .arg("bash-stdin")
             .env_clear()
             .stdin(std::process::Stdio::piped())
