@@ -163,7 +163,7 @@ fn heading(line: &str) -> Option<Heading> {
         return Some(Heading { survivor: None, title: title.trim().to_string() });
     }
     let (id, title) = line.strip_prefix(AMEND_HEADING)?.split_once(':')?;
-    is_bead_token(id).then(|| Heading { survivor: Some(id.to_string()), title: title.trim().to_string() })
+    Some(Heading { survivor: Some(id.to_string()), title: title.trim().to_string() })
 }
 
 /// The last (heading, body) of each trimmed title in `notes`, drafts and amendments together, in
@@ -441,8 +441,9 @@ pub struct Draft {
 }
 
 /// The last draft or amendment headed `title` (a correction is the whole note resent): the text
-/// after the heading and a blank line, up to another heading, an `Open:` line, a harness note or
-/// the end. An amendment's survivor rides beside it.
+/// after the heading and a blank line, up to another heading, a harness note or the end; a
+/// draft's also ends at an `Open:` line. An amendment's survivor rides beside it. `None` when that
+/// last note has no blank line or no text: an earlier one never stands in for it.
 fn last_note(notes: &str, title: &str) -> Option<(Option<String>, Draft)> {
     let notes = notes.replace("\r\n", "\n");
     let mut found = None;
@@ -450,11 +451,12 @@ fn last_note(notes: &str, title: &str) -> Option<(Option<String>, Draft)> {
     for line in notes.split_inclusive('\n') {
         at += line.len();
         let Some(h) = heading(line.trim_end_matches('\n')) else { continue };
-        if h.title == title.trim() && line.ends_with('\n') && notes[at..].starts_with('\n') {
-            found = Some((h.survivor, at + 1));
+        if h.title == title.trim() {
+            found = Some((h.survivor, notes[at..].starts_with('\n').then_some(at + 1)));
         }
     }
     let (survivor, start) = found?;
+    let start = start?;
     let rest = &notes[start..];
     let mut end = rest.len();
     let mut open = None;
@@ -465,7 +467,7 @@ fn last_note(notes: &str, title: &str) -> Option<(Option<String>, Draft)> {
             end = offset;
             break;
         }
-        if bare.starts_with("Open:") {
+        if survivor.is_none() && bare.starts_with("Open:") {
             end = offset;
             open = Some(bare.to_string());
             break;
@@ -496,12 +498,29 @@ pub struct Amend {
 pub fn amend_notes(notes: &str) -> Vec<Amend> {
     last_headed(notes)
         .into_iter()
-        .filter(|(h, _)| h.survivor.is_some())
         .filter_map(|(h, _)| {
             let (survivor, note) = last_note(notes, &h.title)?;
-            Some(Amend { survivor: survivor?, title: h.title, evidence: note.body })
+            let survivor = survivor.filter(|id| is_bead_token(id))?;
+            Some(Amend { survivor, title: h.title, evidence: note.body })
         })
         .collect()
+}
+
+/// One line per `### Amend` note that would move no evidence: the last note of its title with a
+/// malformed id, no blank line or no text; or a line with no `:` that no amendment follows.
+pub fn amend_refusals(notes: &str) -> Vec<String> {
+    let usable = amend_notes(notes);
+    let mut found: Vec<String> = last_headed(notes)
+        .into_iter()
+        .filter(|(h, _)| h.survivor.is_some() && !usable.iter().any(|a| a.title == h.title))
+        .map(|(h, _)| format!("amendment \"{}\": want `### Amend <survivor-id>: <title>`, a blank line, then the evidence", h.title))
+        .collect();
+    let lines: Vec<&str> = notes.lines().collect();
+    let unread = lines.iter().rposition(|l| l.starts_with(AMEND_HEADING) && heading(l).is_none());
+    if let Some(at) = unread.filter(|at| amend_notes(&lines[*at + 1..].join("\n")).is_empty()) {
+        found.push(format!("`{}` names no `<survivor-id>: <title>`", lines[at]));
+    }
+    found
 }
 
 /// One piece of a request's notes: a draft or amendment under its heading (`title` set), or
@@ -525,7 +544,7 @@ fn pieces(notes: &str) -> Vec<Piece> {
         }
         let last = out.last_mut().expect("a piece was just pushed");
         last.text.push_str(line);
-        if drafting && bare.starts_with("Open:") {
+        if drafting && bare.starts_with("Open:") && last.text.starts_with(DRAFT_HEADING) {
             drafting = false;
         }
     }
@@ -1133,7 +1152,7 @@ pub fn lint(src: &dyn LintSource, cfg: &LintCfg) -> (i32, Vec<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{amend_notes, depends_prose, depends_refusal, draft_body, draft_depends_refusals, review_filed_from, review_request_body, with_drafts, Amend, Draft};
+    use super::{amend_notes, amend_refusals, depends_prose, depends_refusal, draft_body, draft_depends_refusals, review_filed_from, review_request_body, with_drafts, Amend, Draft};
 
     
     #[test_id(tmuoozk)]
@@ -1388,6 +1407,19 @@ mod tests {
         assert_eq!(draft_body("### Draft: T\n\nbody\n", "T two"), None);
     }
 
+    #[test_id(to02k0o)]
+    #[test]
+    fn an_amend_note_that_would_move_no_evidence_is_named_and_no_earlier_note_stands_in() {
+        for bad in ["### Amend sp-a: T\nno blank line", "### Amend sp-a: T\n\n", "### Amend nonsense: T\n\ne", "### Amend sp-a T\n\ne"] {
+            assert_eq!(amend_refusals(&format!("{bad}\n")).len(), 1, "{bad}");
+            assert_eq!(amend_refusals(&format!("{bad}\n### Amend sp-a: T\n\ncorrected\n")), Vec::<String>::new(), "{bad}");
+        }
+        for earlier in ["### Amend sp-z: T\n\nold", "### Draft: T\n\nold"] {
+            let notes = format!("{earlier}\n### Amend sp-a: T\nno blank line\n");
+            assert_eq!((amend_notes(&notes), draft_body(&notes, "T")), (vec![], None), "{earlier}");
+        }
+    }
+
     #[test_id(thkmwu6)]
     #[test]
     fn review_request_body_names_the_followup_and_the_verbatim_heading() {
@@ -1417,6 +1449,9 @@ mod tests {
         let amended_last = "### Draft: T\n\nDepends: after the other\n### Amend sp-a: T\n\ne\n";
         assert_eq!((amend_notes(amended_last), draft_body(amended_last, "T")), (vec![amend("sp-a", "T", "e")], None));
         assert!(draft_depends_refusals(amended_last).is_empty(), "a replaced draft is not judged");
+        let quoted = "### Amend sp-a: T\n\nthe log said:\nOpen: /x: denied\nand exited\n";
+        assert_eq!(amend_notes(quoted), [amend("sp-a", "T", "the log said:\nOpen: /x: denied\nand exited")]);
+        assert_eq!(with_drafts(quoted, "### Amend sp-a: T\n\nagain").unwrap(), "### Amend sp-a: T\n\nagain", "a resend leaves no tail behind");
         let resent = with_drafts("### Draft: T\n\nfirst\n### Amend sp-a: T\n\ne", "### Draft: T\n\nsecond").unwrap();
         assert_eq!(resent, "### Draft: T\n\nsecond", "a resend replaces either kind of note");
     }

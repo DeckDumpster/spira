@@ -967,26 +967,31 @@ fn skuld_review_apply(bead_id: &str) -> Option<(i32, String)> {
         Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
     };
     let filed = ::bead::review_filed_from(&description);
-    if !dependents.is_empty() {
-        apply_reviews(bead_id, filed.as_ref(), &dependents, &notes, filed_item, crate::bd::amend_replace, crate::bd::amend_note, supersede_into)
-    } else if filed.is_none() {
+    // A closed follow-up still owes an amendment its evidence and the filer's note.
+    let amends = ::bead::amend_notes(&notes);
+    let dependents: Vec<(String, String)> =
+        dependents.into_iter().filter(|d| d.open || amends.iter().any(|a| a.title == d.title.trim())).map(|d| (d.id, d.title)).collect();
+    if dependents.is_empty() {
         apply_amends(bead_id, &notes, filed_item, crate::bd::amend_note)
     } else {
-        None
+        apply_reviews(bead_id, filed.as_ref(), &dependents, &notes, filed_item, crate::bd::amend_replace, crate::bd::amend_note, supersede_into)
     }
 }
 
 /// What an amendment is judged against: an item's lifecycle state and repo, and its title.
 struct Item {
     state: Option<bead::BeadState>,
+    superseded_by: Option<String>,
     repo: Option<String>,
     title: String,
 }
 
 fn filed_item(id: &str) -> Result<Item, String> {
-    let state = crate::plane::bead(id).map_err(|e| format!("{e:?}"))?.map(|r| r.state);
+    let row = crate::plane::bead(id).map_err(|e| format!("{e:?}"))?;
+    let state = row.as_ref().map(|r| r.state);
+    let superseded_by = row.filter(|r| r.state == bead::BeadState::Superseded).and_then(|r| r.reason);
     let repo = crate::plane::repo(id).map_err(|e| format!("{e:?}"))?;
-    Ok(Item { state, repo, title: crate::bd::title(id)?.unwrap_or_default() })
+    Ok(Item { state, superseded_by, repo, title: crate::bd::title(id)?.unwrap_or_default() })
 }
 
 /// Retires `dep` as SUPERSEDED by `survivor`, on its row and then in the content store. A row
@@ -1017,7 +1022,7 @@ fn waiting_survivor(item: &impl Fn(&str) -> Result<Item, String>, survivor: &str
 
 enum Verdict {
     Draft(::bead::Draft),
-    Amend { evidence: String, survivor: String, survivor_title: String },
+    Amend { evidence: String, survivor: String, survivor_title: String, retire: bool },
 }
 
 /// Every dependent's note is judged before any of them is applied, so a refusal changes nothing.
@@ -1040,12 +1045,20 @@ fn apply_reviews(
             if a.survivor == *dep || dependents.iter().any(|(d, t)| *d == a.survivor && amend_of(t).is_some()) {
                 return Some((REFUSED, format!("refused: work done: {} is itself being folded by {request}; draft {dep} instead or name a waiting item", a.survivor)));
             }
-            let repo = match item(dep) {
-                Ok(i) => i.repo,
+            let followup = match item(dep) {
+                Ok(i) => i,
                 Err(e) => return Some((CANNOT_TELL, format!("cannot tell: reading {dep}: {e}"))),
             };
-            match waiting_survivor(&item, &a.survivor, repo.as_deref(), &format!("draft {dep} instead or ")) {
-                Ok(s) => Verdict::Amend { evidence: a.evidence.clone(), survivor: a.survivor.clone(), survivor_title: s.title },
+            // A repeat of a fold the row already records: the survivor may have moved on since.
+            let folded = followup.superseded_by.as_deref() == Some(a.survivor.as_str());
+            let survivor = if folded {
+                item(&a.survivor).map_err(|e| (CANNOT_TELL, format!("cannot tell: reading {}: {e}", a.survivor)))
+            } else {
+                waiting_survivor(&item, &a.survivor, followup.repo.as_deref(), &format!("draft {dep} instead or "))
+            };
+            let retire = folded || !followup.state.is_some_and(|s| s.is_terminal());
+            match survivor {
+                Ok(s) => Verdict::Amend { evidence: a.evidence.clone(), survivor: a.survivor.clone(), survivor_title: s.title, retire },
                 Err(refusal) => return Some(refusal),
             }
         } else if let Some(d) = ::bead::draft_body(notes, title) {
@@ -1074,10 +1087,15 @@ fn apply_reviews(
                 }
                 crate::bd::record_event("spira_skuld_drafts_applied", "done");
             }
-            Verdict::Amend { evidence, survivor, survivor_title } => {
+            Verdict::Amend { evidence, survivor, survivor_title, retire } => {
                 let from = filed.map_or(String::new(), |(filer, bound)| format!(" filed by {filer} from {bound}"));
                 if let Err(e) = note(&survivor, &format!("Amended by Skuld: {request}, from {dep}{from}\n\n{evidence}")) {
-                    return Some((CANNOT_TELL, format!("cannot tell: {request} was left WORKING; the evidence could not be noted on {survivor}, and {dep} keeps waiting (run work done again): {e}")));
+                    return Some((CANNOT_TELL, format!("cannot tell: {request} was left WORKING; the evidence could not be noted on {survivor}, and {dep} was not retired (run work done again): {e}")));
+                }
+                // A follow-up that ended some other way has nothing to retire, and was not folded.
+                if !retire {
+                    crate::bd::record_event("spira_skuld_amendments_applied", "done");
+                    continue;
                 }
                 if let Err(e) = supersede(dep, &survivor) {
                     return Some((CANNOT_TELL, format!("cannot tell: {request} was left WORKING; the evidence note was written on {survivor} but {dep} could not be superseded by it (run work done again): {e}")));
@@ -1085,7 +1103,7 @@ fn apply_reviews(
                 if let Some((_, bound)) = filed {
                     let folded = format!("{dep} was folded into {survivor} (\"{survivor_title}\")");
                     if let Err(e) = note(bound, &folded) {
-                        return Some((CANNOT_TELL, format!("cannot tell: {request} was left WORKING; the evidence was noted on {survivor} and {dep} superseded by it, but {bound} was not told `{folded}` (run work done again to close the request): {e}")));
+                        return Some((CANNOT_TELL, format!("cannot tell: {request} was left WORKING; the evidence was noted on {survivor} and {dep} superseded by it, but {bound} was not told `{folded}` (run work done again): {e}")));
                     }
                 }
                 crate::bd::record_event("spira_skuld_amendments_applied", "done");
@@ -1126,6 +1144,10 @@ fn apply_amends(
 }
 
 fn skuld_draft_notes_refusal(bead_id: &str, notes: &str) -> Option<(i32, String)> {
+    let amends = ::bead::amend_refusals(notes);
+    if !amends.is_empty() {
+        return Some((REFUSED, format!("refused: work done: {bead_id} holds an amendment that would move no evidence.\n{}\nResend it with `work note` and run `work done` again", amends.join("\n"))));
+    }
     let mut found = ::bead::draft_depends_refusals(notes);
     found.extend(::bead::draft_trailer_refusals(notes));
     if found.is_empty() {
@@ -2849,7 +2871,7 @@ mod tests {
     fn plane(state: bead::BeadState, repo: &'static str) -> impl Fn(&str) -> Result<super::Item, String> {
         move |id| {
             let (state, repo) = if id == "sp-x" { (state, repo) } else { (bead::BeadState::Ready, "spira") };
-            Ok(super::Item { state: Some(state), repo: Some(repo.to_string()), title: format!("title of {id}") })
+            Ok(super::Item { state: Some(state), superseded_by: None, repo: Some(repo.to_string()), title: format!("title of {id}") })
         }
     }
 
@@ -2911,6 +2933,51 @@ mod tests {
             assert_eq!(out, format!("refused: work done: sp-x is {}, not a waiting item of spira; draft sp-f1 instead or name a waiting item", state.as_str()));
             assert!(effects.is_empty(), "{effects:?}");
         }
+    }
+
+    /// A plane after `sp-f1` ended as `state`, by `successor`, with `sp-x` claimed since.
+    fn ended(state: bead::BeadState, successor: Option<&'static str>, survivor: bead::BeadState) -> impl Fn(&str) -> Result<super::Item, String> {
+        move |id| {
+            let mut item = plane(survivor, "spira")(id)?;
+            if id == "sp-f1" {
+                item.state = Some(state);
+                item.superseded_by = successor.map(str::to_string);
+            }
+            Ok(item)
+        }
+    }
+
+    #[test_id(teutlnf)]
+    #[test]
+    fn a_repeat_after_the_filers_note_failed_tells_the_filer_even_when_the_survivor_has_moved_on() {
+        let filed = ("builder".to_string(), "sp-b0".to_string());
+        let (code, out) = super::apply_reviews("sp-r1", Some(&filed), &deps(), AMEND, plane(bead::BeadState::Ready, "spira"), |_, _| panic!("no replace"), |id, _| if id == "sp-b0" { Err("no".into()) } else { Ok(()) }, |_, _| Ok(())).unwrap();
+        assert_eq!(code, super::CANNOT_TELL);
+        assert!(out.contains("sp-b0 was not told") && out.contains("run work done again"), "{out}");
+        let (out, effects) = amend_review(ended(bead::BeadState::Superseded, Some("sp-x"), bead::BeadState::Working), Ok(()));
+        assert_eq!(out, None);
+        assert_eq!(effects.iter().map(|e| (e.0, e.1.as_str())).collect::<Vec<_>>(), [("note", "sp-x"), ("supersede", "sp-f1"), ("note", "sp-b0")]);
+    }
+
+    #[test_id(thoy7gy)]
+    #[test]
+    fn a_followup_that_ended_another_way_still_has_its_evidence_moved_and_is_not_retired() {
+        for (state, successor) in [(bead::BeadState::Dropped, None), (bead::BeadState::Superseded, Some("sp-other"))] {
+            let (out, effects) = amend_review(ended(state, successor, bead::BeadState::Ready), Ok(()));
+            assert_eq!(out, None);
+            assert_eq!(effects.iter().map(|e| (e.0, e.1.as_str())).collect::<Vec<_>>(), [("note", "sp-x")]);
+        }
+        let (out, effects) = amend_review(ended(bead::BeadState::Dropped, None, bead::BeadState::Landed), Ok(()));
+        assert_eq!(out.unwrap().0, super::REFUSED);
+        assert!(effects.is_empty(), "{effects:?}");
+    }
+
+    #[test_id(tlkgx8o)]
+    #[test]
+    fn an_amendment_that_would_move_no_evidence_is_refused_at_done() {
+        let (code, out) = super::skuld_draft_notes_refusal("sp-r1", "### Amend sp-x: Fix x\nno blank line\n").unwrap();
+        assert_eq!(code, super::REFUSED);
+        assert!(out.contains("Fix x") && out.contains("work note"), "{out}");
     }
 
     #[test_id(tfzotau)]

@@ -394,10 +394,21 @@ pub fn amend_note(id: &str, text: &str) -> Result<(), String> {
     content_write(&["note", id, "--stdin"], text)
 }
 
-/// The open beads that wait on `id` through a `blocks` edge, each with its title.
-pub fn blocked_dependents(id: &str) -> Result<Vec<(String, String)>, String> {
-    let ids = <LiveBd as crate::callers::Bd>::blocking_dependents(&mut LiveBd, id)?;
-    ids.into_iter().map(|d| { let t = title(&d)?.unwrap_or_default(); Ok((d, t)) }).collect()
+/// A bead behind another's `blocks` edge, and whether it is still open.
+pub struct Dependent {
+    pub id: String,
+    pub title: String,
+    pub open: bool,
+}
+
+/// Every bead behind a `blocks` edge on `id`, the closed ones included.
+pub fn blocked_dependents(id: &str) -> Result<Vec<Dependent>, String> {
+    let ids = store(|sql, db| content_sql::blocked_by(sql, db, id))?;
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let open = <LiveBd as crate::callers::Bd>::open_among(&mut LiveBd, &ids)?;
+    ids.into_iter().map(|d| Ok(Dependent { title: title(&d)?.unwrap_or_default(), open: open.contains(&d), id: d })).collect()
 }
 
 /// Pushes a count of `name`, labelled by `op`; a failed push is dropped.

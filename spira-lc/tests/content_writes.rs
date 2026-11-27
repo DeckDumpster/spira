@@ -1678,8 +1678,51 @@ fn a_second_filing_of_a_waiting_outcome_is_folded_into_the_first_and_leaves_no_n
     let told = field(&b1, "notes");
     assert!(told.contains(&format!("{f2} was folded into {f1} (\"Fix x\")")), "{told}");
     assert!(state_of(&lc, &s2).contains("DONE"), "{}", state_of(&lc, &s2));
-    let waiting = ok(&["work", "-", "open-items", "--repo", "spira", "--json", "--actor", "skuld"], None);
-    let waiting: Vec<serde_json::Value> = serde_json::from_str(&waiting).unwrap();
-    let waiting: Vec<&str> = waiting.iter().filter_map(|w| w["id"].as_str()).collect();
-    assert!(waiting.contains(&f1.as_str()) && !waiting.contains(&f2.as_str()), "{waiting:?}");
+    let waiting_now = || -> Vec<String> {
+        let listed = ok(&["work", "-", "open-items", "--repo", "spira", "--json", "--actor", "skuld"], None);
+        let listed: Vec<serde_json::Value> = serde_json::from_str(&listed).unwrap();
+        listed.iter().filter_map(|w| w["id"].as_str().map(str::to_string)).collect()
+    };
+    let waiting = waiting_now();
+    assert!(waiting.contains(&f1) && !waiting.contains(&f2), "{waiting:?}");
+
+    // A half-applied fold: the row retired, the content write lost; and a whole one whose filer
+    // was never told. The survivor has since been claimed.
+    let half = [builder(), builder()].map(|bound| {
+        let (followup, request) = file(&bound, &format!("Fix x for {bound}"));
+        (bound, followup, request)
+    });
+    for (n, (_, followup, _)) in half.iter().enumerate() {
+        let (rc, row) = lc.run(&["show", followup], None);
+        let row: serde_json::Value = serde_json::from_str(&row).unwrap_or_else(|e| panic!("{rc} {e}: {row}"));
+        let version = row["bead"]["version"].to_string().replace('"', "");
+        ok(&["event", "bead", followup, "--expect", "READY", "--version", &version, "--actor", "skuld", "--kind", &format!(r#"{{"Supersede":{{"by":"{f1}"}}}}"#)], None);
+        if n == 1 {
+            ok(&["bd-supersede", followup, &f1], None);
+            assert_eq!(field(followup, "status"), "closed");
+        }
+    }
+    claim(&f1, "builder");
+    for (bound, followup, request) in &half {
+        let (rc, out) = review(request, &format!("### Amend {f1}: Fix x for {bound}\n\nseen again from {bound}\n"));
+        assert_eq!(rc, 0, "{out}");
+        assert_eq!(field(followup, "status"), "closed");
+        assert!(field(&f1, "notes").contains(&format!("seen again from {bound}")), "{}", field(&f1, "notes"));
+        assert!(field(bound, "notes").contains(&format!("{followup} was folded into {f1}")), "{}", field(bound, "notes"));
+    }
+
+    // A Concierge request reviews nothing: its amendment lands on the item and nothing is retired.
+    let (f4, s4) = file(&b0, "Fix y");
+    let (rc, out) = review(&s4, "### Draft: Fix y\n\n## Outcome\ny is fixed\n");
+    assert_eq!(rc, 0, "{out}");
+    let asked = first_line(&ok(&["content", "create", "an intent about y", "--silent", "--labels", "repo:spira,draft"], None));
+    ok(&["create-bead", &asked, "--ready", "--repo", "spira"], None);
+    let (rc, out) = review(&asked, &format!("### Amend {f4}: an intent about y\n\nthe Concierge's sighting\n"));
+    assert_eq!(rc, 0, "{out}");
+    let held = field(&f4, "notes");
+    assert!(held.contains(&format!("Amended by Skuld: {asked}\n\nthe Concierge's sighting")), "{held}");
+    assert!(state_of(&lc, &asked).contains("DONE"));
+
+    let waiting = waiting_now();
+    assert!(waiting.contains(&f4) && half.iter().all(|(_, followup, _)| !waiting.contains(followup)), "{waiting:?}");
 }
