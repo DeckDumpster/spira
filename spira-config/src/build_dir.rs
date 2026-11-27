@@ -1338,8 +1338,8 @@ pub fn eviction_samples(gone: &[Deleted]) -> Vec<Sample> {
         })
         .collect()
 }
+
 /// One `build_dir_lease` event, and the first build's seconds when one was recorded.
-/// One `build_dir_lease` event, and the first build's seconds when one was stamped.
 pub fn report_samples(report: &LeaseReport) -> Vec<Sample> {
     let (repo, state) = (("repo", report.repo.clone()), ("state", report.state.name().to_string()));
     let labels = vec![
