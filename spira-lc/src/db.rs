@@ -576,8 +576,11 @@ mod session_pool_tests {
     #[test]
     fn a_panicking_read_gives_its_place_back() {
         let rig = Rig::new(1);
-        let _ = rig.read("panic").recv_timeout(BOUND);
-        rig.read("fast").recv_timeout(BOUND).expect("the next read answered");
+        assert!(rig.read("panic").recv().is_err(), "the read panicked rather than answering");
+        assert_eq!(rig.pool.pool.lock().unwrap().open, 0, "the panicked read still holds its place");
+        let tx = rig.entered_tx.clone();
+        let release = rig.release.clone();
+        assert!(rig.pool.run(|| Ok(Double { entered: tx.clone(), release: release.clone() }), "fast").is_ok());
     }
 
     #[test_id(t3znxfn)]
