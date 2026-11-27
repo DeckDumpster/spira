@@ -1,10 +1,10 @@
-//! Orchestration: the dedupe scan, filing a new bead or bumping a recurrence, the Fenrir
-//! escalation and the undeclared-repo ask. Pure decision-making lives in `decide.rs`; this
+//! Orchestration: the dedupe scan, filing a new bead or bumping a recurrence, and the Fenrir
+//! escalation. Pure decision-making lives in `decide.rs`; this
 //! module only sequences calls to the `Bd`/`Mailer`/`Clock` ports and never contains a
 //! judgement call `decide.rs` could have made instead — table-driven parity against the
 //! bash is easiest when every "should this fire" answer has exactly one place it is typed.
 
-use crate::decide::{self, DedupHit, Scope};
+use crate::decide::{self, DedupHit, Lane, Scope};
 use crate::ports::{self, Bd, Clock, Mailer};
 
 #[derive(Clone, Copy)]
@@ -20,6 +20,8 @@ pub struct FileConfig<'a> {
     pub dedup_lookback_days: i64,
     pub repo_declared: Option<&'a str>,
     pub delivers_pref: Option<&'a str>,
+    /// The full label set of a plan filing; `None` when the plan label is not configured.
+    pub plan_labels: Option<&'a str>,
     pub sop_ledger: &'a str,
     pub spira_run: &'a str,
     pub home_repo: &'a str,
@@ -295,10 +297,6 @@ fn file_new(
     predecessor: Option<Predecessor>,
     log: &mut Vec<String>,
 ) -> FileOutcome {
-    if let Some(bad_repo) = cfg.repo_declared.and_then(|r| decide::invalid_repo_label(&format!("repo:{r}"), cfg.home_repo, cfg.known_repos)) {
-        log.push(format!("spira: repo:{bad_repo} is not in the repo map"));
-        // An unmapped repo files under the home repo rather than refusing the event.
-    }
     if decide::contains_schema_delete(title, "") {
         log.push(format!("create FAILED for {reference} — contains a schema_migrations DELETE — stays spooled"));
         return FileOutcome::Refused;
@@ -318,21 +316,37 @@ fn file_new(
     // dwarf-filed title does not re-spool forever (sp-nredi).
     let clipped: String = title.chars().take(490).collect();
     let title = clipped.as_str();
-    let create_labels = match cfg.repo_declared {
-        Some(repo) => {
-            let effective = if repo == cfg.home_repo || cfg.known_repos.iter().any(|r| r == repo) {
-                repo.to_string()
-            } else {
-                log.push(format!("warning: SPIRA_INCIDENT_REPO={repo} has no entry in the repository map; using {}", cfg.home_repo));
-                cfg.home_repo.to_string()
-            };
-            if labels.split(',').any(|l| l.trim().starts_with("repo:")) {
-                labels.to_string()
-            } else {
-                format!("{labels},repo:{effective}")
+    // `incident_labels` puts the scope first, so the plan label itself is the last one.
+    let plan_label = cfg.plan_labels.and_then(|l| l.rsplit(',').next()).unwrap_or_default();
+    let (create_labels, body) = if labels.split(',').any(|l| l.trim().starts_with("repo:")) {
+        (labels.to_string(), body)
+    } else {
+        let route = decide::route(reference, labels, cfg.repo_declared, cfg.home_repo, cfg.known_repos, plan_label);
+        let repo = route.repo;
+        match route.lane {
+            Lane::Plan => {
+                let Some(plan_labels) = cfg.plan_labels else {
+                    log.push(format!("SPIRA_PLAN_LABEL is not set — {reference} stays spooled"));
+                    return FileOutcome::Refused;
+                };
+                let spec = format!(
+                    "\n{}\nMake {repo}'s landing ref green: fix the failure the evidence above names, in {repo}, in the suite(s) it names.\n",
+                    bead::BUILD_HEADING
+                );
+                (format!("{plan_labels},repo:{repo}"), body + &spec)
+            }
+            Lane::Incident => {
+                let body = match cfg.repo_declared.filter(|d| *d != repo) {
+                    Some(declared) => {
+                        let unmapped = if cfg.known_repos.iter().any(|k| k == declared) { String::new() } else { format!(" — {declared} has no entry in the repository map") };
+                        log.push(format!("{reference} concerns {declared}; filed on {repo} (harness fault){unmapped}"));
+                        format!("Concerns repository: {declared}\n\n{body}")
+                    }
+                    None => body,
+                };
+                (format!("{labels},repo:{repo}"), body)
             }
         }
-        None => labels.to_string(),
     };
     let id = match bd.create(cfg.db, title, cfg.kind, cfg.priority, &create_labels, reference, &body, cfg.actor) {
         Ok(id) => id,
@@ -401,17 +415,6 @@ fn file_new(
     }
     bd.label_add(cfg.db, &id, &format!("ref:{}", decide::ref_hash(reference)));
 
-    if cfg.repo_declared.is_none() {
-        bd.label_add(cfg.db, &id, "needs-repo-triage");
-        bd.note(
-            cfg.db,
-            &id,
-            &format!(
-                "Repository not declared — SPIRA_INCIDENT_REPO was not set. A dwarf claiming this bead works it in the home-repo fallback, which may be the wrong checkout. Set the repo dimension with: bd set-state {id} repo=<name>."
-            ),
-        );
-        log.push(format!("{reference} labelled needs-repo-triage — repo undeclared"));
-    }
     FileOutcome::Filed(id)
 }
 
@@ -1141,15 +1144,16 @@ mod tests {
         let mut c = cfg(&known);
         c.repo_declared = Some("dumpstar");
         let mut log = vec![];
-        let out = file_one(&bd, &mailer, &clock, &c, "incident:r", "r failed", b"payload", "spira,incident", &mut log);
+        let out = file_one(&bd, &mailer, &clock, &c, "basefail-local:dumpstar:t:FAIL:1", "r failed", b"payload", "spira,incident", &mut log);
         let FileOutcome::Filed(id) = out else { panic!() };
         assert_eq!(created_repo_of(&bd, &id).as_deref(), Some("dumpstar"));
+        assert!(bd.create_labels.borrow()[&id].split(',').any(|l| l == "plan"));
     }
 
     // covers: UC-ops-detection-remediation-05
     #[test_id(taeqrrn)]
     #[test]
-    fn undeclared_repo_gets_needs_repo_triage() {
+    fn an_undeclared_repo_files_against_the_home_repo_with_no_triage_label() {
         let bd = FakeBd::new();
         let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
@@ -1162,7 +1166,24 @@ mod tests {
             FileOutcome::Filed(id) => id,
             _ => panic!(),
         };
-        assert!(bd.label_list("db", &id).contains(&"needs-repo-triage".to_string()));
+        assert_eq!(created_repo_of(&bd, &id).as_deref(), Some("spira"));
+        assert!(!bd.label_list("db", &id).contains(&"needs-repo-triage".to_string()));
+    }
+
+    // covers: UC-ops-detection-remediation-05
+    #[test_id(tgb2qup)]
+    #[test]
+    fn a_plan_route_with_no_plan_label_stays_spooled_naming_the_key() {
+        let bd = FakeBd::new();
+        let known = vec!["spira".to_string(), "dumpstar".to_string()];
+        let mut c = cfg(&known);
+        c.repo_declared = Some("dumpstar");
+        c.plan_labels = None;
+        let mut log = vec![];
+        let out = file_one(&bd, &FakeMailer::default(), &FixedClock(1_000_000), &c, "basefail-local:dumpstar:t:FAIL:1", "t", b"p", "spira,incident", &mut log);
+        assert!(matches!(out, FileOutcome::Refused), "{out:?}");
+        assert!(log.last().is_some_and(|l| l.contains("SPIRA_PLAN_LABEL")), "{log:?}");
+        assert!(bd.created.borrow().is_empty());
     }
 
     // covers: UC-ops-detection-remediation-08
@@ -1362,22 +1383,6 @@ mod tests {
         assert_eq!((again, legacy), (first, "sp-legacy".to_string()));
         assert_eq!(bd.created.borrow().len(), 1, "only the first filing created a bead");
         assert_eq!(*bd.shows.borrow(), 0, "no bd show on the dedup path");
-    }
-
-    // covers: UC-ops-detection-remediation-05
-    #[test_id(tpa0ij9)]
-    #[test]
-    fn an_undeclared_repo_leaves_a_note_naming_the_missing_declaration() {
-        let bd = FakeBd::new();
-        let mailer = FakeMailer::default();
-        let known = vec!["spira".to_string()];
-        let mut c = cfg(&known);
-        c.repo_declared = None;
-        let mut log = vec![];
-        let FileOutcome::Filed(id) = file_one(&bd, &mailer, &FixedClock(1_000_000), &c, "incident:nr", "t", b"p", "spira,incident", &mut log) else { panic!() };
-        let notes = bd.notes.borrow().get(&id).cloned().unwrap_or_default().join("\n");
-        assert!(notes.contains("SPIRA_INCIDENT_REPO"), "{notes}");
-        assert!(!bd.create_labels.borrow()[&id].contains("repo:"), "no repo recorded when none was declared");
     }
 
     // covers: UC-ops-detection-remediation-07

@@ -98,8 +98,9 @@ lane-refused entry stays by design and so is such a condition.
 
 - **The `bd create` guards `bdq` applies underneath every filing** —
   `_bdq_check_repo_label`, `_bdq_check_schema_delete` — are ported
-  to `decide::invalid_repo_label`/`contains_schema_delete` and enforced
-  in `run::file_new` before calling `Bd::create`. `real.rs` shells to `bd` directly (not
+  to `decide::invalid_repo_label`/`contains_schema_delete`; `run::file_new` enforces the
+  schema-delete one before calling `Bd::create`, and `decide::route` only ever names the home
+  repo or a mapped one. `real.rs` shells to `bd` directly (not
   through `bdq`/lib.sh), so without this port these safety fences would silently stop
   applying to every incident filing — a real regression, not a simplification. They are
   small, self-contained, and change rarely; lib.sh's own rewrite wave can delete these three
@@ -111,7 +112,7 @@ lane-refused entry stays by design and so is such a condition.
   the write-ahead spool (byte-identical on-disk format, so a spool directory populated by
   the bash mid-cutover still drains under the new binary), the two-pass label-keyed-then-
   fallback dedupe, the reopen-vs-recurrence classification, the payload-hash dedup on the
-  recurrence note body, the Fenrir escalation mail, the undeclared-repo ask, the `delivers:`
+  recurrence note body, the Fenrir escalation mail, the `delivers:`
   label decision.
 
 ## Schema / architecture

@@ -47,21 +47,31 @@ pub fn supersede(s: &dyn Superseder, repo: &str, landing: &str, landed_at: i64) 
 /// The store as [`Superseder`]: the unfinished incidents, closed through the lifecycle row.
 pub struct RealSuperseder<'a> {
     pub bd: &'a crate::real::RealBd,
-    pub incident_label: String,
+    /// A red is filed under the incident label or, on a product repo, the plan label.
+    pub labels: Vec<String>,
+}
+
+/// Each red once, however many of the lists hold it.
+fn merge_open(lists: Vec<Vec<OpenRed>>) -> Vec<OpenRed> {
+    let mut seen = std::collections::HashSet::new();
+    lists.into_iter().flatten().filter(|b| seen.insert(b.id.clone())).collect()
 }
 
 impl Superseder for RealSuperseder<'_> {
     fn open_incidents(&self) -> Result<Vec<OpenRed>, String> {
-        let rows = self.bd.list_beads(crate::decide::Scope::Unfinished, Some(&self.incident_label), None, None)?;
-        Ok(rows
-            .into_iter()
-            .map(|(row, bead)| {
-                let stamp = |k: &str| bead.get(k).and_then(|v| v.as_str()).and_then(crate::run::parse_iso8601);
-                let bumped = row.labels.iter().filter_map(|l| l.strip_prefix("recurrence:")?.split_once('@')).filter_map(|(_, at)| crate::run::parse_iso8601(at));
-                let last_seen = bumped.chain(stamp("updated_at")).chain(stamp("created_at")).max();
-                OpenRed { id: row.id, external_ref: row.external_ref, last_seen }
-            })
-            .collect())
+        let lists = self.labels.iter().map(|label| {
+            let rows = self.bd.list_beads(crate::decide::Scope::Unfinished, Some(label), None, None)?;
+            Ok(rows
+                .into_iter()
+                .map(|(row, bead)| {
+                    let stamp = |k: &str| bead.get(k).and_then(|v| v.as_str()).and_then(crate::run::parse_iso8601);
+                    let bumped = row.labels.iter().filter_map(|l| l.strip_prefix("recurrence:")?.split_once('@')).filter_map(|(_, at)| crate::run::parse_iso8601(at));
+                    let last_seen = bumped.chain(stamp("updated_at")).chain(stamp("created_at")).max();
+                    OpenRed { id: row.id, external_ref: row.external_ref, last_seen }
+                })
+                .collect())
+        });
+        Ok(merge_open(lists.collect::<Result<_, String>>()?))
     }
 
     fn close(&self, id: &str, evidence: &str) -> Result<(), String> {
@@ -102,6 +112,16 @@ mod tests {
         let closed = f.closed.borrow();
         assert_eq!(closed.len(), 2);
         assert!(closed.iter().all(|(_, e)| e.contains("deadbeef")), "{closed:?}");
+    }
+
+    #[test_id(trbr70j)]
+    #[test]
+    fn a_red_in_the_plan_lane_is_closed_with_the_incident_lanes_and_one_in_both_lists_once() {
+        let incident = vec![red("sp-i", "fx", "t1.sh", Some(100)), red("sp-both", "fx", "t2.sh", Some(100))];
+        let plan = vec![red("sp-both", "fx", "t2.sh", Some(100)), red("sp-plan", "fx", "t3.sh", Some(100))];
+        let f = Fake { open: merge_open(vec![incident, plan]), closed: Default::default() };
+        let out = supersede(&f, "fx", "deadbeef", 300).unwrap();
+        assert_eq!(out, ["sp-i", "sp-both", "sp-plan"].map(|i| Outcome::Closed(i.into())));
     }
 
     #[test_id(ty0dti9)]

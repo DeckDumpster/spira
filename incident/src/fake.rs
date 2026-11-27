@@ -24,6 +24,8 @@ pub(crate) struct FakeBd {
     pub(crate) fact_fails: bool,
     /// `bd create` refuses with this text.
     pub(crate) create_error: Option<String>,
+    /// Repo-map text: when set, `create` applies the filing door's repo, build-spec and lane refusals.
+    pub(crate) admits: Option<String>,
     pub(crate) created: RefCell<Vec<(String, String)>>,
     pub(crate) bodies: RefCell<HashMap<String, String>>,
     pub(crate) reopened: RefCell<Vec<String>>,
@@ -42,6 +44,18 @@ pub(crate) struct FakeBd {
 impl FakeBd {
     pub(crate) fn new() -> FakeBd {
         FakeBd { reachable: true, next_id: RefCell::new(1), ..Default::default() }
+    }
+
+    fn door(&self, labels: &str, body: &str) -> Result<(), String> {
+        let Some(map) = &self.admits else { return Ok(()) };
+        let repo = labels.split(',').find_map(|l| l.strip_prefix("repo:")).ok_or("bead: --repo <name> required")?;
+        if bead::rune_partition(labels) == Some(spira_config::Lane::Plan) && !bead::has_build_spec(body) {
+            return Err(format!("bead: refusing: a bead for builder must name what to build under a `{}` heading", bead::BUILD_HEADING));
+        }
+        match bead::lane_check(labels, repo, &bead::repos_by_name(map), false) {
+            bead::LaneCheck::Admitted => Ok(()),
+            bead::LaneCheck::Refused(m) => Err(m),
+        }
     }
 }
 
@@ -69,6 +83,7 @@ impl Bd for FakeBd {
         if let Some(e) = &self.create_error {
             return Err(e.clone());
         }
+        self.door(labels, _body)?;
         let mut n = self.next_id.borrow_mut();
         let id = format!("sp-fake{n}");
         *n += 1;
@@ -181,6 +196,7 @@ pub(crate) fn cfg<'a>(known: &'a [String]) -> FileConfig<'a> {
         dedup_lookback_days: 7,
         repo_declared: Some("spira"),
         delivers_pref: None,
+        plan_labels: Some("spira,plan"),
         sop_ledger: "run/sop/applied.jsonl",
         spira_run: "run",
         home_repo: "spira",

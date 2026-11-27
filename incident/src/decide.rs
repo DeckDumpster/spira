@@ -300,6 +300,33 @@ pub fn incident_labels(supplied: Option<&str>, scope: Option<&str>, incident_lab
     }
 }
 
+/// Which lane a filing lands in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lane {
+    Plan,
+    Incident,
+}
+
+/// The repository a filing is filed against, and the lane there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Route {
+    pub repo: String,
+    pub lane: Lane,
+}
+
+/// A mapped product repo's own landing-ref red, or a caller asking for the plan lane, is a
+/// builder's work on that repo. Everything else is a harness fault: product repos admit no
+/// incident lane, so it goes to the home repo.
+pub fn route(reference: &str, labels: &str, repo_declared: Option<&str>, home_repo: &str, known_repos: &[String], plan_label: &str) -> Route {
+    let asks_plan = !plan_label.is_empty() && labels.split(',').any(|l| l == plan_label);
+    match repo_declared {
+        Some(r) if r != home_repo && known_repos.iter().any(|k| k == r) && (asks_plan || reference.starts_with(&crate::supersede::red_ref_prefix(r))) => {
+            Route { repo: r.to_string(), lane: Lane::Plan }
+        }
+        _ => Route { repo: home_repo.to_string(), lane: Lane::Incident },
+    }
+}
+
 /// The `removed` keys a release's `config-delta.toml` lists, as `spira.<key>` paths.
 pub fn delta_removed_keys(delta_text: &str) -> Vec<String> {
     let Some(start) = delta_text.find("removed") else { return Vec::new() };
@@ -582,6 +609,28 @@ mod tests {
         assert_eq!(incident_labels(Some("spira-ops,incident"), Some("spira-ops"), "incident"), "spira-ops,incident");
         assert_eq!(incident_labels(None, None, "incident"), "spira,incident");
         assert_eq!(incident_labels(None, Some(""), "incident"), "spira,incident");
+    }
+
+    // covers: UC-ops-detection-remediation-05
+    #[test_id(tsvql1l)]
+    #[test]
+    fn only_a_mapped_product_repos_red_or_plan_request_routes_to_the_plan_lane() {
+        let known = vec!["spira".to_string(), "dumpstar".to_string(), "other".to_string()];
+        let to = |reference: &str, labels: &str, repo: Option<&str>, plan: &str| route(reference, labels, repo, "spira", &known, plan);
+        let planned = Route { repo: "dumpstar".into(), lane: Lane::Plan };
+        let home = Route { repo: "spira".into(), lane: Lane::Incident };
+        assert_eq!(to("basefail-local:dumpstar:t:FAIL:1", "spira,incident", Some("dumpstar"), "plan"), planned);
+        assert_eq!(to("incident:base-red:main", "spira,plan", Some("dumpstar"), "plan"), planned);
+        for (reference, labels, repo, plan) in [
+            ("basefail-local:dumpstar:t:FAIL:1", "spira,incident", None, "plan"),
+            ("basefail-local:nope:t:FAIL:1", "spira,plan", Some("nope"), "plan"),
+            ("basefail-local:spira:t:FAIL:1", "spira,plan", Some("spira"), "plan"),
+            ("basefail-local:other:t:FAIL:1", "spira,incident", Some("dumpstar"), "plan"),
+            ("test-flip:dumpstar:t", "spira,incident,planning", Some("dumpstar"), "plan"),
+            ("test-flip:dumpstar:t", "spira,,incident", Some("dumpstar"), ""),
+        ] {
+            assert_eq!(to(reference, labels, repo, plan), home, "{reference} {labels} {repo:?}");
+        }
     }
 
     #[test_id(tfuazcd)]
