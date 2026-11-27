@@ -356,11 +356,7 @@ mod tests {
     /// The real registry this tree ships, defaults written against a fake home.
     fn reg() -> Registry<'static> {
         let env: &'static BTreeMap<String, String> = Box::leak(Box::new([("HOME".to_string(), "b/home".to_string())].into_iter().collect()));
-        // render() also reads the process registry, which loads from SPIRA_HOME on first use.
-        {
-            let _env = testkit::env_read();
-            crate::registry::for_process().expect("the process registry loads");
-        }
+        crate::process::load_fixture_registry();
         let home = crate::process::fixture_home();
         Registry { conf_d: Box::leak(Box::new(home.join("conf.d"))), env }
     }
@@ -468,6 +464,7 @@ mod tests {
         assert!(text.contains("lc_store_path = \"b/run/lc-control.db\""), "{text}");
     }
 
+    // Can fail only while nothing else in the process has loaded the registry: run it by name.
     #[test_id(t16nqxu)]
     #[test]
     fn a_swap_after_reg_returns_cannot_move_the_registry_render_reads() {

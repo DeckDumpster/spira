@@ -195,6 +195,14 @@ pub fn fixture_home() -> std::path::PathBuf {
     crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree")
 }
 
+/// Loads the process registry under the environment lock, for a test about to `validate` or
+/// `set_path`: the first load reads `SPIRA_HOME`.
+#[cfg(test)]
+pub(crate) fn load_fixture_registry() {
+    let _env = testkit::env_read();
+    crate::registry::for_process().expect("the process registry loads");
+}
+
 /// The complete fixture's text, read from the harness tree this crate was built in.
 pub fn complete_fixture_text() -> String {
     let _env = testkit::env_read();
