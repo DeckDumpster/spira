@@ -242,7 +242,7 @@ fn a_run_publishes_its_session_started_then_ended_and_runs_the_same_with_the_bro
     let started = seen.lock().unwrap().pop().unwrap_or_else(|| panic!("no session ran:\n{}", up.log));
     assert_eq!(started, json!({"state": "started", "bead": "sp-x", "rune": "builder", "started_at": NOW, "sessions": 4}), "{}", up.log);
     assert_eq!(next(&mut watching), json!({"state": "ended", "rc": SESSION_RC, "wall_s": 0, "at": NOW}));
-    assert_eq!(retained_state(broker.socket())["state"], "ended", "the last state is retained");
+    assert_eq!(broker.retained("session/sp-x/#"), [], "a later subscriber is handed nothing");
     assert_eq!(up.session_rc, SESSION_RC, "positive control: the session ran\n{}", up.log);
 
     broker.stop();
@@ -295,6 +295,26 @@ fn a_runs_heartbeat_publishes_its_age_and_lingering_the_configured_time_after_th
     assert_eq!(seen[0], json!({"at": NOW + 900, "sessions": 4}));
     assert_eq!(seen[1]["state"], "started", "not before: {}", seen[1]);
     assert_eq!(seen[2], json!({"state": "lingering", "at": NOW + left + linger, "sessions": 4}));
+}
+
+#[test_id(tgx0nj9)]
+#[test]
+fn a_subscriber_arriving_after_an_aged_session_ended_is_handed_nothing_for_it() {
+    let _one = ONE_RUN.lock().unwrap_or_else(|e| e.into_inner());
+    let broker = Broker::up();
+    let socket = broker.socket().to_path_buf();
+    let clock = AtomicI64::new(NOW);
+    let during = Mutex::new(Vec::new());
+    let outcome = run(&socket, &Store::default(), &clock, || {
+        let mut age = Subscriber::to(&socket, &["session/sp-x/age/15m"]);
+        clock.store(NOW + 900, Ordering::SeqCst);
+        next(&mut age);
+        *during.lock().unwrap() = broker.retained("session/sp-x/#");
+    });
+    let mut during: Vec<String> = during.into_inner().unwrap().into_iter().map(|(topic, _)| topic).collect();
+    during.sort();
+    assert_eq!(during, ["session/sp-x/age/15m", STATE], "positive control\n{}", outcome.log);
+    assert_eq!(broker.retained("session/#"), [], "{}", outcome.log);
 }
 
 #[test_id(twonu66)]

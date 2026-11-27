@@ -368,7 +368,9 @@ Each beat also publishes the session's own marks (`decide::session_marks`, `sess
 has run `SPIRA_SESSION_LINGER_SECS` past the first refused renewal that did not stop it (exit
 1, "not this holder's WORKING row"; neither "cannot tell" nor a refused event on a row still
 WORKING says the item left). The run publishes `started` and `ended` around the
-launch, as publisher `dwarf-<bead>`. A failed publish changes nothing.
+launch, as publisher `dwarf-<bead>`. After `ended` it clears `state` and every age it
+published: a later subscriber is handed nothing, and a reconnect republishes nothing. A run
+that dies without reaching `ended` leaves them retained. A failed publish changes nothing.
 
 ### 4.2a Phase and disposition on the row
 
