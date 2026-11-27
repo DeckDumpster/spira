@@ -1337,7 +1337,7 @@ impl Scripts for RealScripts {
     /// A unit that is `Absent` was collected on exit: its exit is unknown, so rc is 0 and the log
     /// is `err`; `deploy::activate_once` decides from `<releases>/current`.
     fn release_detached(&self, key: &str, bin: &Path, args: &[String], db: &str, log: &Path) -> RunOut {
-        use runtime::units::{Exit, UnitHandle, UnitProps, UnitSpec, UnitState, Units};
+        use runtime::units::{UnitHandle, UnitProps, UnitSpec, Units};
         let fail = |why: String| RunOut { rc: 127, out: String::new(), err: why };
         let units = match runtime::units::SystemdUnits::connect(std::sync::Arc::new(runtime::ports::WallClock)) {
             Ok(u) => u,
@@ -1355,23 +1355,23 @@ impl Scripts for RealScripts {
             Ok(h) => h,
             Err(e) => return fail(format!("cannot start release in a unit of its own: {}", e.0)),
         };
-        let rc = loop {
-            match units.facts(&handle) {
-                Ok(f) => match f.state {
-                    UnitState::Absent if fs::metadata(log).is_ok_and(|m| m.len() > 0) => break 0,
-                    UnitState::Absent => return fail(format!("{} ended without a trace in {}", handle.name, log.display())),
-                    UnitState::Failed | UnitState::Inactive => {
-                        let _ = units.reset_failed(&handle);
-                        break match f.exit {
-                            Some(Exit::Code(c)) => c,
-                            _ => 1,
-                        };
-                    }
-                    _ => {}
-                },
-                Err(e) => return fail(format!("cannot read the state of {}: {}", handle.name, e.0)),
+        let started = std::time::Instant::now();
+        let waited = await_detached(
+            &handle.name,
+            log,
+            || units.facts(&handle).map_err(|e| e.0),
+            || fs::metadata(log).is_ok_and(|m| m.len() > 0),
+            || started.elapsed().as_secs(),
+            || std::thread::sleep(std::time::Duration::from_millis(500)),
+        );
+        let rc = match waited {
+            Ok(DetachedEnd { rc, uncollected }) => {
+                if uncollected {
+                    let _ = units.reset_failed(&handle);
+                }
+                rc
             }
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            Err(why) => return fail(why),
         };
         let err = fs::read_to_string(log).unwrap_or_default();
         RunOut { rc, out: String::new(), err }
@@ -3212,6 +3212,74 @@ mod tests {
     // format_batch/base_conflict/pf_gate used to source batch.sh (deleted); these run the
     // inlined bodies against a real git repo and real bash, not the FLib fakes ops.rs tests
     // use elsewhere — parity proof that the inlining kept batch.sh's own behaviour.
+
+    fn unit_facts(state: runtime::units::UnitState, exit: Option<runtime::units::Exit>) -> runtime::units::UnitFacts {
+        runtime::units::UnitFacts { state, exit, ..runtime::units::UnitFacts::absent() }
+    }
+
+    /// Drive the waiter over `polls` (the last repeats), one second per pause.
+    fn waited_on(polls: &[(runtime::units::UnitFacts, bool)]) -> (Result<DetachedEnd, String>, u64) {
+        let (at, secs) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
+        let now = || &polls[at.get().min(polls.len() - 1)];
+        let end = await_detached(
+            "u.service",
+            Path::new("act.log"),
+            || Ok(now().0.clone()),
+            || now().1,
+            || secs.get(),
+            || {
+                at.set(at.get() + 1);
+                secs.set(secs.get() + 1);
+                assert!(secs.get() <= 1000, "the waiter never ended");
+            },
+        );
+        (end, secs.get())
+    }
+
+    #[test_id(tawx6tg)]
+    #[test]
+    fn a_unit_whose_start_job_has_not_run_is_waited_on_until_it_runs_and_is_collected() {
+        use runtime::units::UnitState::*;
+        let queued = unit_facts(Inactive, None);
+        assert_eq!(detached_poll(&queued, false, false), DetachedPoll::Wait);
+        let (end, _) = waited_on(&[(queued, false), (unit_facts(Active, None), false), (unit_facts(Absent, None), true)]);
+        assert_eq!(end, Ok(DetachedEnd { rc: 0, uncollected: false }));
+    }
+
+    #[test_id(tcphvkn)]
+    #[test]
+    fn a_units_own_exit_ends_the_wait_and_a_failed_ones_log_reaches_the_fault_reason() {
+        use runtime::units::{Exit, UnitState::*};
+        let failed = unit_facts(Failed, Some(Exit::Code(1)));
+        assert_eq!(detached_poll(&failed, false, true), DetachedPoll::Ended(1));
+        assert_eq!(detached_poll(&unit_facts(Inactive, Some(Exit::Code(0))), false, true), DetachedPoll::Ended(0));
+        assert_eq!(detached_poll(&unit_facts(Failed, Some(Exit::Signal(9))), true, true), DetachedPoll::Ended(1));
+        assert_eq!(detached_poll(&unit_facts(Inactive, None), true, true), DetachedPoll::Ended(1));
+        assert_eq!(waited_on(&[(failed, true)]).0, Ok(DetachedEnd { rc: 1, uncollected: true }));
+        let reason = crate::ops::deploy::step_failure("activate", 1, "release: restarting x.service\nx.service: restart failed: boom\n");
+        assert!(reason.contains("x.service: restart failed: boom"), "{reason}");
+    }
+
+    #[test_id(ter0ip1)]
+    #[test]
+    fn a_unit_that_leaves_no_trace_or_never_starts_is_refused_by_name() {
+        use runtime::units::UnitState::*;
+        let gone = unit_facts(Absent, None);
+        assert!(matches!(detached_poll(&gone, true, false), DetachedPoll::Lost(_)));
+        assert_eq!(waited_on(&[(gone, false)]).0, Err("u.service ended without a trace in act.log".into()));
+        let (end, secs) = waited_on(&[(unit_facts(Inactive, None), false)]);
+        assert_eq!(end, Err(format!("u.service never started within {DETACHED_START_WAIT_SECS}s")));
+        assert_eq!(secs, DETACHED_START_WAIT_SECS);
+    }
+
+    #[test_id(tjubcg1)]
+    #[test]
+    fn the_start_bound_does_not_cut_off_a_unit_that_has_been_seen_to_run() {
+        use runtime::units::UnitState::*;
+        let mut polls = vec![(unit_facts(Active, None), true); 2 * DETACHED_START_WAIT_SECS as usize];
+        polls.push((unit_facts(Absent, None), true));
+        assert_eq!(waited_on(&polls).0, Ok(DetachedEnd { rc: 0, uncollected: false }));
+    }
 }
 
 #[cfg(test)]
@@ -3264,6 +3332,65 @@ mod vtime_tests {
         assert_eq!(RealGit.branches(d.path(), "refs/heads/spira/"), want);
         fs::write(g.join("refs/heads/spira/sp-loose"), format!("{}\n", sha('6'))).unwrap();
         assert_eq!(RealGit.branches(d.path(), "refs/heads/spira/")[1].1, sha('6'), "nothing is cached between reads");
+    }
+}
+
+/// How long a started unit may go without being seen to run.
+const DETACHED_START_WAIT_SECS: u64 = 60;
+
+#[derive(Debug, PartialEq, Eq)]
+enum DetachedPoll {
+    Wait,
+    Ended(i32),
+    Lost(String),
+}
+
+/// `ran` is whether an earlier poll saw the unit live or exited. Until then, `inactive` with no
+/// exit is a start job that has not been dispatched, not an end.
+fn detached_poll(f: &runtime::units::UnitFacts, ran: bool, log_has_text: bool) -> DetachedPoll {
+    use runtime::units::{Exit, UnitState};
+    match f.state {
+        UnitState::Absent if log_has_text => DetachedPoll::Ended(0),
+        UnitState::Absent => DetachedPoll::Lost("ended without a trace".into()),
+        UnitState::Failed | UnitState::Inactive => match f.exit {
+            Some(Exit::Code(c)) => DetachedPoll::Ended(c),
+            Some(_) => DetachedPoll::Ended(1),
+            None if ran => DetachedPoll::Ended(1),
+            None => DetachedPoll::Wait,
+        },
+        UnitState::Activating | UnitState::Active | UnitState::Deactivating => DetachedPoll::Wait,
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct DetachedEnd {
+    rc: i32,
+    /// The manager still holds the ended unit.
+    uncollected: bool,
+}
+
+/// Poll `unit` until its own end; `Err` is the refusal, naming the unit.
+fn await_detached(
+    unit: &str,
+    log: &Path,
+    mut facts: impl FnMut() -> Result<runtime::units::UnitFacts, String>,
+    mut log_has_text: impl FnMut() -> bool,
+    mut waited_secs: impl FnMut() -> u64,
+    mut pause: impl FnMut(),
+) -> Result<DetachedEnd, String> {
+    use runtime::units::UnitState;
+    let mut ran = false;
+    loop {
+        let f = facts().map_err(|e| format!("cannot read the state of {unit}: {e}"))?;
+        ran |= f.exit.is_some() || matches!(f.state, UnitState::Activating | UnitState::Active | UnitState::Deactivating);
+        match detached_poll(&f, ran, log_has_text()) {
+            DetachedPoll::Wait if !ran && waited_secs() >= DETACHED_START_WAIT_SECS => {
+                return Err(format!("{unit} never started within {DETACHED_START_WAIT_SECS}s"));
+            }
+            DetachedPoll::Wait => pause(),
+            DetachedPoll::Ended(rc) => return Ok(DetachedEnd { rc, uncollected: f.state != UnitState::Absent }),
+            DetachedPoll::Lost(why) => return Err(format!("{unit} {why} in {}", log.display())),
+        }
     }
 }
 
