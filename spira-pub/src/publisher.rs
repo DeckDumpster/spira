@@ -65,8 +65,16 @@ pub fn check_topic(topic: &str) -> Result<(), PubError> {
 }
 
 fn message(topic: &str, class: Class, payload: &Value) -> Result<Message, PubError> {
+    built(topic, class, payload.to_string().into_bytes())
+}
+
+/// The zero-byte message that makes the broker forget a topic's retained value.
+fn clearing(topic: &str) -> Result<Message, PubError> {
+    built(topic, Class::State, Vec::new())
+}
+
+fn built(topic: &str, class: Class, payload: Vec<u8>) -> Result<Message, PubError> {
     check_topic(topic)?;
-    let payload = payload.to_string().into_bytes();
     if payload.len() > MAX_PAYLOAD {
         return Err(PubError::TooLarge { topic: topic.to_string(), bytes: payload.len() });
     }
@@ -230,7 +238,17 @@ impl Publisher {
     /// Queues `payload` for `topic`, retained when `class` is state. `Err` means it will not
     /// arrive; it is already logged.
     pub fn publish(&self, class: Class, topic: &str, payload: &Value) -> Result<(), PubError> {
-        let sent = message(topic, class, payload).and_then(|m| {
+        self.send(topic, message(topic, class, payload))
+    }
+
+    /// Queues the removal of `topic`'s retained value: a later subscriber is handed nothing
+    /// for it. Fails and is logged as [`publish`](Publisher::publish) does.
+    pub fn clear(&self, topic: &str) -> Result<(), PubError> {
+        self.send(topic, clearing(topic))
+    }
+
+    fn send(&self, topic: &str, built: Result<Message, PubError>) -> Result<(), PubError> {
+        let sent = built.and_then(|m| {
             let mut shared = self.connected()?;
             if shared.pending >= self.inner.queue {
                 return Err(PubError::QueueFull { topic: m.topic });

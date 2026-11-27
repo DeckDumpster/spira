@@ -1,7 +1,9 @@
 use spira_sim::world::{
-    control_store, db_root, down, is_world_serve, lc_pid_file, lc_socket, release_source, serve_argv,
-    ReleaseSource, Steps, RELEASE_ENV, TESTENV_ENV,
+    broker_pid_file, broker_socket, control_store, db_root, down, is_world_serve, lc_pid_file, lc_socket, release_source,
+    serve_argv, start_broker, ProcessSteps, ReleaseSource, Steps, RELEASE_ENV, TESTENV_ENV,
 };
+use std::io::Read;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -12,7 +14,7 @@ struct Fake {
     ups: AtomicUsize,
     downs: AtomicUsize,
     lifecycles: AtomicUsize,
-    /// lc_serve / lc_stop / db_down, in order.
+    /// lc_serve / lc_stop / broker_stop / db_down, in order.
     calls: Mutex<Vec<String>>,
     serve_fails: bool,
 }
@@ -68,6 +70,13 @@ impl Steps for Fake {
         self.calls.lock().unwrap().push(format!("lc_stop {pid}"));
         Ok(())
     }
+    fn broker_up(&self, _: &Path) -> Result<(), String> {
+        Ok(())
+    }
+    fn broker_stop(&self, _: &Path, pid: u32) -> Result<(), String> {
+        self.calls.lock().unwrap().push(format!("broker_stop {pid}"));
+        Ok(())
+    }
 }
 
 fn clean(_: &str) -> Option<String> {
@@ -100,6 +109,49 @@ fn down_refuses_a_directory_that_is_not_a_world() {
     std::fs::create_dir_all(&dir).unwrap();
     assert!(down(&dir, &Fake::default()).is_err());
     assert!(dir.exists());
+}
+
+#[test_id(tphvno3)]
+#[test]
+fn down_stops_the_broker_after_the_serve_that_publishes_to_it_and_before_the_database() {
+    let t = testkit::TempDir::new("simw");
+    let dir = t.join("w");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(spira_sim::world::MARKER), "").unwrap();
+    std::fs::write(lc_pid_file(&dir), "11").unwrap();
+    std::fs::write(broker_pid_file(&dir), "22").unwrap();
+    std::fs::write(dir.join("db.fixture"), "fx").unwrap();
+    let steps = Fake::default();
+    down(&dir, &steps).unwrap();
+    assert_eq!(*steps.calls.lock().unwrap(), ["lc_stop 11", "broker_stop 22", "db_down"]);
+}
+
+#[test_id(tf7cvob)]
+#[test]
+fn the_worlds_real_broker_accepts_once_up_and_down_leaves_no_process_behind() {
+    let t = testkit::TempDir::new("simbk");
+    let dir = t.join("w");
+    let systemd = dir.join("release/systemd");
+    std::fs::create_dir_all(&systemd).unwrap();
+    std::fs::write(dir.join(spira_sim::world::MARKER), "").unwrap();
+    let template = "mosquitto.conf";
+    std::fs::copy(testkit::manifest_dir().join("../../systemd").join(template), systemd.join(template)).unwrap();
+
+    // The PATH `mosquitto`, as `testkit::broker`: a round's HOME holds no pinned environment.
+    let path = std::env::var_os("PATH").expect("PATH is set");
+    let mosquitto = std::env::split_paths(&path).map(|d| d.join("mosquitto")).find(|p| p.is_file()).expect("a mosquitto on PATH");
+    start_broker(&dir, mosquitto.to_str().expect("a UTF-8 path")).unwrap();
+
+    let pid: u32 = std::fs::read_to_string(broker_pid_file(&dir)).unwrap().parse().unwrap();
+    let socket = broker_socket(&dir);
+    let mut held = UnixStream::connect(&socket).unwrap_or_else(|e| panic!("{} does not accept: {e}", socket.display()));
+    down(&dir, &ProcessSteps).unwrap();
+    assert!(!Path::new(&format!("{}/{pid}", system_paths::PROC)).exists(), "broker pid {pid} outlived the world");
+    // `down` removes the socket's directory, so only a connection opened before it can tell.
+    held.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap(); // batch-job: bounds a broker that outlived its world
+    let end = held.read(&mut [0u8; 1]);
+    let hung_up = matches!(&end, Ok(0)) || matches!(&end, Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset);
+    assert!(hung_up, "the world's broker still holds the connection: {end:?}");
 }
 
 /// A directory shaped like `spira-releases/<sha>`.

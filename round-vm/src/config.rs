@@ -71,6 +71,7 @@ pub struct Config {
     pub cap_secs: u64,
     /// The operator's resolved testenv limits as `key = value` lines for the VM's `round-config.toml`.
     pub testenv_limits: String,
+    pub pids_limit: u64,
     /// How long the VM waits for the unit-test job after the cap clock stops before killing it.
     pub post_guard_secs: u64,
     /// A progress phase with no change for this long reports itself stalled.
@@ -117,6 +118,7 @@ pub(crate) struct Fields {
     pub attr_linger_secs: u64,
     pub cap_secs: u64,
     pub testenv_limits: String,
+    pub pids_limit: u64,
     pub post_guard_secs: u64,
     pub vm_budget_secs: u64,
     pub build_budget_secs: u64,
@@ -270,6 +272,7 @@ impl Config {
             attr_linger_secs: num_env("SPIRA_ROUND_VM_ATTR_LINGER", 3600)?,
             cap_secs: must_cfg_parse("SPIRA_ROUND_CERTIFY_WALL_SECS")?,
             testenv_limits: testenv_limits()?,
+            pids_limit: must_cfg_parse("SPIRA_TESTENV_PIDS_LIMIT")?,
             post_guard_secs: num_env("SPIRA_ROUND_VM_POST_GUARD_SECS", 600)?,
             vm_budget_secs: num_env("SPIRA_ROUND_VM_PHASE_VM_SECS", 300)?,
             build_budget_secs: num_env("SPIRA_ROUND_VM_PHASE_BUILD_SECS", 600)?,
@@ -313,6 +316,7 @@ impl Config {
             attr_linger: Duration::from_secs(f.attr_linger_secs),
             cap_secs: f.cap_secs,
             testenv_limits: f.testenv_limits,
+            pids_limit: f.pids_limit,
             post_guard_secs: f.post_guard_secs,
             vm_budget_secs: f.vm_budget_secs,
             build_budget_secs: f.build_budget_secs,
@@ -450,6 +454,7 @@ mod tests {
             attr_linger_secs: 3600,
             cap_secs: 900,
             testenv_limits: "testenv_suite_cap = 600\n".into(),
+            pids_limit: 4096,
             post_guard_secs: 600,
             vm_budget_secs: 300,
             build_budget_secs: 600,
@@ -481,6 +486,24 @@ mod tests {
         assert!(c.host_addr.is_none());
         assert!(c.testenv_registry.is_none());
         assert!(c.cache_home.is_none());
+    }
+
+    #[test_id(tfz8a7y)]
+    #[test]
+    fn the_testenv_pids_limit_is_carried_and_a_blank_one_is_refused_by_name() {
+        let c = Config::build(Fields { pids_limit: 12345, ..base_fields() });
+        assert_eq!(c.pids_limit, 12345);
+
+        let load = |declared: &str| {
+            let d = TempDir::new();
+            let toml = spira_config::process::fixture_toml(d.path(), &[("SPIRA_TESTENV_PIDS_LIMIT", declared), ("SPIRA_ROUND_VM_HOST_ADDR", "192.0.2.1")]);
+            let _env = testkit::env(&[(spira_config::process::TOML_ENV, toml.to_str())]);
+            // Read fresh: the process pins its first config, which may be another test's.
+            spira_config::process::with_fresh(Config::load).unwrap()
+        };
+        assert_eq!(load("23456").unwrap().pids_limit, 23456);
+        let e = load(" ").unwrap_err();
+        assert!(e.starts_with("round-vm: ") && e.contains("SPIRA_TESTENV_PIDS_LIMIT"), "{e}");
     }
 
     #[test_id(t4idd1a)]

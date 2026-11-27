@@ -1,5 +1,6 @@
 //! The retained `round/<repo>/<batch>` topic: each open round's current event, kept under
-//! `run/rounds/<batch>.event` so any process that connects can republish it.
+//! `run/rounds/<batch>.event` so any process that connects can republish it. A round's ending
+//! is published and then cleared from the broker, so only open rounds stay retained there.
 
 use serde_json::{json, Value};
 use spira_pub::{Class, PubError, Publisher};
@@ -115,6 +116,12 @@ impl RoundBus {
             .as_ref()
     }
 
+    /// Waits until the broker has taken everything announced.
+    #[cfg(all(test, feature = "integration"))]
+    pub(crate) fn flush(&self, deadline: std::time::Duration) -> Result<(), PubError> {
+        self.publisher.get().and_then(Option::as_ref).expect("a round was published").flush(deadline)
+    }
+
     /// For a round that ended with no event of its own: publishes its ending, when this host
     /// still keeps an event for it as open.
     pub fn close(&self, run: &Path, repo: &str, batch: &str, kind: &str, event: Value, open: &dyn Fn(&str) -> Result<Vec<String>, String>) {
@@ -130,10 +137,14 @@ impl RoundBus {
         let _ = fs::remove_file(kept_path(run, batch));
         forget_ended(run, open);
         let now = Kept { repo: repo.into(), batch: batch.into(), event };
+        let ended = ENDING.contains(&kind);
         if let Some(p) = self.publisher(run) {
             let _ = p.publish(Class::State, &now.topic(), &now.event);
+            if ended {
+                let _ = p.clear(&now.topic());
+            }
         }
-        if !ENDING.contains(&kind) {
+        if !ended {
             keep(run, &now);
         }
     }

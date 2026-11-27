@@ -254,6 +254,24 @@ fn a_round_subscriber_sees_open_then_green_then_land() {
 }
 
 #[cfg(feature = "integration")]
+#[test_id(t2857wx)]
+#[test]
+fn a_subscriber_attaching_after_a_land_is_handed_no_retained_ending() {
+    let broker = testkit::broker::Broker::up();
+    let mut t = round_world();
+    t.rounds = bus_on(broker.socket());
+
+    let (batch, codes) = a_green_round(&t);
+    assert_eq!(codes, [0, 0, 0], "{}", t.err());
+    t.rounds.flush(std::time::Duration::from_secs(30)).unwrap();
+
+    // Retained messages arrive in subscription order, so a retained round topic would be first.
+    let topic = format!("round/spira/{batch}");
+    let first = testkit::broker::Subscriber::to(broker.socket(), &[&topic, "publisher/queue"]).recv();
+    assert_eq!(first.topic, "publisher/queue", "{}", String::from_utf8_lossy(&first.payload));
+}
+
+#[cfg(feature = "integration")]
 #[test_id(t2v7sq6)]
 #[test]
 fn an_open_round_is_republished_to_a_broker_that_lost_it() {
@@ -11745,6 +11763,36 @@ fn a_detached_activation_that_exits_0_leaving_current_behind_is_a_deploy_fault()
     assert_eq!(t.scripts.detached_keys.borrow().len(), 1);
     let m = fs::read_to_string(t.qfile("deploy-fault")).unwrap();
     assert!(m.contains("exited 0 but current is"), "{m}");
+}
+
+fn unread_activation_round(leave_current: bool) -> (T, String) {
+    let (t, batch) = deploy_faulting_round(true);
+    t.scripts.detached_unread.set(true);
+    t.scripts.leave_current.set(leave_current);
+    (t, batch)
+}
+
+#[test_id(tsm73cn)]
+#[test]
+fn a_detached_activation_whose_unit_state_cannot_be_read_but_whose_release_is_current_lands_with_exit_0() {
+    let (t, batch) = unread_activation_round(false);
+    assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
+    assert!(!t.qfile("deploy-fault").exists());
+    let mails = t.lib.mails.borrow();
+    assert!(!mails.iter().any(|(s, b)| s.starts_with("local landing") && b.contains("DEPLOY FAULT")), "{mails:?}");
+    let log = t.landing_log();
+    let line = log.lines().find(|l| l.starts_with("QUEUE LANDED ")).unwrap_or_else(|| panic!("{log}"));
+    assert!(line.split(' ').any(|f| f == "release=merged-tb"), "{line}");
+    assert!(t.err().contains("so release") && t.err().contains("is in effect"), "{}", t.err());
+}
+
+#[test_id(t1rojmw)]
+#[test]
+fn an_unread_activation_whose_release_is_not_current_is_a_deploy_fault_naming_both() {
+    let (t, batch) = unread_activation_round(true);
+    assert_eq!(t.run(&["round", "land", &batch]), crate::ops::DEPLOY_FAULT, "{}", t.err());
+    let m = fs::read_to_string(t.qfile("deploy-fault")).unwrap();
+    assert!(m.contains("cannot read the state of") && m.contains("current is"), "{m}");
 }
 
 #[test_id(tgcdkij)]

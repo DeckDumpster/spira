@@ -106,6 +106,24 @@ fn assert_delivered_once(broker: &Broker, topic: &str) {
     assert!(broker.retained(topic).is_empty(), "chatter was retained");
 }
 
+#[test_id(tv83o7h)]
+#[test]
+fn a_cleared_topic_is_handed_to_no_later_subscriber_and_a_filter_cannot_be_cleared() {
+    let broker = Broker::up();
+    let p = publisher("t", broker.socket());
+
+    p.publish(Class::State, "nosuch/topic", &json!({"a": 1})).unwrap();
+    p.clear("nosuch/topic").unwrap();
+    p.publish(Class::State, "host/pressure", &json!({"cpu": 1})).unwrap();
+    let filter = p.clear("nosuch/+");
+    p.flush(FAILSAFE).unwrap();
+
+    // Retained messages arrive in subscription order, so a retained nosuch/topic would be first.
+    let (topic, ..) = value(Subscriber::to(broker.socket(), &["nosuch/topic", "host/pressure"]).recv());
+    assert_eq!(topic, "host/pressure", "the cleared topic was still retained");
+    assert!(matches!(filter, Err(PubError::BadTopic(..))), "{filter:?}");
+}
+
 #[test_id(tjetwgp)]
 #[test]
 fn a_subscriber_to_two_retained_topics_receives_both_in_subscription_order() {
