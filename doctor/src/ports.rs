@@ -166,8 +166,12 @@ pub trait World {
     fn deps_provided_by_spira_env(&self) -> Vec<String>;
     /// The store path `~/.local/lib/spira-env` resolves to; `None` when it is absent.
     fn spira_env_installed(&self) -> Option<String>;
-    /// `nix eval --raw <release>#spira-env.outPath` — the store path the locked flake yields.
-    fn spira_env_locked(&self) -> Result<String, String>;
+    /// The flake digest the build recorded beside the env; `None` when there is no stamp.
+    fn spira_env_recorded(&self) -> Option<String>;
+    /// The flake digest of the running release.
+    fn spira_env_wanted(&self) -> Result<String, String>;
+    /// Whether `<env bin>/<name>` exists.
+    fn env_file_exists(&self, name: &str) -> bool;
     /// First line of `<path> --version`; `None` when it could not be run.
     fn tool_version_line(&self, path: &Path) -> Option<String>;
 

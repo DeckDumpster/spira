@@ -3036,6 +3036,80 @@ fn spira_env_target_names_the_release_directory_not_the_symlink_to_it() {
     assert_eq!(spira_env::target(&td.path().join("current")), want);
 }
 
+const STAMP: &str = spira_config::SPIRA_ENV_SOURCE_REL;
+
+/// A release root carrying a flake, and a home; the nix "builds" into the same scratch dir.
+fn stamping(t: &TempDir) -> (PathBuf, PathBuf, FakeNix) {
+    let (rel, home) = (t.path().join("spira-rel"), t.path().join("home"));
+    file(&rel.join("flake.nix"), "{ }\n");
+    file(&rel.join("flake.lock"), "{\"v\":1}\n");
+    (rel, home, FakeNix { store: t.path().join("store"), ..FakeNix::default() })
+}
+
+#[test_id(t9zupbj)]
+#[test]
+fn a_built_env_is_stamped_with_the_digest_of_the_releases_flake() {
+    let t = TempDir::new("env-stamp");
+    let (rel, home, nix) = stamping(&t);
+    spira_env::build(&nix, &rel, &home).unwrap();
+    let want = spira_env::flake_digest(&rel).unwrap();
+    assert_eq!(fs::read_to_string(home.join(STAMP)).unwrap(), format!("{want}\n"));
+}
+
+#[test_id(tyjuert)]
+#[test]
+fn the_flake_digest_is_the_sha256_of_flake_nix_followed_by_flake_lock() {
+    let t = TempDir::new("env-digest");
+    file(&t.path().join("flake.nix"), "a");
+    file(&t.path().join("flake.lock"), "bc");
+    assert_eq!(spira_env::flake_digest(t.path()).unwrap(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+}
+
+#[test_id(t2fuix8)]
+#[test]
+fn a_failed_env_build_writes_no_stamp() {
+    let t = TempDir::new("env-stamp-fail");
+    let (rel, home, nix) = stamping(&t);
+    let nix = FakeNix { fails: Some("boom"), ..nix };
+    spira_env::build(&nix, &rel, &home).unwrap_err();
+    assert!(!home.join(STAMP).exists());
+}
+
+#[test_id(telhj3w)]
+#[test]
+fn an_env_that_cannot_be_stamped_fails_the_build_and_stays_linked() {
+    let w = world_activating_a_flake_release();
+    let before = installed_env(&w, "old-env");
+    fs::create_dir_all(home_of(&w).join(format!("{STAMP}.new"))).unwrap();
+    let e = activate_with_nix(&w, &FakeSystemctl::new(w.cfg.unit_dir.clone()), &FakeNix::watching(&w)).unwrap_err();
+    assert!(e.contains("spira-env.source") && e.contains("nothing changed"), "{e}");
+    assert_eq!(fs::canonicalize(env_link(&w)).unwrap(), before);
+}
+
+#[test_id(txldtct)]
+#[test]
+fn an_undone_activation_puts_the_env_stamp_back_even_when_the_env_did_not_change() {
+    let w = world_activating_a_flake_release();
+    installed_env(&w, &format!("{A}-spira-env"));
+    file(&home_of(&w).join(STAMP), "earlier\n");
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.reload_fails_once.set(true);
+    let e = activate_with_nix(&w, &sc, &FakeNix::watching(&w)).unwrap_err();
+    assert!(!e.contains("UNDO INCOMPLETE"), "{e}");
+    assert_eq!(fs::read_to_string(home_of(&w).join(STAMP)).unwrap(), "earlier\n");
+}
+
+#[test_id(t26u51w)]
+#[test]
+fn an_undone_activation_removes_the_stamp_an_unstamped_env_never_had() {
+    let w = world_activating_a_flake_release();
+    installed_env(&w, "old-env");
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.reload_fails_once.set(true);
+    activate_with_nix(&w, &sc, &FakeNix::watching(&w)).unwrap_err();
+    assert!(!home_of(&w).join(STAMP).exists());
+}
+
 #[test_id(tdabs9l)]
 #[test]
 fn an_activation_that_cannot_move_current_puts_the_env_back() {

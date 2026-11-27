@@ -389,6 +389,21 @@ pub const SPIRA_ENV_REL: &str = ".local/lib/spira-env";
 /// The spira-env the last rebuild replaced, rooted so the garbage collection install starts keeps it for rollback.
 pub const SPIRA_ENV_PREV_REL: &str = ".local/lib/spira-env.prev";
 
+/// The stamp beside the env, under `$HOME`: the [`flake_digest`] of the release it was built from.
+pub const SPIRA_ENV_SOURCE_REL: &str = ".local/lib/spira-env.source";
+
+/// Hex sha256 of the release's `flake.nix` followed by its `flake.lock`: what the env builder
+/// stamps and `doctor` compares, so it lives where both can reach it.
+pub fn flake_digest(release_root: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for name in ["flake.nix", "flake.lock"] {
+        let path = release_root.join(name);
+        h.update(std::fs::read(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?);
+    }
+    Ok(format!("{:x}", h.finalize()))
+}
+
 /// The `bin/` of the pinned tool environment for `home` — what unit PATHs put ahead of the
 /// hand-installed directories.
 pub fn spira_env_bin(home: &str) -> String {

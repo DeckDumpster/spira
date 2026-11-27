@@ -1108,22 +1108,39 @@ pub fn check_hooks_path(w: &dyn World) -> Vec<Line> {
     }
 }
 
-/// Reports, never builds (`law-detect-drift-never-install`): the installed spira-env against
-/// the store path the locked flake evaluates to, and any tool `deps.toml` marks as provided
-/// by it that resolves from outside it or carries a `dev:` commit-stamped version.
+/// Reports, never builds (`law-detect-drift-never-install`): the flake digest stamped beside the
+/// installed spira-env against this release's, and any tool `deps.toml` marks as provided by it
+/// that the env lacks, that resolves from outside it, or that carries a `dev:` commit-stamped
+/// version. Runs no `nix`: an evaluation outlasts every call deadline.
 pub fn check_spira_env(w: &dyn World) -> Vec<Line> {
     let mut out = Vec::new();
-    match (w.spira_env_installed(), w.spira_env_locked()) {
-        (None, _) => out.push(warn("spira-env is not installed", "Re-run install to build it from the locked flake.")),
-        (Some(_), Err(e)) => out.push(warn("cannot evaluate the locked spira-env", e)),
-        (Some(have), Ok(want)) if have == want => out.push(ok(format!("spira-env matches the locked flake ({want})"))),
-        (Some(have), Ok(want)) => out.push(warn(
-            "spira-env has drifted from the locked flake",
-            format!("installed {have}\nlocked    {want}\nRe-run install to rebuild it."),
-        )),
+    let installed = w.spira_env_installed();
+    match &installed {
+        None => out.push(warn("spira-env is not installed", "Re-run install to build it from the locked flake.")),
+        Some(store) => out.push(match w.spira_env_recorded() {
+            None => warn(
+                "spira-env carries no source stamp; it was built before stamps existed. Re-run install or activate a release to rebuild it.",
+                "",
+            ),
+            Some(have) => match w.spira_env_wanted() {
+                Err(e) => warn("cannot read this release's flake", e),
+                Ok(want) if have == want => ok(format!("spira-env matches this release's flake ({})", want.get(..12).unwrap_or(&want))),
+                Ok(want) => warn(
+                    "spira-env has drifted from this release's flake",
+                    format!("installed {store}\nbuilt from {have}\nrelease    {want}\nRe-run install or activate a release to rebuild it."),
+                ),
+            },
+        }),
     }
     let env_bin = spira_config::spira_env_bin(&w.env("HOME").unwrap_or_default());
     for name in w.deps_provided_by_spira_env() {
+        // With no env at all, the one "not installed" line says it for every tool.
+        if installed.is_some() && !w.env_file_exists(&name) {
+            out.push(warn(
+                format!("{name} is provided by spira-env but {env_bin}/{name} does not exist: the env is older than this release's flake"),
+                "",
+            ));
+        }
         let Some(found) = w.which(&name) else { continue };
         if !found.starts_with(&env_bin) {
             out.push(warn(

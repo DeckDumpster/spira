@@ -514,19 +514,19 @@ impl World for Real {
         std::fs::canonicalize(Path::new(&home).join(spira_config::SPIRA_ENV_REL)).ok().map(|p| p.display().to_string())
     }
 
-    fn spira_env_locked(&self) -> Result<String, String> {
-        let root = self.home.parent().ok_or("no release root above SPIRA_HOME")?;
-        let target = format!("path:{}#spira-env.outPath", root.display());
-        let o = spira_config::bounded::bounded("nix")
-            .args(["--extra-experimental-features", "nix-command flakes", "eval", "--raw", &target])
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| e.to_string())?;
-        if o.status.success() {
-            Ok(String::from_utf8_lossy(&o.stdout).trim().to_string())
-        } else {
-            Err(String::from_utf8_lossy(&o.stderr).lines().next().unwrap_or("nix eval failed").to_string())
-        }
+    fn spira_env_recorded(&self) -> Option<String> {
+        let home = self.env("HOME").filter(|h| !h.is_empty())?;
+        let stamp = std::fs::read_to_string(Path::new(&home).join(spira_config::SPIRA_ENV_SOURCE_REL)).ok()?;
+        Some(stamp.trim().to_string()).filter(|s| !s.is_empty())
+    }
+
+    fn spira_env_wanted(&self) -> Result<String, String> {
+        spira_config::flake_digest(self.home.parent().ok_or("no release root above SPIRA_HOME")?)
+    }
+
+    fn env_file_exists(&self, name: &str) -> bool {
+        let home = self.env("HOME").unwrap_or_default();
+        Path::new(&spira_config::spira_env_bin(&home)).join(name).exists()
     }
 
     fn tool_version_line(&self, path: &Path) -> Option<String> {

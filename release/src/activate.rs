@@ -910,12 +910,15 @@ fn restore_files(changes: &[Change]) -> Vec<String> {
     errs
 }
 
-/// Points the env link back at what it held before this switch built over it.
+/// Points the env link, and its source stamp, back at what they held before this switch built
+/// over them. With no env before, the new one stays linked, so its stamp stays too.
 fn restore_env(ctx: &Ctx, env: Option<&spira_env::Built>) -> Result<(), String> {
-    match env.and_then(spira_env::Built::replaced) {
-        Some(before) => spira_env::restore(&ctx.cfg.home()?, before),
-        None => Ok(()),
+    let Some(built) = env.filter(|b| b.before.is_some()) else { return Ok(()) };
+    let home = ctx.cfg.home()?;
+    if let Some(before) = built.replaced() {
+        spira_env::restore(&home, before)?;
     }
+    spira_env::restore_stamp(&home, built)
 }
 
 /// The broker config a switch rewrote, as it was before; `None` when there was none.
