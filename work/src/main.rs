@@ -1238,6 +1238,25 @@ mod tests {
         assert!(at("ami-push") < at("show wr-1") && at("show wr-1") < at("ami-dispatch"), "{log:?}");
     }
 
+    #[test_id(t03bpsv)]
+    #[test]
+    fn only_a_forced_dispatch_sends_the_force_word_to_the_broker() {
+        use work::image::Ports;
+        for force in [true, false] {
+            let log = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+            let seen = log.clone();
+            let answer = recorded(0, "");
+            let p = ports(move |req, left| {
+                seen.borrow_mut().push(req.join(" "));
+                answer(req, left)
+            });
+            p.dispatch("cand", force).unwrap();
+            let sent = log.borrow()[0].clone();
+            assert!(sent.contains("ami-dispatch cand"), "{sent}");
+            assert_eq!(sent.contains("ami-dispatch cand force"), force, "{sent}");
+        }
+    }
+
     #[test_id(t5zb3za)]
     #[test]
     fn texts_reads_the_merge_base_side_and_the_tip_side_from_a_real_repo() {
