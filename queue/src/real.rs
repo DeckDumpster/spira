@@ -291,21 +291,18 @@ impl Git for RealGit {
             (_, why) => Err(format!("git merge-base {a} {b}: no merge base {why}")),
         }
     }
-    fn grep_files(&self, repo: &Path, rev: &str, needle: &str, glob: &str) -> Vec<String> {
-        stdout_of(git(repo).args([
-            "grep",
-            "-l",
-            "-F",
-            "-e",
-            needle,
-            rev,
-            "--",
-            &format!(":(glob){glob}"),
-        ]))
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|l| l.strip_prefix(&format!("{rev}:")).map(String::from))
-        .collect()
+    fn grep_files(&self, repo: &Path, rev: &str, needle: &str, glob: &str) -> Result<Vec<String>, String> {
+        let out = git(repo)
+            .args(["grep", "-l", "-F", "-e", needle, rev, "--", &format!(":(glob){glob}")])
+            .output()
+            .map_err(|e| format!("git grep at {rev}: {e}"))?;
+        match out.status.code() {
+            Some(0 | 1) => Ok(String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter_map(|l| l.strip_prefix(&format!("{rev}:")).map(String::from))
+                .collect()),
+            _ => Err(format!("git grep at {rev}: {}", String::from_utf8_lossy(&out.stderr).trim())),
+        }
     }
     fn branch_set(&self, repo: &Path, name: &str, sha: &str, force: bool) -> bool {
         let mut c = git(repo);
@@ -1930,6 +1927,13 @@ impl Forge for RealForge {
             None,
         )))
         .ok()
+    }
+    fn variable_set(&self, forge: &Path, repo: &Path, name: &str, value: &str) -> Result<(), String> {
+        let r = forge_call(forge, "variable-set", repo, &[name], Some(value.as_bytes()));
+        if r.ok() {
+            return Ok(());
+        }
+        Err(forge_refusal(&r, true))
     }
     fn pr_state(&self, forge: &Path, repo: &Path, pr: &str) -> Option<String> {
         forge_call(forge, "pr-state", repo, &[pr], None)

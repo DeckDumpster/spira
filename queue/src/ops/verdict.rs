@@ -1899,6 +1899,10 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
             };
             w.git.worktree_remove(b.path, &wt);
             if let Some(h) = new_head {
+                if let Err(e) = super::batch::write_deny_list_variable(w, c, b.path, &h) {
+                    w.err(format!("verdict {name}: PR {pr} not rebuilt on {cur}: {e} — nothing pushed; the next pass retries"));
+                    return FAIL;
+                }
                 if w.lib
                     .push(b.path, remote, &format!("+{h}:refs/heads/{}", b.branch))
                 {

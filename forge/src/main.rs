@@ -29,7 +29,7 @@ fn run_main() -> ExitCode {
     } else {
         String::new()
     };
-    let input = (cmd == "pr-create").then(stdin_bytes);
+    let input = matches!(cmd.as_str(), "pr-create" | "variable-set").then(stdin_bytes);
     let out = forge::client::dispatch(&RealGh, &RealProc, &cmd, Path::new(&repo), &argv, input.as_deref());
     for l in forge::diag::take() {
         eprintln!("{l}");

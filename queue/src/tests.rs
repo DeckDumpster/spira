@@ -170,13 +170,16 @@ impl Git for FGit {
     fn fork_point(&self, repo: &Path, a: &str, b: &str) -> Result<String, String> {
         self.merge_base(repo, a, b).ok_or_else(|| format!("no merge base of {a} and {b}"))
     }
-    fn grep_files(&self, _: &Path, rev: &str, needle: &str, _: &str) -> Vec<String> {
+    fn grep_files(&self, _: &Path, rev: &str, needle: &str, _: &str) -> Result<Vec<String>, String> {
+        if self.cannot_say.borrow().contains("grep") {
+            return Err("git cannot grep".into());
+        }
         let greps = self.greps.borrow();
-        greps
+        Ok(greps
             .get(&format!("{rev}:{needle}"))
             .or_else(|| greps.get(needle))
             .cloned()
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
     fn branch_set(&self, _: &Path, name: &str, sha: &str, _force: bool) -> bool {
         self.calls.borrow_mut().push(format!("branch-set {name}"));
@@ -1024,6 +1027,8 @@ struct FForge {
     /// What `fail-lines` answers.
     fails: RefCell<String>,
     arm_fails: std::cell::Cell<bool>,
+    /// variable-set refuses with this message.
+    variable_err: RefCell<Option<String>>,
     /// ami-runs answers in order; when none is left no run is in progress. `None` is an unreadable forge.
     ami_runs: RefCell<Vec<Option<Vec<String>>>>,
     /// ami-result answers in order; the last one repeats. Empty is a run not started.
@@ -1089,6 +1094,13 @@ impl Forge for FForge {
         self.calls
             .borrow_mut()
             .push(format!("pr-comment {pr} {line}"));
+    }
+    fn variable_set(&self, _: &Path, _: &Path, name: &str, value: &str) -> Result<(), String> {
+        self.calls.borrow_mut().push(format!("variable-set {name}\n{value}"));
+        match self.variable_err.borrow().clone() {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
     fn branch_protect(&self, _: &Path, _: &Path, b: &str) -> bool {
         self.calls.borrow_mut().push(format!("protect {b}"));
@@ -3619,6 +3631,88 @@ fn open_batch_admits_a_named_certified_bead() {
         .borrow()
         .iter()
         .any(|c| c.starts_with("pr-create")));
+}
+
+fn deny_list_reader_world() -> T {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    t.git.set("refs/heads/spira/sp-c", "tc");
+    *t.git.branches.borrow_mut() = vec![("spira/sp-c".into(), "tc".into())];
+    t.lc_row("sp-c", "CERTIFIED", "tc", 1);
+    t.git.greps.borrow_mut().insert("vars.SPIRA_TEST_DENY_LIST".into(), vec![".github/workflows/ci.yml".into()]);
+    t
+}
+
+const DENY_SNAPSHOT: &str = "# test-registry deny-list at=9 rows=1\ndisabled\ttest:t0aaaaa\tsp-x\t-\n";
+
+fn open_sp_c(t: &T) -> i32 {
+    t.run(&["open-batch", "--members", "sp-c", "--skip-pregate"])
+}
+
+fn variable_writes(t: &T) -> Vec<String> {
+    t.forge.calls.borrow().iter().filter(|c| c.starts_with("variable-set")).cloned().collect()
+}
+
+fn assert_nothing_pushed(t: &T) {
+    assert!(!t.lib.has("push "), "{:?}", t.lib.calls.borrow());
+    assert!(!cut_a_batch(t));
+    assert!(!t.qfile("open").exists());
+    assert!(t.git.calls.borrow().iter().any(|c| c.starts_with("branch -D spira/queue/")), "{:?}", t.git.calls.borrow());
+}
+
+#[test_id(tb1q0z1)]
+#[test]
+fn open_batch_writes_the_deny_list_variable_for_a_repo_whose_workflows_read_it() {
+    let t = deny_list_reader_world();
+    *t.scripts.deny_list.borrow_mut() = Some(Ok(DENY_SNAPSHOT.into()));
+    assert_eq!(open_sp_c(&t), 0, "{}\n{}", t.out(), t.err());
+    assert_eq!(variable_writes(&t), [format!("variable-set SPIRA_TEST_DENY_LIST\n{DENY_SNAPSHOT}")]);
+    assert!(t.scripts.calls.borrow().contains(&format!("deny-list --at {}", t.clock.now())), "{:?}", t.scripts.calls.borrow());
+    assert!(cut_a_batch(&t));
+}
+
+#[test_id(tegpirh)]
+#[test]
+fn open_batch_pushes_nothing_and_names_the_variable_when_it_cannot_be_written() {
+    let t = deny_list_reader_world();
+    *t.forge.variable_err.borrow_mut() = Some("rc=1: HTTP 403".into());
+    assert_eq!(open_sp_c(&t), 1, "{}", t.out());
+    let err = t.err();
+    assert!(err.contains("SPIRA_TEST_DENY_LIST") && err.contains("HTTP 403") && err.contains("nothing pushed"), "{err}");
+    assert_nothing_pushed(&t);
+}
+
+#[test_id(t2emjkf)]
+#[test]
+fn open_batch_pushes_nothing_when_the_deny_list_cannot_be_read() {
+    let t = deny_list_reader_world();
+    *t.scripts.deny_list.borrow_mut() = Some(Err("registry busy".into()));
+    assert_eq!(open_sp_c(&t), 1, "{}", t.out());
+    let err = t.err();
+    assert!(err.contains("SPIRA_TEST_DENY_LIST") && err.contains("registry busy"), "{err}");
+    assert!(variable_writes(&t).is_empty());
+    assert_nothing_pushed(&t);
+}
+
+#[test_id(txgk5vd)]
+#[test]
+fn open_batch_pushes_nothing_when_git_cannot_say_whether_the_workflows_read_the_list() {
+    let t = deny_list_reader_world();
+    t.git.cannot_say.borrow_mut().insert("grep");
+    assert_eq!(open_sp_c(&t), 1, "{}", t.out());
+    let err = t.err();
+    assert!(err.contains("SPIRA_TEST_DENY_LIST") && err.contains("git cannot grep"), "{err}");
+    assert_nothing_pushed(&t);
+}
+
+#[test_id(tlsnmpy)]
+#[test]
+fn open_batch_leaves_the_variable_alone_for_a_repo_that_does_not_read_it() {
+    let t = deny_list_reader_world();
+    t.git.greps.borrow_mut().clear();
+    assert_eq!(open_sp_c(&t), 0, "{}\n{}", t.out(), t.err());
+    assert!(variable_writes(&t).is_empty());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("deny-list")));
 }
 
 // covers: UC-landing-merge-queue-41
