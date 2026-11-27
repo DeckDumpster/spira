@@ -1176,10 +1176,10 @@ containers, and finishes `VERDICT FAULT rc=2 reason=over-cap`, logging
 (`exec`, or `record` with the exec's rc and seconds), then each such unit's `log (<unit>)` path
 (a suite's is its `.<suite>.raw` in the results dir) and the log's last 60 lines. Only the 4
 (`TAIL_UNITS`) longest-registered units get their lines; later ones get the path alone, and a
-closing line names them. A suite's raw log is removed once its `.out` is written. It is kept if
-that write fails, or if the cap has already snapshotted the running units (the report may name it;
-snapshot and removal share one lock). A kept log, including that of a suite cut with no record,
-lasts until the results dir is pruned;
+closing line names them. A suite's raw log is removed once its `.out` is written, and `.out`
+becomes the suite's log. The raw log is kept if that write fails, or if a cap's snapshot has
+already named the suite (snapshot and removal share one lock). A kept log, including that of a
+suite cut with no record, lasts until the results dir is pruned;
 the verdict is recorded in `run.events`. If it has not unwound 30 s later it kills its descendants
 and exits itself, printing the same report before the VERDICT line: nothing buffered survives that
 exit.

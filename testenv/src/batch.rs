@@ -254,8 +254,10 @@ impl Shared<'_> {
         (out.rc, secs, out.output, running)
     }
 
+    /// Only for a suite whose `.out` was written: that file takes the raw log's place.
     fn drop_raw(&self, suite: &str) {
-        crate::cap::discard_log(&self.raw_path(suite));
+        let out = self.cfg.results.join(format!("{suite}.out"));
+        crate::cap::supersede_log(&self.raw_path(suite), &out);
     }
 
     fn finish(&self, n: usize, suite: &str, rc: i32, secs: u64, output: &str) {
@@ -1073,22 +1075,30 @@ mod tests {
     #[test_id(tfgj6g3)]
     #[test]
     fn a_log_the_cap_may_have_named_is_kept_after_the_suite_is_recorded() {
+        let armed = Arc::new(Mutex::new(None));
+        let slot = armed.clone();
         let rt = FakeRuntime::new();
-        rt.on_suite("test-a.sh", |_| {
-            crate::cap::PINNED_HERE.with(|p| p.set(true));
+        rt.on_suite("test-a.sh", move |_| {
+            let cap = crate::cap::arm(crate::cap::Cap { secs: 0, source: "test" }, None);
+            cap.await_trip();
+            *slot.lock().unwrap() = Some(cap);
             ExecOutcome { rc: 0, output: "ok\n".into() }
         });
         let dir = tmpdir("raw-tripped");
         let s = session(&rt);
         let c = cfg(Mode::Serial, &dir, 0);
         let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
-        crate::cap::PINNED_HERE.with(|p| p.set(false));
+        let cap = armed.lock().unwrap().take().expect("armed");
+        let trip = cap.finish().expect("tripped");
         assert!(out.records.contains_key("test-a.sh"));
-        assert!(dir.join(".test-a.sh.raw").exists());
+        let raw = dir.join(".test-a.sh.raw");
+        assert!(trip.report.contains(&crate::cap::log_line("test-a.sh", &raw)), "{:?}", trip.report);
+        assert!(raw.exists());
     }
 
     /// The first exec of `test-a.sh` answers `first`, every later one a pass; returns what
-    /// a cap tripping while each record was being reported would have named.
+    /// a cap tripping while each record was being reported would have named. Each report
+    /// must carry the log, by then `.out`, and its last line.
     fn cut_while_recording(mode: Mode, first: (i32, &'static str)) -> Vec<String> {
         let rt = FakeRuntime::new();
         let calls = AtomicUsize::new(0);
@@ -1106,7 +1116,14 @@ mod tests {
         let seen = Mutex::new(Vec::new());
         let line = |l: &str| {
             if l.trim_start().starts_with("test-a.sh") {
-                seen.lock().unwrap().push(crate::cap::describe());
+                let what = crate::cap::describe();
+                let report = crate::cap::trip_report(&what, 1, "test");
+                let out = dir.join("test-a.sh.out");
+                assert!(report.contains(&crate::cap::log_line("test-a.sh", &out)), "{report:?}");
+                let last = fs::read_to_string(&out).unwrap();
+                let last = format!("    {}", last.lines().last().unwrap());
+                assert_eq!(report[report.len() - 2], last, "{report:?}");
+                seen.lock().unwrap().push(what);
             }
         };
         let hooks = Hooks { log: &|_| {}, line: &line, timing: &|_, _, _, _, _| {}, psi_high: &|| false };
