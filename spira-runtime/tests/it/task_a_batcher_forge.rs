@@ -316,3 +316,89 @@ fn a_member_whose_round_is_held_is_noted_with_that_cause() {
     assert_eq!(noted, [("dd-a".to_string(), "round-held".to_string())], "{acts:?}");
     assert!(named(&decide(&carry, &snap).1).is_empty(), "once per change");
 }
+
+/// A carry waiting in `state` on a round whose effect the scheduler may or may not hold.
+fn waiting_on_a_round(state: State) -> Carry {
+    let rc = RepoCarry { state, round_key: Some("sp-gyucje:a69188d0".into()), ..RepoCarry::default() };
+    Carry { repos: [("deckdumpster".to_string(), rc)].into() }
+}
+
+fn one_submitted_flying(in_flight: Option<Vec<String>>) -> Snapshot {
+    let mut s = observed(vec![read("sp-0iavy8.1", true)], vec![]);
+    s.repos.get_mut("deckdumpster").unwrap().in_flight = in_flight;
+    s
+}
+
+#[test_id(tdyir61)]
+#[test]
+fn an_assembling_or_opening_carry_with_its_effect_not_in_flight_is_cut_again() {
+    for state in [State::Assembling, State::Opening] {
+        let (carry, acts) = decide(&waiting_on_a_round(state), &one_submitted_flying(Some(vec![])));
+        assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [FETCH, ASSEMBLE], "{state:?}: {acts:?}");
+        assert_eq!(carry.repos["deckdumpster"].state, State::Assembling, "{state:?}");
+        assert_ne!(carry.repos["deckdumpster"].round_key.as_deref(), Some("sp-gyucje:a69188d0"), "{state:?}");
+    }
+}
+
+#[test_id(tpsmo3q)]
+#[test]
+fn an_assemble_or_batch_open_in_flight_is_left_alone() {
+    for (state, effect) in [(State::Assembling, ASSEMBLE), (State::Opening, BATCH_OPEN)] {
+        for in_flight in [Some(vec![effect.to_string()]), None] {
+            let before = waiting_on_a_round(state);
+            let (carry, acts) = decide(&before, &one_submitted_flying(in_flight.clone()));
+            assert!(acts.is_empty(), "{state:?} {in_flight:?}: {acts:?}");
+            assert_eq!(carry.repos["deckdumpster"].state, state, "{in_flight:?}");
+            assert_eq!(carry.repos["deckdumpster"].round_key, before.repos["deckdumpster"].round_key, "{state:?} {in_flight:?}");
+        }
+    }
+}
+
+#[test_id(ti2rq8d)]
+#[test]
+fn a_carried_assembling_round_with_nothing_in_flight_is_cut_through_the_handler() {
+    use spira_runtime::tasks::a::batcher_local::{Assembled, Leg};
+    let snapshot = serde_json::to_string(&one_submitted_flying(None)).unwrap();
+    let assembled = serde_json::to_string(&Assembled { merged: vec![("sp-0iavy8.1".into(), "t1".into())], suites: false, ..Assembled::default() }).unwrap();
+    let mut r = runtime::taskrig::TaskRig::new(1, BatcherForge::new(BTreeMap::new()).registration())
+        .unwrap()
+        .double(OBSERVE, move |_| Ok(snapshot.clone()))
+        .double(ASSEMBLE, move |_| Ok(assembled.clone()));
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, ASSEMBLE].contains(e)) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.tick(STREAM, EventKind::new(STATE, &serde_json::to_string(&waiting_on_a_round(State::Assembling)).unwrap())).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(CADENCE_MS * 2).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let names: Vec<&str> = r.requested().iter().map(|q| q.name.as_str()).collect();
+    let cut = names.iter().position(|n| *n == ASSEMBLE).unwrap_or_else(|| panic!("no assemble was requested: {names:?}"));
+    let open = r.requested()[cut..].iter().find(|q| q.name == BATCH_OPEN).unwrap_or_else(|| panic!("no batch_open followed: {names:?}"));
+    let leg: Leg = serde_json::from_str(&open.input).unwrap();
+    assert_eq!(leg.members, [("sp-0iavy8.1".to_string(), "t1".to_string())]);
+}
+
+#[test_id(t77erau)]
+#[test]
+fn a_hanging_assemble_is_asked_once() {
+    let mut r = runtime::taskrig::TaskRig::new(1, BatcherForge::new(BTreeMap::new()).registration())
+        .unwrap()
+        .hanging(ASSEMBLE)
+        .double(OBSERVE, |_| Ok(serde_json::to_string(&busy()).unwrap()));
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, ASSEMBLE].contains(e)) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(CADENCE_MS * 3).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let asked = |name: &str| r.requested().iter().filter(|q| q.name == name).count();
+    assert_eq!((asked(ASSEMBLE), asked(BATCH_OPEN)), (1, 0), "{:?}", r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>());
+}
+
+#[test_id(t5n898r)]
+#[test]
+fn a_forgotten_round_is_not_cut_again_while_the_forge_is_disabled() {
+    let (carry, acts) = decide(&waiting_on_a_round(State::Assembling), &Snapshot { enabled: false, ..one_submitted_flying(Some(vec![])) });
+    assert!(acts.iter().all(|a| a.effect != FETCH && a.effect != ASSEMBLE), "{acts:?}");
+    assert_eq!(carry.repos["deckdumpster"].state, State::Disabled);
+}

@@ -47,6 +47,8 @@
 //! |---|---|---|
 //! | Idle | observe: forge disabled | Disabled (`inbox.append` once per waiting set) |
 //! | Disabled | observe: enabled | Idle |
+//! | Assembling | observe: assemble not in flight | Idle |
+//! | Opening | observe: batch_open not in flight | Idle |
 //! | Idle | observe: open batch PR | Settling (hand-off: emit `batch.settle_wanted` to [[queue-step]]; `arm`) |
 //! | Settling | `batch.settled` | Idle |
 //! | Idle | observe: no batch, `should_cut` = None | Idle (silent) |
@@ -109,7 +111,7 @@ use batcher_cut::attribute::Attribution;
 use runtime::units::{Exit, RanOutput, UnitRan};
 use serde::{Deserialize, Serialize};
 
-use super::batcher_local::{P2, digest, green, handle_p2, interests, left_out_note, page_line, select_split, table_step, unit_key, Assembled, On, Leg, Policy, ATTRIBUTE, leg_deadline_ms};
+use super::batcher_local::{P2, digest, green, handle_p2, interests, left_out_note, page_line, select_split, table_step, unit_key, Assembled, On, Leg, Policy, ATTRIBUTE, leg_deadline_ms, flying_by_repo};
 use super::kit::{self, Act, Cadence, Shape};
 
 pub use super::batcher_local::Member;
@@ -203,6 +205,10 @@ pub struct Repo {
     /// Beads the pool read kept out of the pool, with why.
     #[serde(default)]
     pub left_out: Vec<batcher_cut::io::LeftOut>,
+    /// The effects of this task asked for this repo and not yet answered, as the scheduler holds
+    /// them; `None` when the handler could not say.
+    #[serde(default)]
+    pub in_flight: Option<Vec<String>>,
 }
 
 /// One repository as the probe read it. The pool's tips are the sifted ones: a forge cut asks no sift.
@@ -246,6 +252,8 @@ pub enum State {
 pub enum Trigger {
     ForgeDisabled,
     ForgeEnabled,
+    /// The effect the state waits on is not in flight: no outcome will come.
+    EffectUnsent,
     OpenBatch,
     BatchSettled,
     NoTrigger,
@@ -267,6 +275,8 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Idle, Trigger::ForgeDisabled, State::Disabled),
     (State::Disabled, Trigger::ForgeDisabled, State::Disabled),
     (State::Disabled, Trigger::ForgeEnabled, State::Idle),
+    (State::Assembling, Trigger::EffectUnsent, State::Idle),
+    (State::Opening, Trigger::EffectUnsent, State::Idle),
     (State::Idle, Trigger::OpenBatch, State::Settling),
     (State::Settling, Trigger::BatchSettled, State::Idle),
     (State::Idle, Trigger::NoTrigger, State::Idle),
@@ -382,7 +392,23 @@ impl Machine<'_> {
         self.rc = RepoCarry { state: kept.state, held: kept.held, base_moved: kept.base_moved, conflict_streaks: kept.conflict_streaks, held_keys: kept.held_keys, left_noted: kept.left_noted, ..RepoCarry::default() };
     }
 
+    /// The effect the state waits on, when the scheduler says it holds none in flight for the repo.
+    fn unsent(&self, repo: &Repo) -> Option<&'static str> {
+        let effect = match self.rc.state {
+            State::Assembling => ASSEMBLE,
+            State::Opening => BATCH_OPEN,
+            _ => return None,
+        };
+        repo.in_flight.as_ref().filter(|f| !f.iter().any(|e| e == effect)).map(|_| effect)
+    }
+
     fn observe(&mut self, policy: &Policy, enabled: bool, repo: &Repo) {
+        // Ahead of the disabled gate: a forgotten round must not be cut again under the hold.
+        if let Some(effect) = self.unsent(repo) {
+            eprintln!("{NAME} {}: forgetting its {:?} round {:?}: its {effect} was never answered and none is in flight", self.repo, self.rc.state, self.rc.round_key);
+            self.go(Trigger::EffectUnsent);
+            self.reset();
+        }
         if !enabled && matches!(self.rc.state, State::Idle | State::Disabled) {
             self.go(Trigger::ForgeDisabled);
             // `page_held` (`main.rs:1235-1254`): once per change of the waiting set, the whole pool.
@@ -635,7 +661,12 @@ impl Handler for BatcherForge {
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        let observed = |carry: &Carry, body: &str| serde_json::from_str::<Snapshot>(body).ok().map(|snap| decide_with(&self.policy, carry, &snap));
+        let observed = |carry: &Carry, body: &str| {
+            serde_json::from_str::<Snapshot>(body).ok().map(|mut snap| {
+                in_flight(view, &ev.stream, &mut snap);
+                decide_with(&self.policy, carry, &snap)
+            })
+        };
         let outcome = |carry: &Carry, effect: &str, ok: bool, body: &str, input: &str| match serde_json::from_str::<Leg>(input) {
             Ok(leg) => on_outcome(carry, effect, ok, body, &leg, ev.at),
             Err(_) => (carry.clone(), vec![]),
@@ -644,6 +675,14 @@ impl Handler for BatcherForge {
         let ran = |carry: &Carry, r: &UnitRan| on_ran_with(carry, r, &out, ev.at);
         let legs = |carry: &Carry| carry.repos.values().filter(|rc| matches!(rc.state, State::Corpus | State::Attributing)).filter_map(|rc| rc.leg.clone()).collect();
         handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran, legs })
+    }
+}
+
+/// Each repo of `snap` given the effects of this task the stream has asked for and not had answered.
+fn in_flight(view: &Projection, stream: &StreamKey, snap: &mut Snapshot) {
+    let mut flying = flying_by_repo(view, stream, |input| serde_json::from_str::<Leg>(input).ok().map(|leg| leg.repo));
+    for (name, repo) in &mut snap.repos {
+        repo.in_flight = Some(flying.remove(name).unwrap_or_default());
     }
 }
 
