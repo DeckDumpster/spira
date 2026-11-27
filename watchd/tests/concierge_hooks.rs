@@ -54,14 +54,14 @@ import json, sys
 for event, groups in json.load(sys.stdin)["hooks"].items():
     for group in groups:
         for hook in group["hooks"]:
-            print(event, hook["command"].removeprefix("harness/hooks/"))
+            print(event, hook["command"].removeprefix("release/spira/hooks/"))
 '"#;
     let out = Command::new("bash")
         .args(["-c", RUN, "bash"])
         .arg(testkit::manifest_dir().join("../concierge.sh"))
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap())
-        .env("SPIRA_HOME", "harness")
+        .env("SPIRA_RELEASE", "release")
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));

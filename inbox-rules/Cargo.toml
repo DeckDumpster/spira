@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2021"
 publish = false
 autotests = false
-description = "inbox-rules — the one drop/dedup rule set for the Concierge inbox, shared by `inbox-triage`, and the one append-and-push leg (record) every inbox writer calls."
+description = "inbox-rules — the one drop/dedup rule set for the Concierge inbox, shared by `inbox-triage`, and the one append-and-announce leg (record) every inbox writer calls."
 
 [[test]]
 name = "publish"
@@ -26,6 +26,5 @@ ports = { path = "../ports" }
 spira-config = { path = "../spira-config" }
 
 [dev-dependencies]
-libc = "0.2"
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }

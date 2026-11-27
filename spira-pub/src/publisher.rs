@@ -141,7 +141,7 @@ pub struct Publisher {
 }
 
 /// `SPIRA_BROKER_SOCKET` as `cfg` declares it; refused, naming the key, when it does not.
-fn configured_socket(cfg: &dyn Fn(&str) -> Result<String, String>) -> Result<String, PubError> {
+pub fn configured_socket(cfg: &dyn Fn(&str) -> Result<String, String>) -> Result<String, PubError> {
     use spira_config::broker::{socket_path, SOCKET_KEY};
     let refuse = |why: String| PubError::Config(format!("cannot find the broker ({SOCKET_KEY}): {why}"));
     cfg(SOCKET_KEY).map_err(refuse)?;
@@ -150,7 +150,7 @@ fn configured_socket(cfg: &dyn Fn(&str) -> Result<String, String>) -> Result<Str
 }
 
 /// `SPIRA_SEED` as `cfg` declares it; declared empty draws from the clock.
-fn configured_seed(cfg: &dyn Fn(&str) -> Result<String, String>, now_ms: u64) -> Result<u64, PubError> {
+pub fn configured_seed(cfg: &dyn Fn(&str) -> Result<String, String>, now_ms: u64) -> Result<u64, PubError> {
     let value = cfg("SPIRA_SEED").map_err(|why| PubError::Config(format!("cannot read SPIRA_SEED: {why}")))?;
     match value.trim() {
         "" => Ok(now_ms),

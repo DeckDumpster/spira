@@ -87,6 +87,15 @@ impl<'a> Segment<'a> {
     }
 }
 
+/// The family `topic` is recorded under: the first level kept, and each later level that holds
+/// anything outside `a-z` (ids, ages, numbers) replaced by `+`. It is itself an MQTT filter
+/// selecting `topic`.
+pub fn family(topic: &str) -> String {
+    let levels = topic.split('/').enumerate();
+    let levels = levels.map(|(i, level)| if i == 0 || level.bytes().all(|b| b.is_ascii_lowercase()) { level } else { "+" });
+    levels.collect::<Vec<_>>().join("/")
+}
+
 fn segments(pattern: &str) -> Vec<Segment<'_>> {
     // An alternation holds `|`, never `/`, so splitting on `/` keeps each `<...>` whole.
     pattern.split('/').map(Segment::of).collect()
@@ -142,6 +151,33 @@ pub fn filter_selects(filter: &str, topic: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(tpedv1y)]
+    #[test]
+    fn a_topics_family_keeps_the_first_level_and_wildcards_every_level_not_of_lowercase_letters() {
+        for (topic, want) in [
+            ("bead/sp-8wkgbs/state", "bead/+/state"),
+            ("bead/sp-a/sessions", "bead/+/sessions"),
+            ("session/sp-a/state", "session/+/state"),
+            ("session/sp-a/age/15m", "session/+/age/+"),
+            ("test/t274ltk/red", "test/+/red"),
+            ("gate/spira/sp-a", "gate/spira/+"),
+            ("round/spira/r-1", "round/spira/+"),
+            ("pr/spira/7", "pr/spira/+"),
+            ("progress/sp-a", "progress/+"),
+            ("publisher/lc-serve", "publisher/+"),
+            ("release/active", "release/active"),
+            ("host/pressure", "host/pressure"),
+            ("concierge/inbox", "concierge/inbox"),
+            ("publisher/queue", "publisher/queue"),
+            ("subscriber/concierge", "subscriber/concierge"),
+            ("sp-a", "sp-a"),
+            ("a/B/c", "a/+/c"),
+            ("a/b_c/d", "a/+/d"),
+        ] {
+            assert_eq!(family(topic), want, "{topic}");
+        }
+    }
 
     #[test_id(t274ltk)]
     #[test]

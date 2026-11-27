@@ -22,6 +22,11 @@ impl Pass {
 
 /// One round whose `podman run` does `entry`, under a cap of `cap` seconds and the task limit `pids`.
 fn pass(name: &str, entry: &str, cap: u64, pids: &str) -> Pass {
+    pass_with(name, 0, entry, "the-entry", cap, pids)
+}
+
+/// [`pass`] whose `podman pull` exits `pull_rc` and whose declared CI entry is `ci_entry`.
+fn pass_with(name: &str, pull_rc: i32, entry: &str, ci_entry: &str, cap: u64, pids: &str) -> Pass {
     let tmp = testkit::TempDir::new(name);
     let root = tmp.path().to_path_buf();
     let (src, home, stub, mirror) = (root.join("src"), root.join("home"), root.join("stub"), root.join("mirror.git"));
@@ -37,7 +42,7 @@ fn pass(name: &str, entry: &str, cap: u64, pids: &str) -> Pass {
     git(&root, &["clone", "--quiet", "--mirror", "src", "mirror.git"]);
     // Logs each call, and writes the cidfile `run` is told to, as podman does.
     let log = root.join("podman.calls");
-    testkit::write_exe(stub.join("podman"), &format!("#!/bin/sh\necho \"$@\" >> '{}'\n[ \"$1\" = run ] || exit 0\n[ \"$2\" != --cidfile ] || echo cid > \"$3\"\necho entry-output\n{entry}\n", log.display()));
+    testkit::write_exe(stub.join("podman"), &format!("#!/bin/sh\necho \"$@\" >> '{}'\n[ \"$1\" = run ] || exit {pull_rc}\n[ \"$2\" != --cidfile ] || echo cid > \"$3\"\necho entry-output\n{entry}\n", log.display()));
 
     // The script pins its own PATH and fetches over git://; both are pointed at the fixture.
     let url = "\"git://${host_addr}:${port}/mirror.git\"";
@@ -49,7 +54,7 @@ fn pass(name: &str, entry: &str, cap: u64, pids: &str) -> Pass {
         .replace(path_line, &format!("export PATH=\"{}:{}\"", stub.display(), system_paths::SYSTEM_PATH_MIN));
     std::fs::write(root.join("round.sh"), script).unwrap();
     let cap = cap.to_string();
-    let args = ["host", "1", "", "1", "", "", "", "1", &cap, "1", "", "refs/rounds/1", &sha, "the-entry", "", "", "", "", "", "", "image", "", "", pids];
+    let args = ["host", "1", "", "1", "", "", "", "1", &cap, "1", "", "refs/rounds/1", &sha, ci_entry, "", "", "", "", "", "", "image", "", "", pids];
     let o = Command::new("bash").arg(root.join("round.sh")).args(args).env_clear().env("HOME", &home).env("PATH", system_paths::SYSTEM_PATH_MIN).stdin(Stdio::null()).output().unwrap();
     let calls = std::fs::read_to_string(&log).unwrap_or_default();
     Pass { calls, cidfile: home.join("round-entry.cid"), work: home.join("round-work"), code: o.status.code(), said: String::from_utf8_lossy(&o.stderr).into_owned(), _tmp: tmp }
@@ -90,8 +95,7 @@ fn an_entry_that_passes_is_green_and_one_that_exits_124_early_is_an_ordinary_red
 #[test_id(tmx4vs4)]
 #[test]
 fn the_container_gets_the_sent_task_limit_and_ci_out_reports_what_it_reads_before_the_entry() {
-    // The fake runs what follows the image, as podman would inside the container.
-    let p = pass("foreign-pids", "while [ \"$1\" != image ]; do shift; done; shift; exec \"$@\"", 600, "12345");
+    let p = pass_running_the_command("foreign-pids", "", "the-entry");
     assert_eq!(p.code, Some(0), "{}", p.said);
     assert!(p.calls.lines().any(|l| l.starts_with("run ") && l.contains(" --pids-limit 12345 ")), "{}", p.calls);
     let out = p.result("ci.out").unwrap();
@@ -107,4 +111,37 @@ fn a_round_sent_no_task_limit_is_refused_before_the_clone() {
     assert_eq!(p.code, Some(2), "{}", p.said);
     assert!(p.said.contains("round-vm: the host sent no pids limit"), "{}", p.said);
     assert!(!p.work.exists() && p.calls.is_empty(), "{}", p.calls);
+}
+
+/// A `podman run` that does run the command it was given, from the mounted tree; `before` runs first.
+fn pass_running_the_command(name: &str, before: &str, ci_entry: &str) -> Pass {
+    let run = format!("{before}\ncd \"$HOME/round-work\" || exit 99\nwhile [ \"$1\" != image ]; do shift; done; shift; exec \"$@\"");
+    pass_with(name, 0, &run, ci_entry, 600, "12345")
+}
+
+#[test_id(tngguf1)]
+#[test]
+fn the_entry_marks_that_it_started_where_the_results_are_and_keeps_its_own_verdict() {
+    let p = pass_running_the_command("foreign-marker", "", "test -f .runtime/spira/batch-results/ci.started || exit 9; exit 7");
+    assert!(p.result("ci.started").is_some(), "{}", p.said);
+    assert!(p.result("ci.result").unwrap_or_default().trim_end().ends_with(" 7"), "the marker was there when the entry ran: {}", p.said);
+}
+
+#[test_id(tbnhhju)]
+#[test]
+fn a_marker_that_cannot_be_written_does_not_stop_the_entry() {
+    let p = pass_running_the_command("foreign-marker-blocked", "mkdir \"$HOME/round-work/.runtime/spira/batch-results/ci.started\"", "exit 0");
+    assert_eq!(p.code, Some(0), "{}", p.said);
+    assert!(p.result("ci.result").unwrap_or_default().starts_with("ok "), "{}", p.said);
+}
+
+#[test_id(tbl4fii)]
+#[test]
+fn a_pass_whose_entry_never_began_leaves_no_marker() {
+    let unpulled = pass_with("foreign-no-pull", 1, "exit 0", "exit 0", 600, "12345");
+    let unrun = pass("foreign-no-run", "exit 125", 600, "12345");
+    for p in [unpulled, unrun] {
+        assert_eq!(p.code, Some(3), "{}", p.said);
+        assert_eq!(p.result("ci.started"), None, "{}", p.said);
+    }
 }

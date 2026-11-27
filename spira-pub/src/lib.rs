@@ -15,7 +15,7 @@ mod socket_watch;
 mod telemetry;
 pub mod topics;
 
-pub use publisher::{check_topic, Log, Options, Publisher, Republish, CONNECT_DEADLINE, MAX_PAYLOAD};
+pub use publisher::{check_topic, configured_seed, configured_socket, Log, Options, Publisher, Republish, CONNECT_DEADLINE, MAX_PAYLOAD};
 pub use socket_watch::SocketWatch;
 pub use topics::Class;
 

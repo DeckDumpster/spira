@@ -51,9 +51,13 @@ impl Fx {
     }
 
     fn concierge(&self, args: &[&str], env: &[(&str, &str)]) -> Out {
+        self.run_script(&self.path().join("home/concierge.sh"), args, env)
+    }
+
+    fn run_script(&self, script: &Path, args: &[&str], env: &[(&str, &str)]) -> Out {
         let d = self.path();
         let mut cmd = Command::new("bash");
-        cmd.arg(d.join("home/concierge.sh")).args(args).env_clear();
+        cmd.arg(script).args(args).env_clear();
         cmd.env("PATH", format!("{}:/usr/bin:/bin", d.join("bin").display()))
             .env("SPIRA_HOME", d.join("home"))
             .env("SPIRA_REPO", d.join("brain"))
@@ -142,6 +146,99 @@ fn brief_with_no_statutes_tells_an_unreachable_book_from_an_empty_one() {
     assert_eq!(empty.code, Some(1));
     assert!(empty.err.contains("the statute book rendered empty"), "{}", empty.err);
     assert!(!empty.err.contains("cannot reach"), "{}", empty.err);
+}
+
+/// The shape a unit runs: `ExecStart` goes through `releases/current`, while conf.sh resolves
+/// `SPIRA_HOME` to the release directory behind it.
+struct Released {
+    fx: Fx,
+    current: PathBuf,
+    home: PathBuf,
+}
+
+const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+
+impl Released {
+    fn new() -> Released {
+        let fx = Fx::new();
+        let releases = fx.path().join("releases");
+        let release = releases.join(SHA);
+        let home = release.join("spira");
+        std::fs::create_dir_all(home.join("runes")).unwrap();
+        std::fs::copy(repo().join("concierge.sh"), release.join("concierge.sh")).unwrap();
+        std::fs::copy(repo().join("spira/runes/concierge.md"), home.join("runes/concierge.md")).unwrap();
+        let stub = format!(
+            "{LIB_STUB}render_memories() {{ [ -z \"$STUB_STATUTES\" ] || printf '%s\\n    %s\\n' \"$STUB_STATUTES\" \"$SPIRA_REPO/rule.sh show\"; }}\n"
+        );
+        std::fs::write(home.join("lib.sh"), stub).unwrap();
+        let current = releases.join("current");
+        std::os::unix::fs::symlink(SHA, &current).unwrap();
+        Released { fx, current, home }
+    }
+
+    fn run(&self, args: &[&str], extra: &[(&str, &str)]) -> Out {
+        let script = self.current.join("concierge.sh");
+        let mut env = vec![("SPIRA_RELEASE", self.current.to_str().unwrap()), ("SPIRA_HOME", self.home.to_str().unwrap())];
+        env.extend_from_slice(extra);
+        self.fx.run_script(&script, args, &env)
+    }
+}
+
+// covers: UC-operator-channel-41
+#[test_id(tqb86kz)]
+#[test]
+fn brief_names_every_tool_through_the_release_link_never_the_release_behind_it() {
+    let r = Released::new();
+    let o = r.run(&["brief"], &[]);
+    assert_eq!(o.code, Some(0), "{}", o.err);
+    let brief = std::fs::read_to_string(o.out.trim()).unwrap();
+    let current = r.current.display();
+    for needle in [format!("{current}/rule.sh enact"), format!("{current}/spira/../bin/reply"), format!("{current}/rule.sh show")] {
+        assert!(brief.contains(&needle), "brief lacks {needle:?}");
+    }
+    let pinned: Vec<&str> = brief.lines().filter(|l| l.contains(SHA)).collect();
+    assert!(pinned.is_empty(), "the brief pins the release: {pinned:?}");
+}
+
+// covers: UC-operator-channel-41
+#[test_id(tohkrc9)]
+#[test]
+fn brief_refusals_point_at_the_rule_tool_through_the_release_link() {
+    let r = Released::new();
+    testkit::write_exe(r.fx.path().join("bin/spira-lc"), "#!/bin/sh\necho '{}'\n");
+    let empty: &[(&str, &str)] = &[("STUB_STATUTES", "")];
+    let typo: &[(&str, &str)] = &[("STUB_RUNE_STATUTE_CORE", "law-no-such-slug"), ("STUB_STATUTES", "- law-rm-alpha")];
+    for (env, refusal) in [(empty, "rendered empty"), (typo, "no statute rendered in full")] {
+        let o = r.run(&["brief"], env);
+        assert_eq!(o.code, Some(1), "{}", o.err);
+        assert!(o.err.contains(refusal), "{}", o.err);
+        assert!(o.err.contains(&format!("{}/rule.sh list", r.current.display())), "{}", o.err);
+        assert!(!o.err.contains(SHA), "{}", o.err);
+    }
+}
+
+// covers: UC-operator-channel-49
+#[test_id(t49o584)]
+#[test]
+fn session_hooks_are_registered_through_the_release_link() {
+    let r = Released::new();
+    let o = r.run(&["_settings"], &[]);
+    assert_eq!(o.code, Some(0), "{}", o.err);
+    let hooks = format!("{}/spira/hooks", r.current.display());
+    for hook in ["concierge-raw-pr-fence.sh", "statute-check-hook.sh"] {
+        assert!(o.out.contains(&format!("\"command\": \"{hooks}/{hook}\"")), "{hook}: {}", o.out);
+    }
+    assert_eq!(o.out.matches("\"command\":").count(), 2, "{}", o.out);
+}
+
+// covers: UC-operator-channel-41
+#[test_id(tgyoe0w)]
+#[test]
+fn brief_refuses_without_a_release_and_names_the_key() {
+    let fx = Fx::new();
+    let o = fx.concierge(&["brief"], &[("SPIRA_RELEASE", "")]);
+    assert_eq!(o.code, Some(1), "{}", o.out);
+    assert!(o.err.contains("SPIRA_RELEASE is not set"), "{}", o.err);
 }
 
 // covers: UC-operator-channel-40
