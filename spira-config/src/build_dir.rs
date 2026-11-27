@@ -525,7 +525,8 @@ pub struct LeaseReport {
     pub repo: String,
     pub folder: PathBuf,
     pub state: LeaseState,
-    /// Cargo's time for the lease's first unit-test or release build; None when neither ran.
+    /// Cargo's time for the lease's first unit-test or release build; None when the leased folder
+    /// holds no record of one.
     pub first_build_secs: Option<u64>,
 }
 
@@ -1337,7 +1338,7 @@ pub fn eviction_samples(gone: &[Deleted]) -> Vec<Sample> {
         })
         .collect()
 }
-
+/// One `build_dir_lease` event, and the first build's seconds when one was recorded.
 /// One `build_dir_lease` event, and the first build's seconds when one was stamped.
 pub fn report_samples(report: &LeaseReport) -> Vec<Sample> {
     let (repo, state) = (("repo", report.repo.clone()), ("state", report.state.name().to_string()));
