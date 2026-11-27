@@ -255,6 +255,80 @@ fn a_lease_after_the_holder_exits_reuses_the_warm_directory_with_a_selective_cle
     let _ = (p2.kill(), p2.wait());
 }
 
+/// The holder's report lines, once `count` of them are on disk.
+fn wait_reports(log: &Path, count: usize) -> Vec<String> {
+    let deadline = Instant::now() + Duration::from_secs(20); // clock-safe: a cap on waiting for the holder's report line
+    loop {
+        let text = std::fs::read_to_string(log).unwrap_or_default();
+        let lines: Vec<String> = text.lines().filter(|l| l.contains("build folder ")).map(String::from).collect();
+        // clock-safe: cap on the wait for the marker file
+        if lines.len() >= count || Instant::now() >= deadline {
+            assert_eq!(lines.len(), count, "{text}");
+            return lines;
+        }
+        std::thread::sleep(Duration::from_millis(100)); // clock-safe: poll of the marker file
+    }
+}
+
+#[test_id(twd8bwc)]
+#[test]
+fn each_released_hand_lease_logs_one_report_with_its_state_and_first_build_seconds() {
+    let b = setup("bdcli-report");
+    let run = b._d.path().join("run");
+    let toml = spira_config::process::fixture_toml(
+        b._d.path(),
+        &[("SPIRA_DWARF_BUILD_BASE", b.base.to_str().unwrap()), ("SPIRA_DWARF_BUILD_BUDGET_GIB", "60"), ("SPIRA_DWARF_BUILD_FOLDERS_PER_REPO", "5"), ("SPIRA_RUN", run.to_str().unwrap())],
+    );
+    let b = Box_ { toml, ..b };
+    let log = run.join("build-dir.log");
+
+    let mut p1 = sleeper();
+    let (dir, _) = b.lease("hand-1", &p1);
+    release(&b, &mut p1);
+    let first = wait_reports(&log, 1).remove(0);
+    let want = format!("build folder {} repo:spira item:hand-1 state:new first_build_secs:none", dir.display());
+    assert!(first.ends_with(&want), "{first}");
+
+    let mut p2 = sleeper();
+    b.lease("hand-2", &p2);
+    let home = spira_config::resolve::locate_home_for_process().unwrap();
+    let stamped = Command::new("bash").arg(home.join(spira_config::build_dir::CLEAN_SCRIPT)).arg("--stamp").arg(&b.tree).env("CARGO_TARGET_DIR", &dir).status().unwrap();
+    assert!(stamped.success());
+    release(&b, &mut p2);
+    let second = wait_reports(&log, 2).remove(1);
+    let secs = second.split_once("item:hand-2 state:warm first_build_secs:").unwrap_or_else(|| panic!("{second}")).1;
+    assert!(secs.parse::<u64>().is_ok(), "{second}");
+
+    std::fs::write(b.tree.join("b/src/lib.rs"), "pub fn f() { let _ = 1; }\n").unwrap();
+    let mut p3 = sleeper();
+    b.lease("hand-3", &p3);
+    release(&b, &mut p3);
+    let third = wait_reports(&log, 3).remove(2);
+    assert!(third.ends_with("item:hand-3 state:cleaned-crates first_build_secs:none"), "{third}");
+}
+
+#[test_id(tpean4g)]
+#[test]
+fn the_hand_lease_report_log_rotates_at_its_cap() {
+    let b = setup("bdcli-report-cap");
+    let run = b._d.path().join("run");
+    let toml = spira_config::process::fixture_toml(
+        b._d.path(),
+        &[("SPIRA_DWARF_BUILD_BASE", b.base.to_str().unwrap()), ("SPIRA_DWARF_BUILD_BUDGET_GIB", "60"), ("SPIRA_DWARF_BUILD_FOLDERS_PER_REPO", "5"), ("SPIRA_RUN", run.to_str().unwrap())],
+    );
+    let b = Box_ { toml, ..b };
+    let log = run.join("build-dir.log");
+    std::fs::create_dir_all(&run).unwrap();
+    std::fs::write(&log, "old\n".repeat(1 << 18)).unwrap();
+    std::fs::write(run.join("build-dir.log.1"), "older\n").unwrap();
+    let mut p = sleeper();
+    b.lease("hand-1", &p);
+    release(&b, &mut p);
+    wait_reports(&log, 1);
+    assert_eq!(std::fs::metadata(run.join("build-dir.log.1")).unwrap().len(), 1 << 20, "the full log replaced the one before");
+    assert!(std::fs::metadata(&log).unwrap().len() < 1024);
+}
+
 const LEASE_BYTES: &str = "pub fn f() {}\n";
 
 fn release(b: &Box_, holder: &mut Child) {

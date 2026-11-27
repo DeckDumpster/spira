@@ -39,6 +39,8 @@
 //! - **Trim on release.** [`trim`] drops what no later build can use: idle profiles, and
 //!   incremental, `deps`, `.fingerprint` and `build` entries untouched in the lease and a day old.
 //!
+//! - **Every lease reports.** Its holder logs and pushes one [`LeaseReport`] when it releases.
+//!
 //! Dependencies still come from sccache, which is shared, content-addressed and append-only, so
 //! no lease can make another session's dependencies cold.
 
@@ -55,6 +57,8 @@ pub const CEILING_ENV: &str = "SPIRA_DWARF_BUILD_FOLDERS_PER_REPO";
 /// The shared selective clean (`spira/target-clean.sh`): the one copy of the logic, called by
 /// `spira/unit-tests.sh` and by the lease path.
 pub const CLEAN_SCRIPT: &str = "target-clean.sh";
+/// What [`CLEAN_SCRIPT`] `--stamp` creates in a folder at the first build it marks.
+const FIRST_BUILT: &str = ".lease-first-built";
 /// The selective clean's deadline, in seconds as `timeout` takes them.
 pub const CLEAN_DEADLINE_SECS: &str = "900";
 
@@ -82,6 +86,8 @@ pub struct Lease {
     tree: Option<String>,
     toolchain: Option<String>,
     started: SystemTime,
+    /// What the lease-time clean did; None until the caller says.
+    cleaned: Option<LeaseState>,
     /// What [`migrate_flat`] did, or could not do, on the way to this lease: for the caller's log.
     pub notes: Vec<String>,
 }
@@ -111,6 +117,39 @@ impl Lease {
         self.started
     }
 
+    /// Take the lease-time clean's report as what the lease started from.
+    pub fn note_clean(&mut self, report: &CleanReport) {
+        let wiped = report.acts.iter().find(|a| a.branch == "whole-workspace");
+        let crates: std::collections::BTreeSet<&String> = report.acts.iter().flat_map(|a| &a.crates).collect();
+        self.cleaned = Some(match wiped {
+            _ if !self.reused => LeaseState::New,
+            Some(act) => LeaseState::Wiped { cause: act.cause.clone() },
+            None if crates.is_empty() => LeaseState::Warm,
+            None => LeaseState::CleanedCrates { crates: crates.len() },
+        });
+    }
+
+    /// [`empty`] the folder because its lease-time clean failed.
+    pub fn empty_after_failed_clean(&mut self) {
+        empty(&self.dir);
+        self.cleaned = Some(LeaseState::Wiped { cause: "clean failed".into() });
+    }
+
+    /// What this lease reports for `item`. Read it before releasing: the next lease removes the
+    /// first-build marker.
+    pub fn report(&self, item: &str) -> LeaseReport {
+        let unclean = if self.reused { LeaseState::Warm } else { LeaseState::New };
+        let first_built = std::fs::metadata(self.dir.join(FIRST_BUILT)).and_then(|m| m.modified()).ok();
+        LeaseReport {
+            item: item.to_string(),
+            repo: self.repo.clone(),
+            folder: self.dir.clone(),
+            state: self.cleaned.clone().unwrap_or(unclean),
+            // A file time is coarser than the clock `started` is read from, so it can fall just before it.
+            first_build_secs: first_built.map(|at| at.duration_since(self.started).unwrap_or_default().as_secs()),
+        }
+    }
+
     /// Note the tree at `root` as the one this lease built, for the record its release writes.
     pub fn note_root(&mut self, root: &Path) {
         self.tree = head_tree(root);
@@ -136,6 +175,57 @@ impl Lease {
         write_record(&self.dir, &FolderRecord::new(&self.repo, self.tree.clone(), self.toolchain.clone(), SystemTime::now()));
         let _ = self.lock.0.set_len(0);
         trimmed
+    }
+}
+
+/// What a lease's folder held for it when it started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LeaseState {
+    Warm,
+    New,
+    CleanedCrates { crates: usize },
+    Wiped { cause: String },
+}
+
+impl LeaseState {
+    fn name(&self) -> &'static str {
+        match self {
+            LeaseState::Warm => "warm",
+            LeaseState::New => "new",
+            LeaseState::CleanedCrates { .. } => "cleaned-crates",
+            LeaseState::Wiped { .. } => "wiped",
+        }
+    }
+
+    fn cause(&self) -> Option<&str> {
+        match self {
+            LeaseState::Wiped { cause } => Some(cause),
+            _ => None,
+        }
+    }
+}
+
+/// One lease, as its holder reports it at release.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeaseReport {
+    pub item: String,
+    pub repo: String,
+    pub folder: PathBuf,
+    pub state: LeaseState,
+    /// Seconds from the lease to its first stamped build; None when none was stamped.
+    pub first_build_secs: Option<u64>,
+}
+
+impl std::fmt::Display for LeaseReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "build folder {} repo:{} item:{} state:{}", self.folder.display(), self.repo, self.item, self.state.name())?;
+        if let Some(cause) = self.state.cause() {
+            write!(f, " cause:{cause}")?;
+        }
+        match self.first_build_secs {
+            Some(secs) => write!(f, " first_build_secs:{secs}"),
+            None => f.write_str(" first_build_secs:none"),
+        }
     }
 }
 
@@ -470,6 +560,7 @@ fn claim(lock: &mut SlotLock, who: &str) {
 fn take(dir: PathBuf, repo: &str, lock: SlotLock) -> std::io::Result<Lease> {
     std::fs::create_dir_all(&dir)?;
     let _ = std::fs::remove_file(side(&dir, "gate"));
+    let _ = std::fs::remove_file(dir.join(FIRST_BUILT));
     let trusted = read_record(&dir).and_then(|r| match r.repository == repo {
         true => Ok(()),
         false => Err(format!("{}: names repository {:?}, not {repo:?}", side(&dir, "json").display(), r.repository)),
@@ -482,7 +573,7 @@ fn take(dir: PathBuf, repo: &str, lock: SlotLock) -> std::io::Result<Lease> {
     }
     // Written at once, so a holder that never releases still leaves a true repository.
     write_record(&dir, &FolderRecord::new(repo, None, None, SystemTime::now()));
-    Ok(Lease { dir, repo: repo.to_string(), lock, reused, unreadable, tree: None, toolchain: None, started: SystemTime::now(), notes: Vec::new() })
+    Ok(Lease { dir, repo: repo.to_string(), lock, reused, unreadable, tree: None, toolchain: None, started: SystemTime::now(), cleaned: None, notes: Vec::new() })
 }
 
 /// The `n` of every flat `dir.<n>.lock` directly under `base`.
@@ -765,16 +856,16 @@ fn stood_in(dir: &Path, held: &[PathBuf]) -> bool {
     held.iter().any(|h| h.starts_with(dir))
 }
 
-/// One gauge the pool reports; `dir` labels the per-directory series.
+/// One gauge the pool reports.
 #[derive(Debug, PartialEq)]
 pub struct Sample {
     pub name: &'static str,
     pub value: f64,
-    pub dir: Option<String>,
+    pub labels: Vec<(&'static str, String)>,
 }
 
 fn sample(name: &'static str, value: u64, dir: Option<String>) -> Sample {
-    Sample { name, value: value as f64, dir }
+    Sample { name, value: value as f64, labels: dir.into_iter().map(|d| ("dir", d)).collect() }
 }
 
 /// What a lease or a release of `dir` reports: its own bytes, the pool the budget counts (every
@@ -796,12 +887,29 @@ pub fn eviction_samples(gone: &[PathBuf]) -> Vec<Sample> {
     gone.iter().map(|d| sample("build_dir_evicted", 1, Some(d.display().to_string()))).collect()
 }
 
+/// One `build_dir_lease` event, and the first build's seconds when one was stamped.
+pub fn report_samples(report: &LeaseReport) -> Vec<Sample> {
+    let (repo, state) = (("repo", report.repo.clone()), ("state", report.state.name().to_string()));
+    let labels = vec![
+        ("item", report.item.clone()),
+        repo.clone(),
+        ("folder", report.folder.display().to_string()),
+        state.clone(),
+        ("cause", report.state.cause().unwrap_or_default().to_string()),
+    ];
+    let mut out = vec![Sample { name: "build_dir_lease", value: 1.0, labels }];
+    if let Some(secs) = report.first_build_secs {
+        out.push(Sample { name: "build_dir_first_build_seconds", value: secs as f64, labels: vec![repo, state] });
+    }
+    out
+}
+
 /// Push `samples` as gauges; a failed push is counted by the sink, never returned.
 pub fn push(sink: &spira_otel::metrics::MetricsSink, samples: &[Sample]) {
     let at = SystemTime::now();
     let series: Vec<spira_otel::metrics::Series> = samples
         .iter()
-        .map(|s| spira_otel::metrics::Series { name: s.name.into(), value: s.value, labels: s.dir.iter().map(|d| ("dir".to_string(), d.clone())).collect(), at })
+        .map(|s| spira_otel::metrics::Series { name: s.name.into(), value: s.value, labels: s.labels.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(), at })
         .collect();
     if !series.is_empty() {
         let _ = sink.try_push_series(&series);
@@ -812,6 +920,11 @@ pub fn push(sink: &spira_otel::metrics::MetricsSink, samples: &[Sample]) {
 pub fn meter(bases: &[PathBuf], dir: &Path, budget_bytes: u64) {
     let sink = crate::process::metrics_sink("build-dir");
     push(&sink, &lease_samples(bases, dir, budget_bytes, &crate::build::size_of));
+}
+
+/// Push one lease's report: called once, at its release.
+pub fn meter_report(report: &LeaseReport) {
+    push(&crate::process::metrics_sink("build-dir"), &report_samples(report));
 }
 
 /// Push one event per directory evicted.
@@ -849,6 +962,13 @@ const CLEAN_REPORT: &str = ".target-clean-report.json";
 pub const PANEL_CLEAN_GB_BY_CAUSE: &str = "sum by (branch, cause) (sum_over_time(build_dir_clean_bytes[1d])) / 1e9";
 /// GB the cleans removed per day, by mode: lease, release and testenv's unit run.
 pub const PANEL_CLEAN_GB_BY_MODE: &str = "sum by (mode) (sum_over_time(build_dir_clean_bytes[1d])) / 1e9";
+
+/// Leases per day, by repository and the state each started in.
+pub const PANEL_LEASES_BY_REPO_STATE: &str = "sum by (repo, state) (sum_over_time(build_dir_lease[1d]))";
+/// Leases per day that started on a wiped folder, by repository and cause.
+pub const PANEL_WIPES_BY_CAUSE: &str = "sum by (repo, cause) (sum_over_time(build_dir_lease{state=\"wiped\"}[1d]))";
+/// The median seconds a lease's first build took, by repository.
+pub const PANEL_FIRST_BUILD_BY_REPO: &str = "max by (repo) (quantile_over_time(0.5, build_dir_first_build_seconds[1d]))";
 
 /// One run of the clean script: `at` is its own clock at exit.
 #[derive(Debug, serde::Deserialize)]
@@ -1403,7 +1523,7 @@ mod tests {
     }
 
     fn value(s: &[Sample], name: &str, dir: Option<&str>) -> Option<f64> {
-        s.iter().find(|x| x.name == name && x.dir.as_deref() == dir).map(|x| x.value)
+        s.iter().find(|x| x.name == name && x.labels.iter().find(|(k, _)| *k == "dir").map(|(_, v)| v.as_str()) == dir).map(|x| x.value)
     }
 
     #[test_id(tgzkyg9)]
@@ -1521,6 +1641,111 @@ mod tests {
         }
     }
 
+    fn clean_of(acts: &[(&str, &str, &[&str])]) -> CleanReport {
+        let acts = acts
+            .iter()
+            .map(|(branch, cause, crates)| CleanAct { branch: branch.to_string(), cause: cause.to_string(), inputs: Vec::new(), crates: crates.iter().map(|c| c.to_string()).collect(), bytes: None, files: None })
+            .collect();
+        CleanReport { at: SystemTime::UNIX_EPOCH, rc: 0, acts }
+    }
+
+    #[test_id(t1s63vt)]
+    #[test]
+    fn a_lease_time_clean_sets_the_state_the_lease_started_in() {
+        let d = testkit::TempDir::new("bdir-state");
+        let base = d.path().join("base");
+        let mut l = lease(std::slice::from_ref(&base), "sp-a").unwrap();
+        l.note_clean(&clean_of(&[("whole-workspace", "missing-record", &[])]));
+        assert_eq!(l.report("sp-a").state, LeaseState::New, "a lease that reused nothing is new, whatever its clean removed");
+        l.reused = true;
+        l.note_clean(&clean_of(&[("per-crate", "bytes-changed", &["a"]), ("whole-workspace", "build-input-changed", &[])]));
+        assert_eq!(l.report("sp-a").state, LeaseState::Wiped { cause: "build-input-changed".into() });
+        l.note_clean(&clean_of(&[("units-built-after-stamp", "", &["a", "b"]), ("per-crate", "bytes-changed", &["b"])]));
+        assert_eq!(l.report("sp-a").state, LeaseState::CleanedCrates { crates: 2 });
+        l.note_clean(&clean_of(&[]));
+        assert_eq!(l.report("sp-a").state, LeaseState::Warm);
+    }
+
+    #[test_id(tdgo5j7)]
+    #[test]
+    fn a_failed_clean_empties_the_folder_and_reports_a_wipe() {
+        let d = testkit::TempDir::new("bdir-state-failed");
+        let base = d.path().join("base");
+        let mut l = lease(std::slice::from_ref(&base), "sp-a").unwrap();
+        fill(&l.dir().join("debug/x"), 1);
+        l.empty_after_failed_clean();
+        assert!(!holds_anything(l.dir()));
+        assert_eq!(l.report("sp-a").state, LeaseState::Wiped { cause: "clean failed".into() });
+    }
+
+    #[test_id(tk50klw)]
+    #[test]
+    fn first_build_seconds_run_from_the_lease_to_the_first_stamp_and_are_none_without_one() {
+        let d = testkit::TempDir::new("bdir-first-built");
+        let base = d.path().join("base");
+        let first = lease(std::slice::from_ref(&base), "sp-a").unwrap();
+        let dir = first.dir().to_path_buf();
+        assert_eq!(first.report("sp-a").first_build_secs, None);
+        std::fs::write(dir.join(FIRST_BUILT), "").unwrap();
+        let stamp = std::fs::File::options().write(true).open(dir.join(FIRST_BUILT)).unwrap();
+        stamp.set_modified(first.started() + Duration::from_secs(90)).unwrap();
+        assert_eq!(first.report("sp-a").first_build_secs, Some(90));
+        first.release();
+        let next = lease(std::slice::from_ref(&base), "sp-b").unwrap();
+        assert_eq!(next.report("sp-b").first_build_secs, None, "an earlier lease's stamp is not this one's");
+    }
+
+    fn wiped_report(first_build_secs: Option<u64>) -> LeaseReport {
+        LeaseReport { item: "sp-a".into(), repo: "spira".into(), folder: PathBuf::from("pool/spira/1"), state: LeaseState::Wiped { cause: "missing-record".into() }, first_build_secs }
+    }
+
+    #[test_id(tai517f)]
+    #[test]
+    fn the_report_line_names_the_folder_repository_item_state_cause_and_first_build() {
+        assert_eq!(wiped_report(Some(12)).to_string(), "build folder pool/spira/1 repo:spira item:sp-a state:wiped cause:missing-record first_build_secs:12");
+        let warm = LeaseReport { state: LeaseState::Warm, ..wiped_report(None) };
+        assert_eq!(warm.to_string(), "build folder pool/spira/1 repo:spira item:sp-a state:warm first_build_secs:none");
+    }
+
+    #[test_id(tacak0t)]
+    #[test]
+    fn a_report_samples_the_lease_with_every_label_and_a_first_build_only_when_known() {
+        let labels = |s: &Sample| s.labels.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>();
+        let without = report_samples(&wiped_report(None));
+        assert_eq!(without.len(), 1, "{without:?}");
+        assert_eq!((without[0].name, without[0].value), ("build_dir_lease", 1.0));
+        assert_eq!(labels(&without[0]), ["item=sp-a", "repo=spira", "folder=pool/spira/1", "state=wiped", "cause=missing-record"]);
+        let with = report_samples(&wiped_report(Some(7)));
+        assert_eq!((with[1].name, with[1].value), ("build_dir_first_build_seconds", 7.0));
+        assert_eq!(labels(&with[1]), ["repo=spira", "state=wiped"]);
+    }
+
+    #[test_id(thyokew)]
+    #[test]
+    fn a_pushed_lease_report_reaches_the_endpoint_with_its_repository() {
+        let (addr, h) = spira_otel::metrics::run::fixture_sink();
+        let sink = spira_otel::metrics::MetricsSink::new(Some(&addr), "build-dir", std::time::Duration::from_secs(2));
+        push(&sink, &report_samples(&wiped_report(None)));
+        let body = h.join().unwrap();
+        for want in ["build_dir_lease", "repo", "spira", "build-dir"] {
+            assert!(body.contains(want), "{want} missing from the push");
+        }
+    }
+
+    #[test_id(tljqvps)]
+    #[test]
+    fn the_lease_panels_run_their_pinned_expressions() {
+        let dash: serde_json::Value = serde_json::from_str(include_str!("../../spira/metrics/grafana/dashboards/gate-tooling.json")).unwrap();
+        for (title, expr) in [
+            ("build folders: leases per day by repository and state", PANEL_LEASES_BY_REPO_STATE),
+            ("build folders: wipes per day by repository and cause", PANEL_WIPES_BY_CAUSE),
+            ("build folders: median first-build seconds by repository", PANEL_FIRST_BUILD_BY_REPO),
+        ] {
+            let panel = dash["panels"].as_array().unwrap().iter().find(|p| p["title"] == title).expect(title);
+            assert_eq!(panel["targets"][0]["expr"], expr, "{title}");
+        }
+    }
+
     fn empty_proc(d: &Path) -> PathBuf {
         let proc = d.join("empty-proc");
         std::fs::create_dir_all(&proc).unwrap();
@@ -1615,7 +1840,7 @@ mod tests {
     fn a_budget_of_zero_with_one_idle_directory_removes_it_and_reports_one_event_naming_it() {
         let gone = evict_walk(vec![slot(0, 1, 100, 3)], 0, &mut |_| true);
         assert_eq!(gone, [PathBuf::from("b0/r/1")]);
-        assert_eq!(eviction_samples(&gone), [Sample { name: "build_dir_evicted", value: 1.0, dir: Some("b0/r/1".into()) }]);
+        assert_eq!(eviction_samples(&gone), [Sample { name: "build_dir_evicted", value: 1.0, labels: vec![("dir", "b0/r/1".into())] }]);
     }
 
     #[test_id(txutbsf)]

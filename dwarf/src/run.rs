@@ -1617,7 +1617,7 @@ impl<'a> Run<'a> {
                 return Err(Abort::Harness(format!("{} is not set — a building dwarf has no build directory; set dwarf_build_base in the config document", bd::BASE_ENV)));
             }
             let ceiling = spira_config::process::cfg_parse(bd::CEILING_ENV).map_err(Abort::Harness)?;
-            let lease = bd::lease_for(&bases, &self.s.bead, &self.s.repo_name, ceiling).map_err(|e| Abort::Harness(format!("cannot lease a build directory under {}: {e}", self.conf.s(bd::BASE_ENV))))?;
+            let mut lease = bd::lease_for(&bases, &self.s.bead, &self.s.repo_name, ceiling).map_err(|e| Abort::Harness(format!("cannot lease a build directory under {}: {e}", self.conf.s(bd::BASE_ENV))))?;
             for note in &lease.notes {
                 self.log(&format!("{f}: {note}"));
             }
@@ -1629,13 +1629,16 @@ impl<'a> Run<'a> {
             let path = self.d.env.child().get("PATH").cloned().unwrap_or_default();
             match bd::clean(&self.home().join(bd::CLEAN_SCRIPT), work, &dir, &path, false, &self.s.bead, Some(&self.s.repo_name)) {
                 Ok(out) => {
+                    if let Some(report) = bd::clean_report(&dir) {
+                        lease.note_clean(&report);
+                    }
                     for l in out.lines().filter(|l| !l.trim().is_empty()) {
                         self.log(&format!("{f}: {l}"));
                     }
                 }
                 Err(e) => {
                     self.log(&format!("{f}: selective clean of {} failed ({e}) — emptied, this session builds cold", dir.display()));
-                    bd::empty(&dir);
+                    lease.empty_after_failed_clean();
                 }
             }
             let budget = (self.conf.i(bd::BUDGET_ENV).max(0) as u64).saturating_mul(1 << 30);
@@ -1665,12 +1668,15 @@ impl<'a> Run<'a> {
             }
         }
         let dir = lease.dir().to_path_buf();
+        let report = lease.report(&self.s.bead);
         let (trimmed, reserved) = if self.s.submitted_at.is_some() { lease.release_reserved(&self.s.bead) } else { (lease.release(), Ok(())) };
         if let Err(e) = reserved {
             self.log(&format!("{}: could not reserve build directory {d} for {}'s gate: cannot write {d}.gate: {e} — any session may lease it", self.f(), self.s.bead, d = dir.display()));
         }
         self.log(&format!("{}: released build directory {}: {trimmed}", self.f(), dir.display()));
+        self.log(&format!("{}: {report}", self.f()));
         use spira_config::build_dir as pool;
+        pool::meter_report(&report);
         let bases = pool::parse_bases(&self.conf.s(pool::BASE_ENV));
         pool::meter(&bases, &dir, (self.conf.i(pool::BUDGET_ENV).max(0) as u64).saturating_mul(1 << 30));
     }

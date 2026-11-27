@@ -464,6 +464,24 @@ pub(crate) mod verdict_run {
         assert!(lines.iter().any(|l| l.contains("could not reserve") && l.contains(&gate) && l.contains("sp-res")), "{lines:?}");
     }
 
+    #[test_id(ttez6v8)]
+    #[test]
+    fn a_released_build_directory_logs_one_lease_report_naming_the_bead() {
+        let work = testkit::TempDir::new("dwarf-lease-report");
+        let base = work.path().join("builds");
+        let sink = Mute::default();
+        with_run_sink(crate::tests::complete_vars(), &NoBd, Dirty(vec![]), &Lc, &|| 0, &Seams(Default::default()), &sink, "", |r| {
+            r.s.bead = "sp-res".into();
+            r.s.build_dir = Some(spira_config::build_dir::lease_for(std::slice::from_ref(&base), "sp-res", "spira", 1).unwrap());
+            r.release_build_dir();
+            r.release_build_dir();
+        });
+        let lines = sink.0.lock().unwrap();
+        let reports: Vec<&String> = lines.iter().filter(|l| l.contains("build folder ")).collect();
+        let want = format!("build folder {} repo:spira item:sp-res state:new first_build_secs:none", base.join("spira/1").display());
+        assert!(reports.len() == 1 && reports[0].ends_with(&want), "{lines:?}");
+    }
+
     fn session_env_of(builds: bool) -> BTreeMap<String, String> {
         let _otel = OTEL.lock().unwrap_or_else(|e| e.into_inner());
         let work = testkit::TempDir::new("dwarf-cargo-env");
