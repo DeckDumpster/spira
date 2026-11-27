@@ -20,6 +20,17 @@ it existed).
 `event`, the cutover verbs, `classify`, `work`, `serve`. Exit codes on `event`: 0 applied,
 3 refused, 2 cannot tell.
 
+**`topics [--limit N] [--after <family>]`** lists the topic families ever published on the
+broker as `{"topics": [<record>…], "next": <family|null>}`, in family order and paged in the
+store (default 2000, at most 10000; `next` is the `--after` of the next page). A record is
+`family` (`spira_pub::topics::family`), `retained` (the last publish's flag), `mixed` (both flags
+seen), `first_seen` and `last_seen` (ms), and the `publishers` and `resident` names stamped as
+the MQTT 5 user properties `spira-publisher` and `spira-resident: true` (sorted, at most 16
+each). Only the topic tap in `serve` writes it, at `topics/<family>`, at most once per flush
+interval, so a listing can trail the broker by that long; a publish made while the tap is not
+subscribed is not recorded, and neither is a retained value the broker already held then. There
+is no verb that creates, changes or deletes a record. 0 done · 2 cannot tell.
+
 **`admin-create-beads --prefix P --host H --port N --database D`** creates the beads store on
 that server from `beads-schema.sql`, the schema's source: the database, its tables and views,
 `issue_prefix`, one Dolt commit, then `<SPIRA_DB>/.beads/metadata.json`, written last. It runs in

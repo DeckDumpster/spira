@@ -18,6 +18,9 @@ pub const BATCH_MEMBERS: &str = "batch-members/";
 /// The runtime's journal: `runtime/state/`, `runtime/effect/`, `runtime/resolved/`,
 /// `runtime/schedule/`, `runtime/fired/` and `runtime/poison/`, each keyed by its escaped natural key.
 pub const RUNTIME: &str = "runtime/";
+/// Each topic family ever published on the broker, `topics/<family>`; a family holds `/`.
+/// Written by the topic tap alone.
+pub const TOPICS: &str = "topics/";
 /// The attempt and poison history, `facts/<bead>/<request id>`: facts that change no bead's state.
 pub const FACTS: &str = "facts/";
 pub const HISTORY: &str = "history/";
@@ -88,6 +91,10 @@ pub fn delivery(id: &str) -> String {
 
 pub fn ask(id: &str) -> String {
     format!("{ASKS}{id}")
+}
+
+pub fn topic(family: &str) -> String {
+    format!("{TOPICS}{family}")
 }
 
 pub fn conditions(owner: &str) -> String {

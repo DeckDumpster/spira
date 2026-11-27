@@ -22,8 +22,26 @@ pub struct Lost {
 
 impl Lost {
     fn from(e: ConnectionError) -> Lost {
-        let refused = matches!(&e, ConnectionError::Io(io) if matches!(io.kind(), ErrorKind::ConnectionRefused | ErrorKind::NotFound));
+        let refused = matches!(&e, ConnectionError::Io(io) if nothing_listening(io));
         Lost { why: e.to_string(), refused }
+    }
+}
+
+/// Whether a connect's I/O error says nothing was listening on the socket.
+pub fn nothing_listening(e: &std::io::Error) -> bool {
+    matches!(e.kind(), ErrorKind::ConnectionRefused | ErrorKind::NotFound)
+}
+
+/// `attempt`, handed the time left of [`CONNECT_DEADLINE`]. `announced` says the broker's socket
+/// has just appeared, so a failure `refused` accepts is waited out until the deadline.
+pub fn wait_out_refusal<T, E>(announced: bool, mut attempt: impl FnMut(Duration) -> Result<T, E>, refused: impl Fn(&E) -> bool) -> Result<T, E> {
+    // Real time, not an injected clock: this bounds socket I/O, which virtual time never ends.
+    let started = Instant::now();
+    loop {
+        match attempt(CONNECT_DEADLINE.saturating_sub(started.elapsed())) {
+            Err(e) if announced && refused(&e) && started.elapsed() < CONNECT_DEADLINE => std::thread::sleep(LISTEN_PAUSE),
+            other => return other,
+        }
     }
 }
 
@@ -61,14 +79,7 @@ impl Dial<'_> {
     /// A connection within [`CONNECT_DEADLINE`]. `announced` says the broker's socket has just
     /// appeared, so a refusal is waited out until the deadline.
     pub fn connect(&self, announced: bool) -> Result<(Client, Connection), Lost> {
-        // Real time, not an injected clock: this bounds socket I/O, which virtual time never ends.
-        let started = Instant::now();
-        loop {
-            match self.once(CONNECT_DEADLINE.saturating_sub(started.elapsed())) {
-                Err(lost) if announced && lost.refused && started.elapsed() < CONNECT_DEADLINE => std::thread::sleep(LISTEN_PAUSE),
-                other => return other,
-            }
-        }
+        wait_out_refusal(announced, |within| self.once(within), |lost| lost.refused)
     }
 }
 

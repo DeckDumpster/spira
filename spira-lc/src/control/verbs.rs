@@ -2,7 +2,7 @@
 //! of the same names do (`dwell` has none): exit 0 with JSON, or 2 ("cannot tell") with the reason.
 
 use serde_json::{json, Map, Value};
-use state_store::{Backend, Event, Rev, MAX_WATCH_WAIT_MS};
+use state_store::{contract::Cursor, Backend, Event, Rev, Selector, MAX_WATCH_WAIT_MS};
 
 use std::collections::BTreeSet;
 
@@ -14,7 +14,7 @@ use super::store::Store;
 use crate::{flag, CANNOT_TELL};
 
 /// The verbs this module answers.
-pub const VERBS: &[&str] = &["watch", "history", "backfill-history-audits", "event-seq", "audits", "dwell", "store-usage", "plane-bead", "plane-ejected", "plane-gate-red"];
+pub const VERBS: &[&str] = &["watch", "history", "backfill-history-audits", "event-seq", "audits", "dwell", "store-usage", "plane-bead", "plane-ejected", "plane-gate-red", "topics"];
 
 pub fn run<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
     let rest = &args[1..];
@@ -29,6 +29,7 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
         Some("plane-bead") => plane_bead(store, rest),
         Some("plane-ejected") => plane_ejected(store, rest),
         Some("plane-gate-red") => plane_gate_red(store, rest),
+        Some("topics") => topics(store, rest),
         other => Err(format!("{other:?} is not a control-store verb")),
     };
     match answer {
@@ -62,6 +63,28 @@ pub fn run_with_rows<B: Backend>(store: &Store<B>, args: &[String], call: &Call)
     };
     answer.insert("rows".into(), rows);
     (0, Value::Object(answer).to_string())
+}
+
+/// `topics [--limit N] [--after <family>]`: `{"topics": [<record>…], "next": <family|null>}`,
+/// the topic families ever published, in family order; `next` is the `--after` of the next page.
+fn topics<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String> {
+    let limit = number(args, "--limit", USAGE_DEFAULT_LIMIT).map_err(|e| format!("topics: {e}"))?;
+    if !(1..=USAGE_MAX_LIMIT).contains(&limit) {
+        return Err(format!("topics: --limit must be from 1 to {USAGE_MAX_LIMIT}, not {limit}"));
+    }
+    let fail = |e: state_store::Error| format!("topics: {e}");
+    let contract = store.contract();
+    let cursor = match flag(args, "--after") {
+        None => None,
+        Some(family) => Some(Cursor { list_rev: contract.head().map_err(fail)?, prefix: 0, after: Some(keys::topic(&family)) }),
+    };
+    let limit = limit as usize;
+    // One past the page, so `next` is null exactly when nothing follows.
+    let page = contract.list_page(&[keys::TOPICS], &Selector::Everything, limit + 1, cursor.as_ref()).map_err(fail)?;
+    let more = page.items.len() > limit;
+    let records: Vec<Value> = page.items.into_iter().take(limit).map(|i| i.value.data).collect();
+    let next = records.last().filter(|_| more).map(|r| r["family"].clone());
+    Ok(json!({ "topics": records, "next": next }).to_string())
 }
 
 /// `plane-bead <id>`: `{"row": <lifecycle row>|null, "repo": <name>|null}`, what a verb running
