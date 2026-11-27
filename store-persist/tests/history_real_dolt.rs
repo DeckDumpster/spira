@@ -138,7 +138,7 @@ fn a_squash_catches_up_commits_made_while_the_side_branch_was_built() {
 fn an_interrupted_rewrite_is_cleared_before_the_next_one_starts() {
     need_dolt!();
     let tmp = TempDir::new("store-persist-history-stale");
-    let r = fixture(tmp.path(), "db");
+    let r = fixture_of(tmp.path(), "db", KEEP * 4);
     let tip = history::squash(&r, KEEP).unwrap();
     assert!(!tip.is_empty());
     assert!(r.run("SELECT name FROM dolt_branches;\n", true).unwrap().contains("store_persist_squash"));
