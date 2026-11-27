@@ -259,6 +259,25 @@ mod tests {
     }
 
     // covers: UC-safety-fences-19
+    #[test_id(t88ge5q)]
+    #[test]
+    fn a_remote_list_only_git_can_give_is_held_until_the_config_is_edited() {
+        let d = testkit::TempDir::new("guard-included");
+        let repo = checkout(d.path());
+        run(&repo, OPERATOR, &["remote", "add", "up", "does-not-exist"]);
+        run(&repo, OPERATOR, &["update-ref", "refs/remotes/up/trunk", "trunk"]);
+        std::fs::write(repo.join(".git/more"), "").unwrap();
+        run(&repo, OPERATOR, &["config", "include.path", "more"]);
+        assert_eq!(remotes(&repo), None, "the files cannot answer, so git is asked");
+        let reg = registry(d.path(), &repo, "up/trunk");
+        let gits = |reg: &Registry| spira_config::bounded::counting(|| check(reg)).1.get("git").copied().unwrap_or(0);
+        assert_eq!(gits(&reg), 3, "the first audit reads the tip, the remotes and the count");
+        assert_eq!(gits(&reg), 0);
+        run(&repo, OPERATOR, &["config", "core.abbrev", "12"]);
+        assert_eq!(gits(&reg), 1, "an edited config asks for the remotes again");
+    }
+
+    // covers: UC-safety-fences-19
     #[test_id(t0j6afk)]
     #[test]
     fn a_missing_ref_or_an_unresolved_base_is_not_asked_of_git_again_while_nothing_moves() {
