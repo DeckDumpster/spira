@@ -493,8 +493,17 @@ mod tests {
     fn the_testenv_pids_limit_is_carried_and_a_blank_one_is_refused_by_name() {
         let c = Config::build(Fields { pids_limit: 12345, ..base_fields() });
         assert_eq!(c.pids_limit, 12345);
-        let e = spira_config::process::parse_declared::<u64>("SPIRA_TESTENV_PIDS_LIMIT", " ").unwrap_err();
-        assert!(e.contains("SPIRA_TESTENV_PIDS_LIMIT"), "{e}");
+
+        let load = |declared: &str| {
+            let d = TempDir::new();
+            let toml = spira_config::process::fixture_toml(d.path(), &[("SPIRA_TESTENV_PIDS_LIMIT", declared), ("SPIRA_ROUND_VM_HOST_ADDR", "192.0.2.1")]);
+            let _env = testkit::env(&[(spira_config::process::TOML_ENV, toml.to_str())]);
+            // Read fresh: the process pins its first config, which may be another test's.
+            spira_config::process::with_fresh(Config::load).unwrap()
+        };
+        assert_eq!(load("23456").unwrap().pids_limit, 23456);
+        let e = load(" ").unwrap_err();
+        assert!(e.starts_with("round-vm: ") && e.contains("SPIRA_TESTENV_PIDS_LIMIT"), "{e}");
     }
 
     #[test_id(t4idd1a)]

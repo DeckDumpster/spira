@@ -5975,7 +5975,7 @@ mod tests {
             attr_linger_secs: 3600,
             cap_secs: 1234,
             testenv_limits: "testenv_suite_cap = 600\n".into(),
-            pids_limit: 32768,
+            pids_limit: 12345,
             post_guard_secs: 77,
             vm_budget_secs: 300,
             build_budget_secs: 600,
@@ -6791,6 +6791,16 @@ mod tests {
 
     fn foreign_args(fx: &Fixture) -> RunArgs {
         RunArgs { ci_entry: Some("deploy/ci.sh".into()), ci_image: Some("registry.example/rust:1".into()), ..round_args(fx) }
+    }
+
+    #[test_id(txrd1my)]
+    #[test]
+    fn a_runs_batch_carries_the_configured_task_limit() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        go(&fx, &remote, &foreign_args(&fx));
+        let jobs = remote.jobs.lock().unwrap();
+        assert!(jobs.iter().any(|j| j.starts_with("bash -c ") && j.ends_with(" '12345'")), "{jobs:?}");
     }
 
     /// Records, while the batch runs, whether a gate could take the cache's shared lock.
