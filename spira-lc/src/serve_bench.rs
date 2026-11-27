@@ -1,5 +1,6 @@
-//! `spira-lc serve-bench`: the same `show` and `list --live` requests put to a running server's
-//! two sockets, one after the other, and each one's answers per second and p99 reported.
+//! `spira-lc serve-bench`: the same requests (`show` and `list --live`, or with `--open-items`
+//! that verb alone) put to a running server's two sockets, one after the other, and each one's
+//! answers per second and p99 reported.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -7,13 +8,14 @@ use std::time::{Duration, Instant};
 
 use spira_otel::metrics::Point;
 
-const USAGE: &str = "usage: spira-lc serve-bench --socket A --loop-socket B --clients N --secs S";
+const USAGE: &str = "usage: spira-lc serve-bench --socket A --loop-socket B --clients N --secs S [--open-items REPO]";
 
 pub(crate) struct Opts {
     socket: PathBuf,
     loop_socket: PathBuf,
     clients: usize,
     secs: u64,
+    open_items: Option<String>,
 }
 
 pub(crate) fn parse(args: &[String]) -> Result<Opts, String> {
@@ -22,7 +24,8 @@ pub(crate) fn parse(args: &[String]) -> Result<Opts, String> {
         args.get(at + 1).map(String::as_str).ok_or_else(|| format!("{flag} takes a value; {USAGE}"))
     };
     let number = |flag: &str| -> Result<u64, String> { take(flag)?.parse::<u64>().ok().filter(|n| *n > 0).ok_or_else(|| format!("{flag} is a whole number above 0")) };
-    Ok(Opts { socket: take("--socket")?.into(), loop_socket: take("--loop-socket")?.into(), clients: number("--clients")? as usize, secs: number("--secs")? })
+    let open_items = args.iter().any(|a| a == "--open-items").then(|| take("--open-items").map(str::to_string)).transpose()?;
+    Ok(Opts { socket: take("--socket")?.into(), loop_socket: take("--loop-socket")?.into(), clients: number("--clients")? as usize, secs: number("--secs")?, open_items })
 }
 
 /// The bead ids in a `list --live` answer.
@@ -48,8 +51,20 @@ pub(crate) struct Tally {
     pub(crate) per_sec: f64,
 }
 
-/// The request client `c` puts as its `n`th: `show` and `list --live`, alternating.
-fn request(ids: &[String], c: usize, n: u64) -> Vec<String> {
+/// What the clients ask for.
+pub(crate) enum Load<'a> {
+    /// `show` and `list --live`, alternating over these ids.
+    ShowAndList(&'a [String]),
+    /// `work open-items --repo <name>`, every time.
+    OpenItems(&'a str),
+}
+
+/// The request client `c` puts as its `n`th.
+fn request(load: &Load, c: usize, n: u64) -> Vec<String> {
+    let ids = match load {
+        Load::ShowAndList(ids) => ids,
+        Load::OpenItems(repo) => return ["work", "-", "open-items", "--repo", repo].map(String::from).to_vec(),
+    };
     match ids.get((c + n as usize) / 2 % ids.len().max(1)) {
         Some(id) if (c as u64 + n).is_multiple_of(2) => vec!["show".to_string(), id.clone()],
         _ => vec!["list".to_string(), "--live".to_string()],
@@ -57,7 +72,7 @@ fn request(ids: &[String], c: usize, n: u64) -> Vec<String> {
 }
 
 /// `clients` threads calling until `over` says so; `call` is one request's success.
-pub(crate) fn drive(ids: &[String], clients: usize, over: &(dyn Fn() -> bool + Sync), call: &(dyn Fn(&[String]) -> bool + Sync)) -> Tally {
+pub(crate) fn drive(load: &Load, clients: usize, over: &(dyn Fn() -> bool + Sync), call: &(dyn Fn(&[String]) -> bool + Sync)) -> Tally {
     let began = Instant::now();
     let failures = AtomicU64::new(0);
     let mut samples: Vec<Duration> = std::thread::scope(|scope| {
@@ -68,7 +83,7 @@ pub(crate) fn drive(ids: &[String], clients: usize, over: &(dyn Fn() -> bool + S
                     let mut mine = Vec::new();
                     let mut n = 0u64;
                     while !over() {
-                        let argv = request(ids, c, n);
+                        let argv = request(load, c, n);
                         let sent = Instant::now();
                         if call(&argv) {
                             mine.push(sent.elapsed());
@@ -96,6 +111,15 @@ fn report(label: &str, t: &Tally) -> serde_json::Value {
     serde_json::json!({ label: { "answers": t.answers, "failures": t.failures, "per_sec": t.per_sec, "p99_ms": t.p99.as_secs_f64() * 1000.0 } })
 }
 
+fn live_ids(socket: &Path) -> Result<Vec<String>, String> {
+    let stream = spira_store::lc_call::connect(socket).map_err(spira_store::lc_call::Fail::into_text);
+    match stream.and_then(|s| spira_store::lc_call::exchange(s, &["list".to_string(), "--live".to_string()], None)) {
+        Ok(r) if r.code == 0 => Ok(ids_of(&r.out)),
+        Ok(r) => Err(format!("list --live: {}", r.why())),
+        Err(e) => Err(format!("{}: {e}", socket.display())),
+    }
+}
+
 pub(crate) fn run(args: &[String]) -> i32 {
     let opts = match parse(args) {
         Ok(o) => o,
@@ -104,25 +128,24 @@ pub(crate) fn run(args: &[String]) -> i32 {
             return 2;
         }
     };
-    let listing = match spira_store::lc_call::connect(&opts.socket).map_err(spira_store::lc_call::Fail::into_text).and_then(|s| spira_store::lc_call::exchange(s, &["list".to_string(), "--live".to_string()], None)) {
-        Ok(r) if r.code == 0 => r.out,
-        Ok(r) => {
-            eprintln!("spira-lc serve-bench: list --live: {}", r.why());
-            return 2;
-        }
-        Err(e) => {
-            eprintln!("spira-lc serve-bench: {}: {e}", opts.socket.display());
-            return 2;
-        }
+    let ids = match &opts.open_items {
+        Some(_) => Vec::new(),
+        None => match live_ids(&opts.socket) {
+            Ok(ids) => ids,
+            Err(why) => {
+                eprintln!("spira-lc serve-bench: {why}");
+                return 2;
+            }
+        },
     };
-    let ids = ids_of(&listing);
+    let load = opts.open_items.as_deref().map_or(Load::ShowAndList(&ids), Load::OpenItems);
     let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
     let metered = spira_otel::metrics::Run::begin(endpoint.as_deref(), "lc", "serve-bench");
     let mut result = serde_json::json!({ "clients": opts.clients, "secs": opts.secs, "beads": ids.len() });
     let mut gauges = Vec::new();
     for (label, socket, rate, tail) in [("server", &opts.socket, "spira_lc_bench_server_answers_per_second", "spira_lc_bench_server_p99_seconds"), ("loop", &opts.loop_socket, "spira_lc_bench_loop_answers_per_second", "spira_lc_bench_loop_p99_seconds")] {
         let until = Instant::now() + Duration::from_secs(opts.secs);
-        let tally = drive(&ids, opts.clients, &|| Instant::now() >= until, &|argv| call_on(socket, argv));
+        let tally = drive(&load, opts.clients, &|| Instant::now() >= until, &|argv| call_on(socket, argv));
         result[label] = report(label, &tally)[label].clone();
         gauges.extend([Point::Gauge { name: rate, value: tally.per_sec }, Point::Gauge { name: tail, value: tally.p99.as_secs_f64() }]);
     }
@@ -159,7 +182,7 @@ mod tests {
         let ids = vec!["sp-a".to_string(), "sp-b".to_string()];
         let budget = AtomicUsize::new(40);
         let seen = std::sync::Mutex::new(Vec::new());
-        let tally = drive(&ids, 1, &|| budget.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_err(), &|argv| {
+        let tally = drive(&Load::ShowAndList(&ids), 1, &|| budget.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_err(), &|argv| {
             seen.lock().unwrap().push(argv.to_vec());
             argv[0] == "show"
         });
@@ -177,6 +200,20 @@ mod tests {
         assert_eq!((ok.socket, ok.loop_socket, ok.clients, ok.secs), ("a".into(), "b".into(), 50, 60));
         assert!(parse(&words(&["--socket", "a", "--loop-socket", "b", "--clients", "0", "--secs", "60"])).is_err());
         assert!(parse(&words(&["--socket", "a", "--clients", "5", "--secs", "6"])).is_err());
+    }
+
+    #[test_id(ty44yrh)]
+    #[test]
+    fn with_open_items_every_request_is_that_verb_for_the_named_repository() {
+        let words = |w: &[&str]| w.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let base = ["--socket", "a", "--loop-socket", "b", "--clients", "1", "--secs", "1"];
+        let opts = parse(&words(&[&base[..], &["--open-items", "spira"]].concat())).unwrap();
+        let repo = opts.open_items.as_deref().unwrap();
+        for n in 0..3 {
+            assert_eq!(request(&Load::OpenItems(repo), 0, n), words(&["work", "-", "open-items", "--repo", "spira"]));
+        }
+        assert!(parse(&words(&base)).unwrap().open_items.is_none());
+        assert!(parse(&words(&[&base[..], &["--open-items"]].concat())).is_err());
     }
 
     #[test_id(trz2gby)]

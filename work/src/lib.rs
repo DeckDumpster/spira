@@ -337,12 +337,12 @@ pub const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", 
 /// persona may run which is the broker's allow table (spira-lc/src/work.rs `ALLOW`), not
 /// this client's — a client-side check is one the caller could skip.
 pub const LANE_VERBS: &[&str] = &[
-    "ask", "read", "list", "search", "note-on", "label-add", "label-remove", "dep-add", "relate", "reopen", "close-other", "close-ask", "file", "groom", "incident",
+    "ask", "read", "list", "search", "open-items", "note-on", "label-add", "label-remove", "dep-add", "relate", "reopen", "close-other", "close-ask", "file", "groom", "incident",
     "sop", "census", "queue", "landing-pass", "strand", "fence", "hel", "mender", "forge", "claim",
 ];
 
 pub const VERBS: &[&str] = &[
-    "show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack", "logs", "cite-check", "ask", "read", "list", "search", "note-on", "label-add",
+    "show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack", "logs", "cite-check", "ask", "read", "list", "search", "open-items", "note-on", "label-add",
     "label-remove", "dep-add", "relate", "reopen", "close-other", "close-ask", "file", "groom", "incident", "sop", "census", "queue", "landing-pass", "strand",
     "fence", "hel", "mender", "forge", "claim",
 ];

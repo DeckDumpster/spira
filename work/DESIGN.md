@@ -31,6 +31,7 @@ target, and run unbound too (the archivist has no bead; it sends `-` in the boun
 |---|---|
 | `ask --subject S --kind question\|fyi --default D [--class C] [--bead ID] [--body-file -]` | `mail send operator`, sent as the persona |
 | `read <id> [--json]`, `list [--status S] [--label L] [--title-contains T] [--limit N] [--all] [--json]`, `search <q> [--status S] [--limit N] [--json]` | reads |
+| `open-items --repo R [--exclude ID,…] [--json]` | one repository's READY and REWORK items with their `## Outcome` text, from the lifecycle state index and a read by id; held to the store-call latency limit and logged as `work:open-items` |
 | `note-on <id> <text\|->`, `label-add\|label-remove <id> <label>`, `relate <a> <b>`, `reopen <id> --evidence T` | bd writes to another bead |
 | `dep-add <id> <on> [--type T]` | `bead.sh dep add` (refuses a blocks edge onto an incident) |
 | `close-other <id> --evidence T` | `groomer close` |

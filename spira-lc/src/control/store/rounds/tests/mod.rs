@@ -36,6 +36,7 @@ mod list_batches;
 mod list_claim_view;
 mod list_live;
 mod list_page;
+mod open_items;
 mod queue_fields;
 mod readiness;
 mod requeue_orphans;

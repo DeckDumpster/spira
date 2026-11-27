@@ -1414,7 +1414,7 @@ fn landing_commit(id: &str) -> Option<String> {
 /// Every verb that is not bound to the called bead. The bound verbs above act on the
 /// bead the client is bound to; these name their target (or none) themselves.
 pub const LANE_VERBS: &[&str] = &[
-    "ask", "read", "list", "search", "note-on", "label-add", "label-remove", "dep-add", "relate", "reopen", "close-other", "close-ask", "file", "groom", "incident",
+    "ask", "read", "list", "search", "open-items", "note-on", "label-add", "label-remove", "dep-add", "relate", "reopen", "close-other", "close-ask", "file", "groom", "incident",
     "sop", "census", "queue", "landing-pass", "strand", "fence", "hel", "mender", "forge", "claim",
 ];
 
@@ -1451,11 +1451,12 @@ pub fn brokers_tool(verb: &str) -> bool {
 }
 
 /// The brokered verbs that start no program in the scheduler: a content read, a config lookup, or a note or label write the service makes itself.
-const ANSWERED_IN_SERVICE: &[&str] = &["read", "list", "search", "fence", "note-on", "label-add", "label-remove", "claim"];
+const ANSWERED_IN_SERVICE: &[&str] = &["read", "list", "search", "open-items", "fence", "note-on", "label-add", "label-remove", "claim"];
 
-/// The answered-in-service verbs that write: held to the latency limit like any store call, not exempted as batch jobs.
-pub fn answered_write(verb: &str) -> bool {
-    matches!(verb, "note-on" | "label-add" | "label-remove")
+/// The answered-in-service verbs held to the latency limit like any store call, not exempted as
+/// batch jobs: the writes, and `open-items`, which every filing asks.
+pub fn held_to_latency_limit(verb: &str) -> bool {
+    matches!(verb, "note-on" | "label-add" | "label-remove" | "open-items")
 }
 
 /// The verbs lc-serve records as a request for the scheduler to run: the brokered tools not answered in the service.
@@ -1598,6 +1599,7 @@ pub const ALLOW: &[(&str, &[&str])] = &[
     ("read", ANY),
     ("list", ANY),
     ("search", ANY),
+    ("open-items", ANY),
     // Writes to other beads.
     ("note-on", &["groomer", "czar", "mimir", "ops", "batcher", "archivist", "warden"]),
     ("label-add", &["groomer", "batcher", "mimir"]),
@@ -1800,6 +1802,8 @@ pub enum Step {
     Read { id: String, json: bool },
     /// `work search`: the SQL reader's `search`, ranked as the door ranks it.
     Search { query: String, limit: Option<String>, json: bool },
+    /// `work open-items`: one repository's READY and REWORK items with their `## Outcome` text.
+    OpenItems { repo: String, exclude: Vec<String>, json: bool },
     Tool { program: &'static str, args: Vec<String>, stdin: Option<String> },
     /// `work claim`: the caller takes a READY bead as a builder; served only in a pilgrim world.
     Claim { bead: String },
@@ -1927,6 +1931,19 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             };
             let f = parse_flags(verb, a, 1, &["--limit"], &["--json"])?;
             Ok(vec![Step::Search { query: q.clone(), limit: get(&f, "--limit").map(str::to_string), json: f.iter().any(|(k, _)| k == "--json") }])
+        }
+        "open-items" => {
+            const WANT: &str = "work open-items --repo <name> [--exclude <id,…>] [--json]";
+            let refuse = |why: String| usage(verb, &format!("{why}; usage: {WANT}"));
+            let f = parse_flags(verb, a, 0, &["--repo", "--exclude"], &["--json"]).map_err(|(_, why)| refuse(why))?;
+            let Some(repo) = get(&f, "--repo").filter(|r| !r.is_empty() && !r.starts_with('-')) else {
+                return Err(refuse("--repo <name> is required".into()));
+            };
+            let exclude: Vec<String> = get(&f, "--exclude").into_iter().flat_map(|v| v.split(',')).filter(|x| !x.is_empty()).map(str::to_string).collect();
+            if let Some(bad) = exclude.iter().find(|x| !is_bead_id(x)) {
+                return Err(refuse(format!("--exclude {bad:?} is not a bead id")));
+            }
+            Ok(vec![Step::OpenItems { repo: repo.to_string(), exclude, json: f.iter().any(|(k, _)| k == "--json") }])
         }
         "note-on" => {
             let id = bead_arg(verb, a, 0, "<bead-id>")?;
@@ -2382,6 +2399,59 @@ fn list_with_content(reader: &ReadFn, ask: ListAsk) -> (i32, String) {
     (0, lines.join("\n"))
 }
 
+/// `work open-items`: the state index names the waiting items, one read by id says what they
+/// are. Neither read walks history, and bd's `status` is never consulted.
+pub(crate) fn open_items(list: &dyn Fn(&[String]) -> (i32, String), content: &ContentFn, repo: &str, exclude: &[String], json: bool) -> (i32, String) {
+    let (rc, rows) = list(&[s("list"), s("--state"), s("READY,REWORK"), s("--repo"), s(repo), s("--bare")]);
+    if rc != 0 {
+        return (rc, rows);
+    }
+    let rows: Vec<serde_json::Value> = match serde_json::from_str(&rows) {
+        Ok(r) => r,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: the lifecycle list was not JSON: {e}")),
+    };
+    let waiting: Vec<(&str, &str)> =
+        rows.iter().filter_map(|r| Some((r["bead_id"].as_str()?, r["state"].as_str()?))).filter(|(id, _)| !exclude.iter().any(|x| x == id)).collect();
+    let ids: Vec<&str> = waiting.iter().map(|(id, _)| *id).collect();
+    let found = match content(&ids) {
+        Ok(f) => f,
+        Err(e) => return (CANNOT_TELL, e),
+    };
+    let by_id: std::collections::HashMap<&str, &serde_json::Value> = found.iter().filter_map(|c| Some((c["id"].as_str()?, c))).collect();
+    let mut items = Vec::with_capacity(waiting.len());
+    for (id, state) in waiting {
+        let Some(c) = by_id.get(id) else {
+            return (CANNOT_TELL, format!("cannot tell: {id} is {state} and the content store has no row for it"));
+        };
+        let outcome = c["description"].as_str().and_then(|d| ::bead::section(d, "## Outcome"));
+        items.push(OpenItem { id, state, priority: c["priority"].as_i64(), title: c["title"].as_str(), outcome });
+    }
+    if json {
+        return (0, serde_json::to_string(&items).unwrap_or_default());
+    }
+    let lines: Vec<String> = items.iter().map(OpenItem::plain).collect();
+    (0, lines.join("\n"))
+}
+
+pub(crate) type ContentFn<'a> = dyn Fn(&[&str]) -> Result<Vec<serde_json::Value>, String> + 'a;
+
+#[derive(serde::Serialize)]
+struct OpenItem<'a> {
+    id: &'a str,
+    state: &'a str,
+    priority: Option<i64>,
+    title: Option<&'a str>,
+    outcome: Option<String>,
+}
+
+impl OpenItem<'_> {
+    fn plain(&self) -> String {
+        let priority = self.priority.map_or("?".to_string(), |p| p.to_string());
+        let head = format!("{} {} P{priority} {}", self.id, self.state, self.title.unwrap_or(""));
+        self.outcome.iter().flat_map(|o| o.lines()).fold(head, |out, line| out + "\n    " + line)
+    }
+}
+
 /// One id chunk of `work list`'s content rows, read as SQL on the reader's held connection.
 fn content_chunk(reader: &ReadFn, chunk: &[&str], filters: &[String], full: bool) -> Result<Vec<serde_json::Value>, String> {
     let mut args = vec![s("list"), s("--all"), s("--limit"), s("0"), s("--id"), chunk.join(",")];
@@ -2427,6 +2497,7 @@ fn run_read(step: Step, reader: &ReadFn) -> (i32, String) {
                 .collect();
             (0, lines.join("\n"))
         }
+        Step::OpenItems { repo, exclude, json } => open_items(&crate::plane::read, &crate::plan::fetch_described, &repo, &exclude, json),
         Step::LcList { states, all, filters, json, full, limit } => list_with_content(reader, ListAsk { states: &states, all, filters: &filters, json, full, limit }),
         other => (CANNOT_TELL, format!("work: {other:?} is not a read")),
     }
@@ -2498,7 +2569,7 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String]) -> (i32, String) {
                 Ok(t) => (0, t),
                 Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
             },
-            read @ (Step::Read { .. } | Step::Search { .. } | Step::LcList { .. }) => run_read(read, &served_read),
+            read @ (Step::Read { .. } | Step::Search { .. } | Step::LcList { .. } | Step::OpenItems { .. }) => run_read(read, &served_read),
             Step::Tool { program, args, stdin } => {
                 // mail, by name; SPIRA_MAIL_SH is the harness-wide binary-override seam.
                 let prog = if program == "mail" { std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| s("mail")) } else { s(program) };
@@ -2703,7 +2774,7 @@ mod tests {
         for verb in ["submit", "ack", "file-followup", "split", "blocked", "superseded-by", "groom", "incident", "sop", "census", "queue", "landing-pass", "strand", "hel", "mender", "forge", "file", "ask"] {
             assert!(super::exec_verb(verb), "{verb} starts a program, so the scheduler runs it");
         }
-        for verb in ["show", "note", "done", "logs", "cite-check", "read", "list", "search", "fence", "note-on", "label-add", "label-remove", "no-such-verb"] {
+        for verb in ["show", "note", "done", "logs", "cite-check", "read", "list", "search", "open-items", "fence", "note-on", "label-add", "label-remove", "no-such-verb"] {
             assert!(!super::exec_verb(verb), "{verb} starts no program in the service");
         }
         assert!(super::exec_bound_ms("groom") >= super::exec_bound_ms("submit") && super::exec_bound_ms("submit") == super::TOOL_SECS * 1000);
@@ -3998,6 +4069,25 @@ mod tests {
             vec![Step::Search { query: s("merge queue"), limit: Some(s("5")), json: true }]
         );
         assert!(plan("search", "-", &call(&["--status", "open"], "groomer")).is_err());
+    }
+
+    #[test_id(t6d91g4)]
+    #[test]
+    fn open_items_names_its_repo_and_refuses_without_one_with_the_usage_line() {
+        assert_eq!(
+            plan("open-items", "-", &call(&["--repo", "spira", "--exclude", "sp-a"], "skuld")).unwrap(),
+            vec![Step::OpenItems { repo: s("spira"), exclude: v(&["sp-a"]), json: false }]
+        );
+        assert_eq!(
+            plan("open-items", "-", &call(&["--json", "--exclude", "sp-a1,sp-b2", "--repo", "spira"], "skuld")).unwrap(),
+            vec![Step::OpenItems { repo: s("spira"), exclude: v(&["sp-a1", "sp-b2"]), json: true }]
+        );
+        for args in [&[][..], &["--exclude", "sp-a"], &["--repo", ""], &["--repo", "--json"]] {
+            let (code, out) = plan("open-items", "-", &call(args, "skuld")).unwrap_err();
+            assert_eq!(code, CANNOT_TELL, "{args:?}");
+            assert!(out.contains("work open-items --repo <name> [--exclude <id,…>] [--json]"), "{args:?}: {out}");
+        }
+        assert!(plan("open-items", "-", &call(&["--repo", "spira", "--exclude", "nope"], "skuld")).is_err());
     }
 
     // ---- writes ----

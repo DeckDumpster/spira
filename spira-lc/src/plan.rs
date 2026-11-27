@@ -708,6 +708,14 @@ pub fn fetch(ids: &[&str]) -> Result<Vec<Value>, String> {
     fetch_with(bd()?, content_db()?, ids, false, false)
 }
 
+/// [`fetch`] with each row's text columns, the description among them.
+pub fn fetch_described(ids: &[&str]) -> Result<Vec<Value>, String> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    fetch_with(bd()?, content_db()?, ids, true, false)
+}
+
 fn rows_of(conn: &dyn Sql, sql: &str) -> Result<Vec<Value>, String> {
     conn.rows(sql).map_err(|f| format!("cannot tell: {}", f.text()))
 }
