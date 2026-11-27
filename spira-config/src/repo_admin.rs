@@ -782,6 +782,14 @@ fn check_cutting_in(reg: &Registry, name: &str, tree_root: &dyn Fn() -> Result<P
                 }
             );
         }
+        "pr" => piece!(
+            "queue-mode",
+            if remote.is_some() {
+                Ok(format!("{land} tracks a remote"))
+            } else {
+                Err(format!("pr needs a remote landing ref, {land} is local"))
+            }
+        ),
         other => piece!(
             "queue-mode",
             Err(format!("land mode {other:?} has no queue to open"))
@@ -1063,6 +1071,19 @@ mod tests {
         assert!(g.detail.contains("pull request"), "{g:?}");
         let (f, _) = gated_fx("push", "", &[("README", "x")]);
         assert_eq!(first_failure(&f), Some("gate"));
+    }
+
+    #[test_id(tgvwkab)]
+    #[test]
+    fn a_pr_repository_passes_every_piece_only_with_a_remote_landing_ref() {
+        let (f, repo) = gated_fx("pr", "", &[(".spira/testenv.toml", DECL_NO_ENTRY)]);
+        assert_eq!(first_failure(&f), Some("queue-mode"));
+        git(&repo, &["remote", "add", "origin", "unused"]).unwrap();
+        git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]).unwrap();
+        let map = std::fs::read_to_string(&f.map).unwrap().replace("| local/main |", "| origin/main |");
+        std::fs::write(&f.map, map).unwrap();
+        assert_eq!(piece(&f, "landref").detail, "origin/main");
+        assert_eq!(first_failure(&f), None);
     }
 
     #[test_id(tpg1a04)]
