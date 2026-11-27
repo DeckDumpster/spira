@@ -1917,9 +1917,16 @@ struct FEnv {
     stdin: RefCell<String>,
     /// Config keys that do not resolve.
     unresolved: RefCell<BTreeSet<String>>,
+    /// The running release's MANIFEST; unset reads as an unreadable one.
+    manifest: RefCell<Option<ReleaseManifest>>,
+    manifest_reads: Cell<u32>,
 }
 
 impl Env for FEnv {
+    fn release_manifest(&self) -> Result<ReleaseManifest, String> {
+        self.manifest_reads.set(self.manifest_reads.get() + 1);
+        self.manifest.borrow().clone().ok_or_else(|| "MANIFEST unreadable".to_string())
+    }
     fn var(&self, k: &str) -> Option<String> {
         self.vars.borrow().get(k).cloned()
     }
@@ -2186,6 +2193,7 @@ impl T {
             stack: Default::default(),
             ejected_red_tip: None,
             holder: None,
+            repo: None,
         };
         self.lc.rows.borrow_mut().as_mut().unwrap().push(row);
     }

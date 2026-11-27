@@ -2813,6 +2813,15 @@ pub fn utc_stamp(t: u64) -> String {
 pub struct SysEnv;
 
 impl Env for SysEnv {
+    fn release_manifest(&self) -> Result<ReleaseManifest, String> {
+        let root = spira_config::release_env::release_root_for_process()?;
+        let field = |f: &str| {
+            spira_config::resolve::read_manifest_field(&root, f)
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| format!("{}/MANIFEST has no `{f}`", root.display()))
+        };
+        Ok(ReleaseManifest { commit: field("commit")?, repo: field("repo")? })
+    }
     fn var(&self, k: &str) -> Option<String> {
         std::env::var(k).ok()
     }
