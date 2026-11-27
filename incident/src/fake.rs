@@ -8,9 +8,13 @@ use crate::decide::{BeadRow, BeadStatus, Scope};
 use crate::ports::{Bd, Clock, Mailer};
 use crate::run::FileConfig;
 
+/// One `list` call: `(scope, label, closed_after, external_ref)`.
+pub(crate) type ListCall = (Scope, Option<String>, Option<String>, Option<String>);
+
 #[derive(Default)]
 pub(crate) struct FakeBd {
     pub(crate) rows: RefCell<Vec<BeadRow>>,
+    pub(crate) lists: RefCell<Vec<ListCall>>,
     pub(crate) reachable: bool,
     /// The lifecycle machine does not answer: every dedup pass is blind.
     pub(crate) lc_down: bool,
@@ -44,6 +48,8 @@ impl FakeBd {
 impl Bd for FakeBd {
     // A row's `status` stands for its lifecycle row's state (decide::status_of_lc).
     fn list(&self, _db: &str, scope: Scope, label: Option<&str>, closed_after: Option<&str>, external_ref: Option<&str>) -> Result<Vec<BeadRow>, String> {
+        let owned = |s: Option<&str>| s.map(str::to_string);
+        self.lists.borrow_mut().push((scope, owned(label), owned(closed_after), owned(external_ref)));
         if self.lc_down {
             return Err("spira-lc: down".into());
         }

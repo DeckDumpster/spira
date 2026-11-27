@@ -421,7 +421,7 @@ fn drain_entry(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, p
     match outcome {
         FileOutcome::Filed(id) => Ok(Settled::Here(Some(id))),
         FileOutcome::Skew => Ok(Settled::Here(None)),
-        FileOutcome::Unreachable | FileOutcome::Refused => Err(log.pop().unwrap_or_else(|| format!("{} was not filed", entry.reference))),
+        FileOutcome::Unread(_) | FileOutcome::Refused => Err(log.pop().unwrap_or_else(|| format!("{} was not filed", entry.reference))),
         FileOutcome::LaneRefused(reason) => Err(format!("{reason}; {} stays spooled until the repo admits the lane", path.display())),
     }
 }
@@ -917,6 +917,43 @@ mod tests {
         let facts = bd.facts.borrow();
         assert_eq!(facts.len(), 1, "the second entry recurs the first");
         assert_eq!(facts[0].2, "unrecorded");
+    }
+
+    // covers: UC-ops-detection-remediation-10
+    #[test_id(tsjuvom)]
+    #[test]
+    fn a_blind_dedup_records_its_pass_and_the_stores_error_as_the_attempt_reason() {
+        let dir = testkit::TempDir::new("incident-drain-blind");
+        let env = env_in(&dir);
+        let p = spool(&env, "20260101T000000Z-a", &entry("incident:blind"));
+        let bd = FakeBd { lc_down: true, ..FakeBd::new() };
+        drain_spool(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), BATCH);
+        let attempts = tsd::alarm::read(std::path::Path::new(&env.spira_run));
+        let tsd::alarm::Outcome::Failed { reason } = &attempts.last().expect("an attempt is recorded").outcome else { panic!("{attempts:?}") };
+        assert!(reason.contains("Unfinished label-keyed pass") && reason.contains("spira-lc: down"), "{reason}");
+        assert!(!reason.contains("could not be reached"), "{reason}");
+        assert!(p.exists());
+    }
+
+    // covers: UC-ops-detection-remediation-10
+    #[test_id(t7zh7fk)]
+    #[test]
+    fn an_alarm_owner_whose_create_fails_records_the_create_error() {
+        let dir = testkit::TempDir::new("own-alarm-create-failed");
+        let env = env_in(&dir);
+        let bd = FakeBd { create_error: Some("boom: disk full".into()), ..FakeBd::new() };
+        bd.rows.borrow_mut().push(crate::decide::BeadRow {
+            id: "sp-old".into(),
+            status: crate::decide::BeadStatus::Terminal,
+            external_ref: Some("incident:unit-drift".into()),
+            labels: vec![format!("ref:{}", crate::decide::ref_hash("incident:unit-drift"))],
+            closed_at: Some("2026-10-08T00:00:00Z".into()),
+        });
+        own_alarm(&env, &bd, &FakeMailer::default(), &FixedClock(1_792_800_000), "UNIT DRIFT: x", "incident:unit-drift", b"body");
+        let rows = tsd::alarm::read(std::path::Path::new(&env.spira_run));
+        let row = rows.iter().find(|a| a.reference == "incident:unit-drift").expect("an attempt is recorded");
+        let tsd::alarm::Outcome::Failed { reason } = &row.outcome else { panic!("{row:?}") };
+        assert!(reason.contains("create failed (boom: disk full)") && reason.contains("not spooled"), "{reason}");
     }
 
     #[test_id(tkvxiks)]
