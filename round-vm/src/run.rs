@@ -3410,14 +3410,23 @@ fn stream_pull(remote: &dyn Remote, addr: &str, scratch: &Path, results_dir: &Pa
         if let Err(e) = stream_into(scratch, results_dir) {
             eprintln!("round-vm run: streaming results: {e}");
         }
-        for f in PROGRESS_FILES.into_iter().chain([CI_STARTED_FILE]) {
+        for f in PROGRESS_FILES {
             if scratch.join(f).is_file() {
                 let _ = fs::create_dir_all(results_dir);
                 let _ = fs::copy(scratch.join(f), results_dir.join(f));
             }
         }
+        carry_ci_started(scratch, results_dir);
     }
     tally.elapsed += t0.elapsed();
+}
+
+/// A foreign pass has no result leaf until its verdict, so [`stream_into`] never carries [`CI_STARTED_FILE`].
+fn carry_ci_started(pulled: &Path, results_dir: &Path) {
+    if pulled.join(CI_STARTED_FILE).is_file() {
+        let _ = fs::create_dir_all(results_dir);
+        let _ = fs::copy(pulled.join(CI_STARTED_FILE), results_dir.join(CI_STARTED_FILE));
+    }
 }
 
 /// What the streaming pulls of one pass cost, said once when the stream ends.
@@ -3555,6 +3564,7 @@ fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, expected: usiz
     let _ = fs::remove_dir_all(&scratch);
     if pull_retry(env.remote, env.cfg, &vm.addr, REMOTE_RESULTS, &scratch) {
         let n = stream_into(&scratch, results_dir).unwrap_or(0);
+        carry_ci_started(&scratch, results_dir);
         eprintln!("{}", incomplete_count_line(results_present(results_dir), expected, n));
         env.pool.mark_pulled(&vm.handle);
     } else {
@@ -7155,6 +7165,32 @@ mod tests {
         let (code, results, _fx) = dropped_foreign_pass(vec![("round-phase", "phase=pull rc=-\n")]);
         assert_eq!(code, 2);
         assert!(!results.join("ci.started").exists(), "nothing started the entry");
+    }
+
+    /// A foreign pass whose stream pull fails, so only a later pull can carry the marker.
+    fn foreign_pass_with_no_stream_pull(rc: i32) -> (i32, PathBuf, Fixture) {
+        let fx = fixture();
+        let mut remote = foreign_vm(vec![("ci.started", "")]);
+        remote.rc = Ok(rc);
+        remote.fail_result_pulls.store(1, std::sync::atomic::Ordering::SeqCst);
+        let a = foreign_args(&fx);
+        let code = go(&fx, &remote, &a);
+        (code, a.results_dir.unwrap(), fx)
+    }
+
+    #[test_id(tew9hfy)]
+    #[test]
+    fn the_pull_after_an_unrecovered_ssh_drop_carries_the_marker() {
+        let (code, results, _fx) = foreign_pass_with_no_stream_pull(255);
+        assert_eq!(code, 2);
+        assert!(results.join("ci.started").is_file());
+    }
+
+    #[test_id(tv5czp8)]
+    #[test]
+    fn the_final_results_pull_carries_the_marker() {
+        let (_, results, _fx) = foreign_pass_with_no_stream_pull(1);
+        assert!(results.join("ci.started").is_file());
     }
 
     #[test_id(tfxztrm)]
