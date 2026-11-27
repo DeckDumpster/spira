@@ -238,7 +238,7 @@ mod tests {
         let path = entry_path(&dir, "20260101T000000Z", "incident:a", 1);
         let e = parse_entry(b"REF: incident:a\n--\nbody").unwrap();
         write_entry(&path, &e).unwrap();
-        assert_eq!(entries(&dir).unwrap(), [path.clone()]);
+        assert_eq!(entries(&dir).unwrap(), std::slice::from_ref(&path));
         assert!(!partial_path(&path).exists());
         assert_eq!(parse_entry(&std::fs::read(&path).unwrap()).unwrap().body, b"body");
     }
