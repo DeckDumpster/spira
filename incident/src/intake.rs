@@ -1109,9 +1109,14 @@ mod tests {
 
     /// Drain one spooled event through a door that judges as the live one does.
     fn drain_one_event(tag: &str, reference: &str, repo: Option<&str>) -> (DrainReport, FakeBd, usize) {
+        drain_labelled(tag, reference, repo, "spira,incident")
+    }
+
+    fn drain_labelled(tag: &str, reference: &str, repo: Option<&str>, labels: &str) -> (DrainReport, FakeBd, usize) {
         let dir = testkit::TempDir::new(tag);
         let mut env = env_in(&dir);
         env.repo = None;
+        env.labels = labels.into();
         env.known_repos = vec!["spira".into(), "dumpstar".into()];
         env.plan_labels = Some("spira,plan".into());
         let e = SpoolEntry { reference: reference.into(), title: "t".into(), unit: "u".into(), incident_path: "p".into(), cause: "c".into(), repo: repo.map(str::to_string), body: b"payload".to_vec() };
@@ -1137,6 +1142,8 @@ mod tests {
         assert!(labels.contains(&"repo:dumpstar".to_string()) && labels.contains(&"plan".to_string()), "{labels:?}");
         assert!(!labels.iter().any(|l| l == "incident" || l == "alarm"), "{labels:?}");
         assert!(bead::has_build_spec(&body), "{body}");
+        let filed = bd.rows.borrow()[0].labels.clone();
+        assert!(!filed.iter().any(|l| l.starts_with("delivers:")), "builder work delivers a commit: {filed:?}");
     }
 
     // covers: UC-ops-detection-remediation-05
@@ -1169,5 +1176,18 @@ mod tests {
         assert_eq!((report.filed, report.stuck.clone(), left), (1, vec![], 0));
         let (labels, _) = only_create(&bd);
         assert!(labels.contains(&"repo:spira".to_string()) && labels.contains(&"incident".to_string()), "{labels:?}");
+    }
+
+    // covers: UC-ops-detection-remediation-05
+    #[test_id(t8d805j)]
+    #[test]
+    fn a_plan_request_that_is_not_a_product_red_files_on_the_home_repo_in_the_incident_lane() {
+        for (tag, repo) in [("route-plan-undeclared", None), ("route-plan-home", Some("spira")), ("route-plan-unmapped", Some("nope"))] {
+            let (report, bd, left) = drain_labelled(tag, "incident:base-red:gh-budget", repo, "spira,plan");
+            assert_eq!((report.filed, report.stuck.clone(), left), (1, vec![], 0), "{repo:?}");
+            let (labels, _) = only_create(&bd);
+            assert!(labels.contains(&"repo:spira".to_string()) && labels.contains(&"incident".to_string()), "{labels:?}");
+            assert!(!labels.contains(&"plan".to_string()), "{labels:?}");
+        }
     }
 }

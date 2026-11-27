@@ -318,8 +318,8 @@ fn file_new(
     let title = clipped.as_str();
     // `incident_labels` puts the scope first, so the plan label itself is the last one.
     let plan_label = cfg.plan_labels.and_then(|l| l.rsplit(',').next()).unwrap_or_default();
-    let (create_labels, body) = if labels.split(',').any(|l| l.trim().starts_with("repo:")) {
-        (labels.to_string(), body)
+    let (create_labels, body, lane) = if labels.split(',').any(|l| l.trim().starts_with("repo:")) {
+        (labels.to_string(), body, Lane::Incident)
     } else {
         let route = decide::route(reference, labels, cfg.repo_declared, cfg.home_repo, cfg.known_repos, plan_label);
         let repo = route.repo;
@@ -333,7 +333,7 @@ fn file_new(
                     "\n{}\nMake {repo}'s landing ref green: fix the failure the evidence above names, in {repo}, in the suite(s) it names.\n",
                     bead::BUILD_HEADING
                 );
-                (format!("{plan_labels},repo:{repo}"), body + &spec)
+                (format!("{plan_labels},repo:{repo}"), body + &spec, Lane::Plan)
             }
             Lane::Incident => {
                 let body = match cfg.repo_declared.filter(|d| *d != repo) {
@@ -344,7 +344,7 @@ fn file_new(
                     }
                     None => body,
                 };
-                (format!("{labels},repo:{repo}"), body)
+                (format!("{},repo:{repo}", decide::in_incident_lane(labels, plan_label)), body, Lane::Incident)
             }
         }
     };
@@ -376,6 +376,15 @@ fn file_new(
         }
     }
 
+    // A plan filing is builder work: its commit delivers it, so it takes no `delivers:` label.
+    if lane == Lane::Incident {
+        label_delivers(bd, cfg, &id, log);
+    }
+    bd.label_add(cfg.db, &id, &format!("ref:{}", decide::ref_hash(reference)));
+    FileOutcome::Filed(id)
+}
+
+fn label_delivers(bd: &dyn Bd, cfg: &FileConfig, id: &str, log: &mut Vec<String>) {
     match cfg.delivers_pref {
         Some("note") => {
             // Reachable exactly when the ledger is under $SPIRA_RUN (a session here can
@@ -390,10 +399,10 @@ fn file_new(
                     .map(|p| std::fs::create_dir_all(p).is_ok())
                     .unwrap_or(false);
             if mkdir_ok {
-                bd.label_add(cfg.db, &id, &format!("delivers:note:{}", cfg.sop_ledger));
+                bd.label_add(cfg.db, id, &format!("delivers:note:{}", cfg.sop_ledger));
                 log.push(format!("delivers: {id}: delivers:note:{} written (SPIRA_INCIDENT_DELIVERS=note)", cfg.sop_ledger));
             } else {
-                bd.label_add(cfg.db, &id, "delivers:action");
+                bd.label_add(cfg.db, id, "delivers:action");
                 if under_run {
                     log.push(format!("delivers: {id}: cannot create the ledger's directory — falling back to delivers:action"));
                 } else {
@@ -402,20 +411,17 @@ fn file_new(
             }
         }
         Some("action") => {
-            bd.label_add(cfg.db, &id, "delivers:action");
+            bd.label_add(cfg.db, id, "delivers:action");
             log.push(format!("delivers: {id}: delivers:action written (SPIRA_INCIDENT_DELIVERS set by caller)"));
         }
         Some(other) => {
             log.push(format!("delivers: {id}: unrecognised SPIRA_INCIDENT_DELIVERS='{other}' — label not written"));
         }
         None => {
-            bd.label_add(cfg.db, &id, "delivers:action");
+            bd.label_add(cfg.db, id, "delivers:action");
             log.push(format!("delivers: {id}: delivers:action written (default — close reason is the evidence)"));
         }
     }
-    bd.label_add(cfg.db, &id, &format!("ref:{}", decide::ref_hash(reference)));
-
-    FileOutcome::Filed(id)
 }
 
 /// A minimal, dependency-free RFC3339/ISO-8601 UTC parser for the subset bd actually
