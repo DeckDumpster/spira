@@ -196,6 +196,8 @@ pub fn watch_signals(stop: Arc<Stop>) {
 pub trait Beat: Send + Sync {
     fn now(&self) -> i64;
     fn trace_mtime(&self) -> i64;
+    /// The byte offset where the trace's last line that is not a client heartbeat ends.
+    fn trace_progress(&self) -> u64;
     /// `dwarf_fuse_minutes` (an integer, or `?`/`gate`).
     fn fuse(&self) -> String;
     /// `trace_last`, first `n` bytes.
@@ -265,7 +267,9 @@ fn idle_over(ticks: u64, secs: u64, hz: u64) -> bool {
 struct Seen {
     ticks: Option<u64>,
     at: i64,
-    transcript: i64,
+    progress: u64,
+    /// The beat epoch at which `progress` last moved.
+    moved: i64,
     since: Option<i64>,
 }
 
@@ -296,21 +300,25 @@ impl Heartbeat {
         self.run.join("dwarf").join(format!("{}.still", self.bead))
     }
 
-    /// The session is still when its descendants exist, its transcript is unwritten since the
-    /// last beat, they used under 5% of a core in that time and it is not in a harness wait.
-    fn watch_still(&self, b: &dyn Beat, stop: &Stop, transcript: i64, now: i64, seen: &mut Seen) {
+    /// The session is still when its descendants exist, its transcript has gained only client
+    /// heartbeats since the last beat, they used under 5% of a core in that time and it is not
+    /// in a harness wait. Not the mtime: the client's heartbeats move it while a command hangs.
+    fn watch_still(&self, b: &dyn Beat, stop: &Stop, now: i64, seen: &mut Seen) {
+        let progress = b.trace_progress();
+        let unwritten = progress == seen.progress;
+        let moved = if unwritten { seen.moved } else { now };
         let agent = stop.pgid.load(Ordering::SeqCst);
         let ticks = if agent > 0 { b.descendant_ticks(agent) } else { None };
         let idle = match (ticks, seen.ticks) {
             (Some(t), Some(p)) if t >= p => idle_over(t - p, (now - seen.at).max(1) as u64, clock_ticks_per_sec()),
             _ => false,
         };
-        let still = idle && transcript == seen.transcript && stop.harness_wait.load(Ordering::SeqCst) == 0;
-        *seen = Seen { ticks, at: now, transcript, since: if still { seen.since.or(Some(now)) } else { None } };
+        let still = idle && unwritten && stop.harness_wait.load(Ordering::SeqCst) == 0;
+        *seen = Seen { ticks, at: now, progress, moved, since: if still { seen.since.or(Some(now)) } else { None } };
         let file = self.still_file();
         match seen.since {
             Some(since) if since == now => {
-                let doc = serde_json::json!({ "since": since, "transcript": transcript, "last": b.trace_last(200) });
+                let doc = serde_json::json!({ "since": since, "transcript": moved, "last": b.trace_last(200) });
                 if let Some(p) = file.parent() {
                     let _ = std::fs::create_dir_all(p);
                 }
@@ -349,7 +357,7 @@ impl Heartbeat {
         self.write_lease(deadline);
         self.renew_identity(session_start);
         let _still = StillFile(self.still_file());
-        let mut seen = Seen { ticks: None, at: session_start, transcript: prev, since: None };
+        let mut seen = Seen { ticks: None, at: session_start, progress: b.trace_progress(), moved: session_start, since: None };
         loop {
             let t = Instant::now();
             while t.elapsed() < self.every {
@@ -405,7 +413,7 @@ impl Heartbeat {
                 }
                 HbTick::Ok => {}
             }
-            self.watch_still(b, stop, cur, now, &mut seen);
+            self.watch_still(b, stop, now, &mut seen);
             if !b.renew(now + self.lease_s) {
                 return None;
             }
@@ -436,6 +444,8 @@ mod tests {
     struct FakeBeat {
         now: Mutex<i64>,
         mtimes: Mutex<Vec<i64>>,
+        /// What each `trace_progress` call answers (the last repeats); empty: 0.
+        progress: Mutex<Vec<u64>>,
         fuse: String,
         logs: Mutex<Vec<String>>,
         beats: Mutex<u32>,
@@ -496,6 +506,14 @@ mod tests {
                 m.remove(0)
             } else {
                 m[0]
+            }
+        }
+        fn trace_progress(&self) -> u64 {
+            let mut p = self.progress.lock().unwrap();
+            if p.len() > 1 {
+                p.remove(0)
+            } else {
+                p.first().copied().unwrap_or(0)
             }
         }
         fn fuse(&self) -> String {
@@ -816,7 +834,7 @@ mod tests {
         let _ = agent.wait();
         let seen = b.still_seen.lock().unwrap().clone();
         let doc: serde_json::Value = serde_json::from_str(seen.last().unwrap().as_deref().expect("a sleeping child is still")).unwrap();
-        assert_eq!((doc["transcript"].as_i64(), doc["last"].as_str()), (Some(5), Some("{\"type\":\"assistant\"}")));
+        assert_eq!((doc["transcript"].as_i64(), doc["last"].as_str()), (Some(60), Some("{\"type\":\"assistant\"}")));
         assert!(doc["since"].as_i64().unwrap() > 0);
         assert!(!d.join("dwarf/sp-a.still").exists(), "the heartbeat's end removes it");
     }
@@ -877,10 +895,37 @@ mod tests {
     fn a_transcript_write_removes_the_still_file() {
         let d = tmp("still-write");
         let stop = recording_stop(PLACEHOLDER_PGID);
-        let b = FakeBeat { mtimes: Mutex::new(vec![5, 5, 5, 5, 9]), fuse: "?".into(), stop_after: 6, ticks: Mutex::new(idle_then(1)), run: d.to_path_buf(), ..Default::default() };
+        let b = FakeBeat { mtimes: Mutex::new(vec![5, 5, 5, 5, 9]), progress: Mutex::new(vec![5, 5, 5, 5, 9]), fuse: "?".into(), stop_after: 6, ticks: Mutex::new(idle_then(1)), run: d.to_path_buf(), ..Default::default() };
         still_hb(&d).run(&b, &stop, &AtomicBool::new(false));
         let seen: Vec<bool> = b.still_seen.lock().unwrap().iter().map(Option::is_some).collect();
         assert_eq!(seen, [false, true, true, false, true, true], "cleared by the write at beat 4, a fresh still period from beat 5: {seen:?}");
+    }
+
+    fn still_epochs(b: &FakeBeat) -> Vec<Option<i64>> {
+        let seen = b.still_seen.lock().unwrap();
+        seen.iter().map(|s| s.as_deref().map(|s| serde_json::from_str::<serde_json::Value>(s).unwrap()["transcript"].as_i64().unwrap())).collect()
+    }
+
+    #[test_id(ttfok8l)]
+    #[test]
+    fn heartbeat_only_writes_leave_a_still_file_aged_from_the_last_progress() {
+        let d = tmp("still-heartbeats");
+        let stop = recording_stop(PLACEHOLDER_PGID);
+        let b = FakeBeat { mtimes: Mutex::new((0..40).map(|n| 5 + 30 * n).collect()), progress: Mutex::new(vec![5]), fuse: "?".into(), stop_after: 4, ticks: Mutex::new(idle_then(1)), run: d.to_path_buf(), ..Default::default() };
+        still_hb(&d).run(&b, &stop, &AtomicBool::new(false));
+        // The first beat has no earlier CPU reading; the session started at epoch 60.
+        assert_eq!(still_epochs(&b), [None, Some(60), Some(60), Some(60)]);
+    }
+
+    #[test_id(tmki4mp)]
+    #[test]
+    fn a_still_file_is_aged_from_the_beat_that_last_saw_progress() {
+        let d = tmp("still-epoch");
+        let stop = recording_stop(PLACEHOLDER_PGID);
+        let b = FakeBeat { mtimes: Mutex::new(vec![5]), progress: Mutex::new(vec![5, 5, 9]), fuse: "?".into(), stop_after: 4, ticks: Mutex::new(idle_then(1)), run: d.to_path_buf(), ..Default::default() };
+        still_hb(&d).run(&b, &stop, &AtomicBool::new(false));
+        // Progress moves at the second beat, epoch 180.
+        assert_eq!(still_epochs(&b), [None, None, Some(180), Some(180)]);
     }
 
     #[test_id(tq2n8ds)]
