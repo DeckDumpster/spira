@@ -348,7 +348,7 @@ fi
 phase entry
 t0=$(date +%s)
 rc=0
-timeout -k 5 "$9" podman run --cidfile "$HOME/"#, crate::entry_cid_file!(), r#"" --rm -v "$HOME/round-work:$workdir:Z" -w "$workdir" --pids-limit "$pids_limit" "${cache[@]}" "$image" bash -c 'printf "round-vm: container pids.max %s\n" "$(cat /sys/fs/cgroup/pids.max 2>&1)"; exec bash -c "$1"' round-vm "$entry" 2>&1 | tee "$res/ci.out" || rc=${PIPESTATUS[0]}
+timeout -k 5 "$9" podman run --cidfile "$HOME/"#, crate::entry_cid_file!(), r#"" --rm -v "$HOME/round-work:$workdir:Z" -w "$workdir" --pids-limit "$pids_limit" "${cache[@]}" "$image" bash -c ': > .runtime/spira/batch-results/ci.started; printf "round-vm: container pids.max %s\n" "$(cat /sys/fs/cgroup/pids.max 2>&1)"; exec bash -c "$1"' round-vm "$entry" 2>&1 | tee "$res/ci.out" || rc=${PIPESTATUS[0]}
 spent=$(( $(date +%s) - t0 ))
 # The elapsed time tells the cap's cut from an entry killed early with the same status.
 if { [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; } && [ "$spent" -ge "$9" ]; then
@@ -2463,7 +2463,7 @@ fn emit_phase_ops(run_dir: &Path, results: &Path, args: &RunArgs, handle: Option
 
 /// Carries the files the VM leaves outside testenv's leaf from `pulled` to `results_dir`, by name.
 pub fn keep_top_files(pulled: &Path, results_dir: &Path) {
-    for top in [FIXTURE_FAULT_FILE, FENCE_TIMES, UNIT_TIMINGS].into_iter().chain(PROGRESS_FILES).chain(TEST_PHASE_FILES).chain(SCRIPT_FILES) {
+    for top in [FIXTURE_FAULT_FILE, FENCE_TIMES, UNIT_TIMINGS, CI_STARTED_FILE].into_iter().chain(PROGRESS_FILES).chain(TEST_PHASE_FILES).chain(SCRIPT_FILES) {
         if pulled.join(top).is_file() {
             let _ = fs::create_dir_all(results_dir);
             let _ = fs::copy(pulled.join(top), results_dir.join(top));
@@ -3410,7 +3410,7 @@ fn stream_pull(remote: &dyn Remote, addr: &str, scratch: &Path, results_dir: &Pa
         if let Err(e) = stream_into(scratch, results_dir) {
             eprintln!("round-vm run: streaming results: {e}");
         }
-        for f in PROGRESS_FILES {
+        for f in PROGRESS_FILES.into_iter().chain([CI_STARTED_FILE]) {
             if scratch.join(f).is_file() {
                 let _ = fs::create_dir_all(results_dir);
                 let _ = fs::copy(scratch.join(f), results_dir.join(f));
@@ -3688,6 +3688,9 @@ fn keep_runner_output(remote: &dyn Remote, cfg: &Config, addr: &str, scratch: &P
 
 /// Where the VM's testenv writes the corpus's results.
 pub const REMOTE_RESULTS: &str = "round-work/.runtime/spira/batch-results/";
+
+/// Written by the foreign entry's own shell inside its image: the entry started, whatever became of its verdict.
+pub const CI_STARTED_FILE: &str = "ci.started";
 
 /// Everything after the remote corpus returned `remote_rc`: pull results, tsd and binaries,
 /// write the manifest, install by tree sha. Returns `run`'s exit code.
@@ -5250,7 +5253,11 @@ mod tests {
     #[test_id(t536igw)]
     #[test]
     fn the_foreign_script_runs_the_entry_only_inside_the_declared_image() {
-        assert!(FOREIGN_SCRIPT.contains(concat!(r#"podman run --cidfile "$HOME/"#, crate::entry_cid_file!(), r#"" --rm -v "$HOME/round-work:$workdir:Z" -w "$workdir" --pids-limit "$pids_limit" "${cache[@]}" "$image" bash -c 'printf "round-vm: container pids.max %s\n" "$(cat /sys/fs/cgroup/pids.max 2>&1)"; exec bash -c "$1"' round-vm "$entry" 2>&1"#)));
+        assert!(FOREIGN_SCRIPT.contains(concat!(r#"podman run --cidfile "$HOME/"#, crate::entry_cid_file!(), r#"" --rm -v "$HOME/round-work:$workdir:Z" -w "$workdir" --pids-limit "$pids_limit" "${cache[@]}" "$image" bash -c ': > .runtime/spira/batch-results/ci.started; printf "round-vm: container pids.max %s\n" "$(cat /sys/fs/cgroup/pids.max 2>&1)"; exec bash -c "$1"' round-vm "$entry" 2>&1"#)));
+        let marker = format!("bash -c ': > {}{CI_STARTED_FILE}; ", REMOTE_RESULTS.trim_start_matches("round-work/"));
+        let at = FOREIGN_SCRIPT.find(&marker).expect("the container's shell writes the marker where the host pulls it from");
+        assert!(at < FOREIGN_SCRIPT.find(r#"exec bash -c "$1""#).unwrap(), "the marker precedes the entry");
+        assert_eq!(FOREIGN_SCRIPT.matches(CI_STARTED_FILE).count(), 1, "only the entry's own shell writes the marker");
         assert!(!FOREIGN_SCRIPT.lines().any(|l| l.starts_with(r#"bash -c "$entry" 2>&1"#)));
         assert!(FOREIGN_SCRIPT.contains("round-vm: podman pull $image failed"));
         let refusal = FOREIGN_SCRIPT.find(r#"[ -n "$pids_limit" ] || { echo "round-vm: the host sent no pids limit" >&2; exit 2; }"#).expect("an empty limit is refused");
@@ -5784,6 +5791,8 @@ mod tests {
         result_pulls: std::sync::atomic::AtomicUsize,
         /// how many results pulls fail before one succeeds
         fail_result_pulls: std::sync::atomic::AtomicUsize,
+        /// how many results pulls succeed before `fail_result_pulls` applies
+        result_pulls_before_failing: usize,
         /// every path pulled from the files map, in order
         pull_paths: Mutex<Vec<String>>,
         /// the VM is stopped under the batch, as a hard-stop would
@@ -5826,6 +5835,7 @@ mod tests {
                 hold_for_stream: false,
                 result_pulls: std::sync::atomic::AtomicUsize::new(0),
                 fail_result_pulls: std::sync::atomic::AtomicUsize::new(0),
+                result_pulls_before_failing: 0,
                 kill_vm: None,
                 recorded_exit: None,
                 ssh_log_text: None,
@@ -5899,8 +5909,9 @@ mod tests {
         }
         fn pull(&self, _: &str, remote_path: &str, local: &Path) -> Result<(), PullError> {
             if remote_path == REMOTE_RESULTS {
-                self.result_pulls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                let failing = self.fail_result_pulls.try_update(std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst, |n| n.checked_sub(1)).is_ok();
+                let earlier = self.result_pulls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let failing = earlier >= self.result_pulls_before_failing
+                    && self.fail_result_pulls.try_update(std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst, |n| n.checked_sub(1)).is_ok();
                 if failing {
                     return Err("rsync exited 255".into());
                 }
@@ -7109,6 +7120,54 @@ mod tests {
     fn a_vm_whose_round_script_has_begun_is_not_a_no_output_fault() {
         let fx = fixture();
         assert_ne!(go(&fx, &FakeRemote::green(), &round_args(&fx)), VM_NO_OUTPUT_EXIT);
+    }
+
+    /// A foreign VM as the host streams it: no testenv leaf, only what the VM script left at the top.
+    fn foreign_vm(top: Vec<(&'static str, &'static str)>) -> FakeRemote {
+        let mut remote = FakeRemote::green();
+        remote.files.insert(REMOTE_RESULTS, top);
+        remote.hold_for_stream = true;
+        remote
+    }
+
+    /// The foreign pass whose ssh dropped on a live VM with no exit recorded: its exit and results dir.
+    fn dropped_foreign_pass(top: Vec<(&'static str, &'static str)>) -> (i32, PathBuf, Fixture) {
+        let fx = fixture();
+        let mut remote = foreign_vm(top);
+        remote.rc = Ok(255);
+        let a = foreign_args(&fx);
+        let code = go(&fx, &remote, &a);
+        (code, a.results_dir.unwrap(), fx)
+    }
+
+    #[test_id(tmcvtw6)]
+    #[test]
+    fn a_ci_entry_that_started_before_ssh_was_lost_leaves_its_marker_in_the_results() {
+        let (code, results, _fx) = dropped_foreign_pass(vec![("ci.started", ""), ("round-phase", "phase=entry rc=-\n")]);
+        assert_eq!(code, 2);
+        assert!(!results.join("ci.result").exists());
+        assert!(results.join("ci.started").is_file(), "the entry started");
+    }
+
+    #[test_id(tu8g8c0)]
+    #[test]
+    fn a_ci_entry_that_never_started_before_ssh_was_lost_leaves_no_marker() {
+        let (code, results, _fx) = dropped_foreign_pass(vec![("round-phase", "phase=pull rc=-\n")]);
+        assert_eq!(code, 2);
+        assert!(!results.join("ci.started").exists(), "nothing started the entry");
+    }
+
+    #[test_id(tfxztrm)]
+    #[test]
+    fn a_ci_entry_whose_final_results_pull_failed_keeps_the_marker_the_stream_carried() {
+        let fx = fixture();
+        let mut remote = foreign_vm(vec![("ci.started", "")]);
+        remote.result_pulls_before_failing = 1;
+        remote.fail_result_pulls.store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
+        let a = foreign_args(&fx);
+        assert_eq!(go(&fx, &remote, &a), 2);
+        assert!(remote.result_pulls.load(std::sync::atomic::Ordering::SeqCst) > 1, "the final pull ran and failed");
+        assert!(a.results_dir.unwrap().join("ci.started").is_file());
     }
 
     #[test_id(tj2xr2z)]

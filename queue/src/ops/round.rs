@@ -3720,9 +3720,9 @@ fn no_output_pass(w: &World, label: &str, c: &Ctx, batch: &str, err: &str) -> i3
 
 const INFRA_KEY: &str = "infra-fault";
 
-/// A pass that never reached a suite (no VM, no boot, no checkout) holds no verdict, so it
-/// touches no member and no pass ledger: the next certify places the pass again. The second on
-/// one head is paged under the infrastructure cause.
+/// A pass that never reached a suite or a CI entry (no VM, boot, checkout or image) holds no
+/// verdict, so it touches no member and no pass ledger: the next certify places the pass again.
+/// The second on one head is paged under the infrastructure cause.
 fn infra_pass(w: &World, label: &str, c: &Ctx, batch: &str, why: &str) -> i32 {
     w.out(format!("fault={INFRA_KEY}"));
     let _g = match lock(w, label, c) {
@@ -4309,13 +4309,18 @@ fn certify_pass(
             say_fault(w, &why);
             let why_shown = format!("{why}\n{shown}");
             if !results.join("ci.result").exists() {
-                if declaration_unchanged(w, &base, path, &wt) {
+                if results.join("ci.started").exists() {
+                    w.err(format!(
+                        "queue.sh {label}: the CI entry started, so a member's diff may be why it left no verdict"
+                    ));
+                } else if declaration_unchanged(w, &base, path, &wt) {
                     return infra_pass(w, label, c, batch, &why_shown);
+                } else {
+                    w.err(format!(
+                        "queue.sh {label}: {} differs from the round's base, so a member's diff may be why the CI entry never ran",
+                        gate::own::DECL
+                    ));
                 }
-                w.err(format!(
-                    "queue.sh {label}: {} differs from the round's base, so a member's diff may be why the CI entry never ran",
-                    gate::own::DECL
-                ));
             }
             return faulted_pass(w, by, label, c, batch, &why_shown);
         }
