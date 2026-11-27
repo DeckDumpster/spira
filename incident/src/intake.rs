@@ -55,7 +55,7 @@ pub fn resolved_config() -> &'static spira_config::resolve::Resolved {
 /// called with is NOT in `spira/conf.d` (an ad hoc override with no registry entry, same as
 /// it has always been for the bash function) and keeps the old env/registry/default chain.
 pub const REGISTERED: &[&str] =
-    &["SPIRA_RUN", "SPIRA_INCIDENT_LABEL", "SPIRA_DB", "SPIRA_WATCHER_INTERVAL_S", "SPIRA_INCIDENT_PRIORITY", "SPIRA_HOME_REPO", "SPIRA_ASK_LABEL", "SPIRA_REPO_MAP", "SPIRA_CONCIERGE_INBOX"];
+    &["SPIRA_RUN", "SPIRA_INCIDENT_LABEL", "SPIRA_DB", "SPIRA_WATCHER_INTERVAL_S", "SPIRA_INCIDENT_PRIORITY", "SPIRA_HOME_REPO", "SPIRA_ASK_LABEL", "SPIRA_REPO_MAP", "SPIRA_CONCIERGE_INBOX", "SPIRA_PLAN_LABEL"];
 
 /// The environment, then `spira_config::resolve()`'s in-process answer — never the
 /// reverse, so an explicit env override still wins exactly as it did before this bead.
@@ -117,6 +117,7 @@ pub struct Env {
     pub watcher_interval_s: i64,
     pub cause: String,
     pub labels: String,
+    pub plan_labels: Option<String>,
     pub repo: Option<String>,
     pub kind: String,
     pub priority: String,
@@ -150,6 +151,7 @@ impl Env {
             watcher_interval_s: env("SPIRA_WATCHER_INTERVAL_S").and_then(|v| v.parse().ok()).unwrap_or(1800),
             cause: decide::sanitize_cause(&env_or("SPIRA_INCIDENT_CAUSE", "unrecorded")),
             labels: decide::incident_labels(env("SPIRA_INCIDENT_LABELS").as_deref(), env("SPIRA_SCOPE_LABEL").as_deref(), &incident_label),
+            plan_labels: env("SPIRA_PLAN_LABEL").map(|p| decide::incident_labels(None, env("SPIRA_SCOPE_LABEL").as_deref(), &p)),
             repo: env("SPIRA_INCIDENT_REPO"),
             kind: env_or("SPIRA_INCIDENT_TYPE", "bug"),
             priority: priority_of(env("SPIRA_INCIDENT_PRIORITY")),
@@ -191,6 +193,7 @@ impl Env {
             dedup_lookback_days: self.dedup_lookback_days,
             repo_declared: self.repo.as_deref(),
             delivers_pref: self.delivers_pref.as_deref(),
+            plan_labels: self.plan_labels.as_deref(),
             sop_ledger: &self.sop_ledger,
             spira_run: &self.spira_run,
             home_repo: &self.home_repo,
@@ -715,6 +718,7 @@ mod tests {
             watcher_interval_s: 1800,
             cause: "unrecorded".into(),
             labels: "spira,incident".into(),
+            plan_labels: None,
             repo: Some("spira".into()),
             kind: "bug".into(),
             priority: "3".into(),
@@ -1099,5 +1103,91 @@ mod tests {
         });
         assert_eq!(first.len(), 1);
         assert_eq!(second, (vec![], DrainReport::default()));
+    }
+
+    const LIVE_MAP: &str = "spira | /r/spira | push | origin/main | | true | plan,groom,spike,incident\ndumpstar | /r/dumpstar | push | origin/main | | true | plan\n";
+
+    /// Drain one spooled event through a door that judges as the live one does.
+    fn drain_one_event(tag: &str, reference: &str, repo: Option<&str>) -> (DrainReport, FakeBd, usize) {
+        drain_labelled(tag, reference, repo, "spira,incident")
+    }
+
+    fn drain_labelled(tag: &str, reference: &str, repo: Option<&str>, labels: &str) -> (DrainReport, FakeBd, usize) {
+        let dir = testkit::TempDir::new(tag);
+        let mut env = env_in(&dir);
+        env.repo = None;
+        env.labels = labels.into();
+        env.known_repos = vec!["spira".into(), "dumpstar".into()];
+        env.plan_labels = Some("spira,plan".into());
+        let e = SpoolEntry { reference: reference.into(), title: "t".into(), unit: "u".into(), incident_path: "p".into(), cause: "c".into(), repo: repo.map(str::to_string), body: b"payload".to_vec() };
+        spool(&env, "20260101T000000Z-a", &String::from_utf8(format_entry(&e)).unwrap());
+        let bd = FakeBd { admits: Some(LIVE_MAP.into()), ..FakeBd::new() };
+        let report = drain_spool(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), BATCH);
+        let left = crate::spool::entries(&env.spool_dir).unwrap().len();
+        (report, bd, left)
+    }
+
+    fn only_create(bd: &FakeBd) -> (Vec<String>, String) {
+        let labels = bd.create_labels.borrow().values().next().expect("one create").split(',').map(str::to_string).collect();
+        (labels, bd.bodies.borrow().values().next().cloned().unwrap())
+    }
+
+    // covers: UC-ops-detection-remediation-05
+    #[test_id(t26bog2)]
+    #[test]
+    fn a_product_repos_landing_ref_red_files_against_that_repo_in_the_plan_lane() {
+        let (report, bd, left) = drain_one_event("route-product-red", "basefail-local:dumpstar:unit-tests:FAIL:1a2b3c4d", Some("dumpstar"));
+        assert_eq!((report.filed, report.stuck.clone(), left), (1, vec![], 0));
+        let (labels, body) = only_create(&bd);
+        assert!(labels.contains(&"repo:dumpstar".to_string()) && labels.contains(&"plan".to_string()), "{labels:?}");
+        assert!(!labels.iter().any(|l| l == "incident" || l == "alarm"), "{labels:?}");
+        assert!(bead::has_build_spec(&body), "{body}");
+        let filed = bd.rows.borrow()[0].labels.clone();
+        assert!(!filed.iter().any(|l| l.starts_with("delivers:")), "builder work delivers a commit: {filed:?}");
+    }
+
+    // covers: UC-ops-detection-remediation-05
+    #[test_id(tit421s)]
+    #[test]
+    fn a_harness_ref_that_declares_no_repo_files_against_the_home_repo_in_the_incident_lane() {
+        let (report, bd, left) = drain_one_event("route-undeclared", "incident:refused-ContentOnBase-from-LANDED--Terminal--by-landing-pass", None);
+        assert_eq!((report.filed, report.stuck.clone(), left), (1, vec![], 0));
+        let (labels, _) = only_create(&bd);
+        assert!(labels.contains(&"repo:spira".to_string()) && labels.contains(&"incident".to_string()), "{labels:?}");
+        assert!(!bd.rows.borrow()[0].labels.iter().any(|l| l == "needs-repo-triage"), "{:?}", bd.rows.borrow()[0].labels);
+    }
+
+    // covers: UC-ops-detection-remediation-05
+    #[test_id(teiezgo)]
+    #[test]
+    fn a_harness_fault_naming_a_product_repo_files_on_the_home_repo_and_keeps_the_repo_it_concerns() {
+        let (report, bd, left) = drain_one_event("route-concerns", "land-deploy-fault:dumpstar:abc123", Some("dumpstar"));
+        assert_eq!((report.filed, report.stuck.clone(), left), (1, vec![], 0));
+        let (labels, body) = only_create(&bd);
+        assert!(labels.contains(&"repo:spira".to_string()) && labels.contains(&"incident".to_string()), "{labels:?}");
+        assert!(body.starts_with("Concerns repository: dumpstar\n\n"), "{body}");
+    }
+
+    // covers: UC-ops-detection-remediation-05
+    #[test_id(t0vhkmq)]
+    #[test]
+    fn a_home_repo_stall_naming_a_product_in_its_ref_stays_in_the_incident_lane() {
+        let (report, bd, left) = drain_one_event("route-stall", "incident:throughput-stall:dumpstar:1795797689", Some("spira"));
+        assert_eq!((report.filed, report.stuck.clone(), left), (1, vec![], 0));
+        let (labels, _) = only_create(&bd);
+        assert!(labels.contains(&"repo:spira".to_string()) && labels.contains(&"incident".to_string()), "{labels:?}");
+    }
+
+    // covers: UC-ops-detection-remediation-05
+    #[test_id(t8d805j)]
+    #[test]
+    fn a_plan_request_that_is_not_a_product_red_files_on_the_home_repo_in_the_incident_lane() {
+        for (tag, repo) in [("route-plan-undeclared", None), ("route-plan-home", Some("spira")), ("route-plan-unmapped", Some("nope"))] {
+            let (report, bd, left) = drain_labelled(tag, "incident:base-red:gh-budget", repo, "spira,plan");
+            assert_eq!((report.filed, report.stuck.clone(), left), (1, vec![], 0), "{repo:?}");
+            let (labels, _) = only_create(&bd);
+            assert!(labels.contains(&"repo:spira".to_string()) && labels.contains(&"incident".to_string()), "{labels:?}");
+            assert!(!labels.contains(&"plan".to_string()), "{labels:?}");
+        }
     }
 }
