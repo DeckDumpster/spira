@@ -2,6 +2,7 @@ use spira_sim::world::{
     broker_pid_file, broker_socket, control_store, db_root, down, is_world_serve, lc_pid_file, lc_socket, release_source,
     serve_argv, start_broker, ProcessSteps, ReleaseSource, Steps, RELEASE_ENV, TESTENV_ENV,
 };
+use std::io::Read;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -143,10 +144,14 @@ fn the_worlds_real_broker_accepts_once_up_and_down_leaves_no_process_behind() {
 
     let pid: u32 = std::fs::read_to_string(broker_pid_file(&dir)).unwrap().parse().unwrap();
     let socket = broker_socket(&dir);
-    assert!(UnixStream::connect(&socket).is_ok(), "{} does not accept", socket.display());
+    let mut held = UnixStream::connect(&socket).unwrap_or_else(|e| panic!("{} does not accept: {e}", socket.display()));
     down(&dir, &ProcessSteps).unwrap();
     assert!(!Path::new(&format!("{}/{pid}", system_paths::PROC)).exists(), "broker pid {pid} outlived the world");
-    assert!(UnixStream::connect(&socket).is_err(), "{} still accepts", socket.display());
+    // `down` removes the socket's directory, so only a connection opened before it can tell.
+    held.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap(); // batch-job: bounds a broker that outlived its world
+    let end = held.read(&mut [0u8; 1]);
+    let hung_up = matches!(&end, Ok(0)) || matches!(&end, Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset);
+    assert!(hung_up, "the world's broker still holds the connection: {end:?}");
 }
 
 /// A directory shaped like `spira-releases/<sha>`.

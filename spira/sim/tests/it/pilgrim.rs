@@ -4,7 +4,7 @@
 
 use spira_sim::pilgrim;
 use spira_sim::world::{self, lc_socket, ProcessSteps};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -170,11 +170,22 @@ fn a_pilgrim_files_links_and_closes_in_a_world_of_its_own_and_both_views_follow(
 
     let broker: u32 = std::fs::read_to_string(world::broker_pid_file(&dir)).unwrap().trim().parse().unwrap();
     let socket = world::broker_socket(&dir);
-    assert!(UnixStream::connect(&socket).is_ok(), "positive control: the world's broker accepts");
+    let held = UnixStream::connect(&socket).expect("the world's broker accepts");
     drop(sub);
     world::down(&dir, &ProcessSteps).unwrap();
     assert!(!Path::new(&format!("{}/{broker}", system_paths::PROC)).exists(), "broker pid {broker} outlived the world");
-    assert!(UnixStream::connect(&socket).is_err(), "{} still accepts", socket.display());
+    assert_hung_up(held);
+}
+
+/// `down` removes the socket's directory, so only a connection opened before it can show that
+/// whatever accepted on it is gone.
+fn assert_hung_up(mut held: UnixStream) {
+    held.set_read_timeout(Some(Duration::from_secs(5))).unwrap(); // batch-job: bounds a broker that outlived its world
+    match held.read(&mut [0u8; 1]) {
+        Ok(0) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {}
+        other => panic!("the world's broker still holds the connection: {other:?}"),
+    }
 }
 
 /// The world's own `spira-sub run --as t`, watching every bead's state with a `follow` attached.
