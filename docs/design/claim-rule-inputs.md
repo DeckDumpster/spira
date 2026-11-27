@@ -93,7 +93,7 @@ Three writers, each replacing or editing the whole list:
 
 1. **`publish_readiness`** (`spira-lc/src/control/store/readiness.rs`). Every publish pass overwrites it with `Judged.blocked_by`, which `spira-claim/src/readiness.rs` `payload` sets to the verdict's `blocker` for a record the claim rule judged: at most one id, the first blocker the rule stopped at, or the carrying integration. For a live record the rule did not judge it is every blocker not yet finished.
 2. **`mark_rejudge`** (`spira-lc/src/control/store/readiness.rs` `Store::mark_rejudge`, reached from `spira-lc/src/bd.rs` `mark_rejudge`). After a planning write it replaces the list: with the one new dependency on `dep add`, and with an empty list on `dep rm`, a priority, parent, status or defer update, or a `split-child` relabel (`spira_store::planning::claim_input_change`). It does nothing for a record no pass has judged.
-3. **`set_edge`** (`spira-lc/src/control/store/direct.rs` `Store::set_edge`). Adds or removes one id. Reached from `bead.sh dep add|remove` → the content door → `spira-lc dep-add|dep-remove` (`spira-lc/src/control/state/rounds.rs` `edge`).
+3. **`set_edge`** (`spira-lc/src/control/store/direct.rs` `Store::set_edge`). Adds or removes one id. Reached from `bead.sh dep add|remove` → the content door → `spira-lc dep-add|dep-remove` (`spira-lc/src/control/state/rounds.rs` `edge`). That primitive is served only to the content door's mirror callers and is refused from the command line (`spira-lc/src/lib.rs` `cli_refusal`).
 
 So between passes it is a mix of all three, and after a pass it holds only the last judged
 blocker. `Readiness.gates` is keyed by every blocker the last pass read (the parent plus the

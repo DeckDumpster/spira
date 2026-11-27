@@ -71,6 +71,20 @@ impl World {
     }
 }
 
+#[test_id(tpr6dzm)]
+#[test]
+fn an_edge_verb_typed_at_the_command_line_exits_refused_and_writes_nothing() {
+    let w = World::new();
+    w.ok(&["admin-create-store"]);
+    w.ok(&["create-bead", "sp-a", "--ready", "--repo", "harness"]);
+    let before = w.ok(&["show", "sp-a"]);
+    for verb in ["dep-add", "dep-remove"] {
+        let (rc, out) = w.run(&[verb, "sp-a", "sp-b"]);
+        assert!(rc == 3 && out.contains("bead.sh dep add") && out.contains("bead.sh dep remove"), "{verb}: {rc} {out}");
+        assert_eq!(w.ok(&["show", "sp-a"]), before, "{verb}");
+    }
+}
+
 #[test_id(tplmupn)]
 #[test]
 fn the_ported_verbs_answer_from_the_control_store() {
