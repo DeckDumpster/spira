@@ -784,10 +784,7 @@ mod tests {
         let unit = running("cap-unwound");
         unit.log(log);
         let armed = arm(Cap { secs: 0, source: "test" }, None);
-        // clock-safe: a zero cap trips on the watchdog's first look; this waits for that signal
-        while !tripped_anywhere() {
-            std::thread::yield_now();
-        }
+        armed.await_trip();
         drop(unit);
         let trip = armed.finish().expect("tripped");
         assert!(trip.report.contains(&log_line("cap-unwound", log)), "{:?}", trip.report);
