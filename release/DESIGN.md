@@ -137,6 +137,9 @@ about which release they name.
    `spira-env` built into `~/.local/lib/spira-env` (every unit's tools), with `nix` from
    `$SPIRA_NIX_PROFILE_BIN`, and the env it replaces rooted at `spira-env.prev`. A failed
    build or root refuses with the link as it was. Every later failure points the link back.
+   A build also writes `~/.local/lib/spira-env.source`, the sha256 of the release's `flake.nix`
+   followed by its `flake.lock`, which `doctor` compares with the running release's; undoing a
+   switch puts that stamp back with the link.
    `rollback` does the same for the release it returns to. A release without a flake skips it.
    A switch that stood with a changed env starts the background garbage collection install
    starts, without waiting for it, and no service is restarted for an env change.

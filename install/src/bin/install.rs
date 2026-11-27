@@ -2268,6 +2268,9 @@ mod nix_gc_tests {
         let td = testkit::TempDir::new("nix-gc");
         let root = td.path().join("spira-rel");
         std::fs::create_dir_all(&root).unwrap();
+        for f in ["flake.nix", "flake.lock"] {
+            std::fs::write(root.join(f), "{}\n").unwrap();
+        }
         let profile = td.path().join("profile/bin");
         std::fs::create_dir_all(&profile).unwrap();
         let bin = profile.join("nix-collect-garbage");

@@ -5,6 +5,8 @@ use crate::fsutil;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+pub use spira_config::flake_digest;
+
 pub trait Nix {
     /// Builds `target` and links the result at `out`; `out` is untouched when the build fails.
     fn build(&self, target: &str, out: &Path) -> Result<(), String>;
@@ -59,6 +61,8 @@ pub struct Built {
     /// The store path the link held before; `None` when there was no env.
     pub before: Option<PathBuf>,
     pub after: PathBuf,
+    /// The source stamp as it was before the build; `None` when there was none.
+    pub stamp_before: Option<String>,
 }
 
 impl Built {
@@ -80,25 +84,56 @@ pub fn target(release_root: &Path) -> String {
     format!("path:{}#spira-env", resolved.display())
 }
 
-/// Builds `release_root`'s env into `home`'s env link and roots the env it replaced. On `Err`
-/// the link is as it was. An unchanged lock rebuilds to the same store path.
+/// Builds `release_root`'s env into `home`'s env link, roots the env it replaced and stamps the
+/// release's flake digest beside it. On `Err` the link is as it was. An unchanged lock rebuilds to the same store path.
 pub fn build(nix: &dyn Nix, release_root: &Path, home: &Path) -> Result<Built, String> {
     let out = home.join(spira_config::SPIRA_ENV_REL);
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     }
     let before = std::fs::canonicalize(&out).ok();
+    let digest = flake_digest(release_root)?;
+    let stamp_before = std::fs::read_to_string(home.join(spira_config::SPIRA_ENV_SOURCE_REL)).ok();
     nix.build(&target(release_root), &out)?;
     let after = std::fs::canonicalize(&out).map_err(|e| format!("the build left no env at {}: {e}", out.display()))?;
-    let built = Built { before, after };
+    let built = Built { before, after, stamp_before };
     if let Some(old) = built.replaced() {
         let prev = home.join(spira_config::SPIRA_ENV_PREV_REL);
         if let Err(e) = nix.add_root(&prev, old) {
-            let left = restore(home, old).err().map(|r| format!("; the env link still names {}: {r}", built.after.display())).unwrap_or_default();
-            return Err(format!("cannot root the previous spira-env {}: {e}{left}", old.display()));
+            return Err(format!("cannot root the previous spira-env {}: {e}{}", old.display(), put_back(home, &built, &digest)));
         }
     }
+    if let Err(e) = write_stamp(home, &digest) {
+        return Err(format!("{e}{}", put_back(home, &built, &digest)));
+    }
     Ok(built)
+}
+
+fn write_stamp(home: &Path, digest: &str) -> Result<(), String> {
+    fsutil::write_atomic(&home.join(spira_config::SPIRA_ENV_SOURCE_REL), &format!("{digest}\n"))
+}
+
+/// Restores the link a failed build moved; "" or why it still names the new env.
+fn put_back(home: &Path, built: &Built, digest: &str) -> String {
+    let Some(old) = built.replaced() else { return String::new() };
+    let Err(e) = restore(home, old) else { return String::new() };
+    // The old stamp would describe an env that is no longer linked: stamp the new one, or none.
+    if write_stamp(home, digest).is_err() {
+        let _ = std::fs::remove_file(home.join(spira_config::SPIRA_ENV_SOURCE_REL));
+    }
+    format!("; the env link still names {}: {e}", built.after.display())
+}
+
+/// Puts the source stamp back to what it was before `built`.
+pub fn restore_stamp(home: &Path, built: &Built) -> Result<(), String> {
+    let stamp = home.join(spira_config::SPIRA_ENV_SOURCE_REL);
+    match &built.stamp_before {
+        Some(text) => fsutil::write_atomic(&stamp, text),
+        None => match std::fs::remove_file(&stamp) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("cannot remove {}: {e}", stamp.display())),
+            _ => Ok(()),
+        },
+    }
 }
 
 /// Atomically points the env link back at `before`.

@@ -59,7 +59,9 @@ pub struct Fake {
     pub hooks_path: RefCell<Option<String>>,
     pub env_provided: RefCell<Vec<String>>,
     pub env_installed: RefCell<Option<String>>,
-    pub env_locked: RefCell<Result<String, String>>,
+    pub env_recorded: RefCell<Option<String>>,
+    pub env_wanted: RefCell<Result<String, String>>,
+    pub env_files: RefCell<Vec<String>>,
     pub tool_versions: RefCell<BTreeMap<PathBuf, String>>,
     pub submission: RefCell<Option<String>>,
     pub root_scan: RefCell<crate::ports::RootScan>,
@@ -115,7 +117,9 @@ impl Default for Fake {
             hooks_path: RefCell::new(None),
             env_provided: RefCell::new(Vec::new()),
             env_installed: RefCell::new(None),
-            env_locked: RefCell::new(Err(String::new())),
+            env_recorded: RefCell::new(None),
+            env_wanted: RefCell::new(Err(String::new())),
+            env_files: RefCell::new(Vec::new()),
             tool_versions: RefCell::new(BTreeMap::new()),
             submission: RefCell::new(None),
             root_scan: RefCell::new(crate::ports::RootScan::Seen(Vec::new())),
@@ -267,8 +271,14 @@ impl World for Fake {
     fn spira_env_installed(&self) -> Option<String> {
         self.env_installed.borrow().clone()
     }
-    fn spira_env_locked(&self) -> Result<String, String> {
-        self.env_locked.borrow().clone()
+    fn spira_env_recorded(&self) -> Option<String> {
+        self.env_recorded.borrow().clone()
+    }
+    fn spira_env_wanted(&self) -> Result<String, String> {
+        self.env_wanted.borrow().clone()
+    }
+    fn env_file_exists(&self, name: &str) -> bool {
+        self.env_files.borrow().iter().any(|f| f == name)
     }
     fn tool_version_line(&self, path: &Path) -> Option<String> {
         self.tool_versions.borrow().get(path).cloned()
@@ -1527,39 +1537,64 @@ fn hooks_path_passes_relative_and_absolute_forms() {
 }
 
 const STORE_A: &str = "nix/store/aaa-spira-env";
-const STORE_B: &str = "nix/store/bbb-spira-env";
+const DIGEST_A: &str = "aaaaaaaaaaaa1111aaaaaaaaaaaa1111";
+const DIGEST_B: &str = "bbbbbbbbbbbb2222bbbbbbbbbbbb2222";
 
-fn env_fixture(installed: &str, locked: &str, bd: &str) -> Fake {
+fn env_fixture(recorded: &str, wanted: &str, bd: &str) -> Fake {
     let f = Fake::default();
     f.set("HOME", "h");
     *f.env_provided.borrow_mut() = vec!["bd".into()];
-    *f.env_installed.borrow_mut() = Some(installed.into());
-    *f.env_locked.borrow_mut() = Ok(locked.into());
+    *f.env_files.borrow_mut() = vec!["bd".into()];
+    *f.env_installed.borrow_mut() = Some(STORE_A.into());
+    *f.env_recorded.borrow_mut() = Some(recorded.into());
+    *f.env_wanted.borrow_mut() = Ok(wanted.into());
     f.which.borrow_mut().insert("bd".into(), PathBuf::from(bd));
     f
 }
 
 #[test_id(tqxutg3)]
 #[test]
-fn spira_env_clean_when_installed_matches_locked_and_tool_resolves_inside() {
-    let f = env_fixture(STORE_A, STORE_A, "h/.local/lib/spira-env/bin/bd");
-    assert_eq!(levels(&check_spira_env(&f)), vec![Level::Ok]);
+fn spira_env_is_clean_when_the_stamp_is_the_releases_flake_digest_and_the_tool_resolves_inside() {
+    let out = check_spira_env(&env_fixture(DIGEST_A, DIGEST_A, "h/.local/lib/spira-env/bin/bd"));
+    assert_eq!(levels(&out), vec![Level::Ok]);
+    assert!(out[0].msg.contains("matches this release's flake (aaaaaaaaaaaa)"), "{:?}", out[0].msg);
 }
 
 #[test_id(tu3eqo3)]
 #[test]
-fn spira_env_names_both_paths_when_stale() {
-    let f = env_fixture(STORE_A, STORE_B, "h/.local/lib/spira-env/bin/bd");
+fn spira_env_names_both_digests_when_the_stamp_differs() {
+    let f = env_fixture(DIGEST_A, DIGEST_B, "h/.local/lib/spira-env/bin/bd");
     let out = check_spira_env(&f);
     assert_eq!(levels(&out), vec![Level::Warn]);
+    assert!(out[0].msg.contains("drifted"), "{:?}", out[0].msg);
     let d = out[0].detail.as_deref().unwrap();
-    assert!(d.contains(STORE_A) && d.contains(STORE_B), "{d}");
+    assert!(d.contains(DIGEST_A) && d.contains(DIGEST_B) && d.contains(STORE_A), "{d}");
+}
+
+#[test_id(to4ai8p)]
+#[test]
+fn spira_env_without_a_source_stamp_warns_that_it_predates_stamps() {
+    let f = env_fixture(DIGEST_A, DIGEST_A, "h/.local/lib/spira-env/bin/bd");
+    *f.env_recorded.borrow_mut() = None;
+    let out = check_spira_env(&f);
+    assert_eq!(levels(&out), vec![Level::Warn]);
+    assert!(out[0].msg.contains("no source stamp"), "{:?}", out[0].msg);
+}
+
+#[test_id(tzo8wc3)]
+#[test]
+fn spira_env_reports_a_release_whose_flake_cannot_be_read() {
+    let f = env_fixture(DIGEST_A, DIGEST_A, "h/.local/lib/spira-env/bin/bd");
+    *f.env_wanted.borrow_mut() = Err("cannot read flake.lock".into());
+    let out = check_spira_env(&f);
+    assert_eq!(levels(&out), vec![Level::Warn]);
+    assert_eq!(out[0].detail.as_deref(), Some("cannot read flake.lock"));
 }
 
 #[test_id(tearsvw)]
 #[test]
 fn spira_env_flags_a_stray_binary_ahead_of_the_env() {
-    let f = env_fixture(STORE_A, STORE_A, "h/.local/bin/bd");
+    let f = env_fixture(DIGEST_A, DIGEST_A, "h/.local/bin/bd");
     let out = check_spira_env(&f);
     assert_eq!(levels(&out), vec![Level::Ok, Level::Warn]);
     assert!(out[1].msg.contains("h/.local/bin/bd"), "{:?}", out[1].msg);
@@ -1568,7 +1603,7 @@ fn spira_env_flags_a_stray_binary_ahead_of_the_env() {
 #[test_id(tgqqznb)]
 #[test]
 fn spira_env_flags_a_commit_stamped_dev_build() {
-    let f = env_fixture(STORE_A, STORE_A, "h/.local/bin/bd");
+    let f = env_fixture(DIGEST_A, DIGEST_A, "h/.local/bin/bd");
     f.tool_versions.borrow_mut().insert(PathBuf::from("h/.local/bin/bd"), "bd version 1.3.1 (dev: abc1234)".into());
     let out = check_spira_env(&f);
     assert!(out.iter().any(|l| l.msg.contains("dev build")), "{out:?}");
@@ -1576,10 +1611,45 @@ fn spira_env_flags_a_commit_stamped_dev_build() {
 
 #[test_id(tfrya0t)]
 #[test]
-fn spira_env_warns_when_not_installed() {
-    let f = env_fixture(STORE_A, STORE_A, "h/.local/lib/spira-env/bin/bd");
+fn spira_env_warns_once_when_not_installed() {
+    let f = env_fixture(DIGEST_A, DIGEST_A, "h/.local/lib/spira-env/bin/bd");
     *f.env_installed.borrow_mut() = None;
+    *f.env_recorded.borrow_mut() = None;
+    f.env_files.borrow_mut().clear();
     assert_eq!(levels(&check_spira_env(&f)), vec![Level::Warn]);
+}
+
+#[test_id(tfjp06t)]
+#[test]
+fn spira_env_names_a_provided_tool_missing_from_the_env() {
+    let f = env_fixture(DIGEST_A, DIGEST_A, "h/.local/lib/spira-env/bin/bd");
+    f.env_provided.borrow_mut().push("clang".into());
+    let out = check_spira_env(&f);
+    let missing: Vec<_> = out.iter().filter(|l| l.msg.contains("does not exist")).collect();
+    assert_eq!(missing.len(), 1, "{out:?}");
+    assert!(missing[0].level == Level::Warn && missing[0].msg.contains("clang"), "{out:?}");
+    assert!(missing[0].msg.contains("h/.local/lib/spira-env/bin/clang"), "{out:?}");
+}
+
+#[test_id(tjmsxum)]
+#[test]
+fn the_real_world_reads_the_stamp_the_releases_digest_and_the_env_bin() {
+    let t = testkit::TempDir::new("doctor-env-real");
+    let (home, release) = (t.join("home"), t.join("release"));
+    std::fs::create_dir_all(home.join(spira_config::SPIRA_ENV_REL).join("bin")).unwrap();
+    std::fs::create_dir_all(release.join("spira")).unwrap();
+    for (name, body) in [("flake.nix", "a"), ("flake.lock", "bc")] {
+        std::fs::write(release.join(name), body).unwrap();
+    }
+    std::fs::write(home.join(spira_config::SPIRA_ENV_REL).join("bin/bd"), "").unwrap();
+    let env = [("HOME".to_string(), home.display().to_string())].into();
+    let real = crate::real::Real { home: release.join("spira"), env, lc: String::new(), child_env: Vec::new() };
+    assert_eq!(real.spira_env_recorded(), None);
+    let digest = spira_config::flake_digest(&release).unwrap();
+    std::fs::write(home.join(spira_config::SPIRA_ENV_SOURCE_REL), format!("{digest}\n")).unwrap();
+    assert_eq!(real.spira_env_recorded(), Some(digest.clone()));
+    assert_eq!(real.spira_env_wanted(), Ok(digest));
+    assert!(real.env_file_exists("bd") && !real.env_file_exists("clang"));
 }
 
 // ============================================================================ mail submission
