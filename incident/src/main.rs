@@ -67,9 +67,16 @@ fn cmd_alarm(env: &Env, bd: Option<&dyn Bd>, mailer: &dyn Mailer, clock: &dyn Cl
 }
 
 fn cmd_drain(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock) -> ExitCode {
-    let (n, stuck) = drain_spool(env, bd, mailer, clock);
-    println!("{}", drain_report(n, stuck));
-    if stuck == 0 {
+    let batch = match configured_batch() {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("incident: drain: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let report = drain_spool(env, bd, mailer, clock, batch);
+    println!("{}", drain_report(&report));
+    if report.stuck.is_empty() {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE

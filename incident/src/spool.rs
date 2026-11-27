@@ -83,6 +83,52 @@ pub fn entry_path(spool_dir: &Path, stamp: &str, reference: &str, pid: u32) -> P
     spool_dir.join(format!("{stamp}-{}-{pid}", safe_ref_component(reference)))
 }
 
+/// Renamed into place from a dot-name [`entries`] skips: a drain running beside the writer
+/// would otherwise move a half-written entry aside as one with no REF.
+pub fn write_entry(path: &Path, e: &SpoolEntry) -> std::io::Result<()> {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("entry");
+    let partial = path.with_file_name(format!(".{name}"));
+    std::fs::write(&partial, format_entry(e))?;
+    std::fs::rename(&partial, path)
+}
+
+/// Every entry a drain owes, oldest first (the name opens with the spool stamp). A spool that
+/// does not exist yet holds nothing; one that cannot be read is an error.
+pub fn entries(spool_dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let dir = match std::fs::read_dir(spool_dir) {
+        Ok(d) => d,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut paths = Vec::new();
+    for entry in dir {
+        let p = entry?.path();
+        let hidden = p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.'));
+        if !hidden && p.is_file() && p.extension().is_none_or(|x| x != "bad") {
+            paths.push(p);
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+/// The spool stamp an entry's name opens with.
+pub fn stamp_of(path: &Path) -> Option<&str> {
+    let stamp = path.file_name()?.to_str()?.split('-').next()?;
+    let b = stamp.as_bytes();
+    let shaped = b.len() == 16 && b[8] == b'T' && b[15] == b'Z' && b.iter().enumerate().all(|(i, c)| i == 8 || i == 15 || c.is_ascii_digit());
+    shaped.then_some(stamp)
+}
+
+/// When the entry was spooled, in epoch seconds: its stamp, else the file's mtime.
+pub fn spooled_at(path: &Path) -> Option<i64> {
+    let from_stamp = stamp_of(path).and_then(|s| crate::run::parse_iso8601(&format!("{}-{}-{}T{}:{}:{}Z", &s[0..4], &s[4..6], &s[6..8], &s[9..11], &s[11..13], &s[13..15])));
+    from_stamp.or_else(|| {
+        let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+        modified.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs() as i64)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

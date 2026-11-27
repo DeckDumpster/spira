@@ -581,19 +581,12 @@ pub fn run_incident_drain(_: &Effects, _key: &str, _s: &EffectSpec) -> Result<St
         return Err("no SPIRA_DB: the incident spool cannot be drained".into());
     }
     let bd = incident::real::RealBd::from_env()?;
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&env.spool_dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_file() && p.extension().map(|e| e != "bad").unwrap_or(true)).collect();
-    paths.sort();
-    let (mut n, mut stuck) = (0, 0);
-    for p in paths {
-        match incident::intake::drain_one(&env, &bd, &incident::real::RealMailer, &incident::real::RealClock, &p) {
-            Ok(_) => n += 1,
-            Err(()) => stuck += 1,
-        }
-    }
-    if stuck == 0 {
-        Ok(format!("drained {n}"))
+    let batch = incident::intake::configured_batch()?;
+    let report = incident::intake::drain_spool(&env, &bd, &incident::real::RealMailer, &incident::real::RealClock, batch);
+    if report.stuck.is_empty() {
+        Ok(format!("drained {}", report.drained()))
     } else {
-        Err(format!("drained {n}, still spooled {stuck}"))
+        Err(incident::intake::drain_report(&report))
     }
 }
 

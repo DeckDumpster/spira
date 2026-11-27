@@ -333,10 +333,14 @@ pub fn with_incident_lock<R>(lock_path: &std::path::Path, wait_s: u64, f: impl F
     }
 }
 
-// `Err(())` is "the entry stays spooled", already logged; there is nothing more to carry.
-#[allow(clippy::result_unit_err)]
-pub fn drain_one(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, path: &std::path::Path) -> Result<Option<String>, ()> {
-    let raw = std::fs::read(path).map_err(|_| ())?;
+/// `Err` is why the entry stays spooled.
+pub fn drain_one(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, path: &std::path::Path) -> Result<Option<String>, String> {
+    drain_entry(env, bd, mailer, clock, path, None)
+}
+
+/// `drain_one`, with `preface` opening the filed body.
+fn drain_entry(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, path: &std::path::Path, preface: Option<&str>) -> Result<Option<String>, String> {
+    let raw = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let Some(mut entry) = spool::parse_entry(&raw) else {
         ilog(env, &format!("spool entry with no REF: {} — moved aside", path.display()));
         let bad = path.with_extension("bad");
@@ -349,6 +353,9 @@ pub fn drain_one(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock,
             entry.reference
         )
         .into_bytes();
+    }
+    if let Some(line) = preface {
+        entry.body = [format!("{line}\n\n").into_bytes(), entry.body].concat();
     }
     let provenance = decide::provenance(&entry.unit, &hostname(), &entry.incident_path);
     let cause = decide::sanitize_cause(&entry.cause);
@@ -366,9 +373,10 @@ pub fn drain_one(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock,
         run::file_one(bd, mailer, clock, &cfg, &entry.reference, &entry.title, &entry.body, &file_labels, &mut log)
     });
     let Some(outcome) = locked else {
-        ilog(env, &format!("another intake held {} for {}s — {} stays spooled, drain will retry", env.lock_path.display(), env.lock_wait_s, entry.reference));
+        let held = format!("another intake held {} for {}s — {} stays spooled, drain will retry", env.lock_path.display(), env.lock_wait_s, entry.reference);
+        ilog(env, &held);
         record_attempt(env, "incident-file", "incident", &entry.reference, tsd::alarm::Outcome::Failed { reason: "another intake held the lock; the event stays spooled".into() }, Some(note_of(&entry.title, &entry.body)));
-        return Err(());
+        return Err(held);
     };
     for l in &log {
         ilog(env, l);
@@ -392,27 +400,118 @@ pub fn drain_one(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock,
             let _ = std::fs::remove_file(path);
             Ok(None)
         }
-        FileOutcome::Unreachable | FileOutcome::Refused | FileOutcome::LaneRefused(_) => Err(()),
+        FileOutcome::Unreachable | FileOutcome::Refused => Err(log.pop().unwrap_or_else(|| format!("{} was not filed", entry.reference))),
+        FileOutcome::LaneRefused(reason) => Err(format!("{reason}; {} stays spooled until the repo admits the lane", path.display())),
     }
 }
 
-/// `incident drain`: every entry the spool holds, oldest first; (drained, still spooled).
-pub fn drain_spool(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock) -> (usize, usize) {
-    let entries = std::fs::read_dir(&env.spool_dir).into_iter().flatten().flatten();
-    let mut paths: Vec<_> = entries.map(|e| e.path()).filter(|p| p.is_file() && p.extension().map(|e| e != "bad").unwrap_or(true)).collect();
-    paths.sort();
-    let (mut drained, mut stuck) = (0, 0);
+pub const BATCH_KEY: &str = "SPIRA_INCIDENT_DRAIN_BATCH";
+
+pub fn parse_batch(raw: &str) -> Result<usize, String> {
+    raw.trim().parse::<usize>().ok().filter(|n| *n > 0).ok_or_else(|| format!("{BATCH_KEY} must be a positive number of references, got {raw:?} — refusing"))
+}
+
+pub fn configured_batch() -> Result<usize, String> {
+    parse_batch(&spira_config::process::cfg(BATCH_KEY)?)
+}
+
+/// What one pass over the spool did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct DrainReport {
+    /// References settled by their own filing, and malformed entries moved aside.
+    pub filed: usize,
+    /// The other entries those filings settled.
+    pub duplicates: usize,
+    /// Entries a filing was tried for and that stay, oldest reference first, each with why.
+    pub stuck: Vec<(std::path::PathBuf, String)>,
+    /// References past the pass's batch, left for the next one.
+    pub held_back: usize,
+    /// The entries of those references.
+    pub held_entries: usize,
+}
+
+impl DrainReport {
+    pub fn drained(&self) -> usize {
+        self.filed + self.duplicates
+    }
+
+    pub fn still_spooled(&self) -> usize {
+        self.stuck.len() + self.held_entries
+    }
+}
+
+/// One pass: each of the oldest `batch` references is filed once, from its newest event, and
+/// that filing settles every entry of the reference.
+pub fn drain_spool(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, batch: usize) -> DrainReport {
+    let mut report = DrainReport::default();
+    let paths = match spool::entries(&env.spool_dir) {
+        Ok(p) => p,
+        Err(e) => {
+            let why = format!("the spool {} cannot be read: {e}", env.spool_dir.display());
+            ilog(env, &why);
+            report.stuck.push((env.spool_dir.clone(), why));
+            return report;
+        }
+    };
+    let mut groups: Vec<Vec<std::path::PathBuf>> = Vec::new();
+    let mut group_of = std::collections::HashMap::new();
     for p in paths {
-        match drain_one(env, bd, mailer, clock, &p) {
-            Ok(_) => drained += 1,
-            Err(()) => stuck += 1,
+        let raw = match std::fs::read(&p) {
+            Ok(raw) => raw,
+            // Another drain settled it since the listing.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                let why = format!("{}: {e}", p.display());
+                report.stuck.push((p, why));
+                continue;
+            }
+        };
+        let Some(entry) = spool::parse_entry(&raw) else {
+            match drain_one(env, bd, mailer, clock, &p) {
+                Ok(_) => report.filed += 1,
+                Err(why) => report.stuck.push((p, why)),
+            }
+            continue;
+        };
+        let at = *group_of.entry(decide::bound_ref(&entry.reference)).or_insert_with(|| {
+            groups.push(Vec::new());
+            groups.len() - 1
+        });
+        groups[at].push(p);
+    }
+    for (i, group) in groups.into_iter().enumerate() {
+        if i >= batch {
+            report.held_back += 1;
+            report.held_entries += group.len();
+            continue;
+        }
+        let Some((oldest, newest)) = group.first().zip(group.last()) else { continue };
+        let stamp = |p: &std::path::Path| spool::stamp_of(p).unwrap_or("an unrecorded time").to_string();
+        let preface = (group.len() > 1).then(|| format!("{} events of this reference were spooled from {} to {}; this is the newest.", group.len(), stamp(oldest), stamp(newest)));
+        match drain_entry(env, bd, mailer, clock, newest, preface.as_deref()) {
+            Ok(_) => {
+                report.filed += 1;
+                report.duplicates += group.len() - 1;
+                for older in &group[..group.len() - 1] {
+                    if let Err(e) = std::fs::remove_file(older) {
+                        if e.kind() != std::io::ErrorKind::NotFound {
+                            report.stuck.push((older.clone(), format!("{}: filed with its reference but not removed: {e}", older.display())));
+                            report.duplicates -= 1;
+                        }
+                    }
+                }
+            }
+            Err(why) => report.stuck.extend(group.into_iter().map(|p| (p, why.clone()))),
         }
     }
-    (drained, stuck)
+    if report.held_back > 0 {
+        ilog(env, &format!("held back {} reference(s) for the next pass", report.held_back));
+    }
+    report
 }
 
-pub fn drain_report(drained: usize, stuck: usize) -> String {
-    format!("drained {drained}, still spooled {stuck}")
+pub fn drain_report(r: &DrainReport) -> String {
+    format!("drained {}, still spooled {}", r.drained(), r.still_spooled())
 }
 
 pub fn require_db(env: &Env) -> ExitCode {
@@ -454,12 +553,12 @@ pub fn cmd_systemd(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Cloc
     let _ = std::fs::create_dir_all(&env.spool_dir);
     let stamp = spool_stamp();
     let sp = spool::entry_path(&env.spool_dir, &stamp, &reference, std::process::id());
-    if std::fs::write(&sp, spool::format_entry(&entry)).is_err() {
+    if spool::write_entry(&sp, &entry).is_err() {
         return ExitCode::FAILURE;
     }
     match drain_one(env, bd, mailer, clock, &sp) {
         Ok(_) => ExitCode::SUCCESS,
-        Err(()) => {
+        Err(_) => {
             ilog(env, &format!("spooled {reference} at {}", sp.display()));
             ExitCode::FAILURE
         }
@@ -521,10 +620,10 @@ pub fn file_body_id(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clo
     let _ = std::fs::create_dir_all(&env.spool_dir);
     let stamp = spool_stamp();
     let sp = spool::entry_path(&env.spool_dir, &stamp, &reference, std::process::id());
-    if std::fs::write(&sp, spool::format_entry(&entry)).is_err() {
+    if spool::write_entry(&sp, &entry).is_err() {
         return Err(());
     }
-    drain_one(env, bd, mailer, clock, &sp).inspect_err(|()| ilog(env, &format!("spooled {reference} at {}", sp.display())))
+    drain_one(env, bd, mailer, clock, &sp).map_err(|_| ilog(env, &format!("spooled {reference} at {}", sp.display())))
 }
 
 /// `incident file <title> -` in-process, with the host's ports: what a Spira caller runs where
@@ -569,7 +668,8 @@ pub fn spool_stamp() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{drain_report, drain_spool, filed_answer, own_alarm, priority_of, with_incident_lock, Env};
+    const BATCH: usize = 20;
+    use super::{drain_report, drain_spool, parse_batch, DrainReport, filed_answer, own_alarm, priority_of, with_incident_lock, Env};
     use crate::fake::{FakeBd, FakeMailer, FixedClock};
     use crate::spool::{format_entry, SpoolEntry};
     use std::cell::RefCell;
@@ -728,8 +828,8 @@ mod tests {
         let p = spool(&env, "20260101T000000Z-a", &entry("incident:held"));
         let bd = FakeBd::new();
         let mailer = FakeMailer::default();
-        let held = with_incident_lock(&env.lock_path, 0, || drain_spool(&env, &bd, &mailer, &FixedClock(1_000_000)));
-        assert_eq!(held, Some((0, 1)));
+        let held = with_incident_lock(&env.lock_path, 0, || drain_spool(&env, &bd, &mailer, &FixedClock(1_000_000), BATCH));
+        assert_eq!(held.map(|r| (r.drained(), r.stuck.len())), Some((0, 1)));
         assert!(p.exists(), "the entry stays spooled for the next drain");
         assert!(bd.created.borrow().is_empty());
     }
@@ -743,14 +843,14 @@ mod tests {
         let p = spool(&env, "20260101T000000Z-a", &entry("incident:later"));
         let mailer = FakeMailer::default();
         let down = FakeBd { reachable: false, next_id: RefCell::new(1), ..Default::default() };
-        let (n, stuck) = drain_spool(&env, &down, &mailer, &FixedClock(1_000_000));
-        assert_eq!((n, stuck), (0, 1));
-        assert_eq!(drain_report(n, stuck), "drained 0, still spooled 1");
+        let report = drain_spool(&env, &down, &mailer, &FixedClock(1_000_000), BATCH);
+        assert_eq!((report.drained(), report.stuck.len()), (0, 1));
+        assert_eq!(drain_report(&report), "drained 0, still spooled 1");
         assert!(p.exists() && down.created.borrow().is_empty());
 
         let up = FakeBd::new();
-        let (n, stuck) = drain_spool(&env, &up, &mailer, &FixedClock(1_000_000));
-        assert_eq!(drain_report(n, stuck), "drained 1, still spooled 0");
+        let report = drain_spool(&env, &up, &mailer, &FixedClock(1_000_000), BATCH);
+        assert_eq!(drain_report(&report), "drained 1, still spooled 0");
         assert!(!p.exists());
         assert_eq!(up.created.borrow().len(), 1);
     }
@@ -763,8 +863,8 @@ mod tests {
         let env = env_in(&dir);
         let p = spool(&env, "20260101T000000Z-a", &entry("incident:lane"));
         let bd = FakeBd { create_error: Some("bead: repo:walled does not admit lane incident — refused by its admitted lanes (plan)\nbead: override".into()), ..FakeBd::new() };
-        let (n, stuck) = drain_spool(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000));
-        assert_eq!((n, stuck), (0, 1));
+        let report = drain_spool(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), BATCH);
+        assert_eq!((report.drained(), report.stuck.len()), (0, 1));
         assert!(p.exists());
         let attempts = tsd::alarm::read(std::path::Path::new(&env.spira_run));
         let tsd::alarm::Outcome::Failed { reason } = &attempts.last().expect("an attempt is recorded").outcome else { panic!("{attempts:?}") };
@@ -780,10 +880,10 @@ mod tests {
         let p = spool(&env, "20260101T000000Z-a", "TITLE: orphan\n--\nbody");
         let bd = FakeBd::new();
         let mailer = FakeMailer::default();
-        assert_eq!(drain_spool(&env, &bd, &mailer, &FixedClock(1_000_000)), (1, 0));
+        assert_eq!(drain_spool(&env, &bd, &mailer, &FixedClock(1_000_000), BATCH).drained(), 1);
         assert!(!p.exists() && p.with_extension("bad").exists());
         assert!(bd.created.borrow().is_empty());
-        assert_eq!(drain_spool(&env, &bd, &mailer, &FixedClock(1_000_000)), (0, 0), "a .bad entry is not drained again");
+        assert_eq!(drain_spool(&env, &bd, &mailer, &FixedClock(1_000_000), BATCH), DrainReport::default(), "a .bad entry is not drained again");
     }
 
     // covers: UC-ops-detection-remediation-10
@@ -793,13 +893,108 @@ mod tests {
         let dir = testkit::TempDir::new("incident-drain-precause");
         let env = env_in(&dir);
         let old = "REF: incident:old\nTITLE: t\nUNIT: u\nINCIDENT_PATH: p\n--\npayload";
-        spool(&env, "20260101T000000Z-a", old);
-        spool(&env, "20260101T000001Z-b", old);
         let bd = FakeBd::new();
         let mailer = FakeMailer::default();
-        assert_eq!(drain_spool(&env, &bd, &mailer, &FixedClock(1_000_000)), (2, 0));
+        for name in ["20260101T000000Z-a", "20260101T000001Z-b"] {
+            spool(&env, name, old);
+            assert_eq!(drain_spool(&env, &bd, &mailer, &FixedClock(1_000_000), BATCH).drained(), 1);
+        }
         let facts = bd.facts.borrow();
         assert_eq!(facts.len(), 1, "the second entry recurs the first");
         assert_eq!(facts[0].2, "unrecorded");
+    }
+
+    #[test_id(tkvxiks)]
+    #[test]
+    fn an_event_spooled_while_the_store_is_down_is_filed_once_when_it_returns() {
+        let dir = testkit::TempDir::new("incident-drain-store-down");
+        let env = env_in(&dir);
+        let p = spool(&env, "20260101T000000Z-a", &entry("incident:outage"));
+        let (mailer, clock) = (FakeMailer::default(), FixedClock(1_000_000));
+        let down = FakeBd { lc_down: true, ..FakeBd::new() };
+        let report = drain_spool(&env, &down, &mailer, &clock, BATCH);
+        assert!(p.exists() && down.created.borrow().is_empty());
+        assert!(report.stuck[0].1.contains("spira-lc: down"), "{report:?}");
+
+        let up = FakeBd { rows: RefCell::new(down.rows.borrow().clone()), ..FakeBd::new() };
+        drain_spool(&env, &up, &mailer, &clock, BATCH);
+        assert_eq!(up.created.borrow().len(), 1);
+        assert!(crate::spool::entries(&env.spool_dir).unwrap().is_empty());
+        assert_eq!(drain_spool(&env, &up, &mailer, &clock, BATCH), DrainReport::default());
+        assert_eq!(up.created.borrow().len(), 1);
+    }
+
+    #[test_id(tzpzzvf)]
+    #[test]
+    fn a_hundred_events_of_one_reference_file_one_item_carrying_the_count() {
+        let dir = testkit::TempDir::new("incident-drain-hundred");
+        let env = env_in(&dir);
+        for i in 0..100 {
+            let e = SpoolEntry { reference: "incident:flood".into(), title: "t".into(), unit: "u".into(), incident_path: "p".into(), cause: "c".into(), repo: None, body: format!("event {i}").into_bytes() };
+            spool(&env, &format!("20260101T00{:02}{:02}Z-flood-1", i / 60, i % 60), &String::from_utf8(format_entry(&e)).unwrap());
+        }
+        let bd = FakeBd::new();
+        let report = drain_spool(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), BATCH);
+        assert_eq!((report.filed, report.duplicates, report.stuck.len()), (1, 99, 0));
+        assert_eq!(drain_report(&report), "drained 100, still spooled 0");
+        assert_eq!(bd.created.borrow().len(), 1);
+        assert!(bd.facts.borrow().is_empty(), "{:?}", bd.facts.borrow());
+        let body = bd.bodies.borrow().values().next().cloned().unwrap();
+        assert!(body.starts_with("100 events of this reference were spooled from 20260101T000000Z to 20260101T000139Z; this is the newest."), "{body}");
+        assert!(body.contains("event 99") && !body.contains("event 98"), "{body}");
+        assert!(crate::spool::entries(&env.spool_dir).unwrap().is_empty());
+    }
+
+    #[test_id(trbl8tj)]
+    #[test]
+    fn a_pass_files_at_most_a_batch_of_references_oldest_first_and_says_what_it_held_back() {
+        let dir = testkit::TempDir::new("incident-drain-batch");
+        let env = env_in(&dir);
+        spool(&env, "20260101T000000Z-c", &entry("incident:first"));
+        spool(&env, "20260101T000001Z-a", &entry("incident:second"));
+        let third = spool(&env, "20260101T000002Z-b", &entry("incident:third"));
+        spool(&env, "20260101T000003Z-c", &entry("incident:first"));
+        let bd = FakeBd::new();
+        let report = drain_spool(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), 2);
+        assert_eq!((report.filed, report.duplicates, report.held_back), (2, 1, 1));
+        let refs: Vec<String> = bd.created.borrow().iter().map(|c| c.1.clone()).collect();
+        assert_eq!(refs, ["incident:first", "incident:second"]);
+        assert_eq!(crate::spool::entries(&env.spool_dir).unwrap(), [third]);
+        assert_eq!(drain_report(&report), "drained 3, still spooled 1");
+        assert!(std::fs::read_to_string(&env.log_path).unwrap().contains("held back 1 reference(s) for the next pass"));
+    }
+
+    #[test_id(tz4mpo9)]
+    #[test]
+    fn a_reference_that_cannot_be_filed_keeps_every_one_of_its_entries() {
+        let dir = testkit::TempDir::new("incident-drain-group-stuck");
+        let env = env_in(&dir);
+        let a = spool(&env, "20260101T000000Z-a", &entry("incident:walled"));
+        let b = spool(&env, "20260101T000001Z-a", &entry("incident:walled"));
+        let bd = FakeBd { create_error: Some("bead: repo:walled does not admit lane incident".into()), ..FakeBd::new() };
+        let report = drain_spool(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), BATCH);
+        assert_eq!(report.stuck.iter().map(|s| s.0.clone()).collect::<Vec<_>>(), [a.clone(), b.clone()]);
+        assert!(report.stuck[0].1.contains("repo:walled"), "{report:?}");
+        assert!(a.exists() && b.exists());
+    }
+
+    #[test_id(tclfp9y)]
+    #[test]
+    fn a_drain_leaves_an_entry_still_being_written_alone() {
+        let dir = testkit::TempDir::new("incident-drain-partial");
+        let env = env_in(&dir);
+        let partial = spool(&env, ".20260101T000000Z-a-1", "");
+        let bd = FakeBd::new();
+        assert_eq!(drain_spool(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), BATCH), DrainReport::default());
+        assert!(partial.exists() && !partial.with_extension("bad").exists());
+    }
+
+    #[test_id(te9p14f)]
+    #[test]
+    fn a_batch_that_would_file_nothing_is_refused() {
+        assert_eq!(parse_batch("20"), Ok(20));
+        for bad in ["0", "", "many"] {
+            assert!(parse_batch(bad).unwrap_err().contains("SPIRA_INCIDENT_DRAIN_BATCH"), "{bad:?}");
+        }
     }
 }
