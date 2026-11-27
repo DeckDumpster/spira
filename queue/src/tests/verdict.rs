@@ -854,6 +854,41 @@ fn a_rebuild_on_a_moved_base_gives_the_new_head_its_own_flip_rerun() {
     assert!(!has_call(&t.scripts.calls, "judgement-ci"));
 }
 
+fn rebuild_world() -> T {
+    let t = flip_world();
+    t.git.set("origin/main", "b1");
+    reads_the_list_at(&t, "merged-tb", "      run: echo \"${{ vars.SPIRA_TEST_DENY_LIST }}\" > deny\n");
+    t
+}
+
+#[test_id(t1e7990)]
+#[test]
+fn a_rebuild_on_a_moved_base_writes_the_deny_list_variable_before_the_new_head_is_pushed() {
+    let t = rebuild_world();
+    assert_eq!(pass_on(&t, "green\nhead-sha: h1\n"), 0, "{}", t.err());
+    assert!(t.out().contains("rebuilt on moved base"), "{}", t.out());
+    assert_eq!(count(&t.forge.calls, "variable-set SPIRA_TEST_DENY_LIST\n# test-registry deny-list at="), 1);
+}
+
+#[test_id(t158vo2)]
+#[test]
+fn a_rebuild_whose_variable_write_fails_pushes_nothing_and_keeps_the_batch_open() {
+    let t = rebuild_world();
+    *t.forge.variable_err.borrow_mut() = Some("rc=1: HTTP 403".into());
+    assert_eq!(pass_on(&t, "green\nhead-sha: h1\n"), 1, "{}", t.out());
+    let err = t.err();
+    assert!(err.contains("SPIRA_TEST_DENY_LIST") && err.contains("HTTP 403"), "{err}");
+    assert!(!t.lib.has("push origin +"), "{:?}", t.lib.calls.borrow());
+    assert!(!has_call(&t.forge.calls, "pr-close"));
+    assert!(record(&t).contains("head=h1\nbase=b0\n"), "{}", record(&t));
+    assert_eq!(pass_on(&t, "green\nhead-sha: h1\n"), 1);
+    assert_eq!(t.lib.mails.borrow().len(), 1, "{:?}", t.lib.mails.borrow());
+    assert!(t.lib.mails.borrow()[0].1.contains("queue abandon"), "{:?}", t.lib.mails.borrow());
+    *t.forge.variable_err.borrow_mut() = None;
+    assert_eq!(pass_on(&t, "green\nhead-sha: h1\n"), 0, "{}", t.err());
+    assert!(t.lib.has("push origin +"), "{:?}", t.lib.calls.borrow());
+}
+
 // ------------------------------------------------------------------ queue.forge batch
 
 fn batch(t: &T) {

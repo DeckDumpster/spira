@@ -486,7 +486,8 @@ impl Handler for SentinelCall {
             out.extend(self.observe(&next, self.cadence.next_after(ev.at)));
             return out;
         }
-        if let Some(spec) = crate::watchers::answered_spec(view, ev).filter(|s| s.name == UNIT_START) {
+        // A start lost at a restart may have started: the next observe says what runs.
+        if let Some(spec) = crate::watchers::answered_spec(view, ev).filter(|s| s.name == UNIT_START && !crate::watchers::lost_at_restart(ev)) {
             let Ok(start) = serde_json::from_str::<Start>(&spec.input) else { return vec![] };
             let ok = ev.kind.tag == EFFECT_SUCCEEDED;
             let mut next = carry.clone();

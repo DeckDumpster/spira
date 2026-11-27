@@ -166,6 +166,39 @@ pub fn a_restart_never_relaunches_an_unresolved_effect_and_delivers_timed_out(ri
     assert_eq!(count_tag(&*j, "done:effect.timed_out"), 1, "the lost effect is resolved once");
 }
 
+type Heard = Arc<std::sync::Mutex<Vec<(Option<String>, String)>>>;
+
+/// Records, for each outcome it hears, the name of the effect the view says it answers.
+struct Listener(Heard);
+impl Handler for Listener {
+    fn interests(&self) -> &[EventKindTag] {
+        &["start", EFFECT_TIMED_OUT]
+    }
+    fn handle(&self, _: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
+        if ev.kind.tag == "start" {
+            return vec![Command::Effect(EffectSpec { name: "work".into(), input: String::new(), deadline_ms: 1000, key: "work".into() })];
+        }
+        let requested = ev.cause.as_ref().and_then(|c| view.events(&ev.stream).iter().rev().find(|e| &e.id == c && e.kind.tag == EFFECT_REQUESTED));
+        let name = requested.and_then(|e| serde_json::from_str::<serde_json::Value>(&e.kind.body).ok()?["spec"]["name"].as_str().map(str::to_string));
+        self.0.lock().unwrap().push((name, ev.kind.body.clone()));
+        vec![]
+    }
+}
+
+pub fn a_task_told_an_effect_was_lost_at_a_restart_can_read_which_effect(rig: &dyn Rig) {
+    let (j, clock, heard) = (rig.journal(), VirtualClock::new(0), Heard::default());
+    let listener = || vec![Registration::new("listener", Listener(heard.clone()))];
+    let mut x = rig.boot(j.clone(), &clock, 1, listener()).unwrap();
+    x.submit("s1", "s", EventKind::new("start", "")).unwrap();
+    x.run_until_idle().unwrap();
+    drop(x);
+
+    let mut y = rig.boot(j.clone(), &clock, 1, listener()).unwrap();
+    y.run_until_idle().unwrap();
+    assert_eq!(*heard.lock().unwrap(), [(Some("work".to_string()), "lost at restart".to_string())]);
+    assert_eq!(count_tag(&*j, EFFECT_REQUESTED), 1, "reading the request back journals nothing");
+}
+
 pub fn out_of_order_effect_outcomes(rig: &dyn Rig) {
     let (j, clock, n) = (rig.journal(), VirtualClock::new(0), Counter::default());
     let mut x = rig.boot(j.clone(), &clock, 1, all(&n)).unwrap();
@@ -653,6 +686,7 @@ pub fn run_all(rig: &dyn Rig) {
     a_duplicate_submit_dispatches_once(rig);
     a_failed_commit_is_sent_again_and_the_turn_lands_once(rig);
     a_restart_never_relaunches_an_unresolved_effect_and_delivers_timed_out(rig);
+    a_task_told_an_effect_was_lost_at_a_restart_can_read_which_effect(rig);
     out_of_order_effect_outcomes(rig);
     effect_deadline_times_out(rig);
     determinism_under_one_seed(rig);

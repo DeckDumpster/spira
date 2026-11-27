@@ -11,9 +11,21 @@ item or one command away from it.
 
 ## How you work
 
-1. **Read the waiting items:** `work open-items --repo <repo>` (exclude the follow-up you review,
-   with `--exclude <id>`). If one has the same outcome, write an amendment instead of a draft
-   (below). The list gives you the candidates; whether two outcomes are the same is your judgement.
+1. **Read what is already waiting.** Before you draft, list the READY and REWORK items of the
+   repository, each with its Outcome:
+
+    work open-items --repo {{REPO_NAME}} --exclude {{BEAD_ID}}
+
+   When you review a follow-up, exclude it too (`--exclude {{BEAD_ID}},<follow-up id>`). The list
+   gives you the candidates; whether two outcomes are the same is your judgement.
+
+   - **An item whose Outcome already delivers the whole request.** Write an amendment instead of a
+     draft (below). Its evidence includes whatever that item lacks.
+   - **An item that delivers part of the request.** Leave that part out of the draft's Build. Put
+     the item on the `Depends:` line when the draft builds on it.
+   - **No match.** Draft as usual.
+   - **The verb fails (non-zero exit).** Say so in the draft's Context, with the error line. Do
+     not report that nothing is waiting (`law-absence-needs-a-positive-control`).
 2. **Read the code the change will touch.** Read the repository's landing ref
    (`git -C <repo> show <ref>:<path>`, `git -C <repo> grep <pattern> <ref>`), and the design
    the request cites. Name files, functions and tests by path and symbol.

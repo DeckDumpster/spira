@@ -76,6 +76,11 @@ pub fn maintenance_orphaned(m: &spira_world::freeze::Maintenance) -> String {
     format!("P0 BLIND: store maintenance by {} since {} is orphaned (pid {} gone); run world thaw-store", m.owner, iso8601(m.since), m.pid)
 }
 
+/// Whether `ev` ends an effect the process that asked did not live to hear: whether it ran is unknown.
+pub fn lost_at_restart(ev: &Event) -> bool {
+    ev.kind.tag == runtime::EFFECT_TIMED_OUT && ev.kind.body == runtime::engine::LOST_AT_RESTART
+}
+
 /// The name of the effect that `ev` is the outcome of, when its stream requested one.
 pub fn answered_effect(view: &Projection, ev: &Event) -> Option<String> {
     let cause = ev.cause.as_ref()?;

@@ -118,11 +118,11 @@ while IFS= read -r m; do [ -n "$m" ] && [ -f "$m/Cargo.toml" ] && members+=("$m"
 package_name() {
   awk '/^\[package\]/{p=1;next} /^\[/{p=0} p && /^name[[:space:]]*=/{gsub(/.*=[[:space:]]*"|".*/,""); print; exit}' "$1/Cargo.toml"
 }
-FINGERPRINTS="$TARGET/debug/.fingerprint"
-# The fingerprint directories of package $1's units, one per line.
+# The fingerprint directories of package $1's units in every profile of the folder
+# (<profile>/.fingerprint and <triple>/<profile>/.fingerprint), one per line.
 units_of() {
   local d
-  for d in "$FINGERPRINTS/$1"-*; do
+  for d in "$TARGET"/*/.fingerprint/"$1"-* "$TARGET"/*/*/.fingerprint/"$1"-*; do
     [ -d "$d" ] || continue
     case "${d##*/$1-}" in *[!0-9a-f]*|"") continue ;; esac
     printf '%s\n' "$d"
@@ -266,7 +266,17 @@ if [ -n "$manifest" ] && [ -f "$BUILT" ] && [ -n "${changed:-}" ]; then
     elif [ "${#to_clean[@]}" -gt 0 ]; then
       echo "unit-tests: cleaning the workspace crates whose bytes changed:${to_clean[*]//-p/}"
       rm -f "$BUILT" || exit 2
-      cargo_clean per-crate bytes-changed '[]' "$(json_list "${cleaned[@]}")" "${to_clean[@]}" || { echo "unit-tests: cargo clean ${to_clean[*]} failed" >&2; exit 2; }
+      # Dropping a changed crate's fingerprints makes cargo rebuild it and its dependents; its
+      # outputs stay for rustc to overwrite. Deleting them (cargo clean -p) cost gigabytes a lease.
+      unit_bytes=0
+      unit_files=0
+      for name in "${cleaned[@]}"; do
+        while IFS= read -r u; do
+          [ -n "$u" ] || continue
+          remove_unit "$u" || { echo "unit-tests: removing $name's fingerprint $u failed" >&2; exit 2; }
+        done < <(units_of "$name")
+      done
+      add_act per-crate bytes-changed '[]' "$(json_list "${cleaned[@]}")" "$unit_bytes" "$unit_files"
     else
       if [ -z "$release" ] && grep -qxF Cargo.lock <<< "$changed"; then
         echo "unit-tests: only Cargo.lock changed — cargo keys each unit by its resolved dependencies; nothing cleaned"

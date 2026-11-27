@@ -399,3 +399,17 @@ fn unit_start_still_refuses_on_a_capacity_pause_in_the_future() {
     let err = unit_start_with_pause(3600).unwrap_err();
     assert!(err.contains(CAPACITY_REFUSAL), "{err}");
 }
+
+#[test_id(tb6jk6v)]
+#[test]
+fn a_unit_start_lost_at_a_restart_is_not_counted_as_a_failed_start() {
+    let mut r = TaskRig::new(1, registration()).unwrap().hanging(UNIT_START).double(OBSERVE, |_| Ok(serde_json::to_string(&busy()).unwrap()));
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE].contains(e)) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    assert!(r.requested().iter().any(|q| q.name == UNIT_START), "{:?}", r.requested());
+    r.reopen(registration()).unwrap();
+    r.run_until_idle().unwrap();
+    assert!(!r.requested().iter().any(|q| q.name == METRIC && q.input.contains("failed")), "{:?}", r.requested());
+}

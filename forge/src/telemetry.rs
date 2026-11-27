@@ -37,6 +37,7 @@ pub const OPERATIONS: &[&str] = &[
     "ami-result",
     "ami-log",
     "fail-lines",
+    "variable-set",
     "branch-protect",
     "branch-protection-status",
 ];

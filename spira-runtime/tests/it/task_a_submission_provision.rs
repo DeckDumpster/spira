@@ -162,3 +162,20 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
 }
+
+#[test_id(tpz9tdb)]
+#[test]
+fn a_config_write_lost_at_a_restart_does_not_restart_the_unit() {
+    let mut r = TaskRig::new(1, registration()).unwrap().hanging(CONFIG_SET).double(OBSERVE, |_| Ok(serde_json::to_string(&Snapshot { plan: Plan { cert: String::new(), ..plan() }, ..busy() }).unwrap())).double(CERT_RENEW, |_| Ok("renewed".into()));
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, CERT_RENEW].contains(e)) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    let (_, stream, kind) = SubmissionProvision::boot();
+    r.tick(stream, kind).unwrap();
+    r.advance(BOOT_DELAY_MS).unwrap();
+    let asked = |r: &TaskRig, n: &str| r.requested().iter().filter(|q| q.name == n).count();
+    assert!(asked(&r, CONFIG_SET) > 0, "{:?}", r.requested());
+    r.reopen(registration()).unwrap();
+    r.run_until_idle().unwrap();
+    assert_eq!(asked(&r, UNIT_RESTART), 0, "{:?}", r.requested());
+}

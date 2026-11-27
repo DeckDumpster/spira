@@ -3500,7 +3500,7 @@ fn settings_refused(
         }
     };
     let has = |rev: &str| {
-        w.git.grep_files(path, rev, key, "**").iter().any(|f| {
+        w.git.grep_files(path, rev, key, "**").unwrap_or_default().iter().any(|f| {
             w.git
                 .file_at(path, rev, f)
                 .is_some_and(|t| names_key(&t, key))

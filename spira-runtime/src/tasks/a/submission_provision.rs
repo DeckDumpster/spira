@@ -601,6 +601,8 @@ impl Handler for SubmissionProvision {
                     (next, acts)
                 }
             }
+            // Whether the value was written is unknown: no restart on it, and the next observe decides again.
+            (State::Setting, CONFIG_SET) if crate::watchers::lost_at_restart(ev) => (Carry { state: State::Idle, ..carry.clone() }, vec![]),
             (State::Setting, CONFIG_SET) if sets_done(view, ev) => {
                 // The restart reloads the scheduler's own submission source.
                 let snap = Snapshot { day: the_day(ev.at as i64 / 1000), ..Snapshot::default() };

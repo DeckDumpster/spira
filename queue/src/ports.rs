@@ -186,7 +186,8 @@ pub trait Git {
     /// [`Git::merge_base`] that says why there is none.
     fn fork_point(&self, repo: &Path, a: &str, b: &str) -> Result<String, String>;
     /// `grep -l -F <needle>` at `rev`, limited to the files matching the glob pathspec.
-    fn grep_files(&self, repo: &Path, rev: &str, needle: &str, glob: &str) -> Vec<String>;
+    /// Err when git cannot say; a caller for which that is no match says so.
+    fn grep_files(&self, repo: &Path, rev: &str, needle: &str, glob: &str) -> Result<Vec<String>, String>;
     /// `branch [-f] <name> <sha>`.
     fn branch_set(&self, repo: &Path, name: &str, sha: &str, force: bool) -> bool;
     /// `branch -D <name>`.
@@ -495,6 +496,9 @@ pub trait Forge {
     /// One bounded line (DESIGN.md §5).
     fn pr_comment(&self, forge: &Path, repo: &Path, pr: &str, line: &str);
     fn branch_protect(&self, forge: &Path, repo: &Path, branch: &str) -> bool;
+    /// `variable-set <repo> <name>`, value on stdin: creates or replaces the repository
+    /// variable, or the forge's own error.
+    fn variable_set(&self, forge: &Path, repo: &Path, name: &str, value: &str) -> Result<(), String>;
     /// `pr-state <repo> <pr>` → `open`, `closed`, `merged` or `unknown`; None when the call failed.
     fn pr_state(&self, forge: &Path, repo: &Path, pr: &str) -> Option<String>;
     /// `check-status <repo> <pr> <branch>` → stdout, or None when the call failed.

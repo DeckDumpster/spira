@@ -311,7 +311,7 @@ fn mended(
             |p| crate_dir(w, path, tip, p),
             |p| {
                 let name = p.rsplit('/').next().unwrap_or(p);
-                w.git.grep_files(path, tip, name, SUITE_GLOB)
+                w.git.grep_files(path, tip, name, SUITE_GLOB).unwrap_or_default()
             },
         ));
         moves.push(format!("{bead}:{current}:{tip}"));
