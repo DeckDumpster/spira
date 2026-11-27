@@ -337,31 +337,23 @@ fn sole_member(mut c: Carry) -> Carry {
     c
 }
 
-/// A red `queue round certify` of a one-member round ejects that member with the red output as
-/// its evidence and writes no pause, whether or not the output names the member's files.
+/// A red `queue round certify` of a one-member round that carries the repository's own
+/// `red-output=` ejects that member with the output as its evidence and writes no pause.
 #[test_id(t9jl806)]
 #[test]
 fn sp_z43b7y_a_red_certify_of_a_one_member_round_ejects_the_member_and_writes_no_pause() {
-    for out in ["verdict=red\nred-output=run/rounds/r9.results/testenv.out\n", "queue.sh round certify: round r9 is RED at abc: test-a.sh\nred=test-a.sh\n", ""] {
-        let c = {
-            let mut c = sole_member(driving(State::Certifying, "spira.c3"));
-            c.repos.get_mut("spira").unwrap().attributed = true;
-            c
-        };
-        let red = runtime::units::RanOutput::captured(out.as_bytes(), b"");
-        let (waiting, acts) = on_ran_with(&c, &red_ran("spira.c3"), &red, NOW).expect("its own leg");
-        let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
-        assert!(!names.contains(&PAUSE) && !names.contains(&ABANDON), "{out:?}: the abandon waits on the eject: {names:?}");
-        let eject: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == EJECT).unwrap_or_else(|| panic!("{out:?}: no eject: {names:?}")).input).unwrap();
-        assert_eq!((eject.bead.as_str(), eject.head.as_str()), ("sp-a", "t1"), "{out:?}");
-        if out.contains("red-output=") {
-            assert!(eject.why.contains("run/rounds/r9.results/testenv.out"), "{}", eject.why);
-        }
-        let (next, acts) = on_outcome(&waiting, EJECT, true, "{}", &eject, NOW);
-        assert!(acts.iter().all(|a| a.effect != ABANDON && a.effect != PAUSE), "{out:?}: {acts:?}");
-        let rc = next.repos.get("spira").cloned().unwrap_or_default();
-        assert!(rc.members.is_empty() && rc.batch.is_none(), "{out:?}: the emptied round is forgotten: {rc:?}");
-    }
+    let c = attributed(sole_member(driving(State::Certifying, "spira.c3")));
+    let red = runtime::units::RanOutput::captured(b"verdict=red\nred-output=run/rounds/r9.results/testenv.out\n", b"");
+    let (waiting, acts) = on_ran_with(&c, &red_ran("spira.c3"), &red, NOW).expect("its own leg");
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert!(!names.contains(&PAUSE) && !names.contains(&ABANDON), "the abandon waits on the eject: {names:?}");
+    let eject: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == EJECT).unwrap_or_else(|| panic!("no eject: {names:?}")).input).unwrap();
+    assert_eq!((eject.bead.as_str(), eject.head.as_str()), ("sp-a", "t1"));
+    assert!(eject.why.contains("run/rounds/r9.results/testenv.out"), "{}", eject.why);
+    let (next, acts) = on_outcome(&waiting, EJECT, true, "{}", &eject, NOW);
+    assert!(acts.iter().all(|a| a.effect != ABANDON && a.effect != PAUSE), "{acts:?}");
+    let rc = next.repos.get("spira").cloned().unwrap_or_default();
+    assert!(rc.members.is_empty() && rc.batch.is_none(), "the emptied round is forgotten: {rc:?}");
 }
 
 /// While the sole member's eject is in flight the dead certify leg is not judged lost: the next
@@ -370,7 +362,7 @@ fn sp_z43b7y_a_red_certify_of_a_one_member_round_ejects_the_member_and_writes_no
 #[test]
 fn sp_z1vzxd_a_tick_between_the_sole_eject_and_its_outcome_starts_nothing() {
     let mut r = carried(&attributed(sole_member(driving(State::Certifying, "spira.c3"))));
-    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "red=test-a.sh\n")).unwrap();
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "red=test-a.sh\nred-output=run/rounds/r9.results/testenv.out\n")).unwrap();
     let n = r.requested().len();
     r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
     let names: Vec<String> = asked_after(&r, n).into_iter().map(|(e, _)| e).collect();
@@ -474,6 +466,60 @@ fn sp_mg27kj_a_red_after_the_confirmed_attribution_pauses_and_abandons() {
     r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), THREE_REDS)).unwrap();
     let names: Vec<String> = asked_after(&r, n).into_iter().map(|(e, _)| e).collect();
     assert!(names.contains(&PAUSE.to_string()) && names.contains(&ABANDON.to_string()), "{names:?}");
+}
+
+/// A one-member round red again after its first attribution is attributed again, by the same
+/// rerun, base and member-alone legs: being the only member ties no red to it.
+#[test_id(tbccjmp)]
+#[test]
+fn sp_bk7p5o_a_one_member_rounds_second_red_is_attributed_again_not_ejected() {
+    let mut r = carried(&attributed(sole_member(driving(State::Certifying, "spira.c3"))));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "queue.sh round certify: round r9 is RED at abc: test-a.sh\nred=test-a.sh\n")).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let after = asked_after(&r, n);
+    assert!(!after.iter().any(|(e, _)| [EJECT, ABANDON, PAUSE].contains(&e.as_str())), "{after:?}");
+    let legs: Vec<&Leg> = after.iter().filter(|(e, _)| e == CORPUS).map(|(_, l)| l).collect();
+    assert_eq!(legs.len(), 1, "{after:?}");
+    assert!(legs[0].why == ATTRIBUTE && legs[0].after_certify && !legs[0].confirmed, "{:?}", legs[0]);
+    let carry: Carry = r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).expect("a recorded carry");
+    assert!(carry.repos["spira"].confirmed, "the second attribution is spent");
+}
+
+/// A one-member round gets one more attribution per red suite none covered; a suite red again
+/// after its attribution ends the round, pausing it and ejecting nobody.
+#[test_id(tkgyh83)]
+#[test]
+fn sp_bk7p5o_a_one_member_round_attributes_each_new_suite_once_then_abandons_without_an_eject() {
+    let after_red = |red: &str| {
+        let mut r = carried(&sole_member(confirmed_on(&["test-a.sh"])));
+        let n = r.requested().len();
+        r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), red)).unwrap();
+        kit::assert_unpoisoned(&r, STREAM);
+        asked_after(&r, n)
+    };
+    let fresh = after_red("red=test-b.sh\n");
+    assert!(!fresh.iter().any(|(e, _)| [EJECT, ABANDON, PAUSE].contains(&e.as_str())), "{fresh:?}");
+    assert!(fresh.iter().any(|(e, l)| e == CORPUS && l.why == ATTRIBUTE && l.after_certify), "{fresh:?}");
+
+    let again = after_red("red=test-a.sh\n");
+    let names: Vec<&str> = again.iter().map(|(e, _)| e.as_str()).collect();
+    assert!(names.contains(&PAUSE) && !names.contains(&EJECT) && !names.contains(&CORPUS), "{names:?}");
+    let abandon = &again.iter().find(|(e, _)| e == ABANDON).unwrap_or_else(|| panic!("no abandon: {names:?}")).1;
+    assert_eq!(abandon.reds, ["test-a.sh"]);
+}
+
+/// A one-member red naming no verdict, no suite and no output judged nothing: its output is
+/// kept and the member is not ejected.
+#[test_id(tq5z070)]
+#[test]
+fn sp_bk7p5o_a_one_member_red_that_judged_nothing_keeps_the_output_and_ejects_nobody() {
+    let mut r = carried(&attributed(sole_member(driving(State::Certifying, "spira.c3"))));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "")).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let names: Vec<String> = asked_after(&r, n).into_iter().map(|(e, _)| e).collect();
+    assert!(names.contains(&KEEP_CERTIFY_OUTPUT.to_string()) && !names.contains(&EJECT.to_string()), "{names:?}");
 }
 
 /// Every other path that pauses blames no member, so its pause carries the reason a person acts on.
