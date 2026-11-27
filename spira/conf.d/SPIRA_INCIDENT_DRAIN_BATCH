@@ -6,7 +6,3 @@ DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # One filing per reference, so this bounds the beads one pass can create; the rest are logged as held back.
     : "${SPIRA_INCIDENT_DRAIN_BATCH:=20}"
 SPIRA_CONF_DEFAULT_EOF
-cat > spira/config-delta.d/sp-p1ingf.toml <<'EOF'
-[spira]
-runtime_incident_drain_secs = 60
-incident_drain_batch = 20
