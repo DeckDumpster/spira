@@ -99,10 +99,13 @@ fn lc() -> Result<spira_store::lc_call::LcClient, String> {
     spira_store::lc_call::LcClient::configured()
 }
 
+/// Every git call a test's filing made, and the (subcommand, exit, output) it is answered with.
+#[cfg(test)]
+type GitSeam = (Vec<Vec<String>>, Vec<(&'static str, i32, &'static str)>);
+
 #[cfg(test)]
 thread_local! {
-    /// Every git call a test's filing made, and the (subcommand, exit, output) it is answered with.
-    static TEST_GIT: std::cell::RefCell<(Vec<Vec<String>>, Vec<(&'static str, i32, &'static str)>)> = const { std::cell::RefCell::new((Vec::new(), Vec::new())) };
+    static TEST_GIT: std::cell::RefCell<GitSeam> = const { std::cell::RefCell::new((Vec::new(), Vec::new())) };
     static TEST_SAID: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
