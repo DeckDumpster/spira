@@ -11,9 +11,9 @@ use runtime::socket::lc_call;
 use spira_config::nonwork::{status_args, Kind, Which};
 use serde_json::Value;
 
-use crate::forge::{slug, Forge};
+use crate::forge::{self, slug, Forge};
 use crate::watchers::cr_cadence;
-use crate::watchers::pr_notify::{self, RepoObs};
+use crate::watchers::pr_notify::{self, DeployRun, RepoObs};
 use crate::watchers::asks;
 use crate::watchers::design_asks::{self, Page};
 use crate::hunk;
@@ -81,11 +81,80 @@ pub struct World {
     pub git_bin: Option<PathBuf>,
 }
 
+#[derive(Default)]
 pub struct PrTarget {
     pub name: String,
-    pub slug: String,
+    /// `None`: a `queue.local` repo whose origin is not on GitHub, so no forge call is made for it.
+    pub slug: Option<String>,
+    /// The origin URL, without any login, when there is no slug.
+    pub origin: String,
+    pub path: PathBuf,
     pub land: String,
     pub base: String,
+    /// A `queue.local` repo's publish ref as the checkout holds it.
+    pub tip: Option<String>,
+    /// The harness is live by release activation, so it gets no deploy verdict.
+    pub home: bool,
+}
+
+/// Reads `<sha>:<file>` from a checkout; `None` when it is not there to read.
+pub type Blob<'a> = dyn Fn(&Path, &str) -> Option<String> + 'a;
+
+const DEPLOY_DECLARATION: &str = ".spira/deploy.toml";
+
+fn declared_deploy(repo: &Path, sha: &str, blob: &Blob) -> Option<String> {
+    let table: toml::Table = blob(repo, &format!("{sha}:{DEPLOY_DECLARATION}"))?.parse().ok()?;
+    table.get("after_landing")?.as_str().filter(|s| !s.trim().is_empty()).map(str::to_string)
+}
+
+/// Where a `queue.local` repo's landings are published, and that remote's commit as the checkout
+/// holds it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Published {
+    remote: String,
+    tip: Option<String>,
+}
+
+/// The mapped checkouts the forge can answer for, and every `queue.local` one whether or not it can.
+fn pr_targets(rows: Vec<MapRow>, home_repo: &str, published: &dyn Fn(&MapRow) -> Option<Published>) -> Vec<PrTarget> {
+    rows.into_iter()
+        .filter(|r| Path::new(&r.path).join(".git").is_dir())
+        .filter_map(|r| {
+            let path = PathBuf::from(&r.path);
+            let (local, home) = (r.land == "queue.local", r.name == home_repo);
+            let published = (local && !home).then(|| published(&r)).flatten();
+            let url = published.as_ref().and_then(|p| forge::remote_url(&path, &p.remote)).or_else(|| forge::origin_url(&path));
+            let (slug, origin) = match url.filter(|_| local) {
+                Some(url) => match forge::github_slug_of(&url) {
+                    Some(slug) => (Some(slug), String::new()),
+                    None => (None, forge::without_login(&url)),
+                },
+                None => (slug(&path), String::new()),
+            };
+            if slug.is_none() && (home || origin.is_empty()) {
+                return None;
+            }
+            let tip = published.and_then(|p| p.tip);
+            Some(PrTarget { name: r.name, slug, origin, path, land: r.land, base: r.base, tip, home })
+        })
+        .collect()
+}
+
+/// `None` for a repo that publishes nowhere. Nothing is fetched; a ref that cannot be read is
+/// reported, because its landings get no verdict until it can.
+fn published_to(reg: &spira_config::repos::Registry, git: &Path, r: &MapRow) -> Option<Published> {
+    let env = BTreeMap::new();
+    if spira_config::repos::publishes_nowhere(reg, &r.name, &env) {
+        return None;
+    }
+    let Some((remote, branch)) = spira_config::repos::publish_forge(reg, &r.name, &env) else {
+        eprintln!("pr-notify: {}: no publish target resolves, so no forge tip is read", r.name);
+        return None;
+    };
+    let tip = crate::unpublished::rev(git, Path::new(&r.path), &format!("refs/remotes/{remote}/{branch}"))
+        .inspect_err(|e| eprintln!("pr-notify: {}: no forge tip is read: {e}", r.name))
+        .ok();
+    Some(Published { remote, tip })
 }
 
 /// A repo absent from the map has no recorded PR; one mapped to `Err` could not be read.
@@ -103,42 +172,63 @@ fn publish_pr(queue_dir: &Path, repo: &str) -> Result<Option<u64>, String> {
 /// The forge's word on each PR in `records` or already tracked in `carry`, asked by number.
 /// A repo's open set is `None` when its records or any answer is missing; strays are looked for
 /// only when a tracked PR left the open set.
-pub fn pr_snapshot_from(records: &RecordedPrs, targets: &[PrTarget], forge: &Forge, carry: &pr_notify::Carry) -> Result<String, String> {
+pub fn pr_snapshot_from(records: &RecordedPrs, targets: &[PrTarget], forge: &Forge, carry: &pr_notify::Carry, blob: &Blob) -> Result<String, String> {
     let mut repos = vec![];
     for t in targets {
         let prev = carry.repos.get(&t.name).cloned().unwrap_or_default();
-        let mut obs = RepoObs::default();
-        if let Ok(recorded) = records.get(&t.name).cloned().unwrap_or(Ok(vec![])) {
-            let asked: BTreeSet<u64> = recorded.into_iter().chain(prev.prs.keys().copied()).collect();
-            let mut open = vec![];
-            let mut left = vec![];
-            let mut unanswered = false;
-            for n in asked {
-                match forge.open_pr(&t.slug, n) {
-                    Some(Some(pr)) => open.push(pr),
-                    Some(None) => left.push(n),
-                    None => unanswered = true,
-                }
+        let mut obs = RepoObs { tip: t.tip.clone(), home: t.home, ..RepoObs::default() };
+        match &t.slug {
+            Some(slug) => {
+                obs.slug = slug.clone();
+                observe_prs(records, t, slug, forge, &prev, &mut obs);
             }
-            if !unanswered {
-                for n in left.iter().filter(|n| prev.prs.contains_key(n)) {
-                    obs.finals.extend(forge.final_state(&t.slug, *n).map(|f| (*n, f)));
-                }
-                if t.land == "pr" && left.iter().any(|n| prev.prs.contains_key(n)) {
-                    let heads: Vec<String> = open.iter().map(|(_, h)| h.clone()).collect();
-                    let base = t.base.strip_prefix("origin/").unwrap_or(&t.base);
-                    obs.strays = forge.stray_branches(&t.slug, if base.is_empty() { "main" } else { base }, &heads);
-                }
-                obs.open = Some(open.into_iter().map(|(p, _)| p).collect());
-            }
+            None => obs.origin = Some(t.origin.clone()),
         }
-        for d in &prev.deploys {
-            obs.runs.extend(forge.deploy_run(&t.slug, &d.sha).map(|run| (d.sha.clone(), run)));
+        if !t.home {
+            let moved = t.tip.as_deref().filter(|tip| prev.moved_to(tip));
+            for sha in prev.deploys.iter().map(|d| d.sha.as_str()).chain(moved) {
+                if let Some(slug) = &t.slug {
+                    let Ok(run) = forge.deploy_run(slug, sha) else { continue };
+                    let completed = matches!(run, DeployRun::Completed(_));
+                    obs.runs.insert(sha.to_string(), run);
+                    if completed {
+                        continue;
+                    }
+                }
+                obs.declared.extend(declared_deploy(&t.path, sha, blob).map(|text| (sha.to_string(), text)));
+            }
         }
         repos.push((t.name.clone(), obs));
     }
     forge.report_spend();
     serde_json::to_string(&pr_notify::Snapshot { repos }).map_err(|e| e.to_string())
+}
+
+fn observe_prs(records: &RecordedPrs, t: &PrTarget, slug: &str, forge: &Forge, prev: &pr_notify::RepoCarry, obs: &mut RepoObs) {
+    let Ok(recorded) = records.get(&t.name).cloned().unwrap_or(Ok(vec![])) else { return };
+    let asked: BTreeSet<u64> = recorded.into_iter().chain(prev.prs.keys().copied()).collect();
+    let mut open = vec![];
+    let mut left = vec![];
+    let mut unanswered = false;
+    for n in asked {
+        match forge.open_pr(slug, n) {
+            Some(Some(pr)) => open.push(pr),
+            Some(None) => left.push(n),
+            None => unanswered = true,
+        }
+    }
+    if unanswered {
+        return;
+    }
+    for n in left.iter().filter(|n| prev.prs.contains_key(n)) {
+        obs.finals.extend(forge.final_state(slug, *n).map(|f| (*n, f)));
+    }
+    if t.land == "pr" && left.iter().any(|n| prev.prs.contains_key(n)) {
+        let heads: Vec<String> = open.iter().map(|(_, h)| h.clone()).collect();
+        let base = t.base.strip_prefix("origin/").unwrap_or(&t.base);
+        obs.strays = forge.stray_branches(slug, if base.is_empty() { "main" } else { base }, &heads);
+    }
+    obs.open = Some(open.into_iter().map(|(p, _)| p).collect());
 }
 
 /// Each queue.local checkout's forge tip, fetched in parallel and best-effort: the measurement
@@ -483,13 +573,16 @@ impl World {
     pub fn pr_snapshot(&self, forge: &Forge, input: &str) -> Result<String, String> {
         let carry: pr_notify::Carry = serde_json::from_str(input).unwrap_or_default();
         let rows = fs::read_to_string(&self.repo_map).map(|t| map_rows(&t)).map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
-        let targets: Vec<PrTarget> = rows
-            .into_iter()
-            .filter(|r| Path::new(&r.path).join(".git").is_dir())
-            .filter_map(|r| Some(PrTarget { slug: slug(Path::new(&r.path))?, name: r.name, land: r.land, base: r.base }))
-            .collect();
+        let git = self.git_bin.as_deref().unwrap_or(Path::new("git"));
+        let reg = crate::tasks::a::queue_step::edge::registry().inspect_err(|e| eprintln!("pr-notify: no forge tip is read: {e}")).ok();
+        let reg = reg.map(|r| match &self.git_bin {
+            Some(bin) => r.with_git(bin.clone()),
+            None => r,
+        });
+        let home = reg.as_ref().map_or(self.home_repo.as_str(), |reg| reg.home_repo());
+        let targets = pr_targets(rows, home, &|r| reg.as_ref().and_then(|reg| published_to(reg, git, r)));
         let records = self.recorded_prs(&targets);
-        pr_snapshot_from(&records, &targets, forge, &carry)
+        pr_snapshot_from(&records, &targets, forge, &carry, &|repo, spec| git_ok_with(git, repo, &["cat-file", "blob", spec]).ok().map(|out| String::from_utf8_lossy(&out).into_owned()))
     }
 
     /// Per repo, the PR numbers its batch record and its publish record name; an `Err` where
@@ -1651,10 +1744,146 @@ fn sweep_bead(b: &Value) -> Option<Bead> {
 mod pr_snapshot_tests {
     use super::*;
     use crate::forge::tests::{answer, forge_at, stub};
-    use crate::watchers::pr_notify::{Carry, RepoCarry, Snapshot, Tracked};
+    use crate::watchers::pr_notify::{decide, Carry, Deploy, DeployRun, PrNotify, RepoCarry, Said, Snapshot, Tracked};
 
     fn target(name: &str, land: &str) -> PrTarget {
-        PrTarget { name: name.into(), slug: "o/r".into(), land: land.into(), base: String::new() }
+        PrTarget { name: name.into(), slug: Some("o/r".into()), land: land.into(), ..PrTarget::default() }
+    }
+
+    fn snapshot_of(records: &RecordedPrs, targets: &[PrTarget], forge: &Forge, carry: &Carry) -> Result<String, String> {
+        pr_snapshot_from(records, targets, forge, carry, &|_, _| None)
+    }
+
+    const OLD: &str = "bdab763500000000";
+    const NEW: &str = "70bf904e00000000";
+    const GITEA: &str = "git@gitea.example:acme/pipeline.git";
+
+    fn checkout(root: &Path, name: &str, origin: &str) -> MapRow {
+        let dir = root.join(name);
+        fs::create_dir_all(dir.join(".git")).unwrap();
+        fs::write(dir.join(".git/config"), format!("[remote \"origin\"]\n\turl = {origin}\n")).unwrap();
+        MapRow { name: name.into(), path: dir.display().to_string(), land: "queue.local".into(), base: "local/main".into() }
+    }
+
+    fn published(remote: &str, tip: Option<&str>) -> Option<Published> {
+        Some(Published { remote: remote.into(), tip: tip.map(str::to_string) })
+    }
+
+    fn at_tip(name: &str, tip: &str) -> Carry {
+        Carry { repos: BTreeMap::from([(name.to_string(), RepoCarry { tip: tip.into(), ..Default::default() })]) }
+    }
+
+    fn judge(carry: &Carry, out: &str, now: u64) -> (Carry, Said) {
+        decide(&PrNotify { interval_ms: 1, deploy_giveup_secs: 100 }, carry, &snapshot(out), now)
+    }
+
+    #[test_id(tulzkqf)]
+    #[test]
+    fn a_repo_whose_origin_is_not_github_is_not_live_and_quotes_its_declared_deploy() {
+        let tmp = testkit::TempDir::new("pr-gitea");
+        let targets = pr_targets(vec![checkout(tmp.path(), "pipeline", GITEA)], "spira", &|_| published("origin", Some(NEW)));
+        let (api, seen) = stub(vec![]);
+        let carry = at_tip("pipeline", OLD);
+        let declared = "on the host, install.sh --pipeline builds it; ## probe $(x)";
+        let out = pr_snapshot_from(&RecordedPrs::new(), &targets, &forge_at(api), &carry, &|_, spec| (spec == format!("{NEW}:.spira/deploy.toml")).then(|| format!("after_landing = \"{declared}\"\n"))).unwrap();
+        assert!(seen.join().unwrap().is_empty(), "no forge is asked about a repository that is not on GitHub");
+        let (after, said) = judge(&carry, &out, 1000);
+        assert_eq!(said.notes.len(), 1);
+        assert_eq!(said.notes[0].subject, "NOT LIVE [pipeline] 70bf904e0");
+        assert_eq!(said.notes[0].body, format!("NOT LIVE [pipeline] 70bf904e0: origin {GITEA} is not a GitHub repository; no deploy run is observable\nDeclared deploy: {declared}\n"));
+        assert_eq!(said.lines, [format!("NOT LIVE [pipeline] 70bf904e0: origin {GITEA} is not a GitHub repository; no deploy run is observable")]);
+        assert_eq!(judge(&after, &out, 1090).1, Said::default());
+    }
+
+    #[test_id(tv7qebm)]
+    #[test]
+    fn a_login_in_an_origin_url_is_not_repeated_to_the_operator() {
+        let tmp = testkit::TempDir::new("pr-login");
+        let url = format!("https://{}gitea.example/acme/pipeline.git", concat!("someone:hunter2", "@"));
+        let targets = pr_targets(vec![checkout(tmp.path(), "pipeline", &url)], "spira", &|_| None);
+        assert_eq!(targets[0].origin, "https://gitea.example/acme/pipeline.git");
+    }
+
+    #[test_id(tq8jc60)]
+    #[test]
+    fn a_queue_local_repo_on_github_is_asked_by_its_slug() {
+        let tmp = testkit::TempDir::new("pr-github");
+        let rows = vec![checkout(tmp.path(), "cubby", "git@github.com:acme/cubby.git")];
+        let targets = pr_targets(rows, "spira", &|_| published("origin", Some(NEW)));
+        assert_eq!((targets[0].slug.as_deref(), targets[0].tip.as_deref()), (Some("acme/cubby"), Some(NEW)));
+    }
+
+    #[test_id(toz2tsl)]
+    #[test]
+    fn the_publish_remote_not_origin_says_which_repository_is_observed() {
+        let tmp = testkit::TempDir::new("pr-two-remotes");
+        let row = checkout(tmp.path(), "pipeline", "git@github.com:acme/mirror.git");
+        let config = Path::new(&row.path).join(".git/config");
+        fs::write(&config, format!("{}[remote \"prod\"]\n\turl = {GITEA}\n", fs::read_to_string(&config).unwrap())).unwrap();
+        let targets = pr_targets(vec![row], "spira", &|_| published("prod", Some(NEW)));
+        assert_eq!((targets[0].slug.as_deref(), targets[0].origin.as_str()), (None, GITEA));
+    }
+
+    #[test_id(tmdzn8z)]
+    #[test]
+    fn the_forge_tip_is_the_configured_publish_ref_and_an_unread_one_is_no_tip() {
+        let tmp = testkit::TempDir::new("pr-tip");
+        let row = checkout(tmp.path(), "pipeline", GITEA);
+        let git_dir = Path::new(&row.path).join(".git");
+        for (name, sha) in [("refs/heads/local/main", "a"), ("refs/remotes/prod/trunk", "b")] {
+            fs::create_dir_all(git_dir.join(name).parent().unwrap()).unwrap();
+            fs::write(git_dir.join(name), format!("{}\n", sha.repeat(40))).unwrap();
+        }
+        let map = format!("pipeline|{}|queue.local|local/main||\n", row.path);
+        let reading = |branch: &str| {
+            let section = spira_config::PublishSection { remote: Some("prod".into()), branch: Some(branch.into()), ..Default::default() };
+            let reg = spira_config::repos::Registry::new(Some(&map), &BTreeMap::new(), tmp.path()).with_publish(BTreeMap::from([("pipeline".to_string(), section)]));
+            published_to(&reg, &tmp.path().join("no-such-git"), &row)
+        };
+        assert_eq!(reading("trunk"), published("prod", Some(&"b".repeat(40))));
+        assert_eq!(reading("absent"), published("prod", None));
+    }
+
+    #[test_id(tolpjwq)]
+    #[test]
+    fn the_home_repo_gets_no_deploy_verdict() {
+        let tmp = testkit::TempDir::new("pr-home");
+        let rows = vec![checkout(tmp.path(), "spira", "git@github.com:acme/spira.git")];
+        let targets = pr_targets(rows, "spira", &|_| published("origin", Some(NEW)));
+        let (api, seen) = stub(vec![]);
+        let mut carry = at_tip("spira", OLD);
+        carry.repos.get_mut("spira").unwrap().deploys.push(Deploy { sha: OLD.into(), n: 7, at: 1000, ..Default::default() });
+        let out = snapshot_of(&RecordedPrs::new(), &targets, &forge_at(api), &carry).unwrap();
+        assert!(seen.join().unwrap().is_empty(), "no deploy run is asked for");
+        let (waiting, said) = judge(&carry, &out, 1050);
+        assert_eq!((said, waiting.repos["spira"].deploys.len()), (Said::default(), 1), "the PR's merged topic is carried as before");
+        let (after, said) = judge(&waiting, &out, 5000);
+        assert_eq!((said, after.repos["spira"].deploys.len()), (Said::default(), 0));
+        let gitea = pr_targets(vec![checkout(tmp.path(), "spira", GITEA)], "spira", &|_| published("origin", Some(NEW)));
+        assert!(gitea.is_empty());
+    }
+
+    #[test_id(t9hc2m7)]
+    #[test]
+    fn an_unanswered_deploy_listing_is_not_a_verdict() {
+        let mut carry = Carry::default();
+        carry.repos.entry("r".into()).or_default().deploys.push(Deploy { sha: NEW.into(), n: 7, at: 1000, ..Default::default() });
+        let (api, seen) = stub(vec![answer("500 Internal Server Error", "", "{}")]);
+        let out = snapshot_of(&RecordedPrs::new(), &[target("r", "queue.local")], &forge_at(api), &carry).unwrap();
+        assert_eq!(seen.join().unwrap().len(), 1);
+        let (after, said) = judge(&carry, &out, 1_000_000);
+        assert_eq!((said, after.repos["r"].deploys.len()), (Said::default(), 1));
+    }
+
+    #[test_id(to5c871)]
+    #[test]
+    fn a_404_on_the_deploy_listing_is_no_workflow_and_an_empty_listing_is_not_yet() {
+        let (api, seen) = stub(vec![answer("404 Not Found", "", "{}"), answer("200 OK", "", r#"{"workflow_runs":[{"status":"in_progress"}]}"#), answer("200 OK", "", r#"{"message":"odd"}"#)]);
+        let forge = forge_at(api);
+        assert_eq!(forge.deploy_run("o/r", "a"), Ok(DeployRun::NoWorkflow));
+        assert_eq!(forge.deploy_run("o/r", "b"), Ok(DeployRun::NotYet));
+        assert!(forge.deploy_run("o/r", "c").is_err());
+        assert!(seen.join().unwrap()[0].starts_with("get /repos/o/r/actions/workflows/deploy.yml/runs?head_sha=a"));
     }
 
     fn snapshot(out: &str) -> Snapshot {
@@ -1670,7 +1899,7 @@ mod pr_snapshot_tests {
     #[test]
     fn nothing_recorded_nothing_tracked_and_no_deploy_makes_no_forge_call() {
         let (api, seen) = stub(vec![]);
-        let out = pr_snapshot_from(&RecordedPrs::new(), &[target("a", "queue"), target("r", "pr")], &forge_at(api), &Carry::default()).unwrap();
+        let out = snapshot_of(&RecordedPrs::new(), &[target("a", "queue"), target("r", "pr")], &forge_at(api), &Carry::default()).unwrap();
         assert!(seen.join().unwrap().is_empty());
         assert!(snapshot(&out).repos.iter().all(|(_, o)| o.open == Some(vec![])));
     }
@@ -1683,7 +1912,7 @@ mod pr_snapshot_tests {
         let runs = r#"{"workflow_runs":[]}"#;
         let (api, seen) = stub(vec![answer("200 OK", "", pr), answer("200 OK", "", checks), answer("200 OK", "", runs)]);
         let records = RecordedPrs::from([("r".to_string(), Ok(vec![12]))]);
-        let out = pr_snapshot_from(&records, &[target("r", "queue")], &forge_at(api), &Carry::default()).unwrap();
+        let out = snapshot_of(&records, &[target("r", "queue")], &forge_at(api), &Carry::default()).unwrap();
         let seen = seen.join().unwrap();
         assert!(seen[0].starts_with("get /repos/o/r/pulls/12 "), "{}", seen[0]);
         assert!(seen[1].contains("/commits/abc/check-runs") && seen[2].contains("head_sha=abc")); // not a path: request URL path
@@ -1697,7 +1926,7 @@ mod pr_snapshot_tests {
     fn a_tracked_pr_no_longer_recorded_that_closed_gets_its_final_state_and_no_check_read() {
         let closed = r#"{"number":12,"state":"closed","merged":false,"head":{"sha":"abc","ref":"b"}}"#;
         let (api, seen) = stub(vec![answer("200 OK", "", closed), answer("200 OK", "", closed)]);
-        let out = pr_snapshot_from(&RecordedPrs::new(), &[target("r", "queue")], &forge_at(api), &tracking(12)).unwrap();
+        let out = snapshot_of(&RecordedPrs::new(), &[target("r", "queue")], &forge_at(api), &tracking(12)).unwrap();
         let seen = seen.join().unwrap();
         assert!(seen.iter().all(|r| r.starts_with("get /repos/o/r/pulls/12 ")), "{seen:?}");
         let obs = snapshot(&out).repos[0].1.clone();
@@ -1722,12 +1951,12 @@ mod pr_snapshot_tests {
     #[test]
     fn strays_are_listed_only_on_the_tick_a_tracked_pr_leaves_the_open_set() {
         let (api, seen) = stub(vec![]);
-        pr_snapshot_from(&RecordedPrs::new(), &[target("r", "pr")], &forge_at(api), &Carry::default()).unwrap();
+        snapshot_of(&RecordedPrs::new(), &[target("r", "pr")], &forge_at(api), &Carry::default()).unwrap();
         assert!(seen.join().unwrap().is_empty(), "a quiet tick lists no branches");
 
         let closed = r#"{"number":12,"state":"closed","merged":false,"head":{"sha":"abc","ref":"b"}}"#;
         let (api, seen) = stub(vec![answer("200 OK", "", closed), answer("200 OK", "", closed), answer("200 OK", "", "[]")]);
-        let out = pr_snapshot_from(&RecordedPrs::new(), &[target("r", "pr")], &forge_at(api), &tracking(12)).unwrap();
+        let out = snapshot_of(&RecordedPrs::new(), &[target("r", "pr")], &forge_at(api), &tracking(12)).unwrap();
         let seen = seen.join().unwrap();
         assert!(seen[2].starts_with("get /repos/o/r/branches"), "{}", seen[2]);
         assert_eq!(snapshot(&out).repos[0].1.strays, Some(vec![]));
@@ -1741,7 +1970,7 @@ mod pr_snapshot_tests {
             let closed = r#"{"number":12,"state":"closed","merged":false,"head":{"sha":"abc","ref":"b"}}"#;
             let (api, seen) = stub(vec![answer("200 OK", "", closed), answer("200 OK", "", closed), answer("200 OK", "", "[]")]);
             let addr = api.trim_start_matches("http://").to_string();
-            let out = pr_snapshot_from(&RecordedPrs::new(), &[target("r", land)], &forge_at(api), &tracking(12)).unwrap();
+            let out = snapshot_of(&RecordedPrs::new(), &[target("r", land)], &forge_at(api), &tracking(12)).unwrap();
             // The stub waits for a third request: a branch listing would be it, so a probe stands in
             // for it and is told apart by carrying no path.
             drop(std::net::TcpStream::connect(addr));
@@ -1756,7 +1985,7 @@ mod pr_snapshot_tests {
     fn a_repo_whose_records_cannot_be_read_is_unobserved_and_makes_no_call() {
         let (api, seen) = stub(vec![]);
         let records = RecordedPrs::from([("r".to_string(), Err("store down".to_string()))]);
-        let out = pr_snapshot_from(&records, &[target("r", "pr")], &forge_at(api), &tracking(12)).unwrap();
+        let out = snapshot_of(&records, &[target("r", "pr")], &forge_at(api), &tracking(12)).unwrap();
         assert!(seen.join().unwrap().is_empty());
         assert_eq!(snapshot(&out).repos[0].1.open, None);
     }

@@ -95,6 +95,22 @@ pub const DOVECOT_DROPIN: &str = "/etc/systemd/system/dovecot.service.d/spira-ta
 /// A unit condition path that never exists, so the store stays frozen.
 pub const FROZEN_CONDITION: &str = "/nonexistent/spira-store-frozen-thaw-with-world-thaw-store";
 
+/// [`guest::VAR_CACHE_SPIRA_FOREIGN_TARGET`] as a literal, for `concat!` into a script.
+#[macro_export]
+macro_rules! foreign_cache_target {
+    () => {
+        "/var/cache/spira-foreign/target"
+    };
+}
+
+/// [`guest::VAR_CACHE_SPIRA_FOREIGN_CARGO`] as a literal, for `concat!` into a script.
+#[macro_export]
+macro_rules! foreign_cache_cargo {
+    () => {
+        "/var/cache/spira-foreign/cargo"
+    };
+}
+
 /// Paths absolute inside a container or VM this code builds.
 pub mod guest {
     /// The checkout mount in a container.
@@ -116,9 +132,9 @@ pub mod guest {
     /// The testdb template cache in a container.
     pub const VAR_CACHE_SPIRA_TESTDB_TEMPLATES: &str = "/var/cache/spira-testdb-templates";
     /// The foreign-build target cache.
-    pub const VAR_CACHE_SPIRA_FOREIGN_TARGET: &str = "/var/cache/spira-foreign/target";
+    pub const VAR_CACHE_SPIRA_FOREIGN_TARGET: &str = crate::foreign_cache_target!();
     /// The foreign-build cargo cache.
-    pub const VAR_CACHE_SPIRA_FOREIGN_CARGO: &str = "/var/cache/spira-foreign/cargo";
+    pub const VAR_CACHE_SPIRA_FOREIGN_CARGO: &str = crate::foreign_cache_cargo!();
     /// The sandbox's tree mount.
     pub const TMP_SANDBOX_TREE: &str = "/tmp/spira-sandbox-tree";
     /// The sandbox's target mount.

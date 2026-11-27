@@ -12,7 +12,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::api_budget;
-use crate::watchers::pr_notify::{classify, Final, OpenPr, Run};
+use crate::watchers::pr_notify::{classify, DeployRun, Final, OpenPr, Run};
 use crate::wiki_git::gh_auth_token;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(5);
@@ -58,17 +58,38 @@ fn slug_of(url: &str) -> Option<String> {
     }
 }
 
-/// `owner/repo` of a checkout's forge remote: `origin` when it has one, else the first remote.
-pub fn slug(repo_dir: &Path) -> Option<String> {
+/// The URL of a checkout's forge remote: `origin` when it has one, else the first remote.
+pub fn origin_url(repo_dir: &Path) -> Option<String> {
     let remotes = remotes(repo_dir);
     let (_, url) = remotes.iter().find(|(n, _)| n == "origin").or(remotes.first())?;
-    slug_of(url)
+    Some(url.clone())
+}
+
+/// The URL of the named remote.
+pub fn remote_url(repo_dir: &Path, remote: &str) -> Option<String> {
+    remotes(repo_dir).into_iter().find(|(n, _)| n == remote).map(|(_, url)| url)
+}
+
+/// `owner/repo` of [`origin_url`], on whatever host it is.
+pub fn slug(repo_dir: &Path) -> Option<String> {
+    slug_of(&origin_url(repo_dir)?)
+}
+
+/// `owner/repo` of a URL, only when it is on github.com.
+pub fn github_slug_of(url: &str) -> Option<String> {
+    ["github.com", "ssh.github.com"].iter().any(|h| host_of(url).eq_ignore_ascii_case(h)).then(|| slug_of(url)).flatten()
+}
+
+/// `url` fit to show a reader: a `scheme://` URL loses its user and password.
+pub fn without_login(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else { return url.to_string() };
+    let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+    format!("{scheme}://{}{path}", authority.rsplit('@').next().unwrap_or(authority))
 }
 
 /// `owner/repo` of the named remote, only when that remote is on github.com.
 pub fn github_slug(repo_dir: &Path, remote: &str) -> Option<String> {
-    let url = remotes(repo_dir).into_iter().find(|(n, _)| n == remote)?.1;
-    host_of(&url).eq_ignore_ascii_case("github.com").then(|| slug_of(&url)).flatten()
+    github_slug_of(&remote_url(repo_dir, remote)?)
 }
 
 fn host_of(url: &str) -> &str {
@@ -292,12 +313,18 @@ impl Forge {
         Some(Final { state: state.into(), sha: text(&p, "merge_commit_sha"), beads })
     }
 
-    /// The first completed deploy run for a merge commit; `None` while there is none.
-    pub fn deploy_run(&self, slug: &str, sha: &str) -> Option<Run> {
-        let runs = self.get("deploy_run", &format!("/repos/{slug}/actions/workflows/deploy.yml/runs?head_sha={sha}&{PAGE}"))?; // not a path: GitHub API route or JSON pointer
-        let r = runs["workflow_runs"].as_array()?.iter().find(|r| r["status"] == "completed")?;
-        let secs = epoch(r["updated_at"].as_str()?).zip(epoch(r["created_at"].as_str()?)).map_or(0, |(u, c)| u.saturating_sub(c));
-        Some(Run { conclusion: r["conclusion"].as_str().unwrap_or("unknown").to_string(), secs, url: text(r, "html_url") })
+    /// What the deploy workflow's listing says of a commit; an `Err` is a call that did not answer.
+    pub fn deploy_run(&self, slug: &str, sha: &str) -> Result<DeployRun, String> {
+        let path = format!("/repos/{slug}/actions/workflows/deploy.yml/runs?head_sha={sha}&{PAGE}"); // not a path: GitHub API route or JSON pointer
+        let runs = match self.try_get("deploy_run", &path) {
+            Err(why) if why.ends_with(": status code 404") => return Ok(DeployRun::NoWorkflow),
+            other => other?,
+        };
+        let listed = runs["workflow_runs"].as_array().ok_or_else(|| format!("{path} has no workflow_runs"))?;
+        let Some(r) = listed.iter().find(|r| r["status"] == "completed") else { return Ok(DeployRun::NotYet) };
+        let at = |key: &str| r[key].as_str().and_then(epoch);
+        let secs = at("updated_at").zip(at("created_at")).map_or(0, |(u, c)| u.saturating_sub(c));
+        Ok(DeployRun::Completed(Run { conclusion: r["conclusion"].as_str().unwrap_or("unknown").to_string(), secs, url: text(r, "html_url") }))
     }
 
     /// One `STRANDED run=<id> job="<name>" label=<labels> queued=<n>s runner=<name> vmid=<id>` line per
@@ -399,6 +426,7 @@ pub(crate) mod tests {
             ("https://github.com/acme/widgets.git", true),
                         ("https://USERINFO/github.com/acme/widgets", true),
             ("ssh://git@github.com:22/acme/widgets.git", true),
+            ("ssh://git@ssh.github.com:443/acme/widgets.git", true),
             ("git@github.com:acme/widgets.git", true),
             ("git@gitea.example:acme/widgets.git", false),
             ("https://gitea.example/github.com/widgets.git", false),

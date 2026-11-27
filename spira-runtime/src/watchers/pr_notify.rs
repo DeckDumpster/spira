@@ -1,6 +1,7 @@
-//! OPENED, FAIL RED, GREEN, MERGED, CLOSED, DEPLOYED, DEPLOY FAILED and `no PR` for the PRs the harness
-//! opened, read from its own batch and publish records and from the PRs already tracked. Each tick
-//! asks the world for one snapshot, by PR number; the decision over snapshot and carried state is `decide`, which does no IO.
+//! OPENED, FAIL RED, GREEN, MERGED, CLOSED and `no PR` for the PRs the harness opened, read from
+//! its own batch and publish records and from the PRs already tracked; and one deploy verdict,
+//! DEPLOYED, DEPLOY FAILED or NOT LIVE, for each merge or forge tip move. Each tick asks the world
+//! for one snapshot; the decision over snapshot and carried state is `decide`, which does no IO.
 
 use std::collections::BTreeMap;
 
@@ -26,6 +27,8 @@ const ROW_PARTS: &[Part] = &[Part::Map { name: "repos", drop: &[] }];
 
 const OBSERVE_DEADLINE_MS: u64 = 120_000;
 const DEADLINE_MS: u64 = 10_000;
+/// How many judged commits a repo remembers, so a merge seen after its tip's verdict gets no second.
+const JUDGED_KEPT: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrNotify {
@@ -42,7 +45,7 @@ pub struct Tracked {
     pub at: u64,
 }
 
-/// A merge awaiting its deploy run.
+/// A landed commit awaiting its deploy verdict; `n` is 0 when no PR carried it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Deploy {
     pub sha: String,
@@ -79,6 +82,19 @@ pub struct RepoCarry {
     pub said: BTreeMap<u64, Heard>,
     pub deploys: Vec<Deploy>,
     pub strays: Vec<String>,
+    /// The last forge tip seen; empty before the first.
+    #[serde(default)]
+    pub tip: String,
+    /// Commits already given a verdict, oldest first.
+    #[serde(default)]
+    pub judged: Vec<String>,
+}
+
+impl RepoCarry {
+    /// Whether `tip` is a move off the last tip seen onto a commit nothing has queued or judged.
+    pub fn moved_to(&self, tip: &str) -> bool {
+        !self.tip.is_empty() && self.tip != tip && !self.judged.iter().any(|s| s == tip) && !self.deploys.iter().any(|d| d.sha == tip)
+    }
 }
 
 /// Carried between ticks, as the body of the latest `pr-notify.state` event; it is also the
@@ -112,6 +128,14 @@ pub struct Run {
     pub url: String,
 }
 
+/// What the deploy workflow's listing said of one commit.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeployRun {
+    Completed(Run),
+    NotYet,
+    NoWorkflow,
+}
+
 /// One repository as the forge showed it. `open` is `None` when the forge could not be asked,
 /// which is never the same as no open PRs; an absent `finals` or `runs` entry is a question the
 /// forge did not answer; `strays` is `None` where the check does not apply or could not run.
@@ -119,8 +143,21 @@ pub struct Run {
 pub struct RepoObs {
     pub open: Option<Vec<OpenPr>>,
     pub finals: BTreeMap<u64, Final>,
-    pub runs: BTreeMap<String, Run>,
+    pub runs: BTreeMap<String, DeployRun>,
     pub strays: Option<Vec<String>>,
+    #[serde(default)]
+    pub slug: String,
+    /// The origin URL of a repo that is not on GitHub.
+    #[serde(default)]
+    pub origin: Option<String>,
+    #[serde(default)]
+    pub tip: Option<String>,
+    /// Per commit, the repo's own `after_landing` text, shown and never parsed.
+    #[serde(default)]
+    pub declared: BTreeMap<String, String>,
+    /// The home repo, which gets no deploy verdict.
+    #[serde(default)]
+    pub home: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,7 +165,7 @@ pub struct Snapshot {
     pub repos: Vec<(String, RepoObs)>,
 }
 
-/// A merge or deploy outcome for the operator's mailbox.
+/// A merge outcome or deploy verdict for the operator's mailbox.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Note {
     pub subject: String,
@@ -191,7 +228,7 @@ pub fn carried_topics(carry: &Carry) -> Topics {
                 out.extend([topic(repo, *n, state, "", t.at)]);
             }
         }
-        out.extend(rc.deploys.iter().map(|d| topic(repo, d.n, "MERGED", &d.sha, d.at)));
+        out.extend(rc.deploys.iter().filter(|d| d.n != 0).map(|d| topic(repo, d.n, "MERGED", &d.sha, d.at)));
     }
     out
 }
@@ -234,9 +271,30 @@ fn merged(repo: &str, n: u64, title: &str, f: &Final, now: u64, rc: &mut RepoCar
     let tag = if f.sha.is_empty() { String::new() } else { format!(" {}", short(&f.sha)) };
     say.notes.push(Note { subject: format!("MERGED #{n} [{repo}]{tag}"), body: format!("PR #{n} {title} [{repo}] merged{at}.\n{}", beads_block(&beads)) });
     say.change(repo, n, "MERGED", &f.sha);
-    if !f.sha.is_empty() && !rc.deploys.iter().any(|d| d.sha == f.sha) {
-        rc.deploys.push(Deploy { sha: f.sha.clone(), n, at: now, title: title.replace('\t', " "), beads: f.beads.iter().map(|l| l.replacen("- ", "- bead ", 1)).collect() });
+    if f.sha.is_empty() || rc.judged.contains(&f.sha) {
+        return;
     }
+    let d = Deploy { sha: f.sha.clone(), n, at: now, title: title.replace('\t', " "), beads: f.beads.iter().map(|l| l.replacen("- ", "- bead ", 1)).collect() };
+    match rc.deploys.iter_mut().find(|held| held.sha == f.sha) {
+        Some(held) if held.n == 0 => *held = Deploy { at: held.at, ..d },
+        Some(_) => {}
+        None => rc.deploys.push(d),
+    }
+}
+
+/// Whether every PR that could have moved the tip is accounted for. A tip judged ahead of its
+/// merge would leave the verdict without its PR.
+fn prs_settled(obs: &RepoObs, rc: &RepoCarry) -> bool {
+    obs.origin.is_some() || obs.open.as_ref().is_some_and(|open| rc.prs.keys().all(|n| open.iter().any(|p| p.number == *n)))
+}
+
+/// Queues the deploy of a forge tip no merged PR brought: a direct push or a hand landing.
+fn follow_tip(obs: &RepoObs, now: u64, rc: &mut RepoCarry) {
+    let Some(tip) = &obs.tip else { return };
+    if rc.moved_to(tip) {
+        rc.deploys.push(Deploy { sha: tip.clone(), at: now, ..Deploy::default() });
+    }
+    rc.tip = tip.clone();
 }
 
 fn transitions(repo: &str, open: &[OpenPr], obs: &RepoObs, now: u64, rc: &mut RepoCarry, say: &mut Said) {
@@ -334,21 +392,59 @@ fn hear(carry: &mut Carry, r: &PrResult) -> Option<Said> {
 fn deploys(repo: &str, obs: &RepoObs, now: u64, giveup: u64, rc: &mut RepoCarry, say: &mut Said) {
     let queued = std::mem::take(&mut rc.deploys);
     for d in queued {
-        let Some(run) = obs.runs.get(&d.sha) else {
-            if now.saturating_sub(d.at) <= giveup {
+        let waited = now.saturating_sub(d.at);
+        if obs.home {
+            if waited <= giveup {
                 rc.deploys.push(d);
             }
             continue;
-        };
-        let verdict = if run.conclusion == "success" { "DEPLOYED" } else { "DEPLOY FAILED" };
-        let (n, title, sha, concl) = (d.n, &d.title, &d.sha, &run.conclusion);
-        say.notes.push(Note {
-            subject: format!("{verdict} #{n} [{repo}] {}", short(sha)),
-            body: format!("{verdict}: PR #{n} {title} [{repo}]\nMerge: {sha}\nRun: {concl} in {}m{}s\n{}\n{}", run.secs / 60, run.secs % 60, run.url, beads_block(&d.beads.join("\n"))),
-        });
-        say.lines.push(format!("{verdict} #{n} {title} [{repo}]: {concl} in {}s {}", run.secs, run.url));
+        }
+        match (&obs.origin, obs.runs.get(&d.sha)) {
+            (Some(url), _) => not_live(repo, &d, &format!("origin {url} is not a GitHub repository; no deploy run is observable"), obs, say),
+            (None, Some(DeployRun::Completed(run))) => completed(repo, &d, run, say),
+            (None, Some(DeployRun::NoWorkflow)) => not_live(repo, &d, &format!("no deploy.yml on {}", obs.slug), obs, say),
+            (None, Some(DeployRun::NotYet)) if waited > giveup => not_live(repo, &d, &format!("no completed deploy.yml run for {} after {waited}s", short(&d.sha)), obs, say),
+            _ => {
+                rc.deploys.push(d);
+                continue;
+            }
+        }
+        rc.judged.push(d.sha);
+        rc.judged.drain(..rc.judged.len().saturating_sub(JUDGED_KEPT));
+    }
+}
+
+fn completed(repo: &str, d: &Deploy, run: &Run, say: &mut Said) {
+    let verdict = if run.conclusion == "success" { "DEPLOYED" } else { "DEPLOY FAILED" };
+    let (n, title, sha, concl) = (d.n, &d.title, &d.sha, &run.conclusion);
+    let (subject, headline, commit, line) = if n == 0 {
+        let named = format!("{verdict} [{repo}] {}", short(sha));
+        (named.clone(), format!("{verdict}: [{repo}]"), "Commit", named)
+    } else {
+        (format!("{verdict} #{n} [{repo}] {}", short(sha)), format!("{verdict}: PR #{n} {title} [{repo}]"), "Merge", format!("{verdict} #{n} {title} [{repo}]"))
+    };
+    say.notes.push(Note {
+        subject,
+        body: format!("{headline}\n{commit}: {sha}\nRun: {concl} in {}m{}s\n{}\n{}", run.secs / 60, run.secs % 60, run.url, beads_block(&d.beads.join("\n"))),
+    });
+    say.lines.push(format!("{line}: {concl} in {}s {}", run.secs, run.url));
+    if n != 0 {
         say.change(repo, n, verdict, sha);
     }
+}
+
+/// Says what was observed instead of a run. It is no PR topic state.
+fn not_live(repo: &str, d: &Deploy, observed: &str, obs: &RepoObs, say: &mut Said) {
+    let commit = short(&d.sha);
+    let headline = format!("NOT LIVE [{repo}] {commit}: {observed}");
+    let (tag, pr, aside) = if d.n == 0 {
+        (String::new(), String::new(), String::new())
+    } else {
+        (format!(" #{}", d.n), format!("PR #{} {}\n", d.n, d.title), format!(" (PR #{} {})", d.n, d.title))
+    };
+    let declared = obs.declared.get(&d.sha).map(|text| format!("Declared deploy: {text}\n")).unwrap_or_default();
+    say.notes.push(Note { subject: format!("NOT LIVE{tag} [{repo}] {commit}"), body: format!("{headline}\n{pr}{declared}{}", beads_block(&d.beads.join("\n"))) });
+    say.lines.push(format!("{headline}{aside}"));
 }
 
 /// The messages a snapshot calls for, and the state to carry into the next tick.
@@ -359,6 +455,9 @@ pub fn decide(cfg: &PrNotify, carry: &Carry, snap: &Snapshot, now: u64) -> (Carr
         let mut rc = c.repos.remove(repo).unwrap_or_default();
         if let Some(open) = &obs.open {
             transitions(repo, open, obs, now, &mut rc, &mut say);
+        }
+        if prs_settled(obs, &rc) {
+            follow_tip(obs, now, &mut rc);
         }
         deploys(repo, obs, now, cfg.deploy_giveup_secs, &mut rc, &mut say);
         if let Some(found) = &obs.strays {
@@ -540,18 +639,117 @@ mod tests {
         assert_eq!(c.repos["r"].deploys.len(), 1);
     }
 
+    fn answered(sha: &str, run: DeployRun) -> RepoObs {
+        RepoObs { slug: "o/r".into(), runs: BTreeMap::from([(sha.to_string(), run)]), ..open(vec![]) }
+    }
+
+    fn completed(conclusion: &str, secs: u64) -> DeployRun {
+        DeployRun::Completed(Run { conclusion: conclusion.into(), secs, url: "http://u".into() })
+    }
+
     #[test_id(tuep6ad)]
     #[test]
-    fn a_deploy_is_reported_when_its_run_completes_and_dropped_after_the_giveup() {
+    fn a_deploy_is_reported_when_its_run_completes() {
         let (c, _) = merged_carry();
-        let mut done = open(vec![]);
-        done.runs.insert("0123456789abcdef".into(), Run { conclusion: "failure".into(), secs: 125, url: "http://u".into() });
-        let (after, say) = decide(&cfg(), &c, &one(done), 1100);
+        let (after, say) = decide(&cfg(), &c, &one(answered("0123456789abcdef", completed("failure", 125))), 1100);
         assert_eq!(say.lines, ["DEPLOY FAILED #7 t7 [r]: failure in 125s http://u"]);
         assert_eq!(say.notes[0].body, "DEPLOY FAILED: PR #7 t7 [r]\nMerge: 0123456789abcdef\nRun: failure in 2m5s\nhttp://u\n\nBeads:\n- bead sp-aaa — one\n");
         assert!(after.repos["r"].deploys.is_empty());
-        assert_eq!(decide(&cfg(), &c, &one(open(vec![])), 1190).0.repos["r"].deploys.len(), 1, "waiting is not giving up");
-        assert!(decide(&cfg(), &c, &one(open(vec![])), 1191).0.repos["r"].deploys.is_empty());
+    }
+
+    #[test_id(t6zkgsb)]
+    #[test]
+    fn a_deploy_with_no_completed_run_by_the_giveup_is_reported_not_live() {
+        let (c, _) = merged_carry();
+        let waiting = || one(answered("0123456789abcdef", DeployRun::NotYet));
+        let (c, say) = decide(&cfg(), &c, &waiting(), 1190);
+        assert_eq!((c.repos["r"].deploys.len(), say), (1, Said::default()), "waiting is not giving up");
+        let (c, say) = decide(&cfg(), &c, &waiting(), 1191);
+        assert_eq!(say.lines, ["NOT LIVE [r] 012345678: no completed deploy.yml run for 012345678 after 101s (PR #7 t7)"]);
+        assert_eq!(say.notes.len(), 1);
+        assert_eq!(say.notes[0].subject, "NOT LIVE #7 [r] 012345678");
+        assert_eq!(say.notes[0].body, "NOT LIVE [r] 012345678: no completed deploy.yml run for 012345678 after 101s\nPR #7 t7\n\nBeads:\n- bead sp-aaa — one\n");
+        assert!(say.changes.is_empty(), "NOT LIVE is no topic state");
+        assert_eq!(decide(&cfg(), &c, &waiting(), 1300).1, Said::default());
+    }
+
+    #[test_id(tpx68g5)]
+    #[test]
+    fn a_repo_without_deploy_yml_is_not_live_at_once() {
+        let (c, _) = merged_carry();
+        let (c, say) = decide(&cfg(), &c, &one(answered("0123456789abcdef", DeployRun::NoWorkflow)), 1091);
+        assert_eq!(say.lines, ["NOT LIVE [r] 012345678: no deploy.yml on o/r (PR #7 t7)"]);
+        assert!(c.repos["r"].deploys.is_empty());
+    }
+
+    const OLD: &str = "bdab763500000000";
+    const NEW: &str = "70bf904e00000000";
+
+    fn at_tip(tip: &str, runs: RepoObs) -> Snapshot {
+        one(RepoObs { tip: Some(tip.into()), ..runs })
+    }
+
+    #[test_id(tzq8win)]
+    #[test]
+    fn a_forge_tip_moved_without_a_pr_queues_its_deploy() {
+        let (c, say) = decide(&cfg(), &Carry::default(), &at_tip(OLD, open(vec![])), 1000);
+        assert_eq!((say, c.repos["r"].deploys.len()), (Said::default(), 0), "the first tip seen is no landing");
+        let (c, _) = decide(&cfg(), &c, &at_tip(NEW, open(vec![])), 1090);
+        assert_eq!(c.repos["r"].deploys.iter().map(|d| (d.sha.as_str(), d.n)).collect::<Vec<_>>(), [(NEW, 0)]);
+        assert!(carried_topics(&c).is_empty(), "no PR, no PR topic");
+        let (c, say) = decide(&cfg(), &c, &at_tip(NEW, answered(NEW, completed("success", 61))), 1180);
+        assert_eq!(say.lines, ["DEPLOYED [r] 70bf904e0: success in 61s http://u"]);
+        assert_eq!(say.notes[0].subject, "DEPLOYED [r] 70bf904e0");
+        assert_eq!(say.notes[0].body, "DEPLOYED: [r]\nCommit: 70bf904e00000000\nRun: success in 1m1s\nhttp://u\n");
+        assert!(say.changes.is_empty());
+        let (c, say) = decide(&cfg(), &c, &at_tip(NEW, open(vec![])), 1270);
+        assert_eq!((say, c.repos["r"].deploys.len()), (Said::default(), 0));
+    }
+
+    fn merged_at(sha: &str) -> RepoObs {
+        let mut gone = open(vec![]);
+        gone.finals.insert(7, Final { state: "MERGED".into(), sha: sha.into(), beads: vec![] });
+        gone
+    }
+
+    #[test_id(twqkd50)]
+    #[test]
+    fn a_tip_that_arrives_after_its_merges_verdict_is_not_judged_again() {
+        let (c, _) = decide(&cfg(), &Carry::default(), &at_tip(OLD, open(vec![pr(7, "green", "")])), 1000);
+        let (c, _) = decide(&cfg(), &c, &at_tip(OLD, merged_at(NEW)), 1090);
+        let (c, say) = decide(&cfg(), &c, &at_tip(OLD, answered(NEW, completed("success", 1))), 1180);
+        assert_eq!(say.notes.len(), 1);
+        let (c, say) = decide(&cfg(), &c, &at_tip(NEW, open(vec![])), 1270);
+        assert_eq!((say, c.repos["r"].deploys.len()), (Said::default(), 0));
+    }
+
+    #[test_id(tplcwkg)]
+    #[test]
+    fn a_tip_waits_while_a_pr_that_may_have_moved_it_is_unaccounted_for() {
+        let (c, _) = decide(&cfg(), &Carry::default(), &at_tip(OLD, open(vec![pr(7, "green", "")])), 1000);
+        for unsettled in [RepoObs::default(), open(vec![])] {
+            let (held, _) = decide(&cfg(), &c, &at_tip(NEW, unsettled), 1090);
+            assert_eq!((held.repos["r"].tip.as_str(), held.repos["r"].deploys.len()), (OLD, 0));
+        }
+        let (c, _) = decide(&cfg(), &c, &at_tip(NEW, merged_at(NEW)), 1180);
+        assert_eq!(c.repos["r"].deploys.iter().map(|d| d.n).collect::<Vec<_>>(), [7]);
+    }
+
+    #[test_id(t039pa0)]
+    #[test]
+    fn a_merge_seen_while_its_tips_deploy_waits_gives_it_the_pr() {
+        let (c, _) = decide(&cfg(), &Carry::default(), &at_tip(OLD, open(vec![pr(7, "green", "")])), 1000);
+        let (c, _) = decide(&cfg(), &c, &at_tip(NEW, open(vec![pr(7, "green", "")])), 1090);
+        let (c, _) = decide(&cfg(), &c, &at_tip(NEW, merged_at(NEW)), 1180);
+        assert_eq!(c.repos["r"].deploys.iter().map(|d| (d.n, d.at)).collect::<Vec<_>>(), [(7, 1090)]);
+    }
+
+    #[test_id(to8uhwt)]
+    #[test]
+    fn a_tip_that_moves_with_the_merge_that_carried_it_is_queued_once_as_the_prs() {
+        let (c, _) = decide(&cfg(), &Carry::default(), &at_tip(OLD, open(vec![pr(7, "green", "")])), 1000);
+        let (c, _) = decide(&cfg(), &c, &at_tip(NEW, merged_at(NEW)), 1090);
+        assert_eq!(c.repos["r"].deploys.iter().map(|d| d.n).collect::<Vec<_>>(), [7]);
     }
 
     // covers: UC-operator-channel-38
@@ -587,7 +785,7 @@ mod tests {
         let merged = Topics::from([("pr/r/7".to_string(), json!({ "state": "MERGED", "sha": "0123456789abcdef", "at": 1090 }))]);
         assert_eq!((say.topics(1090), carried_topics(&c)), (merged.clone(), merged));
         let mut done = open(vec![]);
-        done.runs.insert("0123456789abcdef".into(), Run { conclusion: "success".into(), secs: 1, url: "u".into() });
+        done.runs.insert("0123456789abcdef".into(), DeployRun::Completed(Run { conclusion: "success".into(), secs: 1, url: "u".into() }));
         let (c, say) = decide(&cfg(), &c, &one(done), 1100);
         assert_eq!(say.topics(1100)["pr/r/7"]["state"], "DEPLOYED");
         assert!(carried_topics(&c).is_empty());

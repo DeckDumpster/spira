@@ -69,6 +69,7 @@ pub mod legacy_map;
 pub mod local_pass;
 pub mod escalation;
 pub mod gate_source;
+pub mod foreign_cache;
 pub mod git_refs;
 pub mod locate;
 pub mod nonwork;
@@ -1841,6 +1842,7 @@ pub fn remove_named_table_in_file(file: &std::path::Path, table: &str, name: &st
 /// pairs in `declare` are written as `spira.<key>`, the only place a value can come from.
 #[cfg(test)]
 pub(crate) fn fixture_doc(declare: &std::collections::BTreeMap<String, String>) -> SpiraToml {
+    process::load_fixture_registry();
     let mut d = validate(&process::complete_fixture_text()).expect("the complete fixture validates");
     for (k, v) in declare {
         if let Some(rest) = k.strip_prefix("SPIRA_") {
