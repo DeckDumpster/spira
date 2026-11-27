@@ -1299,15 +1299,20 @@ pub mod fake {
         }
         /// Answer a suite script (`bash /workspace/spira/<suite>`) with rc and output.
         pub fn suite(&self, suite: &str, rc: i32, output: &str) {
-            let path = format!("{WORKSPACE}/spira/{suite}");
             let out = output.to_string();
-            self.on(
-                move |r| r.argv.get(1).map(String::as_str) == Some(path.as_str()),
-                move |_| ExecOutcome {
-                    rc,
-                    output: out.clone(),
-                },
-            );
+            self.on_suite(suite, move |_| ExecOutcome {
+                rc,
+                output: out.clone(),
+            });
+        }
+        /// Answer a suite script with whatever `ans` does.
+        pub fn on_suite(
+            &self,
+            suite: &str,
+            ans: impl Fn(&ExecRequest) -> ExecOutcome + Send + Sync + 'static,
+        ) {
+            let path = format!("{WORKSPACE}/spira/{suite}");
+            self.on(move |r| r.argv.get(1).map(String::as_str) == Some(path.as_str()), ans);
         }
         /// Successive answers to `{{.State.Running}}`; when exhausted, "true".
         pub fn running_answers(&self, answers: &[Option<&str>]) {

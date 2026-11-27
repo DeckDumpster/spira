@@ -254,11 +254,8 @@ impl Shared<'_> {
         (out.rc, secs, out.output, running)
     }
 
-    /// A tripped cap's report may name this file and is printed, or re-read, later.
     fn drop_raw(&self, suite: &str) {
-        if !crate::cap::tripped() {
-            let _ = fs::remove_file(self.raw_path(suite));
-        }
+        crate::cap::discard_log(&self.raw_path(suite));
     }
 
     fn finish(&self, n: usize, suite: &str, rc: i32, secs: u64, output: &str) {
@@ -976,14 +973,10 @@ mod tests {
     /// Answers each suite with 100 lines, limiting the cap's view to the exec's own thread.
     fn chatty_suites(rt: &FakeRuntime, suites: &[&'static str]) {
         for &suite in suites {
-            let path = format!("{}/spira/{suite}", crate::fixture::WORKSPACE);
-            rt.on(
-                move |r| r.argv.get(1) == Some(&path),
-                move |_| {
-                    crate::cap::ONLY_MY_UNITS.with(|o| o.set(true));
-                    ExecOutcome { rc: 0, output: numbered(suite) }
-                },
-            );
+            rt.on_suite(suite, move |_| {
+                crate::cap::ONLY_MY_UNITS.with(|o| o.set(true));
+                ExecOutcome { rc: 0, output: numbered(suite) }
+            });
         }
     }
 
@@ -1033,14 +1026,10 @@ mod tests {
         let token = Arc::new(std::sync::atomic::AtomicBool::new(false));
         crate::runtime::LOCAL_CANCEL.with(|l| *l.borrow_mut() = Some(token.clone()));
         let rt = FakeRuntime::new();
-        let path = format!("{}/spira/test-a.sh", crate::fixture::WORKSPACE);
-        rt.on(
-            move |r| r.argv.get(1) == Some(&path),
-            move |_| {
-                token.store(true, Ordering::SeqCst);
-                ExecOutcome { rc: crate::runtime::RC_CANCELLED, output: "half a run\n".into() }
-            },
-        );
+        rt.on_suite("test-a.sh", move |_| {
+            token.store(true, Ordering::SeqCst);
+            ExecOutcome { rc: crate::runtime::RC_CANCELLED, output: "half a run\n".into() }
+        });
         let dir = tmpdir("raw-cut");
         let s = session(&rt);
         let c = cfg(Mode::Serial, &dir, 0);
@@ -1085,19 +1074,15 @@ mod tests {
     #[test]
     fn a_log_the_cap_may_have_named_is_kept_after_the_suite_is_recorded() {
         let rt = FakeRuntime::new();
-        let path = format!("{}/spira/test-a.sh", crate::fixture::WORKSPACE);
-        rt.on(
-            move |r| r.argv.get(1) == Some(&path),
-            |_| {
-                crate::cap::TRIPPED_HERE.with(|t| t.set(true));
-                ExecOutcome { rc: 0, output: "ok\n".into() }
-            },
-        );
+        rt.on_suite("test-a.sh", |_| {
+            crate::cap::PINNED_HERE.with(|p| p.set(true));
+            ExecOutcome { rc: 0, output: "ok\n".into() }
+        });
         let dir = tmpdir("raw-tripped");
         let s = session(&rt);
         let c = cfg(Mode::Serial, &dir, 0);
         let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
-        crate::cap::TRIPPED_HERE.with(|t| t.set(false));
+        crate::cap::PINNED_HERE.with(|p| p.set(false));
         assert!(out.records.contains_key("test-a.sh"));
         assert!(dir.join(".test-a.sh.raw").exists());
     }
@@ -1106,19 +1091,15 @@ mod tests {
     /// a cap tripping while each record was being reported would have named.
     fn cut_while_recording(mode: Mode, first: (i32, &'static str)) -> Vec<String> {
         let rt = FakeRuntime::new();
-        let path = format!("{}/spira/test-a.sh", crate::fixture::WORKSPACE);
         let calls = AtomicUsize::new(0);
-        rt.on(
-            move |r| r.argv.get(1) == Some(&path),
-            move |_| {
-                crate::cap::ONLY_MY_UNITS.with(|o| o.set(true));
-                let (rc, output) = match calls.fetch_add(1, Ordering::SeqCst) {
-                    0 => first,
-                    _ => (0, "ok\n"),
-                };
-                ExecOutcome { rc, output: output.into() }
-            },
-        );
+        rt.on_suite("test-a.sh", move |_| {
+            crate::cap::ONLY_MY_UNITS.with(|o| o.set(true));
+            let (rc, output) = match calls.fetch_add(1, Ordering::SeqCst) {
+                0 => first,
+                _ => (0, "ok\n"),
+            };
+            ExecOutcome { rc, output: output.into() }
+        });
         let dir = tmpdir("cut-record");
         let s = session(&rt);
         let c = cfg(mode, &dir, 1);

@@ -28,6 +28,8 @@ pub const SUBCOMMANDS: &[&str] = &[
 ];
 
 static TRIPPED: AtomicBool = AtomicBool::new(false);
+/// Set as the cap snapshots the running units; read and written under [`RUNNING`]'s lock.
+static PINNED: AtomicBool = AtomicBool::new(false);
 static PHASE: Mutex<String> = Mutex::new(String::new());
 static RUNNING: Mutex<Vec<Unit>> = Mutex::new(Vec::new());
 static CONTAINERS: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -53,12 +55,6 @@ pub fn armed_here() -> bool {
     CURRENT.with(|c| c.borrow().as_ref().is_some_and(|k| k.lock().unwrap().counting()))
 }
 
-#[cfg(test)]
-thread_local! {
-    /// A trip only this thread sees: a real one is process-wide and any `finish` clears it.
-    pub static TRIPPED_HERE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
 /// Ignores the per-thread opt-in: for a fake that stands in for a process outside the run.
 #[cfg(test)]
 pub fn tripped_anywhere() -> bool {
@@ -72,7 +68,7 @@ pub fn tripped() -> bool {
 
 #[cfg(test)]
 pub fn tripped() -> bool {
-    TRIPPED_HERE.with(|t| t.get()) || (OBSERVE_CAP.with(|o| o.get()) && TRIPPED.load(Ordering::SeqCst))
+    OBSERVE_CAP.with(|o| o.get()) && TRIPPED.load(Ordering::SeqCst)
 }
 
 /// The wall-clock cap a run carries, and where it came from.
@@ -116,7 +112,20 @@ struct Unit {
 }
 
 fn units() -> Vec<Unit> {
-    let all = RUNNING.lock().unwrap().clone();
+    mine(RUNNING.lock().unwrap().clone())
+}
+
+/// The units a firing cap reports, marking their logs as named in the same step.
+fn cut_units(pinned: &AtomicBool) -> Vec<Unit> {
+    let all = {
+        let running = RUNNING.lock().unwrap();
+        pinned.store(true, Ordering::SeqCst);
+        running.clone()
+    };
+    mine(all)
+}
+
+fn mine(all: Vec<Unit>) -> Vec<Unit> {
     // Tests run tiers in parallel in one process; an exact-text assertion must see only its own.
     #[cfg(test)]
     if ONLY_MY_UNITS.with(|o| o.get()) {
@@ -161,6 +170,39 @@ impl Running {
 impl Drop for Running {
     fn drop(&mut self) {
         RUNNING.lock().unwrap().retain(|u| u.id != self.0);
+    }
+}
+
+#[cfg(not(test))]
+fn pinned() -> bool {
+    PINNED.load(Ordering::SeqCst)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A pin only this thread sees: the real one is process-wide and any `finish` clears it.
+    pub static PINNED_HERE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn pinned() -> bool {
+    PINNED_HERE.with(|p| p.get()) || (OBSERVE_CAP.with(|o| o.get()) && PINNED.load(Ordering::SeqCst))
+}
+
+/// Removes a unit's log unless a cap's report has named it.
+pub fn discard_log(path: &Path) {
+    discard_unless(path, pinned);
+}
+
+/// One step against [`cut_units`]: a log is either unregistered and gone, or named and kept.
+fn discard_unless(path: &Path, pinned: impl Fn() -> bool) {
+    let mut running = RUNNING.lock().unwrap();
+    if pinned() {
+        return;
+    }
+    let _ = std::fs::remove_file(path);
+    for u in running.iter_mut().filter(|u| u.log.as_deref() == Some(path)) {
+        u.log = None;
     }
 }
 
@@ -427,6 +469,7 @@ impl Armed {
         }
         let trip = self.1.lock().unwrap().take();
         if trip.is_some() {
+            PINNED.store(false, Ordering::SeqCst);
             TRIPPED.store(false, Ordering::SeqCst);
         }
         trip
@@ -468,7 +511,7 @@ pub fn arm(cap: Cap, ledger: Option<PathBuf>) -> Armed {
         if !wait(&|| clock.lock().unwrap().counted() < limit) {
             return;
         }
-        let cut = units();
+        let cut = cut_units(&PINNED);
         let what = describe_units(&cut);
         *slot.lock().unwrap() = Some(Tripped { report: explain(&cut, &what, limit.as_secs(), source) });
         TRIPPED.store(true, Ordering::SeqCst);
@@ -700,6 +743,26 @@ mod tests {
             got[got.len() - 2],
             "  last lines held back for 2 more units (cap 4): unit-5,unit-6"
         );
+    }
+
+    #[test_id(tog5uqf)]
+    #[test]
+    fn a_log_is_either_named_by_the_cut_and_kept_or_removed_and_not_named() {
+        ONLY_MY_UNITS.with(|o| o.set(true));
+        let dir = testkit::TempDir::new("testenv-cap-pin");
+        let (early, late) = (dir.path().join("early"), dir.path().join("late"));
+        std::fs::write(&early, "x\n").unwrap();
+        std::fs::write(&late, "x\n").unwrap();
+        let (a, b) = (running("cap-early"), running("cap-late"));
+        a.log(&early);
+        b.log(&late);
+        let pinned = AtomicBool::new(false);
+        discard_unless(&early, || pinned.load(Ordering::SeqCst));
+        let cut = cut_units(&pinned);
+        discard_unless(&late, || pinned.load(Ordering::SeqCst));
+        assert!(!early.exists() && late.exists());
+        let named: Vec<(&str, Option<&Path>)> = cut.iter().map(|u| (u.name.as_str(), u.log.as_deref())).collect();
+        assert_eq!(named, [("cap-early", None), ("cap-late", Some(late.as_path()))]);
     }
 
     #[test_id(thjs95r)]
