@@ -15,15 +15,6 @@ pub fn total_lines(path: &Path) -> u64 {
     inbox_rules::count_lines(&bytes)
 }
 
-pub fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
-    use std::io::Write;
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
-    let mut f = fs::OpenOptions::new().create(true).append(true).open(path)?;
-    f.write_all(format!("{line}\n").as_bytes())
-}
-
 pub use inbox_rules::read_pos;
 
 pub fn write_pos(cursor_file: &Path, pos: u64) -> std::io::Result<()> {

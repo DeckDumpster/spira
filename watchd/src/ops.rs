@@ -87,9 +87,6 @@ pub trait Ops {
 
     /// `mail send concierge --kind <kind>`.
     fn mail_concierge(&self, kind: &str, subject: &str, body: &str) -> Result<(), String>;
-
-    /// `inbox-append.sh <text>`: one event line in the Concierge inbox, with its urgent push.
-    fn inbox_append(&self, text: &str) -> Result<(), String>;
 }
 
 /// What an application is recorded against: the incident's bead if it names one, else a
@@ -290,34 +287,6 @@ impl Ops for Real {
     fn mail_concierge(&self, kind: &str, subject: &str, body: &str) -> Result<(), String> {
         crate::send::send_configured(&crate::send::Letter { mailbox: "concierge", subject, kind, default: "", body })
     }
-
-    /// `inbox-append.sh`, in this process for every line it would not push. A line it pushes
-    /// still goes through the script, whose detached flusher must outlive this process.
-    fn inbox_append(&self, text: &str) -> Result<(), String> {
-        let cfg = spira_config::process::cfg;
-        if !inbox_pushes(text, &cfg("SPIRA_CONCIERGE_PUSH_WAKE")?, &cfg("SPIRA_CONCIERGE_PUSH_PATTERN")?) {
-            let inbox = std::path::PathBuf::from(cfg("SPIRA_CONCIERGE_INBOX")?);
-            if let Some(dir) = inbox.parent() {
-                std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-            }
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-            use std::io::Write;
-            return std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&inbox)
-                .and_then(|mut f| writeln!(f, "{}", inbox_line(now, text)))
-                .map_err(|e| format!("cannot append to {}: {e}", inbox.display()));
-        }
-        // FORK-EDGE: the push leg's detached flusher (flock + quiet-window + concierge.sh wake) outlives this process.
-        let out = spira_config::bounded::bounded("inbox-append.sh")
-            .arg(text)
-            .envs(spira_config::release_env::child_path_env_for_process()?)
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| format!("cannot run inbox-append.sh: {e}"))?;
-        if out.status.success() { Ok(()) } else { Err(format!("inbox-append.sh exited {}", out.status.code().unwrap_or(-1))) }
-    }
 }
 
 /// Runs `cmd` with `stdin_body` on stdin; returns its exit code and stdout+stderr together.
@@ -350,17 +319,6 @@ pub fn pids_with_arg(proc_root: &std::path::Path, prog: &str, except: i32) -> Ve
         .collect();
     pids.sort_unstable();
     pids
-}
-
-/// Whether `inbox-append.sh` would push `text` (its `[ -n WAKE ] && grep -qE PATTERN` gate):
-/// only then does the detached flusher have work, and only then is the script run.
-pub fn inbox_pushes(text: &str, wake: &str, pattern: &str) -> bool {
-    inbox_rules::pushes(text, wake, pattern).unwrap_or(false)
-}
-
-/// `inbox-append.sh`'s own line: `<UTC %FT%TZ> <text>`.
-pub fn inbox_line(epoch: i64, text: &str) -> String {
-    inbox_rules::line(&spira_world::clock::utc_iso(epoch), text)
 }
 
 fn cmdline_has_arg(proc_root: &std::path::Path, pid: i32, target: &str) -> bool {
@@ -405,7 +363,6 @@ pub mod fake {
         pub tool_calls: RefCell<Vec<(String, Vec<String>, u64)>>,
         pub applied: RefCell<Vec<(String, String, String)>>,
         pub concierge_mail: RefCell<Vec<(String, String, String)>>,
-        pub inbox: RefCell<Vec<String>>,
     }
 
     #[derive(Clone)]
@@ -485,10 +442,6 @@ pub mod fake {
             self.concierge_mail.borrow_mut().push((kind.into(), subject.into(), body.into()));
             Ok(())
         }
-        fn inbox_append(&self, text: &str) -> Result<(), String> {
-            self.inbox.borrow_mut().push(text.into());
-            Ok(())
-        }
     }
 
     #[test_id(tlo7jgx)]
@@ -514,22 +467,6 @@ mod real_tests {
             std::fs::write(root.join(pid).join("cmdline"), argv).unwrap();
         }
         assert_eq!(pids_with_arg(&root, "usr/bin/foo", 13), vec![10, 11]);
-    }
-
-    #[test_id(tugonnx)]
-    #[test]
-    fn inbox_pushes_only_with_a_wake_and_a_matching_pattern() {
-        let pat = r"\bP0\b|RED on|PAUSED";
-        assert!(inbox_pushes("watchd: P0 down", "a-wake-command", pat));
-        assert!(!inbox_pushes("watchd: P01 down", "a-wake-command", pat));
-        assert!(!inbox_pushes("watchd: P0 down", "", pat));
-        assert!(!inbox_pushes("watchd: P0 down", "a-wake-command", "("));
-    }
-
-    #[test_id(tb07wa5)]
-    #[test]
-    fn inbox_line_is_the_scripts_utc_stamp_then_the_text() {
-        assert_eq!(inbox_line(0, "hello there"), "1970-01-01T00:00:00Z hello there");
     }
 
     #[test_id(thv5sf8)]

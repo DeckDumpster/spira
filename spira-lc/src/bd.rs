@@ -390,26 +390,49 @@ pub fn label_add(id: &str, label: &str) -> Result<(), String> {
 /// `mail send operator` — an ask carrying the channel back (design §3.5's `work
 /// blocked`, and the supersede-by confirmation request). `--bead` ties the tracking
 /// decision bead mail files to the one this layer is bound to.
+#[allow(dead_code)]
 pub fn ask_operator(from: &str, subject: &str, default: &str, bead_id: &str, body: &str) -> Result<String, String> {
     ask_operator_classed(from, subject, default, None, bead_id, body)
 }
 
-/// [`ask_operator`] with an escalation `--class`: without one mail routes the ask to the
-/// concierge instead of the operator.
+/// [`ask_operator`] with an escalation `--class`: without one mail refuses a question to
+/// the operator.
 pub fn ask_operator_classed(from: &str, subject: &str, default: &str, class: Option<&str>, bead_id: &str, body: &str) -> Result<String, String> {
+    send_ask(&operator_argv(from, subject, default, class, bead_id), body)
+}
+
+/// A question about operating the loop: the Concierge's, so it carries no `--class`.
+pub fn ask_concierge(from: &str, subject: &str, default: &str, bead_id: &str, body: &str) -> Result<String, String> {
+    send_ask(&concierge_argv(from, subject, default, bead_id), body)
+}
+
+fn operator_argv(from: &str, subject: &str, default: &str, class: Option<&str>, bead_id: &str) -> Vec<String> {
+    mail_argv("operator", from, subject, default, class, bead_id)
+}
+
+fn concierge_argv(from: &str, subject: &str, default: &str, bead_id: &str) -> Vec<String> {
+    mail_argv("concierge", from, subject, default, None, bead_id)
+}
+
+fn mail_argv(mailbox: &str, from: &str, subject: &str, default: &str, class: Option<&str>, bead_id: &str) -> Vec<String> {
+    let mut argv = ["send", mailbox, "--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id].map(String::from).to_vec();
+    if let Some(c) = class {
+        argv.extend(["--class", c].map(String::from));
+    }
+    argv
+}
+
+fn send_ask(argv: &[String], body: &str) -> Result<String, String> {
     // mail, by name on the launcher's PATH (sp-gypjk); SPIRA_MAIL_SH is the harness-wide
     // binary-override seam.
     let mail_sh = std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail".to_string());
     // An ask files its decision bead, so it is a filing and waits as one.
-    ask_via((&mail_sh, FILING_SECS), from, subject, default, class, bead_id, body)
+    ask_via((&mail_sh, FILING_SECS), argv, body)
 }
 
-fn ask_via((mail_sh, secs): (&str, &str), from: &str, subject: &str, default: &str, class: Option<&str>, bead_id: &str, body: &str) -> Result<String, String> {
+fn ask_via((mail_sh, secs): (&str, &str), argv: &[String], body: &str) -> Result<String, String> {
     let mut cmd = crate::proc::bounded_for(mail_sh, secs)?;
-    cmd.args(["send", "operator", "--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id]);
-    if let Some(c) = class {
-        cmd.args(["--class", c]);
-    }
+    cmd.args(argv);
     use std::io::Write;
     let out = state_store::phases::child(mail_sh, || {
         let mut child = cmd
@@ -577,6 +600,23 @@ mod resolve_tests {
 }
 
 #[cfg(test)]
+mod ask_argv_tests {
+    use super::{concierge_argv, operator_argv};
+
+    #[test_id(tkllpyu)]
+    #[test]
+    fn a_concierge_ask_declares_no_class_and_an_operator_ask_keeps_its_own() {
+        let groom = concierge_argv("groomer <groomer@spira>", "topic", "relabel", "sp-a");
+        assert_eq!(groom[..2], ["send", "concierge"]);
+        assert!(!groom.iter().any(|a| a == "--class"), "{groom:?}");
+        assert_eq!(
+            operator_argv("f", "s", "d", Some("policy"), "sp-a"),
+            ["send", "operator", "--from", "f", "--subject", "s", "--kind", "question", "--default", "d", "--bead", "sp-a", "--class", "policy"]
+        );
+    }
+}
+
+#[cfg(test)]
 mod filing_tests {
     use super::*;
 
@@ -624,7 +664,8 @@ mod filing_tests {
         let p = dir.path().join("mail");
         testkit::write_exe(&p, "#!/bin/sh\ncat >/dev/null\necho 'mail: blocking edge refused — wiring relates_to instead (override: SPIRA_MAIL_ALLOW_BLOCKING=1)' >&2\nsleep 0.3\n");
         let prog = p.to_string_lossy().into_owned();
-        let ask = |secs| ask_via((&prog, secs), "dwarf <dwarf@spira>", "Retire as superseded by sp-b?", "supersede", Some("policy"), "sp-a", "## Question\nq\n");
+        let argv = operator_argv("dwarf <dwarf@spira>", "Retire as superseded by sp-b?", "supersede", Some("policy"), "sp-a");
+        let ask = |secs| ask_via((&prog, secs), &argv, "## Question\nq\n");
         assert!(ask("0.1").is_err(), "a mail outliving its deadline must be cut");
         let r = ask("2");
         assert!(r.is_ok(), "an ask mail still filing at its deadline was cut and read as undelivered: {r:?}");

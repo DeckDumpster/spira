@@ -1051,6 +1051,12 @@ fn released_on_ask(history: &[(String, String)]) -> bool {
 /// selects work beads, which a groom pass must never close.
 const GROOM_TRIGGER_MARKER: &str = "groom-trigger";
 
+/// Subject, default and body of the ask that gets an untriggered bead relabelled.
+fn untriggered_groom_ask(bead_id: &str) -> (String, String, String) {
+    let body = format!("## Question\n{bead_id} carries the groom label without the {GROOM_TRIGGER_MARKER} marker, so the groomer released it instead of closing it. Which builder persona should it be relabelled for?\n\n## Default\nrelabel {bead_id} for its builder\n");
+    ("A groom-labelled bead is not a groom trigger".to_string(), "relabel for its builder".to_string(), body)
+}
+
 fn release_untriggered_groom(bead_id: &str, actor: &str) -> (i32, String) {
     let (code, out) = crate::plane::apply(bead_id, actor, BeadEventKind::Release);
     if code != 0 {
@@ -1058,9 +1064,8 @@ fn release_untriggered_groom(bead_id: &str, actor: &str) -> (i32, String) {
     }
     let why = "claimed by the groom predicate but is not a groom trigger; relabel for its builder";
     let _ = crate::bd::note(bead_id, why);
-    let subject = format!("{bead_id} was claimed by the groomer but is not a groom trigger");
-    let body = format!("## Question\n{bead_id} carries the groom label without the {GROOM_TRIGGER_MARKER} marker, so the groomer released it instead of closing it. Which builder persona should it be relabelled for?\n\n## Default\nrelabel {bead_id} for its builder\n");
-    match crate::bd::ask_operator(&format!("{actor} <{actor}@spira>"), &subject, "relabel for its builder", bead_id, &body) {
+    let (subject, default, body) = untriggered_groom_ask(bead_id);
+    match crate::bd::ask_concierge(&format!("{actor} <{actor}@spira>"), &subject, &default, bead_id, &body) {
         Ok(_) => (REFUSED, format!("refused: work done: {why}; released, ask filed")),
         Err(e) => (REFUSED, format!("refused: work done: {why}; released, but filing the ask failed: {e}")),
     }
@@ -1087,7 +1092,7 @@ fn cmd_blocked(bead_id: &str, args: &[String]) -> (i32, String) {
         return (CANNOT_TELL, format!("work blocked: {e}; {BLOCKED_USAGE}"));
     }
     let Some(default) = flag(args, "--default") else {
-        return (CANNOT_TELL, "work blocked: --default <default> is required".into());
+        return (CANNOT_TELL, format!("work blocked: --default <default> is required; {BLOCKED_USAGE}"));
     };
     let required = |name: &str| {
         flag(args, name).filter(|v| !v.trim().is_empty() && !v.starts_with("--")).ok_or_else(|| (CANNOT_TELL, format!("work blocked: {name} is required; {BLOCKED_USAGE}")))
@@ -2918,6 +2923,39 @@ mod tests {
         let kinds = spira_config::resolve::locate_home_for_process().unwrap().join("mail/kinds");
         let input = mail::lint::LintInput { kind: "question", subject: question, default, from: "builder <builder@spira>", urgent: false, body: &body, digest: false };
         assert_eq!(mail::lint::lint_check(&input, &kinds, "sp"), Ok(()), "{body}");
+        let led = mail::lint::LintInput { subject: "sp-abcd1 has the Control run passed?", ..input };
+        let refused = mail::lint::lint_check(&led, &kinds, "sp").unwrap_err();
+        assert!(refused.contains("Subject leads with a bead id"), "POSITIVE CONTROL: {refused}");
+    }
+
+    #[test_id(txxgymk)]
+    #[test]
+    fn a_blocked_call_without_its_question_or_default_is_refused_with_the_usage() {
+        let dir = testkit::TempDir::new("blocked-no-question");
+        let _env = testkit::env(&[("SPIRA_MAIL_SH", Some(&dir.path().join("mail").to_string_lossy()))]);
+        let calls: [&[&str]; 3] = [&[""], &["--default", "wait for it"], &["Has the Control run passed?"]];
+        for call in calls {
+            let args: Vec<String> = call.iter().chain(&["--actor", "builder"]).map(|a| a.to_string()).collect();
+            let (code, out) = super::cmd_blocked("sp-x", &args);
+            assert_eq!(code, super::CANNOT_TELL, "{call:?}: {out}");
+            assert!(out.ends_with(super::BLOCKED_USAGE), "{call:?}: {out}");
+        }
+    }
+
+    #[test_id(tvpek5o)]
+    #[test]
+    fn an_untriggered_groom_ask_passes_mails_lint() {
+        let (subject, default, body) = super::untriggered_groom_ask("sp-abc123");
+        let kinds = spira_config::resolve::locate_home_for_process().unwrap().join("mail/kinds");
+        let lint = |subject: &str| {
+            let input = mail::lint::LintInput { from: "groomer <groomer@spira>", subject, kind: "question", default: &default, urgent: false, body: &body, digest: false };
+            mail::lint::lint_check(&input, &kinds, "sp")
+        };
+        let refused = lint("sp-abc123 was claimed by the groomer").unwrap_err();
+        assert!(refused.contains("Subject leads with a bead id"), "POSITIVE CONTROL: {refused}");
+        assert_eq!(lint(&subject), Ok(()), "{body}");
+        assert!(!subject.starts_with("sp-abc123"), "{subject}");
+        assert!(body.contains("sp-abc123"), "{body}");
     }
 
     #[test_id(tfh9r32)]
@@ -2926,21 +2964,21 @@ mod tests {
         let dir = testkit::TempDir::new("blocked-no-mail");
         let _env = testkit::env(&[("SPIRA_MAIL_SH", Some(&dir.path().join("mail").to_string_lossy()))]);
         let base = ["Has the Control run passed?", "--default", "wait for it"];
-        let calls: [&[&str]; 7] = [
-            &[],
-            &["--class", "policy"],
-            &["--class-basis", "it is policy"],
-            &["--class", "", "--class-basis", "it is policy"],
-            &["--class", "policy", "--class-basis", " "],
-            &["--class", "policy", "--class-basis"],
-            &["--class", "--class-basis", "it is policy"],
+        let calls: [(&[&str], &str); 7] = [
+            (&[], "--class"),
+            (&["--class", "policy"], "--class-basis"),
+            (&["--class-basis", "it is policy"], "--class"),
+            (&["--class", "", "--class-basis", "it is policy"], "--class"),
+            (&["--class", "policy", "--class-basis", " "], "--class-basis"),
+            (&["--class", "policy", "--class-basis"], "--class-basis"),
+            (&["--class", "--class-basis", "it is policy"], "--class"),
         ];
-        for extra in calls {
+        for (extra, missing) in calls {
             // The client appends --actor after the caller's own arguments.
             let args: Vec<String> = base.iter().chain(extra).chain(&["--actor", "builder"]).map(|a| a.to_string()).collect();
             let (code, out) = super::cmd_blocked("sp-x", &args);
             assert_eq!(code, super::CANNOT_TELL, "{extra:?}: {out}");
-            assert!(out.contains("--class <permissions|policy|destructive|design>") && out.contains("--class-basis \""), "{extra:?}: {out}");
+            assert!(out.contains(&format!("{missing} is required;")) && out.ends_with(super::BLOCKED_USAGE), "{extra:?}: {out}");
         }
     }
 

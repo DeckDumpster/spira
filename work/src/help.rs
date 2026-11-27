@@ -193,7 +193,7 @@ pub static ENTRIES: &[Entry] = &[
         group: Group::Ask,
         does: "Holds your bead and files the ask in one step.",
         when: "Only the operator can answer, and you cannot finish without it.",
-        args: &["\"<the question>\"", "--default \"<what you would do by default>\"", "--class <permissions|policy|destructive|design>", "--class-basis \"<why it is that class>\""],
+        args: &["\"<the question>\"   (the human topic; never start it with a bead id: the bound bead is attached automatically)", "--default \"<what you would do by default>\"", "--class <permissions|policy|destructive|design>", "--class-basis \"<why it is that class>\""],
         checks: &["the bead is the bound one", "a default is given", "a class and a class basis are given"],
         refusals: &[],
     },

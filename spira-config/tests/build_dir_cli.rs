@@ -369,6 +369,105 @@ fn backdate(file: &Path, secs: u64) {
     std::fs::File::options().append(true).create(true).open(file).unwrap().set_modified(to).unwrap();
 }
 
+#[test_id(tq4lk1a)]
+#[test]
+fn a_tree_whose_lockfile_alone_differs_cleans_nothing_at_lease() {
+    let b = setup("bdcli-lock-only");
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    let _ = std::fs::remove_file(&b.log);
+    std::fs::write(b.tree.join("Cargo.lock"), "# another tree's lock\n").unwrap();
+    let said = clean_tree(&b, &d);
+    assert!(said.contains("only Cargo.lock changed"), "{said}");
+    assert!(!b.log.exists(), "cargo clean ran: {}", cargo_log(&b));
+    let _ = std::fs::remove_file(&b.log);
+    let again = clean_tree(&b, &d);
+    assert!(!again.contains("clean"), "the new lock is the record now, so there is nothing to say: {again}");
+    assert!(!b.log.exists());
+}
+
+#[test_id(tq4lk2b)]
+#[test]
+fn a_tree_whose_lockfile_and_one_crate_differ_cleans_that_crate_at_lease() {
+    let b = setup("bdcli-lock-and-crate");
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    let _ = std::fs::remove_file(&b.log);
+    std::fs::write(b.tree.join("Cargo.lock"), "# another tree's lock\n").unwrap();
+    std::fs::write(b.tree.join("a/src/lib.rs"), "pub fn f() { let _ = 2; }\n").unwrap();
+    clean_tree(&b, &d);
+    assert_eq!(cargo_log(&b), "clean -q -p crate-a");
+}
+
+#[test_id(tq4lk3c)]
+#[test]
+fn a_tree_whose_workspace_manifest_differs_still_cleans_the_workspace_at_lease() {
+    let b = setup("bdcli-root-manifest");
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    let _ = std::fs::remove_file(&b.log);
+    std::fs::write(b.tree.join("Cargo.lock"), "# another tree's lock\n").unwrap();
+    std::fs::write(b.tree.join("Cargo.toml"), "[workspace]\nmembers = [\"a\", \"b\"]\n# changed\n").unwrap();
+    let said = clean_tree(&b, &d);
+    assert!(said.contains("Cargo.toml changed"), "{said}");
+    assert_eq!(cargo_log(&b), "clean --workspace -q");
+}
+
+/// `cargo test --offline --locked` in `tree`, building in `target`.
+fn real_cargo_test(tree: &Path, target: &Path) -> std::process::Output {
+    Command::new("cargo") // real cargo is the subject: only it decides whether a unit built under another lockfile is reused
+        .args(["test", "--offline", "--locked", "-q"])
+        .current_dir(tree)
+        .env("CARGO_TARGET_DIR", target)
+        .env("RUSTC_WRAPPER", "") // no compiler cache: the sandbox has no network, and the units must be this target's own
+        .output()
+        .unwrap()
+}
+
+// Real cargo, unlike the rest of this file: the claim under test is cargo's own behaviour, that a
+// unit built against one resolved dependency version is not reused for a tree that resolves another.
+// The clean's lockfile rule is safe only while that holds, and a fake cargo cannot show it.
+#[test_id(tq4lk4d)]
+#[test]
+fn a_tree_whose_lockfile_alone_differs_does_not_run_the_other_trees_test_binary() {
+    let d = testkit::TempDir::new("bdcli-lock-real");
+    let (vendor, tree, target) = (d.path().join("vendor"), d.path().join("tree"), d.path().join("target"));
+    let sum = "0".repeat(64);
+    for (version, v) in [("0.1.0", 0), ("0.1.1", 1)] {
+        let dep = vendor.join(format!("dep-{version}"));
+        std::fs::create_dir_all(dep.join("src")).unwrap();
+        std::fs::write(dep.join("Cargo.toml"), format!("[package]\nname = \"dep\"\nversion = \"{version}\"\nedition = \"2021\"\n")).unwrap();
+        std::fs::write(dep.join("src/lib.rs"), format!("pub const V: u32 = {v};\n")).unwrap();
+        std::fs::write(dep.join(".cargo-checksum.json"), format!("{{\"files\":{{}},\"package\":\"{sum}\"}}")).unwrap();
+    }
+    std::fs::create_dir_all(tree.join("w/src")).unwrap();
+    std::fs::create_dir_all(tree.join(".cargo")).unwrap();
+    std::fs::write(tree.join("Cargo.toml"), "[workspace]\nmembers = [\"w\"]\nresolver = \"2\"\n").unwrap();
+    std::fs::write(tree.join("rust-toolchain.toml"), include_str!("../../rust-toolchain.toml")).unwrap();
+    std::fs::write(tree.join(".cargo/config.toml"), format!("[source.crates-io]\nreplace-with = \"local\"\n[source.local]\ndirectory = {:?}\n", vendor.display().to_string())).unwrap();
+    std::fs::write(tree.join("w/Cargo.toml"), "[package]\nname = \"w\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\ndep = \"0.1\"\n").unwrap();
+    std::fs::write(tree.join("w/src/lib.rs"), "#[test]\nfn v() {\n    assert_eq!(dep::V, 1);\n}\n").unwrap();
+    let lock = |version: &str| {
+        format!("version = 3\n\n[[package]]\nname = \"dep\"\nversion = \"{version}\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"{sum}\"\n\n[[package]]\nname = \"w\"\nversion = \"0.1.0\"\ndependencies = [\n \"dep\",\n]\n")
+    };
+    let home = spira_config::resolve::locate_home_for_process().unwrap();
+    let script = home.join(spira_config::build_dir::CLEAN_SCRIPT);
+    let path = std::env::var("PATH").unwrap_or_default();
+
+    std::fs::write(tree.join("Cargo.lock"), lock("0.1.0")).unwrap();
+    spira_config::build_dir::clean(&script, &tree, &target, &path, false).unwrap();
+    let a = real_cargo_test(&tree, &target);
+    let a_said = format!("{}{}", String::from_utf8_lossy(&a.stdout), String::from_utf8_lossy(&a.stderr));
+    assert!(!a.status.success() && a_said.contains("left: 0"), "tree A's test runs against dep 0.1.0 and is red: {a_said}");
+
+    std::fs::write(tree.join("Cargo.lock"), lock("0.1.1")).unwrap();
+    let said = spira_config::build_dir::clean(&script, &tree, &target, &path, false).unwrap();
+    assert!(said.contains("only Cargo.lock changed"), "the lease clean removes nothing: {said}");
+    let b = real_cargo_test(&tree, &target);
+    let b_said = format!("{}{}", String::from_utf8_lossy(&b.stdout), String::from_utf8_lossy(&b.stderr));
+    assert!(b.status.success(), "tree B built its own test binary against dep 0.1.1; it did not run tree A's: {b_said}");
+}
+
 #[test_id(thvvkjk)]
 #[test]
 fn a_unit_built_since_the_last_recorded_run_is_rebuilt_though_no_bytes_changed() {

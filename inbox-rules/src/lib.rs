@@ -1,5 +1,4 @@
-//! The drop and dedup rules for the Concierge inbox. One implementation, two readers
-//! (`inbox-triage`, `watchd next`): two copies of "what is noise" is how they come to disagree.
+//! The drop and dedup rules for the Concierge inbox, shared by `inbox-triage`.
 //!
 //! And the one write leg, [`record`], for every writer of the inbox (`inbox-triage append`,
 //! spira-runtime's `World::inbox_append`, the scheduler watchdog's page): a line that matches the
@@ -53,25 +52,6 @@ pub struct Dedup {
 }
 
 impl Dedup {
-    /// Parses `key<TAB>epoch` lines, discarding entries older than `window` and anything malformed.
-    pub fn parse(text: &str, now: u64, window: u64) -> Dedup {
-        let mut seen = HashMap::new();
-        for l in text.lines() {
-            let Some((k, t)) = l.rsplit_once('\t') else { continue };
-            let Ok(t) = t.parse::<u64>() else { continue };
-            if now.saturating_sub(t) < window {
-                seen.insert(k.to_string(), t);
-            }
-        }
-        Dedup { seen }
-    }
-
-    pub fn render(&self) -> String {
-        let mut keys: Vec<_> = self.seen.iter().collect();
-        keys.sort();
-        keys.iter().map(|(k, t)| format!("{k}\t{t}\n")).collect()
-    }
-
     /// The body to deliver for a raw log line, or `None` when it is dropped or a repeat.
     pub fn pass<'a>(&mut self, line: &'a str, now: u64, window: u64) -> Option<&'a str> {
         let body = strip_timestamp(line);

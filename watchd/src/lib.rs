@@ -15,7 +15,6 @@ pub mod iso8601;
 pub mod lock;
 pub mod mail_health;
 pub mod manifest;
-pub mod next;
 pub mod notify;
 pub mod ops;
 pub mod paths;

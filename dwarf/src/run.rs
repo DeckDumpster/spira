@@ -1616,9 +1616,9 @@ impl<'a> Run<'a> {
             if bases.is_empty() {
                 return Err(Abort::Harness(format!("{} is not set — a building dwarf has no build directory; set dwarf_build_base in the config document", bd::BASE_ENV)));
             }
-            let lease = bd::lease(&bases, &self.s.bead).map_err(|e| Abort::Harness(format!("cannot lease a build directory under {}: {e}", self.conf.s(bd::BASE_ENV))))?;
+            let lease = bd::lease_for(&bases, &self.s.bead, Some(&self.s.repo_name)).map_err(|e| Abort::Harness(format!("cannot lease a build directory under {}: {e}", self.conf.s(bd::BASE_ENV))))?;
             let dir = lease.dir().to_path_buf();
-            self.log(&format!("{f}: build directory {} — {}", dir.display(), if lease.reused { "warm: the most recently idled one" } else { "new" }));
+            self.log(&format!("{f}: build directory {} — {}", dir.display(), lease.start(Some(&self.s.repo_name))));
             // The shared selective clean: only the workspace crates whose bytes differ from the
             // tree this directory last built. A clean that cannot run leaves the directory
             // untrusted, so it is emptied — cold, never wrong.
