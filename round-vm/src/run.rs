@@ -3574,7 +3574,7 @@ pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scra
     let corpus = scratch.join("results");
     let stamps = [crate::vm_fault::PHASE_FILE, PHASE_TIMES].map(|f| (format!("{REMOTE_RESULTS}{f}"), f));
     let logs = LAUNCHER_FILES.map(|(remote_name, kept)| (remote_name.to_string(), kept));
-    let pulled = std::thread::scope(|sc| {
+    let n = std::thread::scope(|sc| {
         // Each lands as its own pull returns: the kill may arrive while the corpus is still coming.
         for (remote_path, kept) in logs.into_iter().chain(stamps) {
             let to = scratch.join(kept);
@@ -3585,12 +3585,12 @@ pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scra
         sc.spawn(move || {
             let _ = tx.send(remote.pull(addr, REMOTE_RESULTS, corpus).is_ok());
         });
-        rx.recv_timeout(within).unwrap_or(false)
-    });
-    let n = pulled.then(|| {
-        // A cut round may have no result at all, so its top files are carried by name.
-        keep_top_files(&corpus, results_dir);
-        stream_into(&corpus, results_dir).unwrap_or(0)
+        // Copied before the scope joins: a stalled log pull must not hold back verdicts already here.
+        rx.recv_timeout(within).unwrap_or(false).then(|| {
+            // A cut round may have no result at all, so its top files are carried by name.
+            keep_top_files(corpus, results_dir);
+            stream_into(corpus, results_dir).unwrap_or(0)
+        })
     });
     let _ = fs::remove_dir_all(scratch);
     n
