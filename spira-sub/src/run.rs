@@ -1,5 +1,5 @@
 //! `spira-sub run`: the one broker connection, the control socket over it and the set file.
-//! Nothing here wakes on a timer while no `--at` is pending and the broker answers.
+//! Nothing here wakes on a timer while no `--at` or batch is pending and the broker answers.
 
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -26,7 +26,7 @@ const RETRY: Duration = Duration::from_secs(5);
 const TIMER_SLICE: Duration = Duration::from_secs(60);
 /// Requests the client holds ahead of the connection: the whole set, resubscribed at once.
 const CHANNEL: usize = 1 << 12;
-/// Lines a reader may fall behind before it is cut off; it re-attaches and is replayed.
+/// Deliveries a reader may fall behind before it is cut off; it re-attaches.
 const BACKLOG: usize = 1 << 16;
 
 pub const DELIVERIES: &str = "spira_sub_deliveries";
@@ -186,9 +186,9 @@ impl Server {
         let mut state = self.lock();
         self.sample(Sample::Command(request.name(), state.core.len()));
         let (printed, ticket) = match request {
-            Request::Add { filter, note, once } => {
+            Request::Add { filter, note, once, batch_s } => {
                 let listening = !state.readers.is_empty();
-                match state.core.add(&filter, &note, once, listening) {
+                match state.core.add_classed(&filter, &note, once, batch_s, listening) {
                     Ok((id, out)) => {
                         // Asked even when the filter is already held: that is what resends the
                         // retained values, which the other holders recognise and skip.
@@ -222,6 +222,16 @@ impl Server {
                 }
                 Err(why) => return Reply::Refused(why),
             },
+            Request::Set { id, batch_s } => {
+                let listening = !state.readers.is_empty();
+                return match state.core.set_class(&id, batch_s, listening) {
+                    Ok(out) => match self.apply(&mut state, out).unsaved {
+                        Some(why) => unsaved(&format!("{id} is changed"), &why),
+                        None => Reply::Done { out: String::new(), warning: None },
+                    },
+                    Err(why) => Reply::Refused(why),
+                };
+            }
             Request::List => {
                 let screen = state.core.list(&self.name, state.client.is_some(), state.readers.len());
                 return Reply::Done { out: screen, warning: None };
@@ -243,13 +253,8 @@ impl Server {
         self.sample(Sample::Command(Request::Follow.name(), state.core.len()));
         state.next_reader += 1;
         let id = state.next_reader;
-        let mut replay = state.core.attach();
-        // The newcomer alone is replayed to; the others have these lines already.
-        let replayed = std::mem::take(&mut replay.lines);
-        let delivered = replayed.into_iter().filter(|line| tx.try_send(line.clone()).is_ok()).count();
-        if delivered > 0 {
-            self.sample(Sample::Delivered(delivered, state.core.len()));
-        }
+        let replay = state.core.attach();
+        // What the replay holds has been given to nobody, so every reader gets it.
         state.readers.push(Reader { id, lines: tx });
         self.apply(&mut state, replay);
         (id, rx)
@@ -292,7 +297,8 @@ impl Server {
         Ok(())
     }
 
-    /// Fires `--at` timers: asleep for good while there is none, or nobody to tell.
+    /// Fires `--at` timers and due batches: asleep for good while there is none pending, or
+    /// nobody to tell.
     fn timers(&self) {
         let mut state = self.lock();
         loop {
@@ -300,8 +306,9 @@ impl Server {
             let now = state.core.now_ms();
             state = match due {
                 Some(at) if at <= now => {
-                    let out = state.core.fire_due(true);
-                    self.apply(&mut state, out);
+                    for out in [state.core.flush_due(true), state.core.fire_due(true)] {
+                        self.apply(&mut state, out);
+                    }
                     state
                 }
                 Some(at) => {

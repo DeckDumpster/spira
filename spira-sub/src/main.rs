@@ -1,4 +1,4 @@
-//! `spira-sub <run|add|drop|list|follow>` — see `spira-sub -h`.
+//! `spira-sub <run|add|set|drop|list|follow>` — see `spira-sub -h`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -64,7 +64,8 @@ fn dispatch(name: String, command: Command) -> u8 {
         Command::Add { filter, .. } if !topics::filter_matches_any(&filter) => {
             return fail(REFUSED, &format!("filter {filter:?} matches no topic family declared in spira/topics.toml"))
         }
-        Command::Add { filter, note, once } => Request::Add { filter, note, once },
+        Command::Add { filter, note, once, batch_s } => Request::Add { filter, note, once, batch_s },
+        Command::Set { id, batch_s } => Request::Set { id, batch_s },
         Command::At { at_ms, note } => Request::At { at_ms, note },
         Command::Drop { id } => Request::Drop { id },
         Command::List => Request::List,

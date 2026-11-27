@@ -224,26 +224,30 @@ fn a_killed_client_reads_gone_and_a_restarted_one_resubscribes_from_its_set_file
     assert!(!std::fs::read_to_string(world.set_file()).unwrap().contains("r2"), "the set file holds no message");
 }
 
-#[test_id(t2mtm0z)]
+#[test_id(t4yf7hu)]
 #[test]
-fn a_reattached_follow_is_replayed_the_current_values_and_waits_out_a_restart() {
+fn a_reattached_follow_and_a_restarted_run_deliver_nothing_already_delivered() {
     let broker = Broker::up();
     let world = World::new(broker.socket());
     let run = world.run(broker.socket());
     let first = world.follow();
     world.ok(&["add", "release/active"]);
-    publish(&publisher("t", broker.socket()), "release/active", json!({"release": "r1"}));
+    world.ok(&["add", "gate/#"]);
+    let p = publisher("t", broker.socket());
+    publish(&p, "release/active", json!({"release": "r1"}));
     assert_eq!(first.next(), "[sub:s1] release/active release=r1");
     drop(first);
 
     let again = world.follow();
-    assert_eq!(again.next(), "[sub:s1] release/active release=r1");
+    publish(&p, "gate/r/sp-a", json!({"rc": 0}));
+    assert_eq!(again.next(), "[sub:s2] gate/r/sp-a rc=0");
 
     drop(run);
     again.noted("went away");
     let _restarted = world.run(broker.socket());
     again.noted("following");
-    assert_eq!(again.next(), "[sub:s1] release/active release=r1", "the same stream carries on");
+    publish(&p, "gate/r/sp-b", json!({"rc": 0}));
+    assert_eq!(again.next(), "[sub:s2] gate/r/sp-b rc=0", "the same stream carries on");
 }
 
 #[test_id(tb93383)]
@@ -267,8 +271,69 @@ fn after_a_broker_restart_the_client_reconnects_and_holds_the_same_state_values(
     publish(&gate, "gate/r/sp-a", json!({"rc": 0}));
     assert_eq!(follow.next(), "[sub:s2] gate/r/sp-a rc=0");
 
-    let replayed = world.follow();
-    assert_eq!([replayed.next(), replayed.next()], ["[sub:s1] release/active release=r1", "[sub:s2] gate/r/sp-a rc=0"]);
+    let newcomer = world.follow();
+    publish(&gate, "gate/r/sp-b", json!({"rc": 0}));
+    assert_eq!(newcomer.next(), "[sub:s2] gate/r/sp-b rc=0");
+}
+
+/// Waits out one batch of `topic`, so what is published next falls early in a fresh interval.
+fn at_the_start_of_an_interval(follow: &Follow, p: &Publisher, topic: &str, value: Value) {
+    publish(p, topic, value);
+    assert!(follow.next().starts_with("[batch] n=1 since "));
+    follow.next();
+}
+
+#[test_id(tbhes68)]
+#[test]
+fn a_batched_subscription_arrives_as_one_block_behind_what_is_delivered_at_once() {
+    let broker = Broker::up();
+    let world = World::new(broker.socket());
+    let _run = world.run(broker.socket());
+    let follow = world.follow();
+    world.ok(&["add", "bead/+/state", "--batch", "2s"]);
+    world.ok(&["add", "release/active"]);
+    let p = publisher("t", broker.socket());
+    at_the_start_of_an_interval(&follow, &p, "bead/sp-0/state", json!({"state": "WORKING"}));
+
+    for n in 1..=10 {
+        publish(&p, "bead/sp-a/state", json!({"state": format!("S{n}")}));
+    }
+    publish(&p, "release/active", json!({"release": "r1"}));
+
+    assert_eq!(follow.next(), "[sub:s2] release/active release=r1");
+    let header = follow.next();
+    assert!(header.starts_with("[batch] n=1 since "), "{header}");
+    assert_eq!(follow.next(), "[sub:s1] bead/sp-a/state state=S10");
+    publish(&p, "release/active", json!({"release": "r2"}));
+    assert_eq!(follow.next(), "[sub:s2] release/active release=r2");
+}
+
+#[test_id(tissyg2)]
+#[test]
+fn set_moves_one_subscription_between_batched_and_at_once_under_the_same_id() {
+    let broker = Broker::up();
+    let world = World::new(broker.socket());
+    let _run = world.run(broker.socket());
+    let follow = world.follow();
+    assert_eq!(world.ok(&["add", "release/active"]), "s1");
+    assert_eq!(world.ok(&["set", "s1", "--batch", "2s"]), "");
+    let screen = world.ok(&["list"]);
+    assert!(screen.contains("s1 release/active") && screen.contains("batch 2s") && !screen.contains("s2 "), "{screen}");
+    let p = publisher("t", broker.socket());
+    at_the_start_of_an_interval(&follow, &p, "release/active", json!({"release": "r0"}));
+
+    for release in ["r1", "r2", "r3"] {
+        publish(&p, "release/active", json!({"release": release}));
+    }
+    let header = follow.next();
+    assert!(header.starts_with("[batch] n=1 since "), "{header}");
+    assert_eq!(follow.next(), "[sub:s1] release/active release=r3");
+
+    world.ok(&["set", "s1", "--now"]);
+    publish(&p, "release/active", json!({"release": "r4"}));
+    assert_eq!(follow.next(), "[sub:s1] release/active release=r4");
+    let screen = world.ok(&["list"]);
+    assert!(screen.contains("s1 release/active") && !screen.contains("batch") && !screen.contains("s2 "), "{screen}");
 }
 
 #[test_id(tjpzv51)]

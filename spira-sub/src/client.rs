@@ -9,6 +9,7 @@ use spira_pub::link::{sleep_until_readable, LISTEN_PAUSE};
 use spira_pub::{SocketWatch, CONNECT_DEADLINE};
 
 use crate::protocol::{Reply, Request};
+use crate::render;
 
 /// The most a command waits for its reply: past the longest the client waits for the broker.
 const REPLY_DEADLINE: Duration = Duration::from_secs(5);
@@ -30,9 +31,13 @@ pub fn call(socket: &Path, request: &Request) -> Result<Reply, String> {
         .map_err(|e| format!("no answer on {}: {e}; is `spira-sub run` up?", socket.display()))
 }
 
-/// Copies delivery lines to `out` until killed. A `run` that is not there yet, or restarts, is
-/// waited for on its socket's directory, and replays on the new attach. Returns once `out` is
-/// closed.
+/// Appends one whole line to `into`; false once the stream has no more.
+fn read_whole_line(from: &mut impl BufRead, into: &mut String) -> bool {
+    matches!(from.read_line(into), Ok(n) if n > 0 && into.ends_with('\n'))
+}
+
+/// Copies deliveries to `out` until killed, each in one write. A `run` that is not there yet,
+/// or restarts, is waited for on its socket's directory. Returns once `out` is closed.
 pub fn follow(socket: &Path, out: &mut impl Write, note: &mut impl FnMut(&str)) -> Result<(), String> {
     // It may be asked before any `run` has made the directory it waits in.
     if let Some(dir) = socket.parent() {
@@ -58,16 +63,18 @@ pub fn follow(socket: &Path, out: &mut impl Write, note: &mut impl FnMut(&str)) 
             Ok((Reply::Done { .. }, mut reader)) => {
                 note("following");
                 reader.get_ref().set_read_timeout(None).map_err(|e| e.to_string())?;
-                let mut line = String::new();
+                let mut delivery = String::new();
                 loop {
-                    line.clear();
-                    match reader.read_line(&mut line) {
-                        Ok(n) if n > 0 && line.ends_with('\n') => {
-                            if out.write_all(line.as_bytes()).and_then(|()| out.flush()).is_err() {
-                                return Ok(());
-                            }
-                        }
-                        _ => break,
+                    delivery.clear();
+                    if !read_whole_line(&mut reader, &mut delivery) {
+                        break;
+                    }
+                    let following = render::batch_size(&delivery).unwrap_or(0);
+                    if !(0..following).all(|_| read_whole_line(&mut reader, &mut delivery)) {
+                        break;
+                    }
+                    if out.write_all(delivery.as_bytes()).and_then(|()| out.flush()).is_err() {
+                        return Ok(());
                     }
                 }
                 note("the client went away; waiting for it");

@@ -9,6 +9,8 @@ use crate::core::Core;
 /// The `list` screen's width: a phone held upright.
 const WIDTH: usize = 40;
 
+const BATCH_HEAD: &str = "[batch] n=";
+
 /// A line is one line whatever a publisher put in it.
 fn flat(text: &str) -> String {
     text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect()
@@ -49,6 +51,24 @@ pub(crate) fn at_line(id: &str, at_ms: u64, note: &str) -> String {
     tagged(id, &format!("at {}", instant(at_ms)), note)
 }
 
+pub(crate) fn batch_line(lines: usize, since_ms: u64) -> String {
+    format!("{BATCH_HEAD}{lines} since {}", instant(since_ms))
+}
+
+/// How many lines follow `line`, when it heads a batch.
+pub(crate) fn batch_size(line: &str) -> Option<usize> {
+    line.strip_prefix(BATCH_HEAD)?.split_whitespace().next()?.parse().ok()
+}
+
+/// The interval as `--batch` takes it.
+fn span(secs: u64) -> String {
+    match secs {
+        s if s % 3600 == 0 => format!("{}h", s / 3600),
+        s if s % 60 == 0 => format!("{}m", s / 60),
+        s => format!("{s}s"),
+    }
+}
+
 /// `text` under `lead`, continued on indented lines, none wider than the screen.
 fn wrap(out: &mut String, lead: &str, text: &str) {
     let mut line = lead.to_string();
@@ -81,7 +101,9 @@ pub(crate) fn list(core: &Core, name: &str, connected: bool, readers: usize) -> 
         wrap(&mut out, "", &format!("{} {what}", sub.entry.id));
         let fired = sub.last_fired_ms.map_or("never".to_string(), |t| format!("{} ago", format_age(i64::try_from(now.saturating_sub(t) / 1000).unwrap_or(i64::MAX))));
         let once = if sub.entry.once && sub.entry.filter.is_some() { ", once" } else { "" };
-        wrap(&mut out, "  ", &format!("fired {fired}{once}"));
+        let batch = sub.entry.batch_s.map_or(String::new(), |s| format!(", batch {}", span(s)));
+        let pending = if sub.pending.is_empty() { String::new() } else { format!(", {} pending", sub.pending.len()) };
+        wrap(&mut out, "  ", &format!("fired {fired}{once}{batch}{pending}"));
         if !sub.entry.note.is_empty() {
             wrap(&mut out, "  ", &sub.entry.note);
         }
