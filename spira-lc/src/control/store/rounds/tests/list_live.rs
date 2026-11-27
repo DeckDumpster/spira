@@ -9,23 +9,8 @@ const LANDED: usize = 200;
 /// `LIVE_READY` READY beads each blocked by the next READY bead and one LANDED bead, `LIVE_WORKING`
 /// WORKING beads holding live claim locks, and `LANDED` LANDED beads. Answers the live ids.
 fn live_fixture<B: Backend>(r: &Rig<B>) -> Vec<String> {
-    for chunk in (0..LANDED).collect::<Vec<_>>().chunks(100) {
-        let mut txn = state_store::Txn::new();
-        for i in chunk {
-            let mut rec = crate::control::records::LifecycleRecord::born(
-                &format!("sp-z{i:03}"),
-                Some("spira"),
-                None,
-                AT,
-            );
-            rec.row.state = BeadState::Landed;
-            txn = txn.put(
-                &keys::lifecycle(&format!("sp-z{i:03}")),
-                state_store::Object::new(crate::control::records::encode(&rec).unwrap()),
-            );
-        }
-        r.s.contract().txn(&txn, &r.req()).unwrap();
-    }
+    let landed: Vec<_> = (0..LANDED).map(|i| (format!("sp-z{i:03}"), "spira", BeadState::Landed)).collect();
+    put_records(r, &landed);
     let mut live = Vec::new();
     for i in 0..LIVE_READY {
         let id = format!("sp-r{i:03}");

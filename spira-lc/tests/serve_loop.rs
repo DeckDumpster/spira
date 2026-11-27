@@ -39,6 +39,11 @@ impl Drop for Server {
 }
 
 fn start_server() -> Server {
+    start_server_with(&[])
+}
+
+/// [`start_server`] with `keys` laid over the fixture's config.
+fn start_server_with(keys: &[(&str, &str)]) -> Server {
     let dir = testkit::TempDir::new("spira-lc-serve-loop");
     let run_dir = dir.join("run");
     std::fs::create_dir_all(&run_dir).unwrap();
@@ -46,10 +51,9 @@ fn start_server() -> Server {
     drop(SqliteBackend::open(&store, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap());
     let (socket, loop_socket) = (dir.join("lc.sock"), dir.join("loop.sock"));
     let (d, r, s, sock) = (dir.display().to_string(), run_dir.display().to_string(), store.display().to_string(), socket.display().to_string());
-    let toml = spira_config::process::fixture_toml(
-        &dir,
-        &[("SPIRA_WORKSPACES", &d), ("SPIRA_RUN", &r), ("SPIRA_LC_STORE_PATH", &s), ("SPIRA_LC_SOCKET", &sock), ("SPIRA_VICTORIALOGS_URL", "http://127.0.0.1:9")],
-    );
+    let mut declared = vec![("SPIRA_WORKSPACES", d.as_str()), ("SPIRA_RUN", &r), ("SPIRA_LC_STORE_PATH", &s), ("SPIRA_LC_SOCKET", &sock), ("SPIRA_VICTORIALOGS_URL", "http://127.0.0.1:9")];
+    declared.extend_from_slice(keys);
+    let toml = spira_config::process::fixture_toml(&dir, &declared);
     std::fs::create_dir_all(dir.join("release/bin")).unwrap();
     let home = spira_config::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
     let mut child = Command::new(testkit::bin_exe("spira-lc"))
@@ -177,6 +181,43 @@ fn serve_bench_reports_both_servers_answers_per_second_and_p99_as_json() {
         assert_eq!(report[label]["failures"], 0, "{label}: {report}");
         assert!(report[label]["per_sec"].as_f64().unwrap() > 0.0 && report[label]["p99_ms"].as_f64().unwrap() > 0.0, "{label}: {report}");
     }
+}
+
+/// A repository with nothing waiting reads no content, so this needs no content store.
+#[test_id(tdqt5pw)]
+#[test]
+fn serve_bench_with_open_items_drives_that_verb_alone_on_the_main_socket() {
+    let server = start_server_with(&[("SPIRA_SLOW_QUERY_MS", "0")]);
+    let out = Command::new(testkit::bin_exe("spira-lc"))
+        .args(["serve-bench", "--socket"])
+        .arg(&server.socket)
+        .args(["--clients", "2", "--secs", "1", "--open-items", "spira"])
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("SPIRA_TOML", &server.toml)
+        .env("SPIRA_HOME", &server.home)
+        .env("SPIRA_RELEASE", server._dir.join("release"))
+        .env("HOME", server._dir.join("home"))
+        .output()
+        .expect("serve-bench runs");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("one JSON document");
+    assert!(report["server"]["answers"].as_u64().unwrap() > 0, "{report}");
+    assert_eq!(report["server"]["failures"], 0, "{report}");
+    assert!(report.get("loop").is_none() && report.get("beads").is_none(), "{report}");
+    let log = server._dir.join("run/slow-queries.log");
+    let mut polls = 0;
+    let requests = loop {
+        let text = std::fs::read_to_string(&log).unwrap_or_default();
+        let requests: Vec<String> = text.lines().filter(|l| l.ends_with("\tREQUEST")).map(str::to_string).collect();
+        if !requests.is_empty() {
+            break requests;
+        }
+        polls += 1;
+        assert!(polls < 3_000, "no request line in {}", log.display());
+        std::thread::sleep(Duration::from_millis(10)); // clock-safe: polls the slow log, the signal waited on
+    };
+    assert!(requests.iter().all(|l| l.split('\t').nth(1) == Some("work:open-items")), "{requests:?}");
 }
 
 #[test_id(tpu3tyn)]

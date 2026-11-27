@@ -1,6 +1,6 @@
-//! `spira-lc serve-bench`: the same requests (`show` and `list --live`, or with `--open-items`
-//! that verb alone) put to a running server's two sockets, one after the other, and each one's
-//! answers per second and p99 reported.
+//! `spira-lc serve-bench`: the same `show` and `list --live` requests put to a running server's
+//! two sockets, one after the other, and each one's answers per second and p99 reported. With
+//! `--open-items` that verb alone is put to the main socket: the loop does not serve it.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -8,11 +8,11 @@ use std::time::{Duration, Instant};
 
 use spira_otel::metrics::Point;
 
-const USAGE: &str = "usage: spira-lc serve-bench --socket A --loop-socket B --clients N --secs S [--open-items REPO]";
+const USAGE: &str = "usage: spira-lc serve-bench --socket A (--loop-socket B | --open-items REPO) --clients N --secs S";
 
 pub(crate) struct Opts {
     socket: PathBuf,
-    loop_socket: PathBuf,
+    loop_socket: Option<PathBuf>,
     clients: usize,
     secs: u64,
     open_items: Option<String>,
@@ -25,7 +25,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Opts, String> {
     };
     let number = |flag: &str| -> Result<u64, String> { take(flag)?.parse::<u64>().ok().filter(|n| *n > 0).ok_or_else(|| format!("{flag} is a whole number above 0")) };
     let open_items = args.iter().any(|a| a == "--open-items").then(|| take("--open-items").map(str::to_string)).transpose()?;
-    Ok(Opts { socket: take("--socket")?.into(), loop_socket: take("--loop-socket")?.into(), clients: number("--clients")? as usize, secs: number("--secs")?, open_items })
+    Ok(Opts { socket: take("--socket")?.into(), loop_socket: open_items.is_none().then(|| take("--loop-socket").map(PathBuf::from)).transpose()?, clients: number("--clients")? as usize, secs: number("--secs")?, open_items })
 }
 
 /// The bead ids in a `list --live` answer.
@@ -141,13 +141,24 @@ pub(crate) fn run(args: &[String]) -> i32 {
     let load = opts.open_items.as_deref().map_or(Load::ShowAndList(&ids), Load::OpenItems);
     let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
     let metered = spira_otel::metrics::Run::begin(endpoint.as_deref(), "lc", "serve-bench");
-    let mut result = serde_json::json!({ "clients": opts.clients, "secs": opts.secs, "beads": ids.len() });
+    let mut result = serde_json::json!({ "clients": opts.clients, "secs": opts.secs });
+    match &opts.open_items {
+        Some(repo) => result["open_items"] = repo.as_str().into(),
+        None => result["beads"] = ids.len().into(),
+    }
     let mut gauges = Vec::new();
-    for (label, socket, rate, tail) in [("server", &opts.socket, "spira_lc_bench_server_answers_per_second", "spira_lc_bench_server_p99_seconds"), ("loop", &opts.loop_socket, "spira_lc_bench_loop_answers_per_second", "spira_lc_bench_loop_p99_seconds")] {
+    let legs = [
+        ("server", Some(&opts.socket), "spira_lc_bench_server_answers_per_second", "spira_lc_bench_server_p99_seconds"),
+        ("loop", opts.loop_socket.as_ref(), "spira_lc_bench_loop_answers_per_second", "spira_lc_bench_loop_p99_seconds"),
+    ];
+    for (label, socket, rate, tail) in legs.into_iter().filter_map(|(l, s, r, t)| Some((l, s?, r, t))) {
         let until = Instant::now() + Duration::from_secs(opts.secs);
         let tally = drive(&load, opts.clients, &|| Instant::now() >= until, &|argv| call_on(socket, argv));
         result[label] = report(label, &tally)[label].clone();
-        gauges.extend([Point::Gauge { name: rate, value: tally.per_sec }, Point::Gauge { name: tail, value: tally.p99.as_secs_f64() }]);
+        // These series compare the two sockets under one load; another load's numbers stay out.
+        if opts.open_items.is_none() {
+            gauges.extend([Point::Gauge { name: rate, value: tally.per_sec }, Point::Gauge { name: tail, value: tally.p99.as_secs_f64() }]);
+        }
     }
     println!("{result}");
     metered.end_with("ok", &gauges);
@@ -197,7 +208,7 @@ mod tests {
     fn the_arguments_name_both_sockets_and_a_positive_client_count_and_duration() {
         let words = |w: &[&str]| w.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let ok = parse(&words(&["--socket", "a", "--loop-socket", "b", "--clients", "50", "--secs", "60"])).unwrap();
-        assert_eq!((ok.socket, ok.loop_socket, ok.clients, ok.secs), ("a".into(), "b".into(), 50, 60));
+        assert_eq!((ok.socket, ok.loop_socket, ok.clients, ok.secs), ("a".into(), Some("b".into()), 50, 60));
         assert!(parse(&words(&["--socket", "a", "--loop-socket", "b", "--clients", "0", "--secs", "60"])).is_err());
         assert!(parse(&words(&["--socket", "a", "--clients", "5", "--secs", "6"])).is_err());
     }
@@ -206,13 +217,13 @@ mod tests {
     #[test]
     fn with_open_items_every_request_is_that_verb_for_the_named_repository() {
         let words = |w: &[&str]| w.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        let base = ["--socket", "a", "--loop-socket", "b", "--clients", "1", "--secs", "1"];
+        let base = ["--socket", "a", "--clients", "1", "--secs", "1"];
         let opts = parse(&words(&[&base[..], &["--open-items", "spira"]].concat())).unwrap();
         let repo = opts.open_items.as_deref().unwrap();
         for n in 0..3 {
             assert_eq!(request(&Load::OpenItems(repo), 0, n), words(&["work", "-", "open-items", "--repo", "spira"]));
         }
-        assert!(parse(&words(&base)).unwrap().open_items.is_none());
+        assert!(parse(&words(&base)).is_err(), "without it both sockets are named");
         assert!(parse(&words(&[&base[..], &["--open-items"]].concat())).is_err());
     }
 

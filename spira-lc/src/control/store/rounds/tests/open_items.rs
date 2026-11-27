@@ -1,21 +1,8 @@
 use super::*;
 
-use crate::control::records::LifecycleRecord;
 use crate::plane::Plane;
 use crate::work::{open_items, plan, split_reserved, Step};
 use serde_json::{json, Value};
-
-fn put_records<B: Backend>(r: &Rig<B>, rows: &[(String, &str, BeadState)]) {
-    for chunk in rows.chunks(100) {
-        let mut txn = state_store::Txn::new();
-        for (id, repo, state) in chunk {
-            let mut rec = LifecycleRecord::born(id, Some(repo), None, AT);
-            rec.row.state = *state;
-            txn = txn.put(&keys::lifecycle(id), state_store::Object::new(crate::control::records::encode(&rec).unwrap()));
-        }
-        r.s.contract().txn(&txn, &r.req()).unwrap();
-    }
-}
 
 fn landed<B: Backend>(r: &Rig<B>, from: usize, to: usize) {
     let rows: Vec<_> = (from..to).map(|i| (format!("sp-z{i:04}"), "spira", BeadState::Landed)).collect();
