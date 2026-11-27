@@ -109,6 +109,8 @@ fn hold(args: &[String]) -> Result<(), String> {
             lease.dir(),
             &std::env::var("PATH").unwrap_or_default(),
             true, // release
+            who,
+            repo,
         );
     }
     let dir = lease.dir().to_path_buf();
@@ -135,7 +137,7 @@ fn take(who: &str, root: &Path, repo: Option<&str>, out: &mut impl Write) -> Res
     }
     let lease = bd::lease_for(&bases, who, repo).map_err(|e| format!("cannot lease a build directory under {bases:?}: {e}"))?;
     let path = std::env::var("PATH").unwrap_or_default();
-    match bd::clean(&script()?, root, lease.dir(), &path, false) {
+    match bd::clean(&script()?, root, lease.dir(), &path, false, who, repo) {
         Ok(text) => {
             for l in text.lines().filter(|l| !l.trim().is_empty()) {
                 let _ = writeln!(out, "# {l}");

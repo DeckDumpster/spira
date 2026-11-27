@@ -6,6 +6,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+/// A cargo that logs its arguments and, for `clean`, prints `summary` as cargo does.
+fn stub_cargo(log: &Path, summary: Option<&str>) -> String {
+    let said = summary.map_or(String::new(), |l| format!("[ \"$1\" != clean ] || echo '     {l}' >&2\n"));
+    format!("#!/bin/sh\necho \"$*\" >> {}\n{said}", log.display())
+}
+
 struct Box_ {
     _d: testkit::TempDir,
     toml: PathBuf,
@@ -30,7 +36,7 @@ fn setup(name: &str) -> Box_ {
     std::fs::create_dir_all(&bindir).unwrap();
     testkit::write_exe(
         bindir.join("cargo"),
-        &format!("#!/bin/sh\necho \"$*\" >> {}\n", log.display()),
+        &stub_cargo(&log, Some("Removed 3 files, 1.5GiB total")),
     );
     let tree = d.path().join("tree");
     for c in ["a", "b"] {
@@ -138,7 +144,7 @@ fn a_lease_after_the_holder_exits_reuses_the_warm_directory_with_a_selective_cle
     assert!(err.contains("— new"), "{err}");
     assert_eq!(
         std::fs::read_to_string(&b.log).unwrap().trim(),
-        "clean --workspace -q",
+        "clean --workspace",
         "a target with no record cleans the whole workspace: {err}"
     );
     std::fs::create_dir_all(d1.join("debug/deps")).unwrap();
@@ -157,7 +163,7 @@ fn a_lease_after_the_holder_exits_reuses_the_warm_directory_with_a_selective_cle
     );
     assert_eq!(
         std::fs::read_to_string(&b.log).unwrap().trim(),
-        "clean -q -p crate-b",
+        "clean -p crate-b",
         "only the changed crate is cleaned: {err}"
     );
     let _ = (p2.kill(), p2.wait());
@@ -195,7 +201,7 @@ fn a_release_cleans_a_crate_changed_during_the_lease_and_the_next_lease_trusts_t
     let _ = std::fs::remove_file(&b.log);
     std::fs::write(b.tree.join("a/src/lib.rs"), "pub fn f() { let _ = 2; }\n").unwrap();
     release(&b, &mut p3);
-    assert_eq!(cargo_log(&b), "clean -q -p crate-a", "release cleans only the crate changed in the lease");
+    assert_eq!(cargo_log(&b), "clean -p crate-a", "release cleans only the crate changed in the lease");
 
     let a = std::fs::File::options().write(true).open(b.tree.join("a/src/lib.rs")).unwrap();
     std::fs::write(b.tree.join("a/src/lib.rs"), LEASE_BYTES).unwrap();
@@ -206,7 +212,7 @@ fn a_release_cleans_a_crate_changed_during_the_lease_and_the_next_lease_trusts_t
     assert_eq!(d4, d1);
     assert_eq!(
         cargo_log(&b),
-        "clean -q -p crate-a",
+        "clean -p crate-a",
         "bytes that differ from the release record are cleaned: {err}"
     );
     let _ = (p4.kill(), p4.wait());
@@ -229,7 +235,7 @@ fn a_file_rewritten_with_the_same_bytes_during_the_lease_is_cleaned_on_release()
     std::fs::write(b.tree.join("a/src/lib.rs"), LEASE_BYTES).unwrap();
     touched_after_record(&d1, &b.tree.join("a/src/lib.rs"));
     release(&b, &mut p1);
-    assert_eq!(cargo_log(&b), "clean -q -p crate-a");
+    assert_eq!(cargo_log(&b), "clean -p crate-a");
 }
 
 #[test_id(tx3uue5)]
@@ -241,7 +247,7 @@ fn a_lockfile_change_during_the_lease_cleans_the_workspace_on_release() {
     let _ = std::fs::remove_file(&b.log);
     std::fs::write(b.tree.join("Cargo.lock"), "# lock changed\n").unwrap();
     release(&b, &mut p1);
-    assert_eq!(cargo_log(&b), "clean --workspace -q");
+    assert_eq!(cargo_log(&b), "clean --workspace");
 }
 
 #[test_id(tlf3w20)]
@@ -266,7 +272,7 @@ fn a_file_outside_every_crate_that_a_crate_read_is_cleaned_on_release_when_touch
     std::fs::write(root.join("doc.txt"), "doc\n").unwrap();
     touched_after_record(&d2, &root.join("doc.txt"));
     release(&b, &mut p2);
-    assert_eq!(cargo_log(&b), "clean -q -p crate-a");
+    assert_eq!(cargo_log(&b), "clean -p crate-a");
 }
 
 fn unit(dir: &Path, name: &str, stamp: Option<std::time::SystemTime>) -> PathBuf {
@@ -330,7 +336,7 @@ fn an_edit_with_a_back_dated_mtime_after_the_stamp_drops_the_unit() {
         .set_modified(std::time::SystemTime::now() - Duration::from_secs(3600)).unwrap();
     release(&b, &mut p);
     assert!(!u.exists(), "ctime newer than the stamp drops the unit");
-    assert_eq!(cargo_log(&b), "clean -q -p crate-a");
+    assert_eq!(cargo_log(&b), "clean -p crate-a");
 }
 
 #[test_id(tm4w9ze)]
@@ -341,7 +347,7 @@ fn a_unit_with_no_timestamp_is_removed_and_a_deleted_file_cleans_its_crate() {
     let bare = unit(&d, "crate-a-0123456789abcdef", None);
     release(&b, &mut p);
     assert!(!bare.exists(), "a unit with no timestamp is removed");
-    assert_eq!(cargo_log(&b), "clean -q -p crate-a");
+    assert_eq!(cargo_log(&b), "clean -p crate-a");
 
     let mut p2 = sleeper();
     let (d2, _) = b.lease("hand-2", &p2);
@@ -350,13 +356,13 @@ fn a_unit_with_no_timestamp_is_removed_and_a_deleted_file_cleans_its_crate() {
     let fresh = unit(&d2, "crate-b-0123456789abcdef", Some(std::time::SystemTime::now() + Duration::from_secs(3600)));
     release(&b, &mut p2);
     assert!(fresh.exists());
-    assert_eq!(cargo_log(&b), "clean -q -p crate-b", "a deleted file cleans the crate whatever its units");
+    assert_eq!(cargo_log(&b), "clean -p crate-b", "a deleted file cleans the crate whatever its units");
 }
 
 // These spawn the clean script because it is what is under test: the rule exists only in it.
 fn clean_as(b: &Box_, dir: &Path, release: bool) -> String {
     let home = spira_config::resolve::locate_home_for_process().unwrap();
-    spira_config::build_dir::clean(&home.join(spira_config::build_dir::CLEAN_SCRIPT), &b.tree, dir, &b.bin, release).unwrap()
+    spira_config::build_dir::clean(&home.join(spira_config::build_dir::CLEAN_SCRIPT), &b.tree, dir, &b.bin, release, "sp-test", None).unwrap()
 }
 
 fn clean_tree(b: &Box_, dir: &Path) -> String {
@@ -396,7 +402,7 @@ fn a_tree_whose_lockfile_and_one_crate_differ_cleans_that_crate_at_lease() {
     std::fs::write(b.tree.join("Cargo.lock"), "# another tree's lock\n").unwrap();
     std::fs::write(b.tree.join("a/src/lib.rs"), "pub fn f() { let _ = 2; }\n").unwrap();
     clean_tree(&b, &d);
-    assert_eq!(cargo_log(&b), "clean -q -p crate-a");
+    assert_eq!(cargo_log(&b), "clean -p crate-a");
 }
 
 #[test_id(tq4lk3c)]
@@ -410,7 +416,7 @@ fn a_tree_whose_workspace_manifest_differs_still_cleans_the_workspace_at_lease()
     std::fs::write(b.tree.join("Cargo.toml"), "[workspace]\nmembers = [\"a\", \"b\"]\n# changed\n").unwrap();
     let said = clean_tree(&b, &d);
     assert!(said.contains("Cargo.toml changed"), "{said}");
-    assert_eq!(cargo_log(&b), "clean --workspace -q");
+    assert_eq!(cargo_log(&b), "clean --workspace");
 }
 
 /// `cargo test --offline --locked` in `tree`, building in `target`.
@@ -455,13 +461,13 @@ fn a_tree_whose_lockfile_alone_differs_does_not_run_the_other_trees_test_binary(
     let path = std::env::var("PATH").unwrap_or_default();
 
     std::fs::write(tree.join("Cargo.lock"), lock("0.1.0")).unwrap();
-    spira_config::build_dir::clean(&script, &tree, &target, &path, false).unwrap();
+    spira_config::build_dir::clean(&script, &tree, &target, &path, false, "sp-test", None).unwrap();
     let a = real_cargo_test(&tree, &target);
     let a_said = format!("{}{}", String::from_utf8_lossy(&a.stdout), String::from_utf8_lossy(&a.stderr));
     assert!(!a.status.success() && a_said.contains("left: 0"), "tree A's test runs against dep 0.1.0 and is red: {a_said}");
 
     std::fs::write(tree.join("Cargo.lock"), lock("0.1.1")).unwrap();
-    let said = spira_config::build_dir::clean(&script, &tree, &target, &path, false).unwrap();
+    let said = spira_config::build_dir::clean(&script, &tree, &target, &path, false, "sp-test", None).unwrap();
     assert!(said.contains("only Cargo.lock changed"), "the lease clean removes nothing: {said}");
     let b = real_cargo_test(&tree, &target);
     let b_said = format!("{}{}", String::from_utf8_lossy(&b.stdout), String::from_utf8_lossy(&b.stderr));
@@ -529,4 +535,189 @@ fn with_no_stamp_the_records_own_time_decides_which_units_are_rebuilt() {
     let said = clean_tree(&b, &d);
     assert!(older.exists(), "a unit older than the record stays: {said}");
     assert!(!newer.exists(), "a unit newer than the record is dropped: {said}");
+}
+
+fn report(dir: &Path) -> spira_config::build_dir::CleanReport {
+    spira_config::build_dir::clean_report(dir).expect("the clean wrote a report")
+}
+
+fn only_act(dir: &Path) -> spira_config::build_dir::CleanAct {
+    let mut acts = report(dir).acts;
+    assert_eq!(acts.len(), 1, "{acts:?}");
+    acts.remove(0)
+}
+
+fn kind(a: &spira_config::build_dir::CleanAct) -> (&str, &str) {
+    (&a.branch, &a.cause)
+}
+
+/// Whether `bytes` is `du -sb` of a unit holding `files` bytes: coreutils differ on counting the
+/// directory's own size, `dir_len`.
+fn is_du_of(bytes: Option<u64>, files: u64, dir_len: u64) -> bool {
+    bytes == Some(files) || bytes == Some(files + dir_len)
+}
+
+#[test_id(tblk8bl)]
+#[test]
+fn a_directory_with_no_record_reports_a_whole_workspace_clean_with_cargos_count() {
+    let b = setup("bdcli-report-new");
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    let r = report(&d);
+    let stamped = std::fs::metadata(d.join(".unit-tests-built-stamp")).unwrap().modified().unwrap();
+    assert!(r.rc == 0 && r.at >= stamped, "stamped by the script's own clock, at its exit: {r:?}");
+    let a = only_act(&d);
+    assert_eq!(kind(&a), ("whole-workspace", "missing-record"));
+    assert_eq!((a.bytes, a.files), (Some(1_610_612_736), Some(3)));
+}
+
+#[test_id(ttlo7zm)]
+#[test]
+fn a_changed_lockfile_at_release_reports_the_build_input_that_changed() {
+    let b = setup("bdcli-report-input");
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    std::fs::write(b.tree.join("Cargo.lock"), "# lock changed\n").unwrap();
+    clean_as(&b, &d, true);
+    let a = only_act(&d);
+    assert_eq!(kind(&a), ("whole-workspace", "build-input-changed"));
+    assert_eq!(a.inputs, ["Cargo.lock"]);
+}
+
+#[test_id(txewbqf)]
+#[test]
+fn a_workspace_with_no_member_reports_an_unhashable_tree() {
+    let b = setup("bdcli-report-unhashable");
+    std::fs::write(b.tree.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    assert_eq!(kind(&only_act(&d)), ("whole-workspace", "unhashable-tree"));
+}
+
+#[test_id(tudphnf)]
+#[test]
+fn an_edited_crate_reports_a_per_crate_clean_naming_it() {
+    let b = setup("bdcli-report-crate");
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    std::fs::write(b.tree.join("b/src/lib.rs"), "pub fn f() { let _ = 1; }\n").unwrap();
+    clean_tree(&b, &d);
+    let a = only_act(&d);
+    assert_eq!(kind(&a), ("per-crate", "bytes-changed"));
+    assert_eq!(a.crates, ["crate-b"]);
+}
+
+#[test_id(tisa3uc)]
+#[test]
+fn a_unit_built_after_the_stamp_reports_the_bytes_and_files_it_removed() {
+    let b = setup("bdcli-report-unit");
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    let later = std::time::SystemTime::now() + Duration::from_secs(3600);
+    let u = unit(&d, "crate-a-0123456789abcdef", Some(later));
+    std::fs::write(u.join("lib"), vec![0u8; 4096]).unwrap();
+    let dir_len = std::fs::metadata(&u).unwrap().len();
+    clean_tree(&b, &d);
+    let a = only_act(&d);
+    assert_eq!(kind(&a), ("units-built-after-stamp", ""));
+    assert_eq!(a.crates, ["crate-a"]);
+    assert!(is_du_of(a.bytes, 4096, dir_len), "{a:?}");
+    assert_eq!(a.files, Some(2), "the file and the unit's stamp");
+}
+
+#[test_id(taeli5n)]
+#[test]
+fn a_release_that_drops_a_stale_unit_reports_it() {
+    let b = setup("bdcli-report-release");
+    let (mut p, d) = edit_a_in_lease(&b);
+    let now = std::time::SystemTime::now();
+    let stale = unit(&d, "crate-a-0123456789abcdef", Some(now - Duration::from_secs(3600)));
+    unit(&d, "crate-a-fedcba9876543210", Some(now + Duration::from_secs(3600)));
+    let dir_len = std::fs::metadata(&stale).unwrap().len();
+    release(&b, &mut p);
+    let a = only_act(&d);
+    assert_eq!(kind(&a), ("release-units-dropped", ""));
+    assert_eq!(a.crates, ["crate-a"]);
+    assert!(is_du_of(a.bytes, 0, dir_len), "{a:?}");
+    assert_eq!(a.files, Some(1));
+}
+
+#[test_id(trel889)]
+#[test]
+fn a_clean_with_nothing_changed_reports_no_act_over_the_last_report() {
+    let b = setup("bdcli-report-none");
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    assert_eq!(report(&d).acts.len(), 1, "positive control: the first clean acted");
+    clean_tree(&b, &d);
+    assert_eq!(report(&d).acts, []);
+}
+
+#[test_id(tb81g9z)]
+#[test]
+fn a_cargo_that_prints_no_summary_reports_unknown_bytes() {
+    let b = setup("bdcli-report-silent");
+    testkit::write_exe(Path::new(b.bin.split(':').next().unwrap()).join("cargo"), &stub_cargo(&b.log, None));
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    let a = only_act(&d);
+    assert_eq!((a.bytes, a.files), (None, None));
+}
+
+#[test_id(t8fk41q)]
+#[test]
+fn cargos_removal_summary_is_read_in_every_unit_it_prints() {
+    let b = setup("bdcli-report-summary");
+    let cargo = Path::new(b.bin.split(':').next().unwrap()).join("cargo");
+    for (i, (line, files, bytes)) in [
+        ("Removed 0 files", 0, 0),
+        ("Removed 2 files, 359B total", 2, 359),
+        ("Removed 8 files, 8.7MiB total", 8, 9_122_611),
+        ("Removed 1 files, 11.0GiB total", 1, 11_811_160_064),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        testkit::write_exe(&cargo, &stub_cargo(&b.log, Some(line)));
+        let d = b.base.join(format!("dir.{}", i + 1));
+        let said = clean_tree(&b, &d);
+        assert!(said.contains(line), "cargo's output still reaches the caller: {said}");
+        let a = only_act(&d);
+        assert_eq!((a.files, a.bytes), (Some(files), Some(bytes)), "{line}");
+    }
+}
+
+#[test_id(tu44o0v)]
+#[test]
+fn a_tree_that_is_no_cargo_workspace_reports_no_act() {
+    let b = setup("bdcli-report-no-cargo");
+    std::fs::remove_file(b.tree.join("Cargo.toml")).unwrap();
+    let d = b.base.join("dir.1");
+    std::fs::create_dir_all(&d).unwrap();
+    clean_tree(&b, &d);
+    assert_eq!(report(&d).acts, []);
+}
+
+// The sink answers one connection, and the clean's push is the first a lease makes.
+#[test_id(tr12pkq)]
+#[test]
+fn a_lease_pushes_what_its_clean_removed_under_its_holder_and_mode() {
+    let b = setup("bdcli-report-push");
+    let (addr, sink) = spira_otel::metrics::run::fixture_sink_within(Duration::from_secs(20));
+    let toml = spira_config::process::fixture_toml(
+        b._d.path(),
+        &[
+            ("SPIRA_DWARF_BUILD_BASE", b.base.to_str().unwrap()),
+            ("SPIRA_DWARF_BUILD_BUDGET_GIB", "60"),
+            ("SPIRA_METRICS_ENDPOINT", &addr),
+        ],
+    );
+    let b = Box_ { toml, ..b };
+    let mut p = sleeper();
+    b.lease("hand-pushes", &p);
+    let body = sink.join().unwrap().expect("the lease pushed");
+    for want in ["build_dir_clean_bytes", "hand-pushes", "lease", "whole-workspace", "missing-record"] {
+        assert!(body.contains(want), "{want} missing from the push: {body}");
+    }
+    let _ = (p.kill(), p.wait());
 }
