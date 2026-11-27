@@ -22,7 +22,6 @@ fn append_publishes_the_unread_count_past_watchds_cursor_under_its_own_name() {
         ("SPIRA_BROKER_SOCKET", broker.socket().to_str().unwrap()),
         ("SPIRA_RUN", run.to_str().unwrap()),
         ("SPIRA_CONCIERGE_INBOX", inbox.to_str().unwrap()),
-        ("SPIRA_CONCIERGE_PUSH_WAKE", ""),
     ];
     let env = spira_config::process::fixture_metrics_env(&dir, "", &declare);
 

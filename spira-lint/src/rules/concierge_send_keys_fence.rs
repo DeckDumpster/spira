@@ -15,8 +15,8 @@ const OWN_SOURCE: &str = "spira-lint/src/rules/concierge_send_keys_fence.rs";
 
 /// May name `send-keys`: the wake verb itself and the cockpit tools that drive their own panes.
 const KEYS_ALLOWED: &[&str] = &["concierge.sh", "cockpit/"];
-/// May call the wake verb: the push flusher, the mail
-/// deliverer's `mail.wake` task, and the config that names the verb.
+/// May call the wake verb: the mail deliverer's `mail.wake` task, and the config that names the
+/// verb.
 const WAKE_ALLOWED: &[&str] = &[
     "concierge.sh",
     "spira-runtime/src/tasks/g/mail_wake.rs",
