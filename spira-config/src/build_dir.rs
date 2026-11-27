@@ -901,13 +901,8 @@ mod tests {
         assert!(lease_dir(&bases, &dir, "gate", "builder", std::time::Duration::ZERO).unwrap().is_ok());
     }
 
-    /// Whether a slot given up by `give_up` is leasable while a forked child, not yet exec'd,
-    /// still shares the lock's open file description.
-    fn lockable_beside_a_forked_child(tag: &str, give_up: fn(Lease)) -> Result<(), Refused> {
-        let d = testkit::TempDir::new(tag);
-        let bases = vec![d.path().join("base")];
-        let l = lease(&bases, "builder").unwrap();
-        let dir = l.dir().to_path_buf();
+    /// Run `f` while a forked child, not yet exec'd, shares every open file description.
+    fn beside_a_forked_child<T>(f: impl FnOnce() -> T) -> T {
         // SAFETY: the child calls only the async-signal-safe sleep and _exit.
         let child = unsafe { libc::fork() };
         if child == 0 {
@@ -919,14 +914,25 @@ mod tests {
             }
         }
         assert!(child > 0, "fork failed");
-        give_up(l);
-        let got = lease_dir(&bases, &dir, "probe", "", std::time::Duration::ZERO).unwrap().map(drop);
+        let got = f();
         // SAFETY: `child` is our own unreaped child.
         unsafe {
             libc::kill(child, libc::SIGKILL);
             libc::waitpid(child, std::ptr::null_mut(), 0);
         }
         got
+    }
+
+    /// Whether a slot given up by `give_up` is leasable beside a forked child.
+    fn lockable_beside_a_forked_child(tag: &str, give_up: fn(Lease)) -> Result<(), Refused> {
+        let d = testkit::TempDir::new(tag);
+        let bases = vec![d.path().join("base")];
+        let l = lease(&bases, "builder").unwrap();
+        let dir = l.dir().to_path_buf();
+        beside_a_forked_child(|| {
+            give_up(l);
+            lease_dir(&bases, &dir, "probe", "", std::time::Duration::ZERO).unwrap().map(drop)
+        })
     }
 
     #[test_id(tam523y)]
@@ -953,24 +959,10 @@ mod tests {
         let n = l.n;
         l.release();
         let g = try_lock(&bases[0], n).unwrap();
-        // SAFETY: the child calls only the async-signal-safe sleep and _exit.
-        let child = unsafe { libc::fork() };
-        if child == 0 {
-            // SAFETY: as above.
-            unsafe {
-                // clock-safe: nothing waits on it; the parent kills the child, and this only caps an orphan's life
-                libc::sleep(5);
-                libc::_exit(0);
-            }
-        }
-        assert!(child > 0, "fork failed");
-        drop(g);
-        let relocked = try_lock(&bases[0], n).is_some();
-        // SAFETY: `child` is our own unreaped child.
-        unsafe {
-            libc::kill(child, libc::SIGKILL);
-            libc::waitpid(child, std::ptr::null_mut(), 0);
-        }
+        let relocked = beside_a_forked_child(|| {
+            drop(g);
+            try_lock(&bases[0], n).is_some()
+        });
         assert!(relocked, "a dropped slot lock is still held by the forked child");
     }
 
