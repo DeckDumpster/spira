@@ -1320,7 +1320,7 @@ fn record_forge_state(w: &World, c: &Ctx, b: &Batch, ci: &str, run: &str, meta: 
 fn record_pass(w: &World, c: &Ctx, b: &Batch, status: &str, out: &str) {
     use tsd::pass::{Cause, PassRecord, Place};
     let retries = b.kv.get("retries").unwrap_or("0");
-    let flip = b.kv.get("flip_rerun").map_or("", |_| "/flip");
+    let flip = b.kv.get("flip_rerun").map_or("", |_| "+flip");
     let key = format!("{}/{retries}/{status}{flip}", b.head);
     if b.kv.get("pass_recorded") == Some(key.as_str()) {
         return;
@@ -2258,7 +2258,7 @@ fn note_red_evidence(w: &World, c: &Ctx, b: &Batch, out: &str) {
         .map(|r| r.trim().to_string())
         .unwrap_or_default();
     let twice = b.kv.get(FLIP_RERUN);
-    let again = twice.map_or("", |_| "/twice");
+    let again = twice.map_or("", |_| "+twice");
     let key = format!("{run}/{}{again}", b.head);
     if b.kv.get("evidence_noted") == Some(key.as_str()) {
         return;
