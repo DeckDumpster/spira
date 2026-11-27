@@ -6996,6 +6996,23 @@ fn a_red_trial_publishes_its_result_and_its_red_test() {
 }
 
 #[cfg(feature = "integration")]
+#[test_id(tb148by)]
+#[test]
+fn a_red_test_reaches_a_connected_subscriber_and_is_retained_for_no_later_one() {
+    let broker = testkit::broker::Broker::up();
+    let mut sub = testkit::broker::Subscriber::to(broker.socket(), &["test/#"]);
+    let f = published_red_fake();
+    *f.broker.borrow_mut() = Some(broker.socket().to_path_buf());
+
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+
+    assert!(delivered(&mut sub, 1).contains_key("test/t0aaaaa/red"));
+    assert_eq!(broker.retained("test/#"), []);
+    let topics: Vec<String> = broker.retained("gate/#").into_iter().map(|(t, _)| t).collect();
+    assert_eq!(topics, ["gate/spira/sp-a"]);
+}
+
+#[cfg(feature = "integration")]
 #[test_id(t6lsjx1)]
 #[test]
 fn a_trial_whose_testenv_run_was_stopped_publishes_who_sent_the_signal() {

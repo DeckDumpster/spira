@@ -207,12 +207,13 @@ mod tests {
         let of = |t: &str| family_of(t).map(|f| (f.family.as_str(), f.class));
         for topic in [
             "bead/sp-a/state", "bead/sp-a/sessions", "round/r/12", "gate/r/sp-a", "session/sp-a/state",
-            "session/sp-a/age/15m", "session/sp-a/age/30m", "session/sp-a/age/60m", "test/t1/red", "release/active",
+            "session/sp-a/age/15m", "session/sp-a/age/30m", "session/sp-a/age/60m", "release/active",
             "host/pressure", "pr/r/7", "concierge/inbox", "publisher/queue", "subscriber/concierge",
         ] {
             assert_eq!(of(topic).map(|(_, c)| c), Some(Class::State), "{topic}");
         }
         assert_eq!(of("progress/sp-a"), Some(("progress/<bead>", Class::Chatter)));
+        assert_eq!(of("test/t1/red"), Some(("test/<id>/red", Class::Chatter)));
         for none in ["bead//state", "bead/+/state", "bead/sp-a/state/more", "session/sp-a/age/45m"] {
             assert!(of(none).is_none(), "{none}");
         }
