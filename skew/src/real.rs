@@ -36,9 +36,7 @@ pub fn config_resolves() -> bool {
 
 /// Whether the ref files alone show `A..B` is empty; anything they cannot tell is git's to answer.
 fn ends_name_one_commit(repo: &Path, range: &str) -> bool {
-    use spira_config::git_refs::{head_sha, sha_of};
-    let sha = |end: &str| if end == "HEAD" { head_sha(repo) } else { sha_of(repo, end) };
-    range.split_once("..").is_some_and(|(from, to)| sha(from).is_some_and(|from| sha(to) == Some(from)))
+    range.split_once("..").is_some_and(|(from, to)| spira_config::git_refs::same_tip(repo, from, to).is_some())
 }
 
 const GH_RELEASE: &str = "release";
@@ -695,5 +693,9 @@ mod ref_tests {
         }
         let w = Real::new(tmp.path().to_path_buf());
         assert_eq!(w.rev_list_count(&repo, "HEAD..origin/main"), Some(0));
+        std::fs::write(repo.join(".git/refs/remotes/origin/ahead"), "f".repeat(40)).unwrap();
+        for range in ["HEAD..origin/ahead", "origin/gone..origin/lost", "HEAD...origin/main"] {
+            assert!(!ends_name_one_commit(&repo, range), "{range} is git's to answer");
+        }
     }
 }

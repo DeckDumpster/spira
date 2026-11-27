@@ -56,16 +56,13 @@ fn run_main() -> ExitCode {
             }
         }
         "units" => skew::units(&w),
-        "refresh" => {
-            let (flags, repos): (Vec<&str>, Vec<&str>) = argv.iter().skip(1).map(String::as_str).partition(|a| a.starts_with("--"));
-            match flags.iter().find(|f| **f != "--no-fetch") {
-                Some(unknown) => {
-                    w.err(&format!("skew: unknown flag: {unknown}"));
-                    1
-                }
-                None => skew::refresh(&w, repos.first().copied(), !flags.is_empty()),
+        "refresh" => match skew::refresh_args(argv.get(1..).unwrap_or_default()) {
+            Ok((repo, no_fetch)) => skew::refresh(&w, repo, no_fetch),
+            Err(unknown) => {
+                w.err(&format!("skew: unknown flag: {unknown}"));
+                1
             }
-        }
+        },
         "gap" => skew::gap(&w, argv.get(1).map(String::as_str)),
         "copies" => {
             let rc = skew::copies(&w);

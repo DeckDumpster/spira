@@ -629,6 +629,15 @@ pub fn cksum(data: &str) -> u64 {
     hash
 }
 
+/// `refresh [repo] [--no-fetch]` → (repo, no_fetch); Err names a flag it does not take.
+pub fn refresh_args(args: &[String]) -> Result<(Option<&str>, bool), &str> {
+    let (flags, repos): (Vec<&str>, Vec<&str>) = args.iter().map(String::as_str).partition(|a| a.starts_with("--"));
+    match flags.iter().find(|f| **f != "--no-fetch") {
+        Some(unknown) => Err(unknown),
+        None => Ok((repos.first().copied(), !flags.is_empty())),
+    }
+}
+
 // =============================================================================================
 // refresh — advance a checkout to its base ref via stage-and-swap (checkout mode), rebuild
 // and activate (release mode), or check-only alarm (queue.local). See DESIGN.md §8.

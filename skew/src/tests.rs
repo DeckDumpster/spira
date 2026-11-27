@@ -877,6 +877,41 @@ fn refresh_with_no_fetch_leaves_the_remote_alone() {
     }
 }
 
+#[test_id(tqpk8mn)]
+#[test]
+fn refresh_release_mode_with_no_fetch_leaves_the_remote_alone() {
+    let fetched = |no_fetch| {
+        let f = Fake::default();
+        f.set_env("SPIRA_RELEASES", "releases");
+        f.symlinks.borrow_mut().insert(PathBuf::from("releases/current"), "rel-1".into());
+        f.set_env("SPIRA_REPO", "repo");
+        f.git_repos.borrow_mut().push(PathBuf::from("repo"));
+        f.landrefs.borrow_mut().insert("repo".into(), "origin/main".into());
+        f.ref_remotes.borrow_mut().insert("origin/main".into(), "origin".into());
+        f.rev_list_counts.borrow_mut().insert("repo|HEAD..origin/main".into(), 0);
+        assert_eq!(refresh(&f, Some("repo"), no_fetch), 0);
+        assert!(f.stdout_joined().contains("release mode — already at"));
+        f.fetches.take()
+    };
+    assert_eq!(fetched(true), []);
+    assert_eq!(fetched(false), [(PathBuf::from("repo"), "origin".to_string())]);
+}
+
+#[test_id(tvco099)]
+#[test]
+fn refresh_reads_its_flag_on_either_side_of_the_repo_and_refuses_any_other() {
+    let parse = |args: &[&str]| {
+        let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+        refresh_args(&args).map(|(repo, no_fetch)| (repo.map(str::to_string), no_fetch)).map_err(str::to_string)
+    };
+    let repo = || Some("r".to_string());
+    assert_eq!(parse(&["r", "--no-fetch"]), Ok((repo(), true)));
+    assert_eq!(parse(&["--no-fetch", "r"]), Ok((repo(), true)));
+    assert_eq!(parse(&["r"]), Ok((repo(), false)));
+    assert_eq!(parse(&[]), Ok((None, false)));
+    assert_eq!(parse(&["r", "--no-fetsh"]), Err("--no-fetsh".to_string()));
+}
+
 #[test_id(tk2ncu6)]
 #[test]
 fn refresh_checkout_mode_declines_off_base_branch() {
