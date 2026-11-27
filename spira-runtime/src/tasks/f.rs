@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use super::{Reads, Task};
 use crate::watchers::{answers_observe, INBOX_APPEND};
 
+pub mod incident_drain;
 pub mod intake_filings;
 pub mod intake_gh;
 pub mod intake_gh_closeout;
@@ -58,6 +59,18 @@ pub static TASKS: &[Task] = &[
         runners: &[(intake_gh_closeout::OBSERVE, intake_gh_closeout::run_observe), (intake_gh_closeout::DRAIN, intake_gh_closeout::run_drain)],
         keys: &[intake_gh_closeout::KEYS],
         build: |s| refuse(intake_gh_closeout::NAME, intake_gh_closeout::IntakeGhCloseout::from_settings(s)).registration(),
+    },
+    Task {
+        name: incident_drain::NAME,
+        reads: Reads::None,
+        plane: runtime::Plane::Work,
+        signal: &[],
+        boot: incident_drain::IncidentDrain::boot,
+        cadence_ms: |s| cadence(s, incident_drain::CADENCE_KEY),
+        effects: incident_drain::EFFECTS,
+        runners: &[(incident_drain::OBSERVE, incident_drain::run_observe), (incident_drain::DRAIN, incident_drain::run_drain)],
+        keys: &[incident_drain::KEYS],
+        build: |s| refuse(incident_drain::NAME, incident_drain::IncidentDrain::from_settings(s)).registration(),
     },
     Task {
         name: persona_ops::NAME,

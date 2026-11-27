@@ -845,3 +845,5 @@ pressure_cpu_avg300
 pressure_io_avg300
 dwarf_build_folders_per_repo
 pilgrim_mcp_servers
+runtime_incident_drain_secs
+incident_drain_batch

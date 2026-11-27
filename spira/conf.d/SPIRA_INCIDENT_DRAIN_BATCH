@@ -1,0 +1,8 @@
+TYPE=u64
+GROUP=runtime
+DOC=References one pass over the incident spool files at most; the rest wait for the next pass.
+SCHEMA=REQUIRED: References one drain of the incident spool (incident drain, the incident.drain and persona.ops tasks) files at most; a positive number.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # One filing per reference, so this bounds the beads one pass can create; the rest are logged as held back.
+    : "${SPIRA_INCIDENT_DRAIN_BATCH:=20}"
+SPIRA_CONF_DEFAULT_EOF

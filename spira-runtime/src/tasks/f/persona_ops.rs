@@ -104,7 +104,7 @@ pub const RED_ASK_AT: u32 = 3;
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_PERSONA_OPS_SECS";
 /// `BD_TIMEOUT` is dropped: no step of the sweep calls bd with a deadline any more (statutes
 /// come over the store's socket, the drain's bd calls carry their own).
-pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_AGENT", "SPIRA_MEMORIES_CACHE", "SPIRA_MEMORIES_CACHE_AGE", "SPIRA_STATUTE_CORE", "SPIRA_STATUTE_CORE_LOCAL", "SPIRA_BDQ_CONN_RETRIES", "SPIRA_ALERT_GLOB", "SPIRA_RUN", "SPIRA_OPS_SWEEP_KEEP_DAYS", "SPIRA_RESULTS_PRUNE_MAX"];
+pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_AGENT", "SPIRA_MEMORIES_CACHE", "SPIRA_MEMORIES_CACHE_AGE", "SPIRA_STATUTE_CORE", "SPIRA_STATUTE_CORE_LOCAL", "SPIRA_BDQ_CONN_RETRIES", "SPIRA_ALERT_GLOB", "SPIRA_RUN", "SPIRA_OPS_SWEEP_KEEP_DAYS", "SPIRA_RESULTS_PRUNE_MAX", incident::intake::BATCH_KEY];
 
 /// The first line of a prompt that means there is nothing to sweep.
 pub const NOMINAL: &str = "SWEEP:NOMINAL";
@@ -574,26 +574,19 @@ pub fn run_intake_install(_: &Effects, _key: &str, s: &EffectSpec) -> Result<Str
     }
 }
 
-/// `persona.ops.incident_drain`: files every spooled incident (`incident`'s intake as a library).
+/// `persona.ops.incident_drain`: one pass over the incident spool (`incident`'s intake as a library).
 pub fn run_incident_drain(_: &Effects, _key: &str, _s: &EffectSpec) -> Result<String, String> {
     let env = incident::intake::Env::load();
     if env.db.is_none() {
         return Err("no SPIRA_DB: the incident spool cannot be drained".into());
     }
     let bd = incident::real::RealBd::from_env()?;
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&env.spool_dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_file() && p.extension().map(|e| e != "bad").unwrap_or(true)).collect();
-    paths.sort();
-    let (mut n, mut stuck) = (0, 0);
-    for p in paths {
-        match incident::intake::drain_one(&env, &bd, &incident::real::RealMailer, &incident::real::RealClock, &p) {
-            Ok(_) => n += 1,
-            Err(()) => stuck += 1,
-        }
-    }
-    if stuck == 0 {
-        Ok(format!("drained {n}"))
+    let batch = incident::intake::configured_batch()?;
+    let report = incident::intake::drain_spool(&env, &bd, &incident::real::RealMailer, &incident::real::RealClock, batch);
+    if report.stuck.is_empty() {
+        Ok(format!("drained {}", report.drained()))
     } else {
-        Err(format!("drained {n}, still spooled {stuck}"))
+        Err(incident::intake::drain_report(&report))
     }
 }
 
