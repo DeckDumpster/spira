@@ -611,9 +611,6 @@ pub fn run_brief(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, Stri
         memories_cache_age: get(cfg, "SPIRA_MEMORIES_CACHE_AGE").parse().unwrap_or(0),
         statute_core: get(cfg, "SPIRA_STATUTE_CORE").to_string(),
         statute_core_local: get(cfg, "SPIRA_STATUTE_CORE_LOCAL").to_string(),
-        // The home repo's checkout from the pinned repo map, not `SPIRA_REPO`: that is a
-        // per-copy fact the config door never resolves, so declaring it refused the settings whole.
-        harness_repo: e.world.home_path().map(|p| p.display().to_string()).unwrap_or_default(),
         prod: get(cfg, "SPIRA_PROD").to_string(),
         toml: spira_config::process::spec()?,
     };
