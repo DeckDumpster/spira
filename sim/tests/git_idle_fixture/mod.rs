@@ -60,7 +60,7 @@ pub fn git(repo: &Path, args: &[&str], at: u64) {
     assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
 }
 
-/// A config the ref files cannot list remotes from, as a checkout with dwarf worktrees has.
+/// The extension every checkout with dwarf worktrees has set.
 pub fn per_worktree_config(repo: &Path) {
     git(repo, &["config", "extensions.worktreeConfig", "true"], 1);
 }

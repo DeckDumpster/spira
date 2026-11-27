@@ -358,6 +358,9 @@ fn age(tree: &std::path::Path, by: std::time::Duration) {
 fn the_stale_reaper_asks_git_only_about_a_tree_its_cheap_rules_leave_undecided() {
     let f = fixture(testkit::env);
     spira_config::process::with_fresh(|| {
+    for shared in [&f.local, &f.pr] {
+        per_worktree_config(shared);
+    }
     use spira_runtime::tasks::c::hel_reap_stale as task;
     let names = ["hel.reap_stale.observe"];
     let root = f.effects.world.run_dir.join("worktree");

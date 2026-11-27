@@ -148,16 +148,28 @@ pub fn sha_of(repo: &Path, name: &str) -> Option<String> {
     }
 }
 
-/// The `[remote "…"]` names in the common dir's `config`; `None` when the file cannot be read or
-/// pulls in another by `include`, which this does not follow: git answers then.
+/// The `[remote "…"]` names in the common dir's `config` and, under `extensions.worktreeConfig`,
+/// in this checkout's own `config.worktree` (which may be missing); `None` when either cannot be
+/// read or pulls in another by `include`, which this does not follow: git answers then.
 pub fn remotes(repo: &Path) -> Option<Vec<String>> {
-    let (_, common) = git_dirs(repo)?;
-    let text = fs::read_to_string(common.join("config")).ok()?;
-    if text.to_ascii_lowercase().contains("worktreeconfig") {
-        return None;
+    let (gitdir, common) = git_dirs(repo)?;
+    let shared = fs::read_to_string(common.join("config")).ok()?;
+    let mut names = remote_sections(&shared)?;
+    if shared.to_ascii_lowercase().contains("worktreeconfig") {
+        match fs::read_to_string(gitdir.join("config.worktree")) {
+            Ok(own) => names.extend(remote_sections(&own)?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return None,
+        }
     }
+    names.sort();
+    names.dedup();
+    Some(names)
+}
+
+fn remote_sections(config: &str) -> Option<Vec<String>> {
     let mut names = vec![];
-    for line in text.lines().map(str::trim).filter(|l| l.starts_with('[')) {
+    for line in config.lines().map(str::trim).filter(|l| l.starts_with('[')) {
         let lower = line.to_ascii_lowercase();
         if lower.starts_with("[include") || lower.starts_with("[remote.") {
             return None;
@@ -171,8 +183,6 @@ pub fn remotes(repo: &Path) -> Option<Vec<String>> {
             names.push(line[start..end].to_string());
         }
     }
-    names.sort();
-    names.dedup();
     Some(names)
 }
 
@@ -493,7 +503,41 @@ mod tests {
         fs::write(git.join("config"), "[remote \"origin\"]\n[include]\n\tpath = more\n").unwrap();
         assert_eq!(remotes(d.path()), None);
         fs::write(git.join("config"), "[extensions]\n\tworktreeConfig = true\n[remote \"origin\"]\n").unwrap();
-        assert_eq!(remotes(d.path()), None, "a per-worktree config holds remotes this does not read");
+        assert_eq!(remotes(d.path()), Some(vec!["origin".to_string()]));
+    }
+
+    #[test_id(tx1vbow)]
+    #[test]
+    fn a_per_worktree_config_adds_its_remotes_to_the_shared_ones_only_under_the_extension() {
+        let d = testkit::TempDir::new("refs-remotes-worktree");
+        let git = d.join("main/.git");
+        fs::create_dir_all(&git).unwrap();
+        let main = d.join("main");
+        let names = |n: &[&str]| Some(n.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        let extended = "[extensions]\n\tworktreeConfig = true\n[remote \"origin\"]\n";
+        fs::write(git.join("config"), extended).unwrap();
+        fs::write(git.join("config.worktree"), "[core]\n\thooksPath = x\n").unwrap();
+        assert_eq!(remotes(&main), names(&["origin"]));
+        fs::write(git.join("config.worktree"), "[remote \"wt\"]\n[remote \"origin\"]\n[remote \"a\"]\n").unwrap();
+        assert_eq!(remotes(&main), names(&["a", "origin", "wt"]));
+        fs::write(git.join("config.worktree"), "[include]\n\tpath = more\n").unwrap();
+        assert_eq!(remotes(&main), None);
+
+        let wt_git = git.join("worktrees/w");
+        fs::create_dir_all(&wt_git).unwrap();
+        fs::write(wt_git.join("commondir"), "../..\n").unwrap();
+        fs::create_dir_all(d.join("wt")).unwrap();
+        fs::write(d.join("wt/.git"), format!("gitdir: {}\n", wt_git.display())).unwrap();
+        fs::write(wt_git.join("config.worktree"), "[remote \"linked\"]\n").unwrap();
+        assert_eq!(remotes(&d.join("wt")), names(&["linked", "origin"]), "a linked worktree reads its own config.worktree");
+
+        fs::write(git.join("config"), "[remote \"origin\"]\n").unwrap();
+        assert_eq!(remotes(&main), names(&["origin"]), "without the extension config.worktree is not read");
+
+        fs::write(git.join("config"), extended).unwrap();
+        fs::remove_file(git.join("config.worktree")).unwrap();
+        fs::create_dir(git.join("config.worktree")).unwrap();
+        assert_eq!(remotes(&main), None, "a config.worktree that cannot be read is git's to answer");
     }
 
     #[test_id(t6qv35m)]
