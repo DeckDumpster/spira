@@ -59,7 +59,7 @@ fn unmarked(name: &str, text: &str) -> Vec<String> {
 fn no_unmarked_fork_edge_remains() {
     let mut found = Vec::new();
     let src = testkit::manifest_dir().join("src");
-    let mut files: Vec<PathBuf> = ["world.rs", "wake.rs", "wiki_git.rs", "reconcile_host.rs"].iter().map(|f| src.join(f)).collect();
+    let mut files: Vec<PathBuf> = ["world.rs", "wiki_git.rs", "reconcile_host.rs"].iter().map(|f| src.join(f)).collect();
     let before = files.len();
     rs_files(&src.join("tasks"), &mut files);
     assert!(files.len() > before, "the scan read no task module");

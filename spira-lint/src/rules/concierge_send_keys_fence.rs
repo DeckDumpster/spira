@@ -15,12 +15,10 @@ const OWN_SOURCE: &str = "spira-lint/src/rules/concierge_send_keys_fence.rs";
 
 /// May name `send-keys`: the wake verb itself and the cockpit tools that drive their own panes.
 const KEYS_ALLOWED: &[&str] = &["concierge.sh", "cockpit/"];
-/// May call the wake verb: the inbox-keeper, the push flusher, the runtime's waker, the mail
+/// May call the wake verb: the push flusher, the mail
 /// deliverer's `mail.wake` task, and the config that names the verb.
 const WAKE_ALLOWED: &[&str] = &[
     "concierge.sh",
-    "spira/inbox-keeper.sh",
-    "spira-runtime/src/wake.rs",
     "spira-runtime/src/tasks/g/mail_wake.rs",
     "spira/inbox-append.sh",
     "spira/conf.sh",
@@ -93,7 +91,7 @@ impl Rule for ConciergeSendKeysFence {
 
     fn hint(&self) -> &'static str {
         "Signal the Concierge by writing a row to its inbox (spira/inbox-append.sh). Never type \
-into its pane: keystrokes land inside a person's half-written message. Only the inbox-keeper, \
+into its pane: keystrokes land inside a person's half-written message. Only \
 the push flusher and the mail deliverer may call `concierge.sh wake`, which holds until the \
 input line is empty."
     }
@@ -121,15 +119,15 @@ mod tests {
     fn a_wake_caller_is_flagged_and_the_documented_callers_are_not() {
         let rogue = b"#!/usr/bin/env bash\nconcierge.sh wake \"hi\"\n\"$CONCIERGE\" wake x\n";
         assert_eq!(scan("spira/rogue.sh", rogue).len(), 2);
-        assert!(scan("spira/inbox-keeper.sh", rogue).is_empty());
+        assert!(scan("spira/inbox-append.sh", rogue).is_empty());
     }
 
     #[test_id(tnboo4t)]
     #[test]
-    fn a_rust_wake_call_is_flagged_outside_the_runtime_wake_module() {
+    fn a_rust_wake_call_is_flagged_outside_the_mail_wake_task() {
         let rogue = b"Command::new(c).arg(\"wake\").arg(line);\n";
         assert_eq!(scan("spira-runtime/src/other.rs", rogue).len(), 1);
-        assert!(scan("spira-runtime/src/wake.rs", rogue).is_empty());
+        assert!(scan("spira-runtime/src/tasks/g/mail_wake.rs", rogue).is_empty());
     }
 
     #[test_id(tymiac8)]

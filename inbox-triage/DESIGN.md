@@ -5,12 +5,10 @@ bare name from the release PATH. Bead: sp-48f6g (rewrite wave 5b).
 
 ## Intent
 
-The concierge's mandatory first action at every session start is arming this as a Monitor
-(`spira/hooks/session.sh`): it tails `SPIRA_CONCIERGE_INBOX` — the durable log every watcher
-and `inbox-append.sh`/`spira-mail-deliver` append to — and is how events reach the session
-with no keystroke into the pane (operator, 2026-09-27: nothing types into the pane). It must
-stay constantly attached; `inbox-keeper.sh` (a separate watcher, unchanged by this bead)
-re-arms it if it lapses.
+It tails `SPIRA_CONCIERGE_INBOX` — the durable log every watcher and
+`inbox-append.sh`/`spira-mail-deliver` append to — with no keystroke into the pane
+(operator, 2026-09-27: nothing types into the pane). The Concierge session's event reader is
+`spira-sub follow` (`spira/hooks/session.sh`).
 
 It applies three cheap heuristics to each new line, unchanged from the bash:
 
@@ -24,7 +22,7 @@ It applies three cheap heuristics to each new line, unchanged from the bash:
 
 ## Non-goals
 
-* `conf.sh`, `inbox-append.sh`, `inbox-keeper.sh`, `spira-mail-deliver.sh`, `hooks/session.sh`
+* `conf.sh`, `inbox-append.sh`, `spira-mail-deliver.sh`, `hooks/session.sh`
   — all stay bash; only the call sites that name `inbox-triage.sh` move to the bare binary
   name in this change.
 * The log's format or location (`$SPIRA_RUN/watchd/concierge-inbox.log` by default,

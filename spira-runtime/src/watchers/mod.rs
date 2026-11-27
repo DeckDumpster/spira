@@ -10,7 +10,6 @@ pub mod brain_dirty;
 pub mod claim_count;
 pub mod dependency;
 pub mod bead_sweep;
-pub mod inbox_keeper;
 pub mod margin_comments;
 pub mod overrides;
 pub mod pr_notify;
@@ -28,7 +27,6 @@ use runtime::event::*;
 use serde::de::DeserializeOwned;
 
 pub const INBOX_APPEND: &str = "inbox.append";
-pub const CONCIERGE_WAKE: &str = "concierge.wake";
 
 /// The body of the latest `tag` event on `stream`, or the default before the first.
 pub fn carried<T: DeserializeOwned + Default>(view: &Projection, stream: &StreamKey, tag: EventKindTag) -> T {

@@ -96,8 +96,7 @@ prompt carrying the state.
 spira-sub add 'session/+/age/+' --note "read this builder's approach"
 ```
 
-The topic families are in `{{SPIRA_HOME}}/topics.toml`. The inbox waiter your session hook
-names stays: run both.
+The topic families are in `{{SPIRA_HOME}}/topics.toml`.
 
 ### Reading the state of the world
 

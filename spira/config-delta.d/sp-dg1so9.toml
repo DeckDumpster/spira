@@ -1,0 +1,2 @@
+removed = ["spira.runtime_inbox_keeper_secs", "spira.concierge_inbox_stall", "spira.concierge_inbox_backoff", "spira.concierge_wake_tries"]
+removed_tasks = ["inbox-keeper"]
