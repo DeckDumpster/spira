@@ -9,9 +9,15 @@ description = "batcher-cut — the IO seam (git, testenv-batch, the forge, the b
 name = "batcher"
 path = "src/main.rs"
 
+[[test]]
+name = "inbox_page"
+path = "tests/inbox_page.rs"
+required-features = ["integration"]
+
 [features]
-integration = ["batcher/integration", "forge/integration", "gate/integration", "lifecycle/integration", "runtime/integration", "sift/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "state-store/integration", "store-view/integration", "suite-select/integration", "testenv/integration", "testkit/integration", "tsd/integration", "system-paths/integration", "spira-test-id/integration", "spira-lint/integration"]
+integration = ["inbox-rules/integration", "batcher/integration", "forge/integration", "gate/integration", "lifecycle/integration", "runtime/integration", "sift/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "state-store/integration", "store-view/integration", "suite-select/integration", "testenv/integration", "testkit/integration", "tsd/integration", "system-paths/integration", "spira-test-id/integration", "spira-lint/integration"]
 [dependencies]
+inbox-rules = { path = "../inbox-rules" }
 system-paths = { path = "../system-paths" }
 batcher = { path = "../batcher" }
 sift = { path = "../sift" }

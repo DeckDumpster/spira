@@ -170,6 +170,7 @@ dependencies = [
  "batcher",
  "forge",
  "gate",
+ "inbox-rules",
  "libc",
  "lifecycle",
  "regex",
@@ -1004,9 +1005,11 @@ dependencies = [
 name = "inbox-rules"
 version = "1.0.0"
 dependencies = [
+ "libc",
  "ports",
  "regex",
  "serde_json",
+ "spira-config",
  "spira-pub",
  "spira-test-id",
  "testkit",
@@ -1033,6 +1036,7 @@ name = "incident"
 version = "1.0.0"
 dependencies = [
  "bead",
+ "inbox-rules",
  "mail",
  "reconciler-engine",
  "regex",
@@ -1484,6 +1488,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 name = "perf-watch"
 version = "1.0.0"
 dependencies = [
+ "inbox-rules",
  "serde_json",
  "spira-config",
  "spira-otel",
@@ -2829,6 +2834,7 @@ name = "strand"
 version = "1.0.0"
 dependencies = [
  "hel",
+ "inbox-rules",
  "libc",
  "regex",
  "runtime",
@@ -2924,6 +2930,7 @@ name = "testenv"
 version = "1.0.0"
 dependencies = [
  "gate",
+ "inbox-rules",
  "libc",
  "regex",
  "serde",

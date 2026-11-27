@@ -145,18 +145,15 @@ fn run() -> Result<(), String> {
     let prior = health.as_deref().and_then(|f| std::fs::read_to_string(f).ok()).map(|t| Health::parse(&t)).unwrap_or_default();
     let stats_argv: Vec<String> = stats.split_whitespace().map(String::from).collect();
     let Some(out) = run_pass(&cfg, &probes, &stats_argv, &prior, &Wall(Instant::now()), &mut Spawn::new()) else { return Ok(()) };
-    let inbox = match inbox {
-        Some(p) => p,
-        None => spira_config::process::cfg("SPIRA_CONCIERGE_INBOX")?,
-    };
+    let sink = perf_watch::inbox_sink(inbox_rules::Sink::configured("perf-watch")?, inbox.map(std::path::PathBuf::from));
     let now = Wall(Instant::now()).epoch_secs();
     for l in &out.lines {
         println!("{l}");
-        perf_watch::append_inbox(&inbox, &perf_watch::inbox_line(now, l));
+        perf_watch::append_inbox(&sink, &perf_watch::inbox_line(now, l));
     }
     if let Some(f) = slow_log {
         for l in &out.slow {
-            perf_watch::append_inbox(&f, l);
+            perf_watch::append_line(&f, l);
         }
     }
     perf_watch::push_timings(&spira_config::process::metrics_sink("perf-watch"), &out.timings);

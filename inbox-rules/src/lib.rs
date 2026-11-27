@@ -223,8 +223,11 @@ pub fn record_lines(
     pushed
 }
 
+/// How [`record`] begins the error for a line that never reached the inbox.
+const APPEND_REFUSED: &str = "cannot append to";
+
 fn append_and_push(inbox: &Path, line: &str, wake: &str, pattern: &str, flusher: &impl Fn() -> Result<PathBuf, String>) -> Result<bool, String> {
-    append_line(inbox, line).map_err(|e| format!("cannot append to {}: {e}", inbox.display()))?;
+    append_line(inbox, line).map_err(|e| format!("{APPEND_REFUSED} {}: {e}", inbox.display()))?;
     match pushes(line, wake, pattern) {
         Ok(true) => {}
         Ok(false) => return Ok(false),
@@ -239,6 +242,50 @@ fn append_and_push(inbox: &Path, line: &str, wake: &str, pattern: &str, flusher:
     // batch-job: spawned detached and never waited on; the flusher outlives the writer
     let _ = Command::new(flusher).arg("flush").process_group(0).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
     Ok(true)
+}
+
+/// One writer of the inbox: where it writes, how it pushes, and the name it publishes as.
+#[derive(Debug, Clone)]
+pub struct Sink {
+    pub inbox: PathBuf,
+    pub cursor: PathBuf,
+    pub bus: Bus,
+    pub wake: String,
+    pub pattern: String,
+    pub name: String,
+}
+
+impl Sink {
+    /// The configured Concierge inbox, written as `name`. A key that is missing is an error.
+    pub fn configured(name: &str) -> Result<Sink, String> {
+        use spira_config::process::cfg;
+        Ok(Sink {
+            inbox: PathBuf::from(cfg("SPIRA_CONCIERGE_INBOX")?),
+            cursor: concierge_cursor(&cfg("SPIRA_RUN")?),
+            bus: Bus::Configured,
+            wake: cfg("SPIRA_CONCIERGE_PUSH_WAKE")?,
+            pattern: cfg("SPIRA_CONCIERGE_PUSH_PATTERN")?,
+            name: name.to_string(),
+        })
+    }
+
+    /// [`record`] of one finished line, an `Err` only when the line is not in the inbox: a
+    /// writer remembers what it has said, so a failed push must not make it say it again.
+    pub fn record(&self, line: &str) -> Result<bool, String> {
+        self.record_lines(&[line]).or_else(|e| {
+            if e.starts_with(APPEND_REFUSED) {
+                return Err(e);
+            }
+            eprintln!("{}: the line is in the inbox but was not pushed: {e}", self.name);
+            Ok(false)
+        })
+    }
+
+    /// [`record_lines`] of finished lines.
+    pub fn record_lines(&self, lines: &[&str]) -> Result<bool, String> {
+        let flusher = || spira_config::release_env::tool("inbox-triage").map(PathBuf::from);
+        record_lines(&self.inbox, lines, &self.wake, &self.pattern, flusher, &self.cursor, || self.bus.publisher(&self.name))
+    }
 }
 
 /// When a spooled burst is due: the spool has stopped growing for `idle_ticks`, or

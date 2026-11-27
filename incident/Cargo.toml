@@ -10,9 +10,15 @@ name = "no_fork_edges"
 path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "inbox_page"
+path = "tests/inbox_page.rs"
+required-features = ["integration"]
+
 [features]
-integration = ["bead/integration", "mail/integration", "reconciler-engine/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-desired-state/integration", "spira-world/integration", "testkit/integration", "tsd/integration", "system-paths/integration", "spira-test-id/integration"]
+integration = ["inbox-rules/integration", "bead/integration", "mail/integration", "reconciler-engine/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-desired-state/integration", "spira-world/integration", "testkit/integration", "tsd/integration", "system-paths/integration", "spira-test-id/integration"]
 [dependencies]
+inbox-rules = { path = "../inbox-rules" }
 system-paths = { path = "../system-paths" }
 bead = { path = "../bead" }
 spira-config = { path = "../spira-config" }
