@@ -1551,7 +1551,7 @@ mod locator_tests {
     #[test_id(tm3eksw)]
     #[test]
     fn a_world_dir_too_long_for_the_broker_socket_is_refused_naming_it() {
-        let fits_lc_only = "w".repeat(SUN_PATH_MAX - "/lc.sock".len());
+        let fits_lc_only = "w".repeat(SUN_PATH_MAX - LC_SOCKET.len() - 1);
         let e = check_socket_path(Path::new(&fits_lc_only)).unwrap_err();
         assert!(e.contains("broker.sock"), "{e}");
     }
