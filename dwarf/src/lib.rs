@@ -4,6 +4,7 @@
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
+pub mod bash_stdin;
 pub mod bd;
 pub mod brief;
 pub mod capacity;

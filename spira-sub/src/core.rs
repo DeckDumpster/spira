@@ -440,6 +440,15 @@ mod tests {
         assert!(say(&mut c, "publisher/queue", gone).lines.is_empty(), "a publisher that exits after each message is not news");
     }
 
+    #[test_id(telhlp2)]
+    #[test]
+    fn host_pressure_subscribers_are_told_that_watchtower_went() {
+        let (mut c, _) = core();
+        c.add("host/pressure", "n", false, true).unwrap();
+        let out = say(&mut c, "publisher/watchtower", json!({"state": "gone"}));
+        assert_eq!(out.lines, ["[sub:s1] publisher/watchtower state=gone — n"]);
+    }
+
     #[test_id(twwgm2e)]
     #[test]
     fn a_subscription_added_after_the_publisher_went_is_told_at_once() {

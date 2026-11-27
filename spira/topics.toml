@@ -63,6 +63,7 @@ family = "host/pressure"
 class = "state"
 publisher = "watchtower"
 fields = ["cpu", "io", "cpu_over", "io_over", "at"]
+resident = ["watchtower"]
 
 [[topic]]
 family = "pr/<repo>/<n>"
