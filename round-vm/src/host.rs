@@ -8,7 +8,7 @@ use std::os::unix::process::CommandExt;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use crate::procs::{command, feed_script, FileLock};
+use crate::procs::{command, command_within, feed_script, FileLock};
 use crate::run::{remote_command, BatchJob, Remote, FOREIGN_SCRIPT, REMOTE_EXIT_FILE, REMOTE_SCRIPT};
 use crate::spill::{HostLoad, HostRule};
 
@@ -196,13 +196,14 @@ impl LocalRemote {
 
     /// Ends the pass a signalled round-vm has running here, keeping what a signalled VM run
     /// keeps. A home running another's pass, or none, holds some other round's results.
-    pub fn end_signalled_pass(&self, owner: u32, results_dir: &Path, scratch: &Path, within: Duration) {
+    pub fn end_signalled_pass(&self, owner: u32, results_dir: &Path, scratch: &Path, deadline: Instant) {
         let ours = self.pass_owner() == Some(owner);
         // Stopped before the copy: a slow copy must not outlast the caller's kill-after with the
         // pass and its container still running. The files stay on disk.
         self.stop_pass_of(Some(owner));
         if ours {
-            match crate::run::salvage_results(self, "", results_dir, scratch, within) {
+            let home = std::sync::Arc::new(LocalRemote { home: self.home.clone() });
+            match crate::run::salvage_results(home, "", results_dir, scratch, deadline.saturating_duration_since(Instant::now())) {
                 Some(n) => eprintln!("round-vm run: salvaged {n} suite result(s) from the host pass before stopping it"),
                 None => eprintln!("round-vm run: the host pass's results could not be copied; they stay under {}", self.home.display()),
             }
@@ -261,9 +262,23 @@ impl LocalRemote {
         Ok(child)
     }
 
-    fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
+    fn pull_from(&self, remote_path: &str, local: &Path, within: Option<Duration>) -> Result<(), crate::run::PullError> {
+        let from = self.at(remote_path);
+        if !from.exists() {
+            return Err(crate::run::PullError::Missing(format!("{}: no such file or directory", from.display())));
+        }
+        if from.is_dir() {
+            Ok(Self::copy_dir(&from, local, within)?)
+        } else {
+            fs::create_dir_all(local).map_err(|e| format!("{}: {e}", local.display()))?;
+            let to = local.join(from.file_name().ok_or_else(|| format!("{remote_path}: no file name"))?);
+            Ok(fs::copy(&from, &to).map(|_| ()).map_err(|e| format!("{}: {e}", from.display()))?)
+        }
+    }
+
+    fn copy_dir(from: &Path, to: &Path, within: Option<Duration>) -> Result<(), String> {
         fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
-        let st = command("cp").arg("-a").arg(format!("{}/.", from.display())).arg(to).stdin(Stdio::null()).output().map_err(|e| format!("cp: {e}"))?;
+        let st = command_within("cp", within).arg("-a").arg(format!("{}/.", from.display())).arg(to).stdin(Stdio::null()).output().map_err(|e| format!("cp: {e}"))?;
         if st.status.success() {
             Ok(())
         } else {
@@ -314,21 +329,15 @@ impl Remote for LocalRemote {
     }
 
     fn pull(&self, _addr: &str, remote_path: &str, local: &Path) -> Result<(), crate::run::PullError> {
-        let from = self.at(remote_path);
-        if !from.exists() {
-            return Err(crate::run::PullError::Missing(format!("{}: no such file or directory", from.display())));
-        }
-        if from.is_dir() {
-            Ok(Self::copy_dir(&from, local)?)
-        } else {
-            fs::create_dir_all(local).map_err(|e| format!("{}: {e}", local.display()))?;
-            let to = local.join(from.file_name().ok_or_else(|| format!("{remote_path}: no file name"))?);
-            Ok(fs::copy(&from, &to).map(|_| ()).map_err(|e| format!("{}: {e}", from.display()))?)
-        }
+        self.pull_from(remote_path, local, None)
+    }
+
+    fn pull_within(&self, _addr: &str, remote_path: &str, local: &Path, within: Duration) -> Result<(), crate::run::PullError> {
+        self.pull_from(remote_path, local, Some(within))
     }
 
     fn push(&self, _addr: &str, local: &Path, remote_path: &str) -> Result<(), String> {
-        Self::copy_dir(local, &self.at(remote_path))
+        Self::copy_dir(local, &self.at(remote_path), None)
     }
 
     fn await_exit(&self, _addr: &str, within: Duration, _ssh_log: &Path) -> Result<Option<i32>, String> {
@@ -646,9 +655,9 @@ mod tests {
         fs::write(home.join(PASS_GROUP_FILE), "999999999 1 7\n").unwrap();
         let remote = LocalRemote { home: home.clone() };
         let (dest, scratch) = (d.path().join("results"), d.path().join("scratch"));
-        remote.end_signalled_pass(8, &dest, &scratch, Duration::from_secs(5));
+        remote.end_signalled_pass(8, &dest, &scratch, Instant::now() + Duration::from_secs(5));
         assert!(!dest.exists() && home.join(PASS_GROUP_FILE).exists(), "another round-vm's pass is neither read nor stopped");
-        remote.end_signalled_pass(7, &dest, &scratch, Duration::from_secs(5));
+        remote.end_signalled_pass(7, &dest, &scratch, Instant::now() + Duration::from_secs(5));
         let read = |f: &str| fs::read_to_string(dest.join(f)).unwrap_or_else(|e| panic!("{f}: {e}"));
         assert_eq!(read(crate::run::PHASE_TIMES), "entry 2 - -\n");
         assert_eq!(read(crate::vm_fault::LAUNCHER_OUT_FILE), "the entry's output\n");
