@@ -1092,12 +1092,16 @@ pub fn active_state_of(facts: Option<runtime::units::UnitFacts>) -> String {
     .to_string()
 }
 
-struct HeldBuild(Option<spira_config::build_dir::Lease>);
+/// A release build's lease and the item it reports.
+struct HeldBuild(Option<(spira_config::build_dir::Lease, String)>);
 
 impl Drop for HeldBuild {
     fn drop(&mut self) {
-        if let Some(l) = self.0.take() {
+        if let Some((l, item)) = self.0.take() {
+            let report = l.report(&item);
             l.release();
+            eprintln!("{report}");
+            spira_config::build_dir::meter_report(&report);
         }
     }
 }
@@ -1246,12 +1250,19 @@ impl Scripts for RealScripts {
         lease.notes.iter().for_each(|n| eprintln!("{n}"));
         eprintln!("build directory {} — {}", lease.dir().display(), lease.start());
         lease.note_root(wt);
-        let held = HeldBuild(Some(lease));
-        let dir = held.0.as_ref().map(|l| l.dir().to_path_buf()).unwrap_or_default();
+        let dir = lease.dir().to_path_buf();
+        let mut held = HeldBuild(Some((lease, who.to_string())));
         let script = spira_config::resolve::locate_home_for_process()?.join(bd::CLEAN_SCRIPT);
         let path = std::env::var("PATH").unwrap_or_default();
-        if let Err(e) = bd::clean(&script, wt, &dir, &path, false, who, Some(repo)) {
-            bd::empty(&dir);
+        let cleaned = bd::clean(&script, wt, &dir, &path, false, who, Some(repo));
+        if let Some((lease, _)) = held.0.as_mut() {
+            match (&cleaned, bd::clean_report(&dir)) {
+                (Err(_), _) => lease.empty_after_failed_clean(),
+                (Ok(_), Some(report)) => lease.note_clean(&report),
+                (Ok(_), None) => {}
+            }
+        }
+        if let Err(e) = cleaned {
             return Err(format!("selective clean of {} failed ({e}) — emptied, nothing was built", dir.display()));
         }
         // FORK-EDGE: machine leg cargo (release build)

@@ -308,7 +308,7 @@ impl Real {
 
     fn build_in_bases(&self, tree: &Path, b: &crate::ports::Builder, bases: &[PathBuf]) -> Result<String, (BuilderMiss, String)> {
         use spira_config::build_dir as bd;
-        let lease = match bd::lease_dir(bases, &b.dir, &format!("gate {}", b.bead), &b.bead, b.wait).map_err(|e| (BuilderMiss::Unusable, format!("cannot lease it: {e}")))? {
+        let mut lease = match bd::lease_dir(bases, &b.dir, &format!("gate {}", b.bead), &b.bead, b.wait).map_err(|e| (BuilderMiss::Unusable, format!("cannot lease it: {e}")))? {
             Ok(l) => l,
             Err(bd::Refused::Held { holder }) => {
                 let miss = if holder == b.bead { BuilderMiss::Held } else { BuilderMiss::Taken };
@@ -319,6 +319,9 @@ impl Real {
         };
         let linked = (|| -> Result<(), String> {
             bd::clean(&self.home.join(bd::CLEAN_SCRIPT), tree, lease.dir(), &b.path, false, &b.bead, None)?;
+            if let Some(report) = bd::clean_report(lease.dir()) {
+                lease.note_clean(&report);
+            }
             crate::warm::normalize_mtimes(tree, &b.tip)?;
             let (link, debug) = (tree.join("target").join("debug"), lease.dir().join("debug"));
             fs::create_dir_all(&debug).map_err(|e| format!("{}: {e}", debug.display()))?;
@@ -336,12 +339,20 @@ impl Real {
             Ok(())
         })();
         if let Err(e) = linked {
-            lease.release();
+            self.release_lease(lease, &b.bead);
             return Err((BuilderMiss::Unusable, e));
         }
         let line = format!("{}{} (leased from {}'s builder at {})", crate::warm::BUILDER_IN, lease.dir().display(), b.bead, b.tip);
         self.leases.borrow_mut().insert(tree.to_path_buf(), (lease, b.path.clone(), b.bead.clone()));
         Ok(line)
+    }
+
+    /// Release a pool lease and send its one report.
+    fn release_lease(&self, lease: spira_config::build_dir::Lease, bead: &str) {
+        let report = lease.report(bead);
+        lease.release();
+        eprintln!("{report}");
+        spira_config::build_dir::meter_report(&report);
     }
 
     fn git(&self, repo: &Path) -> Command {
@@ -1143,7 +1154,7 @@ impl World for Real {
             if let Err(e) = spira_config::build_dir::clean(&self.home.join(spira_config::build_dir::CLEAN_SCRIPT), tree, lease.dir(), &path, true, &bead, Some(repo)) {
                 self.eprint(&format!("gate: could not record the tree {} holds ({e}) — the next lease cleans its workspace crates", lease.dir().display()));
             }
-            lease.release();
+            self.release_lease(lease, &bead);
         }
     }
     fn lc_build_dir(&self, bead: &str) -> Option<(String, PathBuf)> {

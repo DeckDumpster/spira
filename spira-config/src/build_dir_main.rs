@@ -6,7 +6,8 @@
 //! detached holder until `--pid` exits (pass the builder shell's `$$`), then the tree at `--root`
 //! (default: the current directory) is recorded as the one the directory holds and the directory
 //! goes idle. The selective clean runs before the path is printed. `--repo` names the repository
-//! the tree belongs to: the directory is one of that repository's own.
+//! the tree belongs to: the directory is one of that repository's own. At release the lease's
+//! report is appended to `$SPIRA_RUN/build-dir.log`.
 
 use spira_config::build_dir as bd;
 use std::io::{BufRead, BufReader, Write};
@@ -15,6 +16,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::Duration;
 
+/// The file under `SPIRA_RUN` each hand lease's report is appended to.
+const LOG: &str = "build-dir.log";
 const POLL: Duration = Duration::from_millis(500);
 const USAGE: &str = "usage: spira-build-dir lease --who <label> --pid <pid> [--root <tree>] --repo <name>";
 
@@ -115,13 +118,30 @@ fn hold(args: &[String]) -> Result<(), String> {
         lease.note_root(root);
     }
     let dir = lease.dir().to_path_buf();
+    let report = lease.report(who);
     let trimmed = lease.release();
     eprintln!("released build directory {}: {trimmed}", dir.display());
+    log_report(&report);
+    bd::meter_report(&report);
     if let Some(bases) = spira_config::process::cfg(bd::BASE_ENV).ok().map(|v| bd::parse_bases(&v)) {
         let budget = spira_config::process::cfg_parse::<i64>(bd::BUDGET_ENV).unwrap_or(0).max(0) as u64;
         bd::meter(&bases, &dir, budget.saturating_mul(1 << 30));
     }
     Ok(())
+}
+
+/// The holder outlives its caller's stderr, so its report goes to a log under `SPIRA_RUN`.
+fn log_report(report: &bd::LeaseReport) {
+    let at = tsd::iso_utc(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs());
+    let written = spira_config::process::cfg("SPIRA_RUN").and_then(|run| append(Path::new(&run), &format!("{at} {report}\n")).map_err(|e| format!("{run}/{LOG}: {e}")));
+    if let Err(e) = written {
+        eprintln!("cannot log the lease report ({e}): {report}");
+    }
+}
+
+fn append(run: &Path, line: &str) -> std::io::Result<()> {
+    std::fs::create_dir_all(run)?;
+    std::fs::OpenOptions::new().append(true).create(true).open(run.join(LOG))?.write_all(line.as_bytes())
 }
 
 fn script() -> Result<PathBuf, String> {
@@ -137,13 +157,16 @@ fn take(who: &str, root: &Path, repo: &str, out: &mut impl Write) -> Result<bd::
         ));
     }
     let ceiling = spira_config::process::cfg_parse(bd::CEILING_ENV)?;
-    let lease = bd::lease_for(&bases, who, repo, ceiling).map_err(|e| format!("cannot lease a build directory under {bases:?}: {e}"))?;
+    let mut lease = bd::lease_for(&bases, who, repo, ceiling).map_err(|e| format!("cannot lease a build directory under {bases:?}: {e}"))?;
     for note in &lease.notes {
         let _ = writeln!(out, "# {note}");
     }
     let path = std::env::var("PATH").unwrap_or_default();
     match bd::clean(&script()?, root, lease.dir(), &path, false, who, Some(repo)) {
         Ok(text) => {
+            if let Some(report) = bd::clean_report(lease.dir()) {
+                lease.note_clean(&report);
+            }
             for l in text.lines().filter(|l| !l.trim().is_empty()) {
                 let _ = writeln!(out, "# {l}");
             }
@@ -153,7 +176,7 @@ fn take(who: &str, root: &Path, repo: &str, out: &mut impl Write) -> Result<bd::
                 out,
                 "# selective clean failed ({e}) — emptied, this build is cold"
             );
-            bd::empty(lease.dir());
+            lease.empty_after_failed_clean();
         }
     }
     let budget = spira_config::process::cfg_parse::<i64>(bd::BUDGET_ENV)?.max(0) as u64;
