@@ -191,13 +191,14 @@ impl LocalRemote {
 
     /// Ends the pass a signalled round-vm has running here, keeping what a signalled VM run
     /// keeps. A home running another's pass, or none, holds some other round's results.
-    pub fn end_signalled_pass(&self, owner: u32, results_dir: &Path, scratch: &Path, within: Duration) {
+    pub fn end_signalled_pass(&self, owner: u32, results_dir: &Path, scratch: &Path, deadline: Instant) {
         let ours = self.pass_owner() == Some(owner);
         // Stopped before the copy: a slow copy must not outlast the caller's kill-after with the
         // pass and its container still running. The files stay on disk.
         self.stop_pass_of(Some(owner));
         if ours {
-            match crate::run::salvage_results(self, "", results_dir, scratch, within) {
+            let home = std::sync::Arc::new(LocalRemote { home: self.home.clone() });
+            match crate::run::salvage_results(home, "", results_dir, scratch, deadline.saturating_duration_since(Instant::now())) {
                 Some(n) => eprintln!("round-vm run: salvaged {n} suite result(s) from the host pass before stopping it"),
                 None => eprintln!("round-vm run: the host pass's results could not be copied; they stay under {}", self.home.display()),
             }
@@ -640,9 +641,9 @@ mod tests {
         fs::write(home.join(PASS_GROUP_FILE), "999999999 1 7\n").unwrap();
         let remote = LocalRemote { home: home.clone() };
         let (dest, scratch) = (d.path().join("results"), d.path().join("scratch"));
-        remote.end_signalled_pass(8, &dest, &scratch, Duration::from_secs(5));
+        remote.end_signalled_pass(8, &dest, &scratch, Instant::now() + Duration::from_secs(5));
         assert!(!dest.exists() && home.join(PASS_GROUP_FILE).exists(), "another round-vm's pass is neither read nor stopped");
-        remote.end_signalled_pass(7, &dest, &scratch, Duration::from_secs(5));
+        remote.end_signalled_pass(7, &dest, &scratch, Instant::now() + Duration::from_secs(5));
         let read = |f: &str| fs::read_to_string(dest.join(f)).unwrap_or_else(|e| panic!("{f}: {e}"));
         assert_eq!(read(crate::run::PHASE_TIMES), "entry 2 - -\n");
         assert_eq!(read(crate::vm_fault::LAUNCHER_OUT_FILE), "the entry's output\n");

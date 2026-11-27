@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::fs;
 use std::io::Write;
@@ -256,6 +256,10 @@ pub trait Remote: Sync {
     fn boot_log_tail(&self, addr: &str) -> Result<String, String>;
     /// Copies the remote directory `remote_path` into `local`.
     fn pull(&self, addr: &str, remote_path: &str, local: &Path) -> Result<(), PullError>;
+    /// [`Self::pull`] whose transfer is ended after `within`, where the implementation can end it.
+    fn pull_within(&self, addr: &str, remote_path: &str, local: &Path, _within: Duration) -> Result<(), PullError> {
+        self.pull(addr, remote_path, local)
+    }
     /// Copies the local directory `local` into the remote `remote_path`.
     fn push(&self, addr: &str, local: &Path, remote_path: &str) -> Result<(), String>;
     /// After the batch's ssh dropped: reconnects until the runner's exit code is recorded on the
@@ -1493,6 +1497,38 @@ impl SshRemote {
     }
 }
 
+impl SshRemote {
+    /// The pull's rsync; with `within`, under `timeout`, which takes seconds rounded up and never 0 (no limit).
+    fn pull_command(&self, addr: &str, remote_path: &str, local: &Path, within: Option<Duration>) -> std::process::Command {
+        let mut cmd = match within {
+            Some(within) => {
+                let secs = within.as_secs() + u64::from(within.subsec_nanos() > 0);
+                let mut cmd = command("timeout");
+                cmd.args(["-k", "1", &secs.max(1).to_string(), "rsync"]);
+                cmd
+            }
+            None => command("rsync"),
+        };
+        cmd.arg("-a")
+            .arg("-e")
+            .arg(format!("ssh {}", self.ssh_opts().join(" ")))
+            .arg(format!("{}@{addr}:{remote_path}", self.user))
+            .arg(format!("{}/", local.display()))
+            .stdin(Stdio::null());
+        cmd
+    }
+
+    fn pull_with(&self, addr: &str, remote_path: &str, local: &Path, within: Option<Duration>) -> Result<(), PullError> {
+        fs::create_dir_all(local).map_err(|e| format!("{}: {e}", local.display()))?;
+        let st = self.pull_command(addr, remote_path, local, within).output().map_err(|e| format!("rsync: {e}"))?;
+        if st.status.success() {
+            Ok(())
+        } else {
+            Err(classify_pull_failure(remote_path, st.status.code().unwrap_or(-1), &st.stderr))
+        }
+    }
+}
+
 fn rsync_said(stderr: &[u8]) -> String {
     let t = String::from_utf8_lossy(stderr);
     let t = t.trim();
@@ -1628,21 +1664,11 @@ impl Remote for SshRemote {
     }
 
     fn pull(&self, addr: &str, remote_path: &str, local: &Path) -> Result<(), PullError> {
-        fs::create_dir_all(local).map_err(|e| format!("{}: {e}", local.display()))?;
-        let st = command("rsync")
-            .arg("-a")
-            .arg("-e")
-            .arg(format!("ssh {}", self.ssh_opts().join(" ")))
-            .arg(format!("{}@{addr}:{remote_path}", self.user))
-            .arg(format!("{}/", local.display()))
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| format!("rsync: {e}"))?;
-        if st.status.success() {
-            Ok(())
-        } else {
-            Err(classify_pull_failure(remote_path, st.status.code().unwrap_or(-1), &st.stderr))
-        }
+        self.pull_with(addr, remote_path, local, None)
+    }
+
+    fn pull_within(&self, addr: &str, remote_path: &str, local: &Path, within: Duration) -> Result<(), PullError> {
+        self.pull_with(addr, remote_path, local, Some(within))
     }
 }
 
@@ -3566,39 +3592,57 @@ fn results_present(dir: &Path) -> usize {
     fs::read_dir(dir).map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "result")).count()).unwrap_or(0)
 }
 
+/// What one of [`salvage_results`]' pulls brought back.
+enum Salvaged {
+    Corpus(bool),
+    File { remote_path: String, kept: &'static str, pulled: Result<(), PullError> },
+}
+
 /// A run cut by a signal still holds the verdicts and the log its VM produced: pulls them into
-/// `results_dir` (results already there are kept) before the VM is released. `within` is how long
-/// the results pull may take to count, because the caller's kill-after is seconds away. Returns how many results were new, or `None` when the results pull itself failed or timed out.
-pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scratch: &Path, within: Duration) -> Option<usize> {
+/// `results_dir` (results already there are kept) before the VM is released. Returns at `within`
+/// whatever is still running, because the caller's kill-after is seconds away: the pulls' threads
+/// are never joined, and only this thread writes `results_dir`. Returns how many results were new,
+/// or `None` when the results pull itself failed or timed out.
+pub fn salvage_results(remote: Arc<dyn Remote + Send + Sync>, addr: &str, results_dir: &Path, scratch: &Path, within: Duration) -> Option<usize> {
+    let deadline = Instant::now() + within;
     let _ = fs::remove_dir_all(scratch);
     let corpus = scratch.join("results");
     let stamps = [crate::vm_fault::PHASE_FILE, PHASE_TIMES].map(|f| (format!("{REMOTE_RESULTS}{f}"), f));
     let logs = LAUNCHER_FILES.map(|(remote_name, kept)| (remote_name.to_string(), kept));
-    let n = std::thread::scope(|sc| {
-        // Each lands as its own pull returns: the kill may arrive while the corpus is still coming.
-        for (remote_path, kept) in logs.into_iter().chain(stamps) {
-            let to = scratch.join(kept);
-            sc.spawn(move || salvage_file(remote, addr, &remote_path, &to, &results_dir.join(kept)));
-        }
-        let (tx, rx) = std::sync::mpsc::channel();
-        let corpus = &corpus;
-        sc.spawn(move || {
-            let _ = tx.send(remote.pull(addr, REMOTE_RESULTS, corpus).is_ok());
+    let (tx, rx) = std::sync::mpsc::channel();
+    for (remote_path, kept) in logs.into_iter().chain(stamps) {
+        let (remote, addr, to, tx) = (remote.clone(), addr.to_string(), scratch.join(kept), tx.clone());
+        std::thread::spawn(move || {
+            let pulled = remote.pull_within(&addr, &remote_path, &to, within);
+            let _ = tx.send(Salvaged::File { remote_path, kept, pulled });
         });
-        // Copied before the scope joins: a stalled log pull must not hold back verdicts already here.
-        rx.recv_timeout(within).unwrap_or(false).then(|| {
-            // A cut round may have no result at all, so its top files are carried by name.
-            keep_top_files(corpus, results_dir);
-            stream_into(corpus, results_dir).unwrap_or(0)
-        })
+    }
+    let (addr, to) = (addr.to_string(), corpus.clone());
+    std::thread::spawn(move || {
+        let _ = tx.send(Salvaged::Corpus(remote.pull_within(&addr, REMOTE_RESULTS, &to, within).is_ok()));
     });
+    let mut new_results = None;
+    // Each lands as its own pull returns: the kill may arrive while another is still coming.
+    while let Ok(landed) = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        match landed {
+            Salvaged::Corpus(true) => {
+                // A cut round may have no result at all, so its top files are carried by name.
+                keep_top_files(&corpus, results_dir);
+                new_results = Some(stream_into(&corpus, results_dir).unwrap_or(0));
+            }
+            Salvaged::Corpus(false) => {}
+            Salvaged::File { remote_path, kept, pulled } => {
+                keep_salvaged(pulled, &remote_path, &scratch.join(kept), &results_dir.join(kept));
+            }
+        }
+    }
     let _ = fs::remove_dir_all(scratch);
-    n
+    new_results
 }
 
-/// Pulls the one file `remote_path` through `scratch` to `kept`; a pull that brings nothing leaves `kept` as it was.
-fn salvage_file(remote: &dyn Remote, addr: &str, remote_path: &str, scratch: &Path, kept: &Path) {
-    if let Err(e) = remote.pull(addr, remote_path, scratch) {
+/// Keeps the one file `remote_path` pulled into `scratch` as `kept`; a pull that brought nothing leaves `kept` as it was.
+fn keep_salvaged(pulled: Result<(), PullError>, remote_path: &str, scratch: &Path, kept: &Path) {
+    if let Err(e) = pulled {
         eprintln!("round-vm run: the VM's {remote_path} could not be pulled: {e:?}");
         return;
     }
@@ -6310,13 +6354,13 @@ mod tests {
         let remote = FakeRemote::green();
         let dest = fx.cfg.run_dir.join("salvaged");
         let scratch = fx.cfg.state_dir.join(".salvage-test");
-        let n = salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5));
+        let n = salvage_results(Arc::new(remote), "addr", &dest, &scratch, Duration::from_secs(5));
         assert_eq!(n, Some(2));
         assert!(dest.join("test-a.sh.result").is_file());
         assert!(!scratch.exists(), "scratch is removed");
         let mut none = FakeRemote::green();
         none.files.clear();
-        assert_eq!(salvage_results(&none, "addr", &dest, &scratch, Duration::from_secs(5)), None, "an unreachable VM salvages nothing and says the pull failed");
+        assert_eq!(salvage_results(Arc::new(none), "addr", &dest, &scratch, Duration::from_secs(5)), None, "an unreachable VM salvages nothing and says the pull failed");
     }
 
     #[test_id(tno3dii)]
@@ -6329,7 +6373,7 @@ mod tests {
         remote.files.insert("round-batch.err", vec![("round-batch.err", "round-vm: PHASE entry\n")]);
         let dest = fx.cfg.run_dir.join("cut");
         let scratch = fx.cfg.state_dir.join(".salvage-cut-test");
-        assert_eq!(salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5)), Some(0));
+        assert_eq!(salvage_results(Arc::new(remote), "addr", &dest, &scratch, Duration::from_secs(5)), Some(0));
         let read = |f: &str| fs::read_to_string(dest.join(f)).unwrap_or_else(|e| panic!("{f}: {e}"));
         assert_eq!(read(crate::vm_fault::LAUNCHER_OUT_FILE), "the entry's output\n");
         assert_eq!(read(crate::vm_fault::LAUNCHER_ERR_FILE), "round-vm: PHASE entry\n");
@@ -6368,7 +6412,65 @@ mod tests {
         remote.files.insert("round-batch.err", vec![("round-batch.err", "err\n")]);
         let dest = fx.cfg.run_dir.join("slow");
         let waits = CorpusWaits(remote, dest.clone());
-        assert_eq!(salvage_results(&waits, "addr", &dest, &fx.cfg.state_dir.join(".salvage-slow-test"), Duration::from_secs(90)), Some(2));
+        assert_eq!(salvage_results(Arc::new(waits), "addr", &dest, &fx.cfg.state_dir.join(".salvage-slow-test"), Duration::from_secs(90)), Some(2));
+    }
+
+    /// Every pull blocks until the test releases it: the VM that is hung at the signal.
+    struct HungPulls(FakeRemote, std::sync::Arc<(Mutex<bool>, std::sync::Condvar)>);
+    impl Remote for HungPulls {
+        fn round_started(&self, a: &str) -> bool { self.0.round_started(a) }
+        fn boot_log_tail(&self, a: &str) -> Result<String, String> { self.0.boot_log_tail(a) }
+        fn reachable(&self, a: &str) -> bool { self.0.reachable(a) }
+        fn run_batch(&self, a: &str, j: &BatchJob) -> Result<i32, String> { self.0.run_batch(a, j) }
+        fn push(&self, a: &str, l: &Path, r: &str) -> Result<(), String> { self.0.push(a, l, r) }
+        fn await_exit(&self, a: &str, w: Duration, s: &Path) -> Result<Option<i32>, String> { self.0.await_exit(a, w, s) }
+        fn run_attr(&self, a: &str, j: &crate::spool::AttrJob) -> Result<i32, String> { self.0.run_attr(a, j) }
+        fn clear_results(&self, a: &str) -> Result<(), String> { self.0.clear_results(a) }
+        fn pull(&self, a: &str, r: &str, l: &Path) -> Result<(), PullError> {
+            let (released, wake) = &*self.1;
+            drop(wake.wait_while(released.lock().unwrap(), |released| !*released).unwrap());
+            self.0.pull(a, r, l)
+        }
+    }
+
+    #[test_id(tpo5bif)]
+    #[test]
+    fn a_hung_pull_does_not_hold_the_salvage_past_its_deadline() {
+        let fx = fixture();
+        let release = std::sync::Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let hung = HungPulls(FakeRemote::green(), release.clone());
+        let dest = fx.cfg.run_dir.join("hung");
+        let scratch = fx.cfg.state_dir.join(".salvage-hung-test");
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(salvage_results(Arc::new(hung), "addr", &dest, &scratch, Duration::from_millis(100)));
+        });
+        let got = rx.recv_timeout(Duration::from_secs(30));
+        *release.0.lock().unwrap() = true;
+        release.1.notify_all();
+        assert_eq!(got.expect("salvage_results joined a pull still running"), None);
+    }
+
+    #[test_id(tl6im3h)]
+    #[test]
+    fn a_salvage_pulls_rsync_is_ended_by_timeout_at_the_deadline() {
+        let ssh = SshRemote { user: "root".into(), port: 2222, key: PathBuf::from("/k") };
+        let argv = |within| {
+            let cmd = ssh.pull_command("vm", "dir/", Path::new("/to"), within);
+            std::iter::once(cmd.get_program()).chain(cmd.get_args()).map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>()
+        };
+        let shell = format!("ssh {}", ssh.ssh_opts().join(" "));
+        let plain = ["rsync", "-a", "-e", &shell, "root@vm:dir/", "/to/"];
+        assert_eq!(argv(None), plain);
+        assert_eq!(argv(Some(Duration::from_secs(3))), [["timeout", "-k", "1", "3"].as_slice(), &plain].concat());
+        assert_eq!(argv(Some(Duration::from_millis(2900)))[3], "3", "a part second is not cut off the budget");
+        assert_eq!(argv(Some(Duration::ZERO))[3], "1", "timeout reads 0 as no limit");
+    }
+
+    #[test_id(t8u1apv)]
+    #[test]
+    fn the_signal_handlers_salvage_ends_before_the_queues_kill_after() {
+        assert!(crate::cli::SALVAGE_WITHIN < Duration::from_secs(5), "queue/src/real.rs runs round-vm under `timeout -k 5`: the salvage must leave time to release the VM");
     }
 
     #[test_id(t2pn393)]
@@ -7100,10 +7202,11 @@ mod tests {
         let fx = fixture();
         let remote = FakeRemote::green();
         remote.fail_result_pulls.store(1, std::sync::atomic::Ordering::SeqCst);
+        let remote = Arc::new(remote);
         let dest = fx.cfg.run_dir.join("salvaged");
         let scratch = fx.cfg.state_dir.join(".salvage-fail");
-        assert_eq!(salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5)), None);
-        assert_eq!(salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5)), Some(2), "the re-pull recovers every result");
+        assert_eq!(salvage_results(remote.clone(), "addr", &dest, &scratch, Duration::from_secs(5)), None);
+        assert_eq!(salvage_results(remote.clone(), "addr", &dest, &scratch, Duration::from_secs(5)), Some(2), "the re-pull recovers every result");
     }
 
     fn pulls_of(remote: &FakeRemote, path: &str) -> usize {
