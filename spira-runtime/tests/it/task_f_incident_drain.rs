@@ -80,19 +80,30 @@ fn the_probe_counts_the_spool_and_ages_its_oldest_entry() {
     assert!(pending(&dir.join("20260101T000100Z-b-1"), SPOOLED).is_err(), "a spool that is not a directory cannot be read");
 }
 
+fn notes(stuck: &[(PathBuf, String)], now: i64) -> Vec<String> {
+    let mut noted = vec![];
+    note_stuck(stuck, now, 60, |title| {
+        noted.push(title.to_string());
+        Ok(())
+    })
+    .unwrap();
+    noted
+}
+
 #[test_id(tzgj8k6)]
 #[test]
 fn an_entry_left_for_more_than_two_cadences_is_noted_with_the_count_and_the_reason() {
     let stuck: Vec<(PathBuf, String)> = vec![("spool/20260101T000100Z-b-1".into(), "later reason".into()), ("spool/20260101T000000Z-a-1".into(), "dedup could not read".into())];
-    assert_eq!(stuck_title(&stuck, SPOOLED + 121, 60).as_deref(), Some("2 incident event(s) stuck in the spool, oldest 2m: dedup could not read"));
+    assert_eq!(notes(&stuck, SPOOLED + 121), ["2 incident event(s) stuck in the spool, oldest 2m: dedup could not read"]);
+    assert_eq!(note_stuck(&stuck, SPOOLED + 121, 60, |_| Err("no inbox".into())), Err("no inbox".into()));
 }
 
 #[test_id(t54efw7)]
 #[test]
 fn a_younger_entry_and_an_empty_stuck_list_note_nothing() {
     let stuck: Vec<(PathBuf, String)> = vec![("spool/20260101T000000Z-a-1".into(), "why".into())];
-    assert_eq!(stuck_title(&stuck, SPOOLED + 120, 60), None);
-    assert_eq!(stuck_title(&[], SPOOLED + 9_999, 60), None);
+    assert!(notes(&stuck, SPOOLED + 120).is_empty());
+    assert!(notes(&[], SPOOLED + 9_999).is_empty());
 }
 
 #[test_id(teqrf17)]
@@ -110,5 +121,7 @@ fn every_effect_has_a_real_runner_and_a_sim_double() {
 #[test_id(tfu2ifq)]
 #[test]
 fn the_module_launches_no_process() {
-    assert!(LAUNCHERS.iter().all(|l| !MODULE.contains(l)));
+    let launches = |src: &str| LAUNCHERS.iter().any(|l| src.contains(l));
+    assert!(launches("let c = Command::new(tool);"), "the matcher finds a planted launcher");
+    assert!(!launches(MODULE));
 }

@@ -7,7 +7,9 @@
 //! entries and reads no store; an empty or unreadable spool ends the tick. Otherwise
 //! `incident.drain.drain` runs `incident::intake::drain_spool` over at most
 //! `SPIRA_INCIDENT_DRAIN_BATCH` references. An entry it could not file that is older than two
-//! cadences is noted in the Concierge inbox, once a day. It runs while the world is halted.
+//! cadences is noted in the Concierge inbox, once a day. It has no world-halt guard of its own;
+//! a scheduler halt holds the drain, a store write, until the resume, as it holds
+//! `incident.settle`'s writes.
 //!
 //! # Act
 //!
@@ -78,24 +80,17 @@ pub fn pending(dir: &std::path::Path, now: i64) -> Result<Pending, String> {
     Ok(Pending { count: entries.len() as u64, oldest_age_s: oldest.map_or(0, |at| (now - at).max(0) as u64) })
 }
 
-fn age(secs: i64) -> String {
-    match secs {
-        s if s >= 86_400 => format!("{}d {}h", s / 86_400, (s % 86_400) / 3600),
-        s if s >= 3600 => format!("{}h {}m", s / 3600, (s % 3600) / 60),
-        s if s >= 60 => format!("{}m", s / 60),
-        s => format!("{s}s"),
+/// The standing condition a drain leaves behind: when a stuck entry is older than two cadences,
+/// `note` is called once with how many are stuck and why the oldest of them is.
+pub fn note_stuck(stuck: &[(PathBuf, String)], now: i64, cadence_s: i64, note: impl FnOnce(&str) -> Result<(), String>) -> Result<(), String> {
+    let oldest = stuck.iter().filter_map(|(p, why)| Some((incident::spool::spooled_at(p)?, why))).min_by_key(|(at, _)| *at);
+    match oldest {
+        Some((at, why)) if now - at > 2 * cadence_s => note(&format!("{} incident event(s) stuck in the spool, oldest {}: {why}", stuck.len(), spira_config::scoped_stop::age(at.max(0) as u64, now.max(0) as u64))),
+        _ => Ok(()),
     }
 }
 
-/// The standing condition a drain leaves behind: the note's title when a stuck entry is older
-/// than two cadences, naming how many are stuck and why the oldest of them is.
-pub fn stuck_title(stuck: &[(PathBuf, String)], now: i64, cadence_s: i64) -> Option<String> {
-    let (oldest, why) = stuck.iter().filter_map(|(p, why)| Some((incident::spool::spooled_at(p)?, why))).min_by_key(|(at, _)| *at)?;
-    let waited = now - oldest;
-    (waited > 2 * cadence_s).then(|| format!("{} incident event(s) stuck in the spool, oldest {}: {why}", stuck.len(), age(waited)))
-}
-
-fn note_stuck(env: &Env, title: &str) -> Result<(), String> {
+fn note_inbox(env: &Env, title: &str) -> Result<(), String> {
     let sink = inbox_rules::Sink::configured("incident")?;
     let state = env.spira_run_path("incident-alarms.tsv");
     intake::with_incident_lock(&env.lock_path, env.lock_wait_s, || incident::alarm::note(&sink, &state, STUCK_REF, title))
@@ -122,9 +117,7 @@ pub fn run_drain(e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<Strin
     let bd = incident::real::RealBd { lc: Some(spira_store::lc_call::LcClient::socket(&e.world.lc_socket)) };
     let report: DrainReport = intake::drain_spool(&env, &bd, &incident::real::RealMailer, &incident::real::RealClock, batch);
     let line = intake::drain_report(&report);
-    if let Some(title) = stuck_title(&report.stuck, intake::now_epoch(), cadence_s) {
-        note_stuck(&env, &title).map_err(|why| format!("{line}; the stuck note was not written: {why}"))?;
-    }
+    note_stuck(&report.stuck, intake::now_epoch(), cadence_s, |title| note_inbox(&env, title)).map_err(|why| format!("{line}; the stuck note was not written: {why}"))?;
     Ok(line)
 }
 

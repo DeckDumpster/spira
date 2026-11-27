@@ -86,10 +86,27 @@ pub fn entry_path(spool_dir: &Path, stamp: &str, reference: &str, pid: u32) -> P
 /// Renamed into place from a dot-name [`entries`] skips: a drain running beside the writer
 /// would otherwise move a half-written entry aside as one with no REF.
 pub fn write_entry(path: &Path, e: &SpoolEntry) -> std::io::Result<()> {
+    let partial = partial_path(path);
+    let written = std::fs::write(&partial, format_entry(e)).and_then(|()| std::fs::rename(&partial, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    written
+}
+
+/// Where [`write_entry`] builds the entry bound for `path`.
+fn partial_path(path: &Path) -> PathBuf {
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("entry");
-    let partial = path.with_file_name(format!(".{name}"));
-    std::fs::write(&partial, format_entry(e))?;
-    std::fs::rename(&partial, path)
+    path.with_file_name(format!(".{name}"))
+}
+
+/// A partial this old has no writer left: its writer died before the rename.
+const ORPHAN_AFTER: std::time::Duration = std::time::Duration::from_secs(300);
+
+fn being_written(path: &Path) -> bool {
+    let hidden = path.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.'));
+    let age = || std::fs::metadata(path).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+    hidden && age().is_none_or(|a| a < ORPHAN_AFTER)
 }
 
 /// Every entry a drain owes, oldest first (the name opens with the spool stamp). A spool that
@@ -103,8 +120,7 @@ pub fn entries(spool_dir: &Path) -> std::io::Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     for entry in dir {
         let p = entry?.path();
-        let hidden = p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.'));
-        if !hidden && p.is_file() && p.extension().is_none_or(|x| x != "bad") {
+        if !being_written(&p) && p.is_file() && p.extension().is_none_or(|x| x != "bad") {
             paths.push(p);
         }
     }
@@ -114,7 +130,7 @@ pub fn entries(spool_dir: &Path) -> std::io::Result<Vec<PathBuf>> {
 
 /// The spool stamp an entry's name opens with.
 pub fn stamp_of(path: &Path) -> Option<&str> {
-    let stamp = path.file_name()?.to_str()?.split('-').next()?;
+    let stamp = path.file_name()?.to_str()?.trim_start_matches('.').split('-').next()?;
     let b = stamp.as_bytes();
     let shaped = b.len() == 16 && b[8] == b'T' && b[15] == b'Z' && b.iter().enumerate().all(|(i, c)| i == 8 || i == 15 || c.is_ascii_digit());
     shaped.then_some(stamp)
@@ -200,5 +216,30 @@ mod tests {
         raw.extend_from_slice(&[0xff, 0x00, 0xfe, b'\n']);
         let parsed = parse_entry(&raw).unwrap();
         assert_eq!(parsed.body, vec![0xff, 0x00, 0xfe, b'\n']);
+    }
+
+    #[test_id(twp8c39)]
+    #[test]
+    fn a_drain_skips_the_name_an_entry_is_written_under_until_its_writer_is_long_gone() {
+        let dir = testkit::TempDir::new("spool-partial");
+        let path = entry_path(&dir, "20260101T000000Z", "incident:a", 1);
+        let partial = partial_path(&path);
+        std::fs::write(&partial, "REF: incident:a\n").unwrap();
+        assert!(entries(&dir).unwrap().is_empty());
+        let long_ago = std::time::SystemTime::UNIX_EPOCH;
+        std::fs::File::options().write(true).open(&partial).unwrap().set_modified(long_ago).unwrap();
+        assert_eq!(entries(&dir).unwrap(), [partial]);
+    }
+
+    #[test_id(tojhxtw)]
+    #[test]
+    fn a_written_entry_is_listed_whole_and_leaves_no_partial() {
+        let dir = testkit::TempDir::new("spool-write");
+        let path = entry_path(&dir, "20260101T000000Z", "incident:a", 1);
+        let e = parse_entry(b"REF: incident:a\n--\nbody").unwrap();
+        write_entry(&path, &e).unwrap();
+        assert_eq!(entries(&dir).unwrap(), [path.clone()]);
+        assert!(!partial_path(&path).exists());
+        assert_eq!(parse_entry(&std::fs::read(&path).unwrap()).unwrap().body, b"body");
     }
 }

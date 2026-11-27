@@ -99,7 +99,7 @@ fn cmd_list(env: &Env, bd: &incident::real::RealBd) -> ExitCode {
         let title = bead.get("title").and_then(|t| t.as_str()).unwrap_or("");
         println!("{} P{priority} {title}", row.id);
     }
-    let spooled = std::fs::read_dir(&env.spool_dir).into_iter().flatten().flatten().filter(|e| e.path().extension().map(|x| x != "bad").unwrap_or(true)).count();
+    let spooled = incident::spool::entries(&env.spool_dir).map_or(0, |e| e.len());
     if spooled > 0 {
         println!("\n{spooled} event(s) still in the spool — run: incident drain");
     }

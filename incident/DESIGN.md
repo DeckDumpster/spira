@@ -60,8 +60,11 @@ back by the batch is not).
 group first, and files each of the first `SPIRA_INCIDENT_DRAIN_BATCH` groups once, from its newest
 event, whose body then opens with the group's count and stamp range. That filing settles the whole
 group: an outage's backlog is one item per cause, not a recurrence per event. A failed group keeps
-every entry. Entries are renamed into place (`spool::write_entry`), so a drain never reads a
-half-written one. The task notes an entry stuck for more than two cadences as
+every entry. Every filer looks for the entry, files it and removes what the filing settles under
+one hold of the incident lock, so concurrent drains file it once. Entries are renamed into place
+(`spool::write_entry`), so a drain never reads a half-written one; a partial older than five
+minutes lost its writer and is drained as it stands. A scheduler halt holds the task's drain, a
+store write, until the resume. The task notes an entry stuck for more than two cadences as
 `incident:spool-stuck` through `alarm::note`: one inbox line a day, with no store needed. A
 lane-refused entry stays by design and so is such a condition.
 

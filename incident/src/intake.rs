@@ -335,17 +335,31 @@ pub fn with_incident_lock<R>(lock_path: &std::path::Path, wait_s: u64, f: impl F
 
 /// `Err` is why the entry stays spooled.
 pub fn drain_one(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, path: &std::path::Path) -> Result<Option<String>, String> {
-    drain_entry(env, bd, mailer, clock, path, None)
+    match drain_entry(env, bd, mailer, clock, path, &[], None)? {
+        Settled::Here(id) => Ok(id),
+        Settled::Elsewhere => Ok(None),
+    }
 }
 
-/// `drain_one`, with `preface` opening the filed body.
-fn drain_entry(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, path: &std::path::Path, preface: Option<&str>) -> Result<Option<String>, String> {
-    let raw = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+enum Settled {
+    /// This call removed the entry, or moved it aside.
+    Here(Option<String>),
+    /// Another filer removed it first; nothing was filed.
+    Elsewhere,
+}
+
+/// `drain_one`, with `preface` opening the filed body and `also` the entries the same filing settles.
+fn drain_entry(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, path: &std::path::Path, also: &[std::path::PathBuf], preface: Option<&str>) -> Result<Settled, String> {
+    let raw = match std::fs::read(path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Settled::Elsewhere),
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+    };
     let Some(mut entry) = spool::parse_entry(&raw) else {
         ilog(env, &format!("spool entry with no REF: {} — moved aside", path.display()));
         let bad = path.with_extension("bad");
         let _ = std::fs::rename(path, &bad);
-        return Ok(None);
+        return Ok(Settled::Here(None));
     };
     if entry.body.is_empty() {
         entry.body = format!(
@@ -369,8 +383,20 @@ fn drain_entry(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, p
     } else {
         env.labels.clone()
     };
+    // Looked for, filed and removed under one hold, so two drains of one entry file it once.
     let locked = with_incident_lock(&env.lock_path, env.lock_wait_s, || {
-        run::file_one(bd, mailer, clock, &cfg, &entry.reference, &entry.title, &entry.body, &file_labels, &mut log)
+        if !path.exists() {
+            return None;
+        }
+        let outcome = run::file_one(bd, mailer, clock, &cfg, &entry.reference, &entry.title, &entry.body, &file_labels, &mut log);
+        if matches!(outcome, FileOutcome::Filed(_) | FileOutcome::Skew) {
+            for settled in also.iter().map(std::path::PathBuf::as_path).chain([path]) {
+                if let Err(e) = std::fs::remove_file(settled) {
+                    log.push(format!("{}: settled but not removed: {e}", settled.display()));
+                }
+            }
+        }
+        Some(outcome)
     });
     let Some(outcome) = locked else {
         let held = format!("another intake held {} for {}s — {} stays spooled, drain will retry", env.lock_path.display(), env.lock_wait_s, entry.reference);
@@ -378,6 +404,7 @@ fn drain_entry(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, p
         record_attempt(env, "incident-file", "incident", &entry.reference, tsd::alarm::Outcome::Failed { reason: "another intake held the lock; the event stays spooled".into() }, Some(note_of(&entry.title, &entry.body)));
         return Err(held);
     };
+    let Some(outcome) = outcome else { return Ok(Settled::Elsewhere) };
     for l in &log {
         ilog(env, l);
     }
@@ -392,14 +419,8 @@ fn drain_entry(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, p
         record_attempt(env, "incident-file", "incident", &entry.reference, o, message);
     }
     match outcome {
-        FileOutcome::Filed(id) => {
-            let _ = std::fs::remove_file(path);
-            Ok(Some(id))
-        }
-        FileOutcome::Skew => {
-            let _ = std::fs::remove_file(path);
-            Ok(None)
-        }
+        FileOutcome::Filed(id) => Ok(Settled::Here(Some(id))),
+        FileOutcome::Skew => Ok(Settled::Here(None)),
         FileOutcome::Unreachable | FileOutcome::Refused => Err(log.pop().unwrap_or_else(|| format!("{} was not filed", entry.reference))),
         FileOutcome::LaneRefused(reason) => Err(format!("{reason}; {} stays spooled until the repo admits the lane", path.display())),
     }
@@ -488,19 +509,13 @@ pub fn drain_spool(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Cloc
         let Some((oldest, newest)) = group.first().zip(group.last()) else { continue };
         let stamp = |p: &std::path::Path| spool::stamp_of(p).unwrap_or("an unrecorded time").to_string();
         let preface = (group.len() > 1).then(|| format!("{} events of this reference were spooled from {} to {}; this is the newest.", group.len(), stamp(oldest), stamp(newest)));
-        match drain_entry(env, bd, mailer, clock, newest, preface.as_deref()) {
-            Ok(_) => {
+        match drain_entry(env, bd, mailer, clock, newest, &group[..group.len() - 1], preface.as_deref()) {
+            Ok(Settled::Here(_)) => {
                 report.filed += 1;
                 report.duplicates += group.len() - 1;
-                for older in &group[..group.len() - 1] {
-                    if let Err(e) = std::fs::remove_file(older) {
-                        if e.kind() != std::io::ErrorKind::NotFound {
-                            report.stuck.push((older.clone(), format!("{}: filed with its reference but not removed: {e}", older.display())));
-                            report.duplicates -= 1;
-                        }
-                    }
-                }
             }
+            // Whoever removed the newest settles the rest, or the next pass does.
+            Ok(Settled::Elsewhere) => {}
             Err(why) => report.stuck.extend(group.into_iter().map(|p| (p, why.clone()))),
         }
     }
@@ -669,7 +684,7 @@ pub fn spool_stamp() -> String {
 #[cfg(test)]
 mod tests {
     const BATCH: usize = 20;
-    use super::{drain_report, drain_spool, parse_batch, DrainReport, filed_answer, own_alarm, priority_of, with_incident_lock, Env};
+    use super::{drain_one, drain_report, drain_spool, parse_batch, DrainReport, filed_answer, own_alarm, priority_of, with_incident_lock, Env};
     use crate::fake::{FakeBd, FakeMailer, FixedClock};
     use crate::spool::{format_entry, SpoolEntry};
     use std::cell::RefCell;
@@ -996,5 +1011,56 @@ mod tests {
         for bad in ["0", "", "many"] {
             assert!(parse_batch(bad).unwrap_err().contains("SPIRA_INCIDENT_DRAIN_BATCH"), "{bad:?}");
         }
+    }
+
+    #[test_id(tpez4hk)]
+    #[test]
+    fn an_entry_another_filer_already_removed_is_not_filed_again() {
+        let dir = testkit::TempDir::new("incident-drain-raced");
+        let env = env_in(&dir);
+        let bd = FakeBd::new();
+        let gone = env.spool_dir.join("20260101T000000Z-a-1");
+        assert_eq!(drain_one(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), &gone), Ok(None));
+        assert!(bd.created.borrow().is_empty());
+    }
+
+    #[test_id(t9km7dn)]
+    #[test]
+    fn two_drains_of_one_spool_file_each_reference_once() {
+        let dir = testkit::TempDir::new("incident-drain-twice");
+        let mut env = env_in(&dir);
+        env.lock_wait_s = 30;
+        for name in ["20260101T000000Z-a-1", "20260101T000001Z-a-1", "20260101T000002Z-a-1"] {
+            spool(&env, name, &entry("incident:contended"));
+        }
+        let env = &env;
+        let (inside_tx, inside_rx) = mpsc::channel();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        struct Paused(mpsc::Sender<()>, mpsc::Receiver<()>);
+        impl crate::ports::Clock for Paused {
+            fn now(&self) -> i64 {
+                let _ = self.0.send(());
+                let _ = self.1.recv();
+                1_000_000
+            }
+        }
+        let (first, second) = std::thread::scope(|scope| {
+            // The clock is read inside the lock, before the filing.
+            let first = scope.spawn(move || {
+                let bd = FakeBd::new();
+                drain_spool(env, &bd, &FakeMailer::default(), &Paused(inside_tx, go_rx), BATCH);
+                bd.created.take()
+            });
+            inside_rx.recv().unwrap();
+            let second = scope.spawn(move || {
+                let bd = FakeBd::new();
+                let report = drain_spool(env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), BATCH);
+                (bd.created.take(), report)
+            });
+            drop(go_tx);
+            (first.join().unwrap(), second.join().unwrap())
+        });
+        assert_eq!(first.len(), 1);
+        assert_eq!(second, (vec![], DrainReport::default()));
     }
 }
