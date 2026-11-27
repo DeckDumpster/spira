@@ -517,7 +517,6 @@ SPIRA_REPO cockpit/ops/src/health_main.rs
 SPIRA_REPO cockpit/ops/src/layout.rs
 SPIRA_REPO doctor/src/lib.rs
 SPIRA_REPO dwarf/src/conf.rs
-SPIRA_REPO dwarf/src/run.rs
 SPIRA_REPO dwarf/src/seam.rs
 SPIRA_REPO install/src/bin/install.rs
 SPIRA_REPO install/src/bootstrap.rs
