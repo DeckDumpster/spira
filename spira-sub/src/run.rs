@@ -153,12 +153,6 @@ impl Server {
 
     /// Carries out what one step of the core owes.
     fn apply(&self, state: &mut State, out: Out) -> Applied {
-        if !out.lines.is_empty() {
-            for line in &out.lines {
-                state.readers.retain(|r| r.lines.try_send(line.clone()).is_ok());
-            }
-            self.sample(Sample::Delivered(out.lines.len(), state.core.len()));
-        }
         let mut unsaved = None;
         if out.changed {
             if let Err(e) = store(&self.set, &state.core.saved()) {
@@ -166,6 +160,13 @@ impl Server {
                 say(&self.name, &why);
                 unsaved = Some(why);
             }
+        }
+        // Queued only once saved: a `run` killed after a reader has a value must not resend it.
+        if !out.lines.is_empty() {
+            for line in &out.lines {
+                state.readers.retain(|r| r.lines.try_send(line.clone()).is_ok());
+            }
+            self.sample(Sample::Delivered(out.lines.len(), state.core.len()));
         }
         let mut ticket = None;
         for filter in &out.unsubscribe {
@@ -465,6 +466,16 @@ mod tests {
     use ports::VirtualClock;
     use testkit::TempDir;
 
+    fn server(dir: &Path, core: Core) -> Server {
+        Server {
+            name: "t".into(),
+            set: dir.join("t.subs"),
+            state: Mutex::new(State { core, client: None, connection: 0, asked: 0, acked: 0, readers: Vec::new(), next_reader: 0 }),
+            changed: Condvar::new(),
+            telemetry: None,
+        }
+    }
+
     // Only an attach that beats the timer thread to a due batch replays to a standing reader,
     // so no timer thread runs here.
     #[test_id(tzdad0i)]
@@ -474,13 +485,7 @@ mod tests {
         let clock = VirtualClock::new(1_000_000);
         let mut core = Core::new(Arc::new(clock.clone()), Saved::default());
         core.add_classed("release/active", "", false, Some(60), true).unwrap();
-        let server = Server {
-            name: "t".into(),
-            set: dir.join("t.subs"),
-            state: Mutex::new(State { core, client: None, connection: 0, asked: 0, acked: 0, readers: Vec::new(), next_reader: 0 }),
-            changed: Condvar::new(),
-            telemetry: None,
-        };
+        let server = server(&dir, core);
         let (_, standing) = server.attach();
         server.lock().core.message("release/active", br#"{"release":"r1"}"#, true);
         clock.advance(60_000);
@@ -492,4 +497,38 @@ mod tests {
             assert!(delivery.ends_with("[sub:s1] release/active release=r1"), "{delivery}");
         }
     }
+
+    // The set file's temp path is a FIFO and the set outgrows its buffer, so `apply` is held
+    // inside the write until it is drained.
+    #[test_id(tfvgq5y)]
+    #[test]
+    fn a_value_reaches_no_reader_before_the_set_file_is_written_with_it_as_given() {
+        let dir = TempDir::new("sub-order");
+        let mut core = Core::new(Arc::new(VirtualClock::new(1_000_000)), Saved::default());
+        core.add_classed("release/active", &"n".repeat(1 << 20), false, None, true).unwrap();
+        let server = server(&dir, core);
+        let (_, reader) = server.attach();
+        let temp = std::ffi::CString::new(format!("{}/.t.subs.tmp.{}", dir.display(), std::process::id())).unwrap();
+        // SAFETY: a plain mkfifo(3) on a path this test just built.
+        assert_eq!(unsafe { libc::mkfifo(temp.as_ptr(), 0o600) }, 0);
+
+        let (early, written) = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let mut state = server.lock();
+                let out = state.core.message("release/active", br#"{"release":"r1"}"#, true);
+                server.apply(&mut state, out);
+            });
+            // Opening returns once the writer has the other end.
+            let mut pipe = std::fs::File::open(temp.to_str().unwrap()).unwrap();
+            let early = reader.try_recv().ok();
+            let mut written = String::new();
+            pipe.read_to_string(&mut written).unwrap();
+            (early.is_some(), written)
+        });
+
+        assert!(!early, "the line was queued while the set file did not yet hold it");
+        assert!(written.contains(r#""delivered":{"release/active":"#), "the held write records the delivery");
+        assert!(reader.try_recv().unwrap().starts_with("[sub:s1] release/active release=r1"));
+    }
 }
+

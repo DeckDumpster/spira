@@ -2683,6 +2683,7 @@ dependencies = [
 name = "spira-sub"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "ports",
  "rumqttc",
  "serde",
