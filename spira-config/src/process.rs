@@ -277,6 +277,14 @@ pub fn fixture_repo_map(dir: &std::path::Path, repos: &[&str]) -> std::path::Pat
     path
 }
 
+/// A repo map `bead file` accepts: each of `repos` lands by push and admits its filer's lane.
+pub fn fixture_filing_repo_map(dir: &std::path::Path, repos: &[&str]) -> std::path::PathBuf {
+    let map: String = repos.iter().map(|r| format!("{r}|{}|push|local/main||true|self\n", dir.join(r).display())).collect();
+    let path = dir.join("filing.repos");
+    std::fs::write(&path, map).expect("the fixture map is written");
+    path
+}
+
 /// The environment of a world whose registry holds exactly `repos` (the first is the home repo)
 /// and whose run directory is `run`, for a test that reads stops through the process's own
 /// registry: `Some` sets, `None` unsets.

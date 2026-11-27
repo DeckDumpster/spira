@@ -1607,7 +1607,7 @@ fn filing_through_the_real_bead(lc: &Lc) {
         std::os::unix::fs::symlink(testkit::bin_exe(program), lc.dir.join("release/bin").join(program)).unwrap();
     }
     let shim = format!("#!/bin/sh\nexec {} --home {} \"$@\"\n", testkit::bin_exe("bead").display(), lc.home.display());
-    testkit::write_exe(&lc.dir.join("release/bin/bead.sh"), &shim);
+    testkit::write_exe(lc.dir.join("release/bin/bead.sh"), &shim);
 }
 
 #[test_id(t3xplmr)]
@@ -1615,7 +1615,7 @@ fn filing_through_the_real_bead(lc: &Lc) {
 fn a_second_filing_of_a_waiting_outcome_is_folded_into_the_first_and_leaves_no_new_row() {
     let Some(store) = Store::up() else { return };
     let writer = store.dir.join("fold.writer");
-    let map = spira_config::process::fixture_repo_map(&store.dir, &["spira"]).display().to_string();
+    let map = spira_config::process::fixture_filing_repo_map(&store.dir, &["spira"]).display().to_string();
     let mut lc = Lc::with_keys(&store, "fold", &writer.display().to_string(), &[("SPIRA_REPO_MAP", &map)]);
     provision(&lc);
     lc.admin("admin-provision-writer");
