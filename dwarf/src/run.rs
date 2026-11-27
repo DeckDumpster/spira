@@ -2021,13 +2021,18 @@ pub fn dwarf_settings(home: &Path, run: &Path, prod: Option<&Path>, habits: bool
         }
     }
     let dwarf_bin = home.parent().unwrap_or(home).join("bin").join("dwarf");
+    let mut bash_group = None;
     if is_executable(&dwarf_bin) {
         let scope = search.map(|(run, work)| format!(" --run {} --worktree {}", sh_quote(run), sh_quote(work))).unwrap_or_default();
         let cmd = format!("{} search-fence{scope}", sh_quote(&dwarf_bin));
         pre.push(format!("{{\"type\": \"command\", \"command\": {}, \"timeout\": 5}}", serde_json::to_string(&cmd).unwrap()));
+        let cmd = format!("{} bash-stdin", sh_quote(&dwarf_bin));
+        bash_group = Some(format!("{{\"matcher\": \"Bash\", \"hooks\": [{{\"type\": \"command\", \"command\": {}, \"timeout\": 5}}]}}", serde_json::to_string(&cmd).unwrap()));
     }
     if !pre.is_empty() {
-        hooks.push_str(&format!(", \"PreToolUse\": [{{\"hooks\": [{}]}}]", pre.join(", ")));
+        let mut groups = vec![format!("{{\"hooks\": [{}]}}", pre.join(", "))];
+        groups.extend(bash_group);
+        hooks.push_str(&format!(", \"PreToolUse\": [{}]", groups.join(", ")));
     }
     format!(
         "{{\"hooks\": {{{hooks}}}, \"env\": {{\"BASH_DEFAULT_TIMEOUT_MS\": \"1800000\", \"BASH_MAX_TIMEOUT_MS\": \"3600000\", \"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS\": \"1\"}}}}"
@@ -2131,5 +2136,20 @@ mod tests {
         assert_eq!(on.len(), 1);
         assert!(on[0].contains("search-fence") && on[0].contains("--run 'r/run'") && on[0].contains("--worktree 'r/run/worktree/sp-a'"), "{on:?}");
         assert!(on[0].starts_with(&format!("'{}'", bin.display())));
+    }
+
+    #[test_id(tsw9q7s)]
+    #[test]
+    fn a_bash_matched_group_runs_the_bash_stdin_hook_once_the_dwarf_binary_is_executable() {
+        let d = testkit::TempDir::new("dwarf-settings-bash-stdin");
+        let home = d.path().join("spira");
+        std::fs::create_dir_all(&home).unwrap();
+        let bin = d.path().join("bin").join("dwarf");
+        std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
+        testkit::write_exe(&bin, "#!/bin/sh\n");
+        let v: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, Path::new("r/run"), None, false, None)).unwrap();
+        let groups = v["hooks"]["PreToolUse"].as_array().unwrap();
+        let bash = groups.iter().find(|g| g["matcher"] == "Bash").unwrap_or_else(|| panic!("no Bash group: {groups:?}"));
+        assert_eq!(bash["hooks"][0]["command"], format!("'{}' bash-stdin", bin.display()).as_str());
     }
 }
