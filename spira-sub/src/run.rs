@@ -458,3 +458,38 @@ pub fn run(options: Options) -> Result<(), String> {
     )?;
     Err(server.connection(&options.broker, &*options.clock))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ports::VirtualClock;
+    use testkit::TempDir;
+
+    // Only an attach that beats the timer thread to a due batch replays to a standing reader,
+    // so no timer thread runs here.
+    #[test_id(tzdad0i)]
+    #[test]
+    fn what_an_attach_replays_reaches_the_readers_already_attached() {
+        let dir = TempDir::new("sub-attach");
+        let clock = VirtualClock::new(1_000_000);
+        let mut core = Core::new(Arc::new(clock.clone()), Saved::default());
+        core.add_classed("release/active", "", false, Some(60), true).unwrap();
+        let server = Server {
+            name: "t".into(),
+            set: dir.join("t.subs"),
+            state: Mutex::new(State { core, client: None, connection: 0, asked: 0, acked: 0, readers: Vec::new(), next_reader: 0 }),
+            changed: Condvar::new(),
+            telemetry: None,
+        };
+        let (_, standing) = server.attach();
+        server.lock().core.message("release/active", br#"{"release":"r1"}"#, true);
+        clock.advance(60_000);
+
+        let (_, newcomer) = server.attach();
+
+        for reader in [standing, newcomer] {
+            let delivery = reader.try_recv().unwrap();
+            assert!(delivery.ends_with("[sub:s1] release/active release=r1"), "{delivery}");
+        }
+    }
+}

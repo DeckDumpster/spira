@@ -88,8 +88,20 @@ fn depends_on(filter: &str, publisher: &str) -> bool {
     topics::families_matching(filter).any(|f| f.resident.iter().any(|r| r == publisher))
 }
 
+/// `value` with its keys in order: a build may unify serde_json's `preserve_order` in.
+fn key_ordered(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let ordered: BTreeMap<&String, &Value> = map.iter().collect();
+            Value::Object(ordered.into_iter().map(|(k, v)| (k.clone(), key_ordered(v))).collect())
+        }
+        Value::Array(items) => Value::Array(items.iter().map(key_ordered).collect()),
+        other => other.clone(),
+    }
+}
+
 fn digest(value: &Value) -> String {
-    format!("{:x}", Sha256::digest(value.to_string()))
+    format!("{:x}", Sha256::digest(key_ordered(value).to_string()))
 }
 
 /// The next multiple of the interval, so equal intervals fall due together.
@@ -232,8 +244,9 @@ impl Core {
         self.subs.iter().position(|s| s.entry.id == id).ok_or_else(|| format!("no subscription {id:?}; `spira-sub list` shows them"))
     }
 
-    /// Changes how `id` is delivered. Becoming at once, it is given what its batch held; with
-    /// nobody `listening` that is left for the next reader's replay.
+    /// Changes how `id` is delivered. Becoming at once, it is given what its batch held. With
+    /// nobody `listening`, the next reader's replay has the state values, and the chatter,
+    /// which no replay holds, stays pending and due.
     pub fn set_class(&mut self, id: &str, batch_s: Option<u64>, listening: bool) -> Result<Out, String> {
         let at = self.position(id)?;
         let now = self.now_ms();
@@ -246,13 +259,15 @@ impl Core {
         sub.entry.batch_s = batch_s;
         match batch_s {
             Some(batch_s) => sub.due_ms = sub.due_ms.map(|_| boundary(now, batch_s)),
-            None => {
+            None if listening => {
                 for (topic, value) in sub.take_pending() {
-                    if listening {
-                        let line = sub.deliver(&topic, &value, is_state(&topic), now, &mut out);
-                        out.lines.extend(line);
-                    }
+                    let line = sub.deliver(&topic, &value, is_state(&topic), now, &mut out);
+                    out.lines.extend(line);
                 }
+            }
+            None => {
+                sub.pending.retain(|topic, _| !is_state(topic));
+                sub.due_ms = (!sub.pending.is_empty()).then_some(now);
             }
         }
         Ok(out)
@@ -394,7 +409,8 @@ impl Core {
     }
 
     /// Delivers every due batch as one delivery, while someone is `listening`; an unheard one
-    /// goes on gathering. A value back to what was last delivered is left out.
+    /// goes on gathering. A value back to what was last delivered is left out. What a
+    /// subscription since set to at once still holds goes as ordinary lines.
     pub fn flush_due(&mut self, listening: bool) -> Out {
         let mut out = Out::default();
         if !listening {
@@ -405,10 +421,13 @@ impl Core {
         let mut since = u64::MAX;
         for sub in self.subs.iter_mut().filter(|s| s.due_ms.is_some_and(|due| due <= now)) {
             for (topic, value) in sub.take_pending() {
-                if let Some(line) = sub.deliver(&topic, &value, is_state(&topic), now, &mut out) {
-                    since = since.min(sub.since_ms);
-                    block.push(line);
+                let Some(line) = sub.deliver(&topic, &value, is_state(&topic), now, &mut out) else { continue };
+                if sub.entry.batch_s.is_none() {
+                    out.lines.push(line);
+                    continue;
                 }
+                since = since.min(sub.since_ms);
+                block.push(line);
             }
         }
         if !block.is_empty() {
@@ -689,6 +708,29 @@ mod tests {
         assert_eq!(c.flush_due(false), Out::default());
         c.message("progress/sp-a", br#"{"note":"two"}"#, false);
         assert_eq!(c.attach().lines, ["[batch] n=1 since 1970-01-01T00:16:40Z\n[sub:s1] progress/sp-a note=two"]);
+    }
+
+    #[test_id(t6c8cpc)]
+    #[test]
+    fn chatter_held_when_set_to_at_once_with_no_reader_reaches_the_next_one() {
+        let (mut c, _) = core();
+        batched(&mut c, "progress/+");
+        batched(&mut c, "release/active");
+        c.message("progress/sp-a", br#"{"note":"held"}"#, false);
+        c.message("release/active", br#"{"release":"r1"}"#, false);
+        assert!(c.set_class("s1", None, false).unwrap().lines.is_empty());
+        assert!(c.set_class("s2", None, false).unwrap().lines.is_empty());
+        assert_eq!(c.attach().lines, ["[sub:s2] release/active release=r1", "[sub:s1] progress/sp-a note=held"]);
+        assert_eq!(c.next_due_ms(), None);
+    }
+
+    #[test_id(t4lutwq)]
+    #[test]
+    fn a_state_value_republished_with_its_keys_reordered_is_not_news() {
+        let (mut c, _) = core();
+        c.add("release/active", "", false, true).unwrap();
+        assert_eq!(c.message("release/active", br#"{"a":1,"b":{"c":2,"d":3}}"#, true).lines.len(), 1);
+        assert!(c.message("release/active", br#"{"b":{"d":3,"c":2},"a":1}"#, true).lines.is_empty());
     }
 
     #[test_id(tqfvk56)]

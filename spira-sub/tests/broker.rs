@@ -6,7 +6,7 @@ extern crate spira_test_id;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -306,6 +306,49 @@ fn a_batched_subscription_arrives_as_one_block_behind_what_is_delivered_at_once(
     assert_eq!(follow.next(), "[sub:s1] bead/sp-a/state state=S10");
     publish(&p, "release/active", json!({"release": "r2"}));
     assert_eq!(follow.next(), "[sub:s2] release/active release=r2");
+}
+
+/// Passes on each write as it was made.
+struct Writes(Sender<String>);
+
+impl std::io::Write for Writes {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.send(String::from_utf8_lossy(bytes).into_owned()).map_err(|_| std::io::ErrorKind::BrokenPipe)?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test_id(tuc4a3j)]
+#[test]
+fn follow_writes_a_whole_batch_in_one_write() {
+    let broker = Broker::up();
+    let world = World::new(broker.socket());
+    let _run = world.run(broker.socket());
+    let (writes, written) = channel();
+    let (notes, noted) = channel();
+    let socket = world.dir.join("c/concierge.sock");
+    std::thread::spawn(move || spira_sub::client::follow(&socket, &mut Writes(writes), &mut |note| drop(notes.send(note.to_string()))));
+    assert_eq!(noted.recv_timeout(FAILSAFE).unwrap(), "following");
+    let p = publisher("t", broker.socket());
+    publish(&p, "bead/sp-a/state", json!({"state": "A"}));
+    publish(&p, "bead/sp-b/state", json!({"state": "B"}));
+
+    world.ok(&["add", "bead/+/state", "--batch", "1s"]);
+
+    let mut batch = written.recv_timeout(FAILSAFE).unwrap();
+    // The two retained values may straddle a boundary and make two batches of one.
+    if batch.starts_with("[batch] n=1 ") {
+        assert_eq!(batch.lines().count(), 2, "{batch:?}");
+        batch = written.recv_timeout(FAILSAFE).unwrap();
+        assert!(batch.starts_with("[batch] n=1 ") && batch.lines().count() == 2, "{batch:?}");
+    } else {
+        assert!(batch.starts_with("[batch] n=2 ") && batch.lines().count() == 3, "{batch:?}");
+    }
+    assert!(batch.ends_with('\n'), "{batch:?}");
 }
 
 #[test_id(tissyg2)]
