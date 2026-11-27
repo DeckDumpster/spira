@@ -433,10 +433,10 @@ pub(crate) mod verdict_run {
         with_run(&NoBd, &Seams(Default::default()), Dirty(vec![]), "", |r| {
             r.s.bead = "sp-res".into();
             r.s.submitted_at = submitted;
-            r.s.build_dir = Some(spira_config::build_dir::lease(std::slice::from_ref(&base), "sp-res").unwrap());
+            r.s.build_dir = Some(spira_config::build_dir::lease_for(std::slice::from_ref(&base), "sp-res", "spira", 1).unwrap());
             r.release_build_dir();
         });
-        std::fs::read_to_string(base.join("dir.1.gate")).ok()
+        std::fs::read_to_string(base.join("spira/1.gate")).ok()
     }
 
     #[test_id(tplace4)]
@@ -451,16 +451,16 @@ pub(crate) mod verdict_run {
     fn a_reservation_that_cannot_be_written_is_logged_with_its_path_and_bead() {
         let work = testkit::TempDir::new("dwarf-reserve-fail");
         let base = work.path().join("builds");
-        std::fs::create_dir_all(base.join("dir.1.gate")).unwrap();
+        std::fs::create_dir_all(base.join("spira/1.gate")).unwrap();
         let sink = Mute::default();
         with_run_sink(crate::tests::complete_vars(), &NoBd, Dirty(vec![]), &Lc, &|| 0, &Seams(Default::default()), &sink, "", |r| {
             r.s.bead = "sp-res".into();
             r.s.submitted_at = Some(T0);
-            r.s.build_dir = Some(spira_config::build_dir::lease(std::slice::from_ref(&base), "sp-res").unwrap());
+            r.s.build_dir = Some(spira_config::build_dir::lease_for(std::slice::from_ref(&base), "sp-res", "spira", 1).unwrap());
             r.release_build_dir();
         });
         let lines = sink.0.lock().unwrap();
-        let gate = base.join("dir.1.gate").display().to_string();
+        let gate = base.join("spira/1.gate").display().to_string();
         assert!(lines.iter().any(|l| l.contains("could not reserve") && l.contains(&gate) && l.contains("sp-res")), "{lines:?}");
     }
 
@@ -478,7 +478,7 @@ pub(crate) mod verdict_run {
             r.s.logf = Some(w.join("log"));
             r.rune.builds = builds;
             if builds {
-                r.s.build_dir = Some(spira_config::build_dir::lease(&[w.join("builds")], "sp-x").unwrap());
+                r.s.build_dir = Some(spira_config::build_dir::lease_for(&[w.join("builds")], "sp-x", "spira", 1).unwrap());
             }
             let bin = w.join("model-bin");
             std::fs::create_dir_all(&bin).unwrap();
