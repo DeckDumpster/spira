@@ -5,27 +5,7 @@
 
 use sha2::{Digest, Sha256};
 
-/// Deterministic 8-char hex label token for an external_ref string (incident.sh's
-/// `_ref_hash`). sha256, first 8 hex chars: 32 bits, negligible collision risk across a
-/// queue of hundreds of open beads, and a collision costs one extra list iteration rather
-/// than a silent wrong answer (the dedup path still confirms external_ref itself).
-pub fn ref_hash(reference: &str) -> String {
-    let digest = Sha256::digest(reference.as_bytes());
-    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
-    hex[..8].to_string()
-}
-
-/// external_ref is a fixed-width column: a longer key is a permanent create error, so a
-/// spooled entry written before its filer bounded the key would retry forever. An overlong
-/// key keeps a readable prefix plus the hash of the whole.
-pub fn bound_ref(reference: &str) -> String {
-    const MAX: usize = 160;
-    if reference.chars().count() <= MAX {
-        return reference.to_string();
-    }
-    let head: String = reference.chars().take(MAX - 9).collect();
-    format!("{head}:{}", ref_hash(reference))
-}
+pub use spira_store::incident::{bound_ref, ref_hash};
 
 /// incident.sh sanitises SPIRA_INCIDENT_CAUSE with
 /// `tr -c 'a-zA-Z0-9-' '-' | sed 's/-\{2,\}/-/g;s/^-//;s/-$//'`, defaulting to "unrecorded"

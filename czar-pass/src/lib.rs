@@ -163,8 +163,8 @@ impl Filing {
     }
 }
 
-/// Files `f` through the incident library in this process: spooled, then drained into the
-/// store, deduplicated on its reference. `Err` when it was not filed (it may stay spooled).
+/// Files `f` through the incident library in this process: raised onto its reference's row and
+/// filed from it, deduplicated on that reference. `Err` says why it was not filed.
 pub fn file(f: &Filing) -> Result<String, String> {
     let mut env = incident::intake::Env::load();
     if env.db.is_none() {
@@ -178,15 +178,11 @@ pub fn file(f: &Filing) -> Result<String, String> {
     env.repo = Some(f.repo.clone()).filter(|r| !r.is_empty());
     env.cause = incident::decide::sanitize_cause(&f.cause);
     env.express = f.express;
+    env.reference = Some(f.reference.clone());
     let bd = incident::real::RealBd::from_env()?;
-    let entry = incident::spool::SpoolEntry { reference: f.reference.clone(), title: f.subject.clone(), unit: env.unit.clone(), incident_path: env.path.clone(), cause: env.cause.clone(), repo: env.repo.clone(), body: f.body.clone().into_bytes() };
-    std::fs::create_dir_all(&env.spool_dir).map_err(|e| format!("{}: {e}", env.spool_dir.display()))?;
-    let path = incident::spool::entry_path(&env.spool_dir, &incident::intake::spool_stamp(), &f.reference, std::process::id());
-    incident::spool::write_entry(&path, &entry).map_err(|e| format!("{}: {e}", path.display()))?;
-    match incident::intake::drain_one(&env, &bd, &incident::real::RealMailer, &incident::real::RealClock, &path) {
-        Ok(id) => Ok(id.unwrap_or_else(|| f.reference.clone())),
-        Err(why) => Err(format!("{} not filed; it stays spooled at {}: {why}", f.reference, path.display())),
-    }
+    incident::intake::file_event(&env, &bd, &incident::real::RealMailer, &incident::real::RealClock, &f.subject, f.body.as_bytes())
+        .map(|id| id.unwrap_or_else(|| f.reference.clone()))
+        .map_err(|why| format!("{} not filed: {why}", f.reference))
 }
 
 /// `forge batch-ci-status <repo> <branch>`'s `key: value` lines, through the forge library.

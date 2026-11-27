@@ -34,16 +34,14 @@ pub struct FileConfig<'a> {
 pub enum FileOutcome {
     Filed(String),
     /// A store read or `bd create` failed, so the filing could not finish; the string says
-    /// why. The caller must keep the spool entry.
+    /// why. The caller holds the event on its row.
     Unread(String),
     /// The database was reachable but the `bd create` guards refused the filing outright
-    /// (a schema-delete text) — also kept spooled, since
-    /// retrying an unreachable-looking failure is safer than silently dropping the event,
-    /// and the guard message is on the log for a human to fix the caller.
+    /// (a schema-delete text) — also held on the row, since keeping the event is safer than
+    /// silently dropping it, and the guard message is there for a human to fix the caller.
     Refused,
     /// `bd create` refused the filing because the repo's admitted lanes leave out `incident`.
-    /// Holds the refusal's first line, which names the repo; the caller surfaces it with the
-    /// spool path rather than leaving the entry silently spooled.
+    /// Holds the refusal's first line, which names the repo.
     LaneRefused(String),
     /// The event was activation skew on a key the running release retired: logged, nothing filed.
     Skew,
@@ -83,7 +81,7 @@ fn dedup_incident(bd: &dyn Bd, db: &str, reference: &str, lookback_days: i64, no
     let since = since_date(now, lookback_days);
     // Open/closed is each bead's lifecycle row (sp-jgjvh: incident beads are work beads);
     // the closed lookback keeps bd's `closed_at` as content. A pass that could not read —
-    // bd or the machine — is not "nothing found": the event stays spooled.
+    // bd or the machine — is not "nothing found": the event stays on its row.
     let passes: [(Scope, Option<&str>, Option<&str>, bool); 4] = [
         (Scope::Unfinished, Some(ref_label.as_str()), None, false),
         (Scope::Unfinished, None, None, true),
@@ -139,7 +137,7 @@ pub fn file_one(
     let hit = match dedup_incident(bd, cfg.db, reference, cfg.dedup_lookback_days, now) {
         Err(why) => {
             let why = format!("dedup could not read ({why})");
-            log.push(format!("{why} — {reference} stays spooled"));
+            log.push(format!("{why} — {reference} stays unfiled"));
             return FileOutcome::Unread(why);
         }
         Ok(h) => h,
@@ -176,28 +174,17 @@ pub fn file_one(
     }
 }
 
-/// A due alarm whose reference already has a bead nobody is working (closed, landed) hands
-/// the firing to `file_one`, so the recurrence has an open owner carrying its evidence. A
-/// reference with no bead, or an open one, stays an inbox note only. Looks back past the
-/// filing window: an alarm outlives the week a bead's dedup covers.
-#[allow(clippy::too_many_arguments)]
-pub fn alarm_owner(
-    bd: &dyn Bd,
-    mailer: &dyn Mailer,
-    clock: &dyn Clock,
-    cfg: &FileConfig,
-    reference: &str,
-    title: &str,
-    payload: &[u8],
-    labels: &str,
-    log: &mut Vec<String>,
-) -> Option<FileOutcome> {
-    let wide = FileConfig { dedup_lookback_days: ALARM_LOOKBACK_DAYS.max(cfg.dedup_lookback_days), ..*cfg };
+/// Whether a due alarm's firing is filed: its reference has a bead nobody is working (closed,
+/// landed), so the recurrence needs an open owner carrying its evidence. A reference with no
+/// bead, or an open one, stays an inbox note only, and so does one the dedup cannot read.
+pub fn alarm_wants_filing(bd: &dyn Bd, clock: &dyn Clock, cfg: &FileConfig, reference: &str) -> bool {
     let bounded = decide::bound_ref(reference);
-    match dedup_incident(bd, wide.db, &bounded, wide.dedup_lookback_days, clock.now()) {
-        Ok(Some(DedupHit::Open { .. })) | Ok(None) | Err(_) => None,
-        Ok(Some(_)) => Some(file_one(bd, mailer, clock, &wide, reference, title, payload, labels, log)),
-    }
+    !matches!(dedup_incident(bd, cfg.db, &bounded, alarm_lookback(cfg.dedup_lookback_days), clock.now()), Ok(Some(DedupHit::Open { .. })) | Ok(None) | Err(_))
+}
+
+/// How far back an alarm's owner is looked for: an alarm outlives the week a bead's dedup covers.
+pub fn alarm_lookback(configured_days: i64) -> i64 {
+    ALARM_LOOKBACK_DAYS.max(configured_days)
 }
 
 const ALARM_LOOKBACK_DAYS: i64 = 3650;
@@ -300,7 +287,7 @@ fn file_new(
         // An unmapped repo files under the home repo rather than refusing the event.
     }
     if decide::contains_schema_delete(title, "") {
-        log.push(format!("create FAILED for {reference} — contains a schema_migrations DELETE — stays spooled"));
+        log.push(format!("create FAILED for {reference} — contains a schema_migrations DELETE — stays unfiled"));
         return FileOutcome::Refused;
     }
 
@@ -315,7 +302,7 @@ fn file_new(
         None => payload_text.into_owned(),
     };
     // bd create rejects titles over 500 chars; clip (full text stays in the body) so a long
-    // dwarf-filed title does not re-spool forever (sp-nredi).
+    // dwarf-filed title does not stay unfiled forever.
     let clipped: String = title.chars().take(490).collect();
     let title = clipped.as_str();
     let create_labels = match cfg.repo_declared {
@@ -338,11 +325,11 @@ fn file_new(
         Ok(id) => id,
         Err(e) if e.contains("does not admit lane") => {
             let reason = e.lines().next().unwrap_or_default().to_string();
-            log.push(format!("create REFUSED for {reference} — {reason} — stays spooled"));
+            log.push(format!("create REFUSED for {reference} — {reason} — stays unfiled"));
             return FileOutcome::LaneRefused(reason);
         }
         Err(e) => {
-            log.push(format!("create FAILED for {reference} — stays spooled ({e})"));
+            log.push(format!("create FAILED for {reference} — stays unfiled ({e})"));
             return FileOutcome::Unread(format!("create failed ({e})"));
         }
     };
@@ -440,7 +427,7 @@ pub fn parse_iso8601(s: &str) -> Option<i64> {
 }
 
 /// Public so `main.rs` has exactly one date formatter in the binary (used for the `ilog`
-/// timestamp and the spool filename's stamp, matching `date -u +%Y-%m-%dT%H:%M:%SZ`).
+/// timestamp, matching `date -u +%Y-%m-%dT%H:%M:%SZ`).
 pub fn iso_now_public(epoch: i64) -> String {
     let date = epoch_to_date(epoch);
     let secs_of_day = epoch.rem_euclid(86_400);
@@ -469,6 +456,13 @@ pub fn collapse(bd: &dyn Bd, db: &str, dup: &str, survivor: &str) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What `intake::own_alarm` does with the predicate, without its row.
+    #[allow(clippy::too_many_arguments)]
+    fn alarm_owner(bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, cfg: &FileConfig, reference: &str, title: &str, payload: &[u8], labels: &str, log: &mut Vec<String>) -> Option<FileOutcome> {
+        let wide = FileConfig { dedup_lookback_days: alarm_lookback(cfg.dedup_lookback_days), ..*cfg };
+        alarm_wants_filing(bd, clock, cfg, reference).then(|| file_one(bd, mailer, clock, &wide, reference, title, payload, labels, log))
+    }
     use crate::decide::BeadRow;
     use crate::decide::BeadStatus;
     use crate::fake::{cfg, FakeBd, FakeMailer, FixedClock};
@@ -649,7 +643,7 @@ mod tests {
     // covers: UC-ops-detection-remediation-10
     #[test_id(tppi73a)]
     #[test]
-    fn unreachable_database_stays_spooled() {
+    fn unreachable_database_stays_unfiled() {
         let bd = FakeBd { reachable: false, next_id: RefCell::new(1), ..Default::default() };
         let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
@@ -661,11 +655,11 @@ mod tests {
     }
 
     /// sp-jgjvh: a lifecycle machine that does not answer cannot say no incident holds the
-    /// reference — the event stays spooled, never filed as a fresh bead.
+    /// reference — the event stays unfiled, never filed as a fresh bead.
     // covers: UC-ops-detection-remediation-10
     #[test_id(t017pfj)]
     #[test]
-    fn an_unanswering_lifecycle_machine_stays_spooled() {
+    fn an_unanswering_lifecycle_machine_stays_unfiled() {
         let bd = FakeBd { reachable: true, lc_down: true, next_id: RefCell::new(1), ..Default::default() };
         let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
@@ -700,7 +694,7 @@ mod tests {
         let known = vec!["spira".to_string()];
         let mut log = vec![];
         file_one(&bd, &mailer, &clock, &cfg(&known), "incident:x", "x failed", b"payload", "spira,incident", &mut log);
-        assert!(log.iter().any(|l| l.contains("spira-lc: down") && l.contains("Unfinished label-keyed pass") && l.contains("incident:x stays spooled")), "{log:?}");
+        assert!(log.iter().any(|l| l.contains("spira-lc: down") && l.contains("Unfinished label-keyed pass") && l.contains("incident:x stays unfiled")), "{log:?}");
         assert!(!log.iter().any(|l| l.contains("database unreachable")), "{log:?}");
     }
 

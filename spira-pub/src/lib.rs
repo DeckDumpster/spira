@@ -19,6 +19,12 @@ pub use publisher::{check_topic, configured_seed, configured_socket, Log, Option
 pub use socket_watch::SocketWatch;
 pub use topics::Class;
 
+/// `raw` as one topic segment: `/`, `+` and `#`, which would split it or make it a filter,
+/// become `-`.
+pub fn segment(raw: &str) -> String {
+    raw.replace(['/', '+', '#'], "-")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PubError {
     /// The configuration does not name the broker.
@@ -76,3 +82,12 @@ impl std::fmt::Display for PubError {
 }
 
 impl std::error::Error for PubError {}
+
+#[cfg(test)]
+mod tests {
+    #[test_id(txp79kp)]
+    #[test]
+    fn a_segment_never_splits_its_topic_or_reads_as_a_filter() {
+        assert_eq!(crate::segment("incident:a/b+c#d e"), "incident:a-b-c-d e");
+    }
+}

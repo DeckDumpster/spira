@@ -4,8 +4,8 @@
 //!   incident systemd <unit>           file an incident for a failed systemd user unit
 //!   incident file <title> [-|<file>]  file one from an arbitrary payload
 //!   incident alarm <title> [-|<file>]  note a detector's condition in the Concierge inbox, no bead
-//!   incident drain                    one pass over the spool, one filing per reference
-//!   incident list                     open incidents
+//!   incident retry [<reference>]      make refused and unread rows pending again
+//!   incident list                     open incidents, then the unfiled rows
 //!   incident settle                   close incidents whose fixes landed and whose detector is quiet
 //!   incident collapse <dup> --of <keep>  mark <dup> a duplicate of <keep> and label it for the meter
 //!   incident alarms-pass [--no-fallback]  the alarms component's minute pass
@@ -66,20 +66,17 @@ fn cmd_alarm(env: &Env, bd: Option<&dyn Bd>, mailer: &dyn Mailer, clock: &dyn Cl
     }
 }
 
-fn cmd_drain(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock) -> ExitCode {
-    let batch = match configured_batch() {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("incident: drain: {e}");
-            return ExitCode::FAILURE;
+fn cmd_retry(bd: &dyn Bd, reference: Option<&str>) -> ExitCode {
+    let key = reference.map(spira_store::incident::key);
+    match bd.incident_rows().retry(key.as_deref()) {
+        Ok(n) => {
+            println!("retried {n}");
+            ExitCode::SUCCESS
         }
-    };
-    let report = drain_spool(env, bd, mailer, clock, batch);
-    println!("{}", drain_report(&report));
-    if report.stuck.is_empty() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
+        Err(e) => {
+            eprintln!("incident: retry: {e}");
+            ExitCode::FAILURE
+        }
     }
 }
 
@@ -99,25 +96,28 @@ fn cmd_list(env: &Env, bd: &incident::real::RealBd) -> ExitCode {
         let title = bead.get("title").and_then(|t| t.as_str()).unwrap_or("");
         println!("{} P{priority} {title}", row.id);
     }
-    let spooled = incident::spool::entries(&env.spool_dir).map_or(0, |e| e.len());
-    if spooled > 0 {
-        println!("\n{spooled} event(s) still in the spool — run: incident drain");
+    match bd.incident_rows().list() {
+        Ok(unfiled) => {
+            for (_, r) in unfiled {
+                println!("unfiled {} ({} event(s)) {} {}", r.payload.reference, r.events, r.standing(), r.payload.title);
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("incident: list: the unfiled rows: {e}");
+            ExitCode::FAILURE
+        }
     }
-    let bad = std::fs::read_dir(&env.spool_dir).into_iter().flatten().flatten().filter(|e| e.path().extension() == Some(std::ffi::OsStr::new("bad"))).count();
-    if bad > 0 {
-        println!("{bad} malformed spool entr(ies) in {}", env.spool_dir.display());
-    }
-    ExitCode::SUCCESS
 }
 
 /// Close the repo's open local-red incidents a green landing has outlived.
-fn cmd_supersede_red(env: &Env, bd: &RealBd, repo: &str, landing: &str) -> ExitCode {
+fn cmd_supersede_red(bd: &RealBd, repo: &str, landing: &str) -> ExitCode {
     let s = incident::supersede::RealSuperseder { bd, incident_label: env_or("SPIRA_INCIDENT_LABEL", "incident") };
     let landed_at = spira_config::vtime::now_epoch() as i64;
     match incident::supersede::supersede(&s, repo, landing, landed_at) {
         Ok(outcomes) => {
             for o in &outcomes {
-                ilog(env, &format!("supersede-red: {o:?}"));
+                ilog(&format!("supersede-red: {o:?}"));
             }
             let closed = outcomes.iter().filter(|o| matches!(o, incident::supersede::Outcome::Closed(_))).count();
             println!("closed {closed} of {}", outcomes.len());
@@ -153,11 +153,11 @@ fn cmd_settle(env: &Env, bd: &RealBd) -> ExitCode {
     };
     match incident::settle::settle(&settler) {
         Ok(outcomes) => {
-            let waiting_path = env.log_path.with_extension("settle-waiting");
+            let waiting_path = env.spira_run_path("incident.settle-waiting");
             let prev = std::fs::read_to_string(&waiting_path).unwrap_or_default();
             let (fresh, state) = incident::settle::changed_waiting(&prev, &outcomes);
             for o in fresh {
-                ilog(env, &format!("settle: {o:?}"));
+                ilog(&format!("settle: {o:?}"));
             }
             let _ = std::fs::write(&waiting_path, state);
             let closed = outcomes.iter().filter(|o| matches!(o, incident::settle::Outcome::Closed { .. })).count();
@@ -369,12 +369,7 @@ fn main() -> ExitCode {
             let src = args.get(2).map(String::as_str).unwrap_or("-");
             cmd_file(&env_cfg, &bd, &mailer, &clock, title, src)
         }
-        Some("drain") => {
-            if env_cfg.db.is_none() {
-                return require_db(&env_cfg);
-            }
-            cmd_drain(&env_cfg, &bd, &mailer, &clock)
-        }
+        Some("retry") => cmd_retry(&bd, args.get(1).map(String::as_str)),
         Some("list") => cmd_list(&env_cfg, &bd),
         Some("supersede-red") => {
             let (Some(repo), Some(landing), None) = (args.get(1), args.get(2), args.get(3)) else {
@@ -384,7 +379,7 @@ fn main() -> ExitCode {
             if env_cfg.db.is_none() {
                 return require_db(&env_cfg);
             }
-            cmd_supersede_red(&env_cfg, &bd, repo, landing)
+            cmd_supersede_red(&bd, repo, landing)
         }
         Some("settle") => {
             if env_cfg.db.is_none() {
@@ -412,7 +407,7 @@ fn main() -> ExitCode {
             }
         }
         _ => {
-            eprintln!("incident.sh — turn a production event into a bead Ops can claim\n\n  incident systemd <unit>           file an incident for a failed systemd user unit\n  incident file <title> [-|<file>]  file one from an arbitrary payload\n  incident drain                    one pass over the spool, one filing per reference\n  incident list                     open incidents\n  incident settle                   close incidents whose fix landed and detector is quiet\n  incident collapse <dup> --of <keep>  mark a duplicate incident\n  incident alarms-pass [--no-fallback]  the alarms component's minute pass\n  incident floor-cleared            exit 0 once the goodput rate is back at its floor\n  incident page --no-fallback --probe <mailbox> [--interval S] | --probe-health [--max-age S]");
+            eprintln!("incident.sh — turn a production event into a bead Ops can claim\n\n  incident systemd <unit>           file an incident for a failed systemd user unit\n  incident file <title> [-|<file>]  file one from an arbitrary payload\n  incident retry [<reference>]      make refused and unread rows pending again\n  incident list                     open incidents, then the unfiled rows\n  incident settle                   close incidents whose fix landed and detector is quiet\n  incident collapse <dup> --of <keep>  mark a duplicate incident\n  incident alarms-pass [--no-fallback]  the alarms component's minute pass\n  incident floor-cleared            exit 0 once the goodput rate is back at its floor\n  incident page --no-fallback --probe <mailbox> [--interval S] | --probe-health [--max-age S]");
             ExitCode::from(1)
         }
     }

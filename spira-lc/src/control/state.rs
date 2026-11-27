@@ -25,6 +25,7 @@ pub fn is_verb(verb: &str) -> bool {
         || asks::VERBS.contains(&verb)
         || mending::VERBS.contains(&verb)
         || conditions::VERBS.contains(&verb)
+        || incidents::VERBS.contains(&verb)
         || landed::VERBS.contains(&verb)
 }
 
@@ -53,6 +54,7 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
         Some(v) if asks::VERBS.contains(&v) => asks::run(store, args, call),
         Some(v) if mending::VERBS.contains(&v) => mending::run(store, args, call),
         Some(v) if conditions::VERBS.contains(&v) => conditions::run(store, args, call),
+        Some(v) if incidents::VERBS.contains(&v) => incidents::run(store, args, call),
         Some(v) if landed::VERBS.contains(&v) => landed::run(store, rest, call),
         Some("promote-filed") => promote(store, rest, call),
         other => (
@@ -658,6 +660,7 @@ fn fill_missing_repo<B: Backend>(store: &Store<B>, id: &str, repo: Option<&str>,
 mod asks;
 mod cascades;
 mod conditions;
+mod incidents;
 pub(crate) mod landed;
 mod mending;
 mod rounds;

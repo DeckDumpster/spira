@@ -2674,6 +2674,7 @@ dependencies = [
  "ports",
  "serde",
  "serde_json",
+ "sha2",
  "spira-config",
  "spira-test-id",
  "testkit",

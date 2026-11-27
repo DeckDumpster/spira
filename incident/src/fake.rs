@@ -1,12 +1,81 @@
 //! In-memory ports for the intake's unit tests: a `Bd` that keeps its beads in a vector, a
 //! mailer that records what it was asked to send, and a fixed clock.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, HashMap};
 
 use crate::decide::{BeadRow, BeadStatus, Scope};
-use crate::ports::{Bd, Clock, Mailer};
+use crate::ports::{Bd, Clock, Mailer, Rows};
+use spira_store::incident::{self, Payload, Recorded, Row};
 use crate::run::FileConfig;
+
+/// The incident rows in memory, moved by the same rules the store verb applies.
+#[derive(Default)]
+pub(crate) struct FakeRows {
+    pub(crate) held: RefCell<BTreeMap<String, Row>>,
+    /// The store's clock: what a raise is stamped with and a claim's lapse is judged on.
+    pub(crate) now: Cell<i64>,
+    /// The control store does not answer.
+    pub(crate) down: Cell<bool>,
+}
+
+impl FakeRows {
+    fn up(&self) -> Result<(), String> {
+        if self.down.get() { Err("store not running".into()) } else { Ok(()) }
+    }
+
+    /// The one row held, for a test that expects exactly one.
+    pub(crate) fn only(&self) -> Row {
+        let held = self.held.borrow();
+        assert_eq!(held.len(), 1, "{held:?}");
+        held.values().next().cloned().unwrap_or_default()
+    }
+
+    fn row(&self, key: &str) -> Result<Row, String> {
+        self.held.borrow().get(key).cloned().ok_or_else(|| "no such incident".into())
+    }
+}
+
+impl Rows for &FakeRows {
+    fn raise(&self, payload: &Payload) -> Result<String, String> {
+        self.up()?;
+        let key = incident::key(&payload.reference);
+        let mut held = self.held.borrow_mut();
+        let next = incident::raise(held.remove(&key), payload.clone(), self.now.get());
+        held.insert(key.clone(), next);
+        Ok(key)
+    }
+    fn claim(&self, key: &str, by: &str, for_secs: i64) -> Result<Row, String> {
+        self.up()?;
+        let next = incident::claim(&self.row(key)?, by, for_secs, self.now.get())?;
+        self.held.borrow_mut().insert(key.into(), next.clone());
+        Ok(next)
+    }
+    fn record(&self, key: &str, outcome: &Recorded) -> Result<(), String> {
+        self.up()?;
+        let next = incident::record(&self.row(key)?, outcome);
+        let mut held = self.held.borrow_mut();
+        match next {
+            Some(row) => held.insert(key.into(), row),
+            None => held.remove(key),
+        };
+        Ok(())
+    }
+    fn retry(&self, only: Option<&str>) -> Result<usize, String> {
+        self.up()?;
+        let mut held = self.held.borrow_mut();
+        let due: Vec<(String, Row)> = held.iter().filter(|(k, _)| only.is_none_or(|o| o == k.as_str())).filter_map(|(k, r)| incident::retry(r).map(|n| (k.clone(), n))).collect();
+        let n = due.len();
+        held.extend(due);
+        Ok(n)
+    }
+    fn list(&self) -> Result<Vec<(String, Row)>, String> {
+        self.up()?;
+        let mut rows: Vec<(String, Row)> = self.held.borrow().iter().map(|(k, r)| (k.clone(), r.clone())).collect();
+        rows.sort_by(|a, b| (a.1.first_at, &a.0).cmp(&(b.1.first_at, &b.0)));
+        Ok(rows)
+    }
+}
 
 /// One `list` call: `(scope, label, closed_after, external_ref)`.
 pub(crate) type ListCall = (Scope, Option<String>, Option<String>, Option<String>);
@@ -24,6 +93,9 @@ pub(crate) struct FakeBd {
     pub(crate) fact_fails: bool,
     /// `bd create` refuses with this text.
     pub(crate) create_error: Option<String>,
+    /// Every `bd create` asked for, refused ones included.
+    pub(crate) create_calls: RefCell<usize>,
+    pub(crate) incidents: FakeRows,
     pub(crate) created: RefCell<Vec<(String, String)>>,
     pub(crate) bodies: RefCell<HashMap<String, String>>,
     pub(crate) reopened: RefCell<Vec<String>>,
@@ -46,6 +118,9 @@ impl FakeBd {
 }
 
 impl Bd for FakeBd {
+    fn incident_rows(&self) -> Box<dyn Rows + '_> {
+        Box::new(&self.incidents)
+    }
     // A row's `status` stands for its lifecycle row's state (decide::status_of_lc).
     fn list(&self, _db: &str, scope: Scope, label: Option<&str>, closed_after: Option<&str>, external_ref: Option<&str>) -> Result<Vec<BeadRow>, String> {
         let owned = |s: Option<&str>| s.map(str::to_string);
@@ -66,6 +141,7 @@ impl Bd for FakeBd {
             .collect())
     }
     fn create(&self, _db: &str, title: &str, _kind: &str, _priority: &str, labels: &str, external_ref: &str, _body: &str, _actor: Option<&str>) -> Result<String, String> {
+        *self.create_calls.borrow_mut() += 1;
         if let Some(e) = &self.create_error {
             return Err(e.clone());
         }
