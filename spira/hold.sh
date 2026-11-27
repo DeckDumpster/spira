@@ -72,7 +72,7 @@ fi
 # Hold the bead on spira-lc — best-effort, like every other spira-lc caller-verb call (CANNOT_TELL until
 # the bead is classified; a refusal here is logged and does not block the hold, since the
 # pidfile below is what actually keeps the reaper off it).
-spira-lc hold "$ID" manual "manual hold via hold.sh (pid $HOLD_PID)" "hold-$ID" >/dev/null 2>&1 || true
+spira-lc hold "$ID" manual "manual hold via hold.sh (pid $HOLD_PID)" "hold-$ID" --purpose sequence >/dev/null 2>&1 || true
 
 # Write the pidfile.
 echo "$HOLD_PID" > "$PIDFILE"

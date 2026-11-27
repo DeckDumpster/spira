@@ -79,7 +79,7 @@ fn hold_writes_pidfile_and_heartbeat_refuses_a_double_hold_and_unhold_removes_bo
     assert_eq!(std::fs::read_to_string(&pidfile).unwrap().trim(), me);
     let hb = std::fs::read_to_string(&hbfile).unwrap().trim().to_string();
     assert!(!gone(&hb), "the heartbeat is alive while held");
-    assert_eq!(fx.lc_calls(), [format!("hold sp-h1 manual manual hold via hold.sh (pid {me}) hold-sp-h1")]);
+    assert_eq!(fx.lc_calls(), [format!("hold sp-h1 manual manual hold via hold.sh (pid {me}) hold-sp-h1 --purpose sequence")]);
 
     let again = fx.script("hold.sh", &["sp-h1", "--pid", &me]);
     assert_eq!(again.status.code(), Some(1), "a second hold of a held bead is refused");

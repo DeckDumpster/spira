@@ -770,7 +770,7 @@ fn apply_transition(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow>
             if row.state.is_terminal() {
                 return terminal(row);
             }
-            if *kind == HoldKind::Manual && *cause == HoldCause::ManualHold {
+            if *kind == HoldKind::Manual && matches!(cause, HoldCause::ManualHold | HoldCause::Sequencing | HoldCause::Verification) {
                 if let Some(refusal) = manual_reason_refusal(detail.as_deref()) {
                     return Outcome::refuse(row.clone(), refusal);
                 }
@@ -891,7 +891,8 @@ fn apply_transition(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow>
             if *kind == HoldKind::Ask {
                 return awaiting_reply(row, &ev.kind);
             }
-            let gate_hold = *kind == HoldKind::Manual && row.state == BeadState::Rework && row.ejected_red_tip.is_some() && row.ejected_red_tip == row.tip;
+            let sequencing = row.manual_hold.as_ref().is_some_and(|h| h.cause == HoldCause::Sequencing);
+            let gate_hold = *kind == HoldKind::Manual && !sequencing && row.state == BeadState::Rework && row.ejected_red_tip.is_some() && row.ejected_red_tip == row.tip;
             if gate_hold {
                 let tip = row.tip.clone().unwrap_or_default();
                 if let Some(missing) = break_glass.gap(&ev.actor, &tip) {
@@ -2198,26 +2199,38 @@ mod tests {
         gate.tip = Some(tip.into());
         gate.ejected_red_tip = Some(tip.into());
         let unhold = |g: BreakGlass| BeadEventKind::Unhold { kind: HoldKind::Manual, break_glass: g };
+        let held_for = |cause| {
+            let mut r = gate.clone();
+            r.manual_hold = Some(ManualHold { at: None, cause, detail: None });
+            r
+        };
         let cases: [(BreakGlass, &str, &str); 4] = [
             (BreakGlass { reason: String::new(), ..bg(tip) }, "concierge", "reason"),
             (BreakGlass { evidence: " ".into(), ..bg(tip) }, "concierge", "evidence ("),
             (bg("3333333333333333333333333333333333333333"), "concierge", "evidence tip"),
             (bg(tip), "", "actor"),
         ];
-        for (g, actor, field) in &cases {
-            let mut e = ev(BeadState::Rework, 0, unhold(g.clone()));
-            e.actor = actor.to_string();
-            let out = apply(&gate, &e);
-            assert!(!out.applied && matches!(&out.refusal, Some(Refusal::BreakGlassIncomplete { missing }) if missing.contains(field)), "{field}: {:?}", out.refusal);
-        }
-        let bare = apply(&gate, &ev(BeadState::Rework, 0, unhold(BreakGlass::default())));
-        assert!(!bare.applied, "an automated unhold of a gate hold is refused");
+        for gate in [gate.clone(), held_for(HoldCause::ManualHold), held_for(HoldCause::Verification)] {
+            for (g, actor, field) in &cases {
+                let mut e = ev(BeadState::Rework, 0, unhold(g.clone()));
+                e.actor = actor.to_string();
+                let out = apply(&gate, &e);
+                assert!(!out.applied && matches!(&out.refusal, Some(Refusal::BreakGlassIncomplete { missing }) if missing.contains(field)), "{field}: {:?}", out.refusal);
+            }
+            let bare = apply(&gate, &ev(BeadState::Rework, 0, unhold(BreakGlass::default())));
+            assert!(!bare.applied, "an automated unhold of a gate hold is refused");
 
-        let out = apply(&gate, &ev(BeadState::Rework, 0, unhold(bg(tip))));
+            let out = apply(&gate, &ev(BeadState::Rework, 0, unhold(bg(tip))));
+            assert!(out.applied, "{:?}", out.refusal);
+            assert!(out.row.holds.is_empty());
+            let stamp = out.row.reason.unwrap_or_default();
+            assert!(stamp.contains("break_glass=true") && stamp.contains("npm test 101/0") && stamp.contains(tip), "{stamp}");
+        }
+
+        let out = apply(&held_for(HoldCause::Sequencing), &ev(BeadState::Rework, 0, unhold(BreakGlass::default())));
         assert!(out.applied, "{:?}", out.refusal);
-        assert!(out.row.holds.is_empty());
-        let stamp = out.row.reason.unwrap_or_default();
-        assert!(stamp.contains("break_glass=true") && stamp.contains("npm test 101/0") && stamp.contains(tip), "{stamp}");
+        assert!(out.row.holds.is_empty() && out.row.manual_hold.is_none());
+        assert!(!out.row.reason.unwrap_or_default().contains("break_glass=true"), "ending a sequencing hold bypasses no check");
 
         let mut other_tip = gate.clone();
         other_tip.ejected_red_tip = Some("3333333333333333333333333333333333333333".into());

@@ -162,8 +162,12 @@ pub enum HoldCause {
     NoProgressBackoff,
     /// a dwarf's own request that the bead be superseded, pending confirmation.
     SupersedeRequest,
-    /// an operator's own manual hold, for no mechanically-detected cause.
+    /// a manual hold from before holds named a purpose; judged as `Verification`.
     ManualHold,
+    /// a manual hold that waits for other work and vouches for nothing.
+    Sequencing,
+    /// a manual hold that vouches for the row's tip.
+    Verification,
 }
 
 impl HoldCause {
@@ -175,6 +179,8 @@ impl HoldCause {
             HoldCause::NoProgressBackoff => "no-progress-backoff",
             HoldCause::SupersedeRequest => "supersede-request",
             HoldCause::ManualHold => "manual-hold",
+            HoldCause::Sequencing => "sequencing",
+            HoldCause::Verification => "verification",
         }
     }
 
@@ -187,6 +193,8 @@ impl HoldCause {
             "no-progress-backoff" => HoldCause::NoProgressBackoff,
             "supersede-request" => HoldCause::SupersedeRequest,
             "manual-hold" => HoldCause::ManualHold,
+            "sequencing" => HoldCause::Sequencing,
+            "verification" => HoldCause::Verification,
             _ => return None,
         })
     }
@@ -213,13 +221,15 @@ mod tests {
         GateRedReason::Confine,
     ];
     const ALL_DROP: [DropReason; 2] = [DropReason::ClosedNoBranch, DropReason::Unwanted];
-    const ALL_HOLD_CAUSE: [HoldCause; 6] = [
+    const ALL_HOLD_CAUSE: [HoldCause; 8] = [
         HoldCause::AttemptsExhausted,
         HoldCause::OperatorQuestion,
         HoldCause::UnlandedBlocker,
         HoldCause::NoProgressBackoff,
         HoldCause::SupersedeRequest,
         HoldCause::ManualHold,
+        HoldCause::Sequencing,
+        HoldCause::Verification,
     ];
 
     #[test_id(ttr5vtl)]

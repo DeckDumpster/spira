@@ -577,7 +577,7 @@ impl Run<'_> {
                     Some(body.into_bytes()),
                     None,
                 );
-                let held = self.hold_unless_terminal(&id, "manual", &format!("harness-red streak {streak}: {first}"), "dwarf");
+                let held = self.hold_unless_terminal(&id, "manual", &format!("harness-red streak {streak}: {first}"), "dwarf", &["--purpose", "sequence"]);
                 if let Some(held) = held.filter(|h| h.code != 0) {
                     self.log(&format!("{f}: {id} manual hold refused (rc={}): {}", held.code, held.stdout.trim()));
                 }
@@ -637,7 +637,7 @@ impl Run<'_> {
                         None,
                     );
                     let why = format!("no-progress streak {streak} at {tip}: the Concierge lifts this once the bead's inputs have changed ({reason})");
-                    let held = self.hold_unless_terminal(&id, "manual", &why, "dwarf");
+                    let held = self.hold_unless_terminal(&id, "manual", &why, "dwarf", &["--purpose", "sequence"]);
                     if let Some(held) = held.filter(|h| h.code != 0) {
                         self.log(&format!("{f}: {id} manual hold refused (rc={}): {}", held.code, held.stdout.trim()));
                     }
@@ -649,7 +649,7 @@ impl Run<'_> {
                     let until = util::iso_utc(until_epoch);
                     // A timed `wait` hold on the lifecycle row: claim reads the expiry from its
                     // reason, so nothing has to lift it and no bd status or defer is written.
-                    let held = self.hold_unless_terminal(&id, "wait", &format!("{} no-progress: {reason}", spira_store::lc_state::snooze_reason(until_epoch)), "dwarf");
+                    let held = self.hold_unless_terminal(&id, "wait", &format!("{} no-progress: {reason}", spira_store::lc_state::snooze_reason(until_epoch)), "dwarf", &[]);
                     if let Some(held) = held.filter(|h| h.code != 0) {
                         self.log(&format!("{f}: {id} snooze hold refused (rc={}): {}", held.code, held.stdout.trim()));
                     }

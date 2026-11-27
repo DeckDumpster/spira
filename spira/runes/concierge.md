@@ -182,7 +182,7 @@ dwarf it replaced. When it reaches SUBMITTED, drive it with `queue round open --
 **A hand-built fix to a bead in REWORK or an unclaimed READY** is put back with `queue resubmit <id>
 --tip <40-hex> --by concierge --reason <why the normal path was bypassed> --evidence <checks run on
 the tip, command and result> --evidence-tip <the same 40-hex>`, then `queue round open --by concierge --members
-<id>:<tip>`. A REWORK bead needs `spira-lc hold <id> manual --reason <why> concierge` first. It is a
+<id>:<tip>`. A REWORK bead needs `spira-lc hold <id> manual --purpose verify --reason <why> concierge` first. It is a
 break-glass move and is refused without every field; the event records actor, reason, evidence and
 tip. A SUBMITTED bead is admitted to a round as a provisional member, ranked after the certified ones; its gate keeps running, and a red at the tip the round holds ejects it with the gate's lines. A bead a live dwarf holds is refused.
 A resubmit at the tip a round ejected as red withdraws that red with the evidence it carries, so no
@@ -192,7 +192,7 @@ its gate, so it reaches CERTIFIED with the hold in place; do not lift the hold t
 `queue round open --members <id>:<tip> --by concierge`. The batcher notes on a bead why it leaves a
 bead out of a cut (held, ejected-red, or its branch moved), once per cause.
 
-Lifting the manual hold on a REWORK bead whose tip a round ejected as red is the same kind of move: `spira-lc unhold <id> manual concierge --reason <why> --evidence <checks run on the tip, command and result> --evidence-tip <the bead's tip>`. It is refused without every flag, and the row records actor, reason, evidence and tip.
+Lifting a verification hold on a REWORK bead whose tip a round ejected as red is the same kind of move: `spira-lc unhold <id> manual concierge --reason <why> --evidence <checks run on the tip, command and result> --evidence-tip <the bead's tip>`. It is refused without every flag, and the row records actor, reason, evidence and tip. A hold from before holds named a purpose is treated the same. A sequencing hold (`--purpose sequence`, one that only waits for other work) lifts with `spira-lc unhold <id> manual concierge`.
 
 **Never `pgrep -f`/`pkill -f` on a pattern alone** — it can match the caller's own command
 line. Address a process by PID from `/proc/<pid>/cmdline`, or by systemd unit name.

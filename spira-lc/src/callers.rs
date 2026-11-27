@@ -110,12 +110,12 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
     let need = |n: usize| args.len() >= n && args[..n].iter().all(|s| !s.is_empty());
     match verb {
         "hold" => {
-            let (pos, reason, review_by) = match hold_flags(args) {
+            let (pos, reason, review_by, purpose) = match hold_flags(args) {
                 Ok(x) => x,
                 Err(a) => return a,
             };
             if pos.len() < 2 || pos[..2].iter().any(|s| s.is_empty()) {
-                return usage("hold <bead-id> <poison|ask|wait|manual> [cause] [actor] [--reason <text>] [--review-by <ISO date>]\n  a timed snooze is: hold <bead-id> wait \"snooze-until:<epoch seconds>[ explanation]\"\n  with --reason the cause is the flag and the third positional is the actor");
+                return usage("hold <bead-id> <poison|ask|wait|manual> [cause] [actor] [--reason <text>] [--review-by <ISO date>] [--purpose <sequence|verify>]\n  a manual hold needs --purpose, and no other kind takes it: sequence waits for other work, verify vouches for the tip\n  a timed snooze is: hold <bead-id> wait \"snooze-until:<epoch seconds>[ explanation]\"\n  with --reason the cause is the flag and the third positional is the actor");
             }
             let at = |i: usize| pos.get(i).cloned().unwrap_or_default();
             let (cause, actor_ix) = match reason {
@@ -127,7 +127,7 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
                 Some(d) => format!("{REVIEW_BY_PREFIX}{d} {cause}"),
                 None => cause,
             };
-            hold(m, &at(0), &at(1), &cause, &actor_or(pos.get(actor_ix), "sentinel"))
+            hold(m, &at(0), &at(1), &cause, purpose.as_deref(), &actor_or(pos.get(actor_ix), "sentinel"))
         }
         "unhold" => {
             let (pos, glass) = match unhold_flags(args) {
@@ -135,13 +135,17 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
                 Err(a) => return a,
             };
             if pos.len() < 2 || pos[..2].iter().any(|s| s.is_empty()) {
-                return usage("unhold <bead-id> <kind> [actor] [--reason <why> --evidence <checks run on the tip> --evidence-tip <tip>]\n  lifting the manual hold on a REWORK bead whose tip a gate or round ejected as red is break-glass: it needs all three flags");
+                return usage("unhold <bead-id> <kind> [actor] [--reason <why> --evidence <checks run on the tip> --evidence-tip <tip>]\n  lifting a verification hold (or one from before holds named a purpose) on a REWORK bead whose tip a gate or round ejected as red is break-glass: it needs all three flags");
             }
             let actor = actor_or(pos.get(2), "sentinel");
-            with_row(m, &pos[0], &actor, |_| match HoldKind::from_str(&pos[1]) {
+            let mut a = with_row(m, &pos[0], &actor, |_| match HoldKind::from_str(&pos[1]) {
                 Some(k) => Ok(BeadEventKind::Unhold { kind: k, break_glass: glass }),
                 None => Err(unknown_kind(&pos[1])),
-            })
+            });
+            if a.code == REFUSED && a.stderr.contains("BreakGlassIncomplete") {
+                a.stderr = format!("{}\nlc: this is a verification hold on the tip a round ejected red; lifting it needs --reason, --evidence and --evidence-tip\n", a.stderr.trim_end());
+            }
+            a
         }
         "reply" => {
             if !need(2) {
@@ -347,20 +351,22 @@ fn unhold_flags(args: &[String]) -> Result<(Vec<String>, BreakGlass), Answer> {
     Ok((pos, glass))
 }
 
-type HoldArgs = (Vec<String>, Option<String>, Option<String>);
+type HoldArgs = (Vec<String>, Option<String>, Option<String>, Option<String>);
 
-/// Split `--reason` / `--review-by` out of a hold's argv; what remains is positional.
+/// Split `--reason` / `--review-by` / `--purpose` out of a hold's argv; what remains is positional.
 fn hold_flags(args: &[String]) -> Result<HoldArgs, Answer> {
-    let (mut pos, mut reason, mut review_by) = (Vec::new(), None, None);
+    let (mut pos, mut reason, mut review_by, mut purpose) = (Vec::new(), None, None, None);
     let mut it = args.iter();
     while let Some(x) = it.next() {
         match x.as_str() {
-            "--reason" | "--review-by" => {
+            "--reason" | "--review-by" | "--purpose" => {
                 let Some(v) = it.next().filter(|v| !v.is_empty()) else {
                     return Err(usage(&format!("hold: {x} needs a value")));
                 };
                 if x == "--reason" {
                     reason = Some(v.clone());
+                } else if x == "--purpose" {
+                    purpose = Some(v.clone());
                 } else if !is_iso_date(v) {
                     return Err(Answer { code: REFUSED, stderr: format!("lc: --review-by {v:?} is not an ISO date (YYYY-MM-DD[THH:MM:SSZ]); no hold was applied\n"), ..Default::default() });
                 } else {
@@ -370,7 +376,7 @@ fn hold_flags(args: &[String]) -> Result<HoldArgs, Answer> {
             _ => pos.push(x.clone()),
         }
     }
-    Ok((pos, reason, review_by))
+    Ok((pos, reason, review_by, purpose))
 }
 
 fn is_iso_date(v: &str) -> bool {
@@ -568,22 +574,31 @@ fn hold_cause(k: HoldKind) -> HoldCause {
 }
 
 /// A timed snooze is a backoff, not a blocker: only a wait the caller gave no snooze is
-/// `unlanded-blocker`.
-fn hold_cause_for(k: HoldKind, reason: &str) -> HoldCause {
-    if k == HoldKind::Wait && reason.starts_with(lc_state::SNOOZE_PREFIX) {
-        return HoldCause::NoProgressBackoff;
+/// `unlanded-blocker`. `None`: the purpose does not fit the kind — a manual hold names one of
+/// the two, and no other kind takes one.
+fn hold_cause_for(k: HoldKind, reason: &str, purpose: Option<&str>) -> Option<HoldCause> {
+    match (k, purpose) {
+        (HoldKind::Manual, Some("sequence")) => Some(HoldCause::Sequencing),
+        (HoldKind::Manual, Some("verify")) => Some(HoldCause::Verification),
+        (HoldKind::Manual, _) | (_, Some(_)) => None,
+        (HoldKind::Wait, None) if reason.starts_with(lc_state::SNOOZE_PREFIX) => Some(HoldCause::NoProgressBackoff),
+        (_, None) => Some(hold_cause(k)),
     }
-    hold_cause(k)
 }
 
-fn hold(m: &mut dyn Machine, id: &str, kind: &str, cause: &str, actor: &str) -> Answer {
+const PURPOSE_REFUSAL: &str = "lc: a manual hold needs --purpose sequence (it waits for other work) or --purpose verify (it vouches for the tip); no hold was applied\n";
+
+fn hold(m: &mut dyn Machine, id: &str, kind: &str, cause: &str, purpose: Option<&str>, actor: &str) -> Answer {
     with_row(m, id, actor, |_| match HoldKind::from_str(kind) {
         Some(HoldKind::Wait) if lc_state::names_directive(cause) && lc_state::snooze_until(cause).is_none() => Err(Answer {
             code: REFUSED,
             stderr: format!("lc: wait hold reason {cause:?} is not understood; a timed snooze is \"snooze-until:<epoch seconds>[ explanation]\"; no hold was applied\n"),
             ..Default::default()
         }),
-        Some(k) => Ok(BeadEventKind::Hold { kind: k, cause: hold_cause_for(k, cause), detail: Some(cause.to_string()) }),
+        Some(k) => match hold_cause_for(k, cause, purpose) {
+            Some(why) => Ok(BeadEventKind::Hold { kind: k, cause: why, detail: Some(cause.to_string()) }),
+            None => Err(Answer { code: REFUSED, stderr: PURPOSE_REFUSAL.into(), ..Default::default() }),
+        },
         None => Err(unknown_kind(kind)),
     })
 }
