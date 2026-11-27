@@ -1190,7 +1190,7 @@ mod tests {
         assert_eq!(
             watchdog_files(watchdog::render::Platform::Systemd, &h).unwrap(),
             vec![
-                ("spira-watchdog-prod.service".to_string(), format!("[Unit]\nDescription=spira-watchdog-prod — one pass: restart and page when the scheduler is wedged or absent\n\n[Service]\nType=oneshot\n{env}ExecStart=rel/current/bin/spira-watchdog pass\nTimeoutStartSec=60\n")),
+                ("spira-watchdog-prod.service".to_string(), format!("[Unit]\nDescription=spira-watchdog-prod — one pass: restart and page when the scheduler is wedged or absent\n\n[Service]\nType=oneshot\nKillMode=process\n{env}ExecStart=rel/current/bin/spira-watchdog pass\nTimeoutStartSec=60\n")),
                 ("spira-watchdog-prod.timer".to_string(), "[Unit]\nDescription=spira-watchdog-prod timer\n\n[Timer]\nOnBootSec=60s\nOnUnitActiveSec=60s\nAccuracySec=1s\nUnit=spira-watchdog-prod.service\n\n[Install]\nWantedBy=timers.target\n".to_string()),
             ]
         );

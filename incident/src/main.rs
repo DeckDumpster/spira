@@ -22,6 +22,7 @@ extern crate spira_test_id;
 use std::io::Read;
 use std::process::ExitCode;
 
+use inbox_rules::Sink;
 use incident::ports::{Bd, Clock, Mailer};
 use incident::real::{RealBd, RealClock, RealMailer};
 use incident::intake::*;
@@ -29,33 +30,24 @@ use incident::run;
 
 fn cmd_alarm(env: &Env, bd: Option<&dyn Bd>, mailer: &dyn Mailer, clock: &dyn Clock, title: &str) -> ExitCode {
     let reference = env.repo_override_ref().unwrap_or_else(|| format!("incident:{title}"));
-    let Some(inbox) = self::env("SPIRA_CONCIERGE_INBOX") else {
-        eprintln!("incident: SPIRA_CONCIERGE_INBOX is not declared — refusing");
-        return ExitCode::FAILURE;
+    let sink = match Sink::configured("incident") {
+        Ok(sink) => sink,
+        Err(e) => {
+            eprintln!("incident: {e} — refusing");
+            return ExitCode::FAILURE;
+        }
     };
     let state_path = env.spira_run_path("incident-alarms.tsv");
     let was_due = std::cell::Cell::new(false);
     let noted = with_incident_lock(&env.lock_path, env.lock_wait_s, || {
-        let state = std::fs::read_to_string(&state_path).unwrap_or_default();
-        let (due, next) = incident::alarm::decide(&state, &reference, now_epoch());
-        if !due {
-            return true;
-        }
-        was_due.set(true);
-        if let Some(parent) = std::path::Path::new(&inbox).parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let line = format!("{} {}\n", now_iso(), incident::alarm::line(title, &reference));
-        let wrote = std::fs::OpenOptions::new().create(true).append(true).open(&inbox).and_then(|mut f| {
-            use std::io::Write;
-            f.write_all(line.as_bytes())
-        });
-        wrote.is_ok() && std::fs::write(&state_path, next).is_ok()
+        let noted = incident::alarm::note(&sink, &state_path, &reference, title);
+        was_due.set(!matches!(noted, Ok(false)));
+        noted.map_err(|e| eprintln!("incident: {e}")).is_ok()
     });
     if was_due.get() || noted.is_none() {
         let outcome = match noted {
             Some(true) => tsd::alarm::Outcome::Delivered { id: format!("inbox:{reference}") },
-            Some(false) => tsd::alarm::Outcome::Failed { reason: format!("the note was not written to {inbox}") },
+            Some(false) => tsd::alarm::Outcome::Failed { reason: format!("the note was not written to {}", sink.inbox.display()) },
             None => tsd::alarm::Outcome::Failed { reason: "another intake held the lock".into() },
         };
         let message = matches!(outcome, tsd::alarm::Outcome::Failed { .. }).then(|| note_of(title, incident::alarm::line(title, &reference).as_bytes()));

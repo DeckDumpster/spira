@@ -50,9 +50,15 @@ name = "unit_tests_script"
 path = "tests/unit_tests_script.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "inbox_page"
+path = "tests/inbox_page.rs"
+required-features = ["integration"]
+
 [features]
-integration = ["gate/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "suite-select/integration", "system-paths/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration"]
+integration = ["inbox-rules/integration", "gate/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "suite-select/integration", "system-paths/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration"]
 [dependencies]
+inbox-rules = { path = "../inbox-rules" }
 spira-otel = { path = "../spira-otel" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

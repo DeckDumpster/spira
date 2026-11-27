@@ -68,7 +68,7 @@ impl Source for Live {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "integration"))]
 impl Config {
     /// A unit test's recorder in place of the spira-claim on PATH.
     pub fn with_claim(mut self, claim: &str) -> Config {

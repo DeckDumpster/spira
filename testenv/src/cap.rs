@@ -408,6 +408,23 @@ pub struct Breach {
     pub cap: u64,
 }
 
+/// Says a kill once, on stdout and in the Concierge inbox.
+pub fn report(sink: &inbox_rules::Sink, b: &Breach) {
+    let line = format!(
+        "testenv over-cap killed: pid {} tier={} wall={}s cap={}s cmd={}",
+        b.proc.pid,
+        b.tier,
+        b.proc.age_secs,
+        b.cap,
+        b.proc.argv.join(" ")
+    );
+    println!("{line}");
+    let stamp = crate::util::iso_utc(crate::batch::now_epoch());
+    if let Err(e) = sink.record(&format!("{stamp} {line}")) {
+        eprintln!("testenv-cap: {e}");
+    }
+}
+
 /// A suite-tier run may first wait up to `load_wait` on host load before its cap starts; a
 /// gate-tier run never waits on load. A run with no ledger may have waited up to `slot_wait`
 /// for admission slots; a ledgered run's age already excludes its waits.
