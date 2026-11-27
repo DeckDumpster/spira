@@ -1245,7 +1245,7 @@ impl Scripts for RealScripts {
         let dir = held.0.as_ref().map(|l| l.dir().to_path_buf()).unwrap_or_default();
         let script = spira_config::resolve::locate_home_for_process()?.join(bd::CLEAN_SCRIPT);
         let path = std::env::var("PATH").unwrap_or_default();
-        if let Err(e) = bd::clean(&script, wt, &dir, &path, false) {
+        if let Err(e) = bd::clean(&script, wt, &dir, &path, false, who, Some(repo)) {
             bd::empty(&dir);
             return Err(format!("selective clean of {} failed ({e}) — emptied, nothing was built", dir.display()));
         }
@@ -2880,13 +2880,13 @@ mod tests {
         fs::create_dir_all(&slot).unwrap();
         fs::write(base.join("dir.1.lock"), "").unwrap();
         let path = std::env::var("PATH").unwrap();
-        spira_config::build_dir::clean(&home.join("target-clean.sh"), &old, &slot, &path, true).unwrap();
+        spira_config::build_dir::clean(&home.join("target-clean.sh"), &old, &slot, &path, true, "hand-0", None).unwrap();
         let wt = d.path().join("wt");
         fs::create_dir_all(&wt).unwrap();
         crate_tree(&wt, "pub fn f() { let _ = 1; }\n");
         let held = RealScripts { home: home.clone() }.build_release(&wt, "hand-1", "spira").expect("builds");
         let lines: Vec<String> = fs::read_to_string(&log).unwrap().lines().map(String::from).collect();
-        let clean = lines.iter().position(|l| l == "clean -q -p crate-a").unwrap_or_else(|| panic!("no clean of crate-a: {lines:?}"));
+        let clean = lines.iter().position(|l| l == "clean -p crate-a").unwrap_or_else(|| panic!("no clean of crate-a: {lines:?}"));
         let build = lines.iter().position(|l| l.starts_with("build -q --profile release")).expect("built");
         assert!(clean < build, "clean runs before the build: {lines:?}");
         assert!(wt.join("target/release").is_symlink(), "the release symlink is made");

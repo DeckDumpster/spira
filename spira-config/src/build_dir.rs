@@ -612,6 +612,84 @@ pub fn owned(var: Option<std::ffi::OsString>, bases: &[PathBuf]) -> Option<PathB
     ours.then_some(p)
 }
 
+/// What the clean script writes in the build directory at exit.
+const CLEAN_REPORT: &str = ".target-clean-report.json";
+
+/// GB the cleans removed per day, by the script's branch and its cause.
+pub const PANEL_CLEAN_GB_BY_CAUSE: &str = "sum by (branch, cause) (sum_over_time(build_dir_clean_bytes[1d])) / 1e9";
+/// GB the cleans removed per day, at lease and at release.
+pub const PANEL_CLEAN_GB_BY_MODE: &str = "sum by (mode) (sum_over_time(build_dir_clean_bytes[1d])) / 1e9";
+
+/// One run of the clean script: `at` is its own clock at exit.
+#[derive(Debug, serde::Deserialize)]
+pub struct CleanReport {
+    #[serde(deserialize_with = "utc_stamp")]
+    pub at: SystemTime,
+    pub rc: i32,
+    pub acts: Vec<CleanAct>,
+}
+
+/// One removal. `bytes` and `files` are None when cargo gave no count.
+#[derive(Debug, PartialEq, serde::Deserialize)]
+pub struct CleanAct {
+    pub branch: String,
+    pub cause: String,
+    pub inputs: Vec<String>,
+    pub crates: Vec<String>,
+    pub bytes: Option<u64>,
+    pub files: Option<u64>,
+}
+
+/// `YYYY-MM-DDTHH:MM:SS.<9 digits>Z`, the script's `date -u`.
+fn utc_stamp<'de, D: serde::Deserializer<'de>>(d: D) -> Result<SystemTime, D::Error> {
+    let text = <String as serde::Deserialize>::deserialize(d)?;
+    let parsed = || {
+        let (seconds, nanos) = text.strip_suffix('Z')?.split_once('.')?;
+        let nanos: u32 = nanos.parse().ok().filter(|_| nanos.len() == 9)?;
+        Some(SystemTime::UNIX_EPOCH + std::time::Duration::new(tsd::parse_ts(&format!("{seconds}Z"))?, nanos))
+    };
+    parsed().ok_or_else(|| serde::de::Error::custom(format!("not a UTC stamp with nanoseconds: {text}")))
+}
+
+/// The report of the last clean of `dir`; None when there is none or it does not parse.
+pub fn clean_report(dir: &Path) -> Option<CleanReport> {
+    serde_json::from_slice(&std::fs::read(dir.join(CLEAN_REPORT)).ok()?).ok()
+}
+
+/// The series one clean reports, one set per act, stamped with the report's time. A clean that
+/// removed nothing is one set of zeros under `branch="none"`; an unknown count has no sample.
+pub fn clean_series(report: &CleanReport, dir: &Path, mode: &str, item: &str, repo: Option<&str>) -> Vec<spira_otel::metrics::Series> {
+    let none = CleanAct { branch: "none".into(), cause: String::new(), inputs: Vec::new(), crates: Vec::new(), bytes: Some(0), files: Some(0) };
+    let acts = if report.acts.is_empty() { std::slice::from_ref(&none) } else { report.acts.as_slice() };
+    let mut out = Vec::new();
+    for act in acts {
+        let labels: Vec<(String, String)> = [
+            ("dir", dir.display().to_string()),
+            ("item", item.into()),
+            ("repo", repo.unwrap_or_default().into()),
+            ("mode", mode.into()),
+            ("branch", act.branch.clone()),
+            ("cause", act.cause.clone()),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        let mut push = |name: &str, value: u64, labels: Vec<(String, String)>| {
+            out.push(spira_otel::metrics::Series { name: name.into(), value: value as f64, labels, at: report.at });
+        };
+        if let Some(bytes) = act.bytes {
+            push("build_dir_clean_bytes", bytes, labels.clone());
+        }
+        if let Some(files) = act.files {
+            push("build_dir_clean_files", files, labels.clone());
+        }
+        let mut named = labels;
+        named.push(("crates".to_string(), act.crates.join(" ")));
+        push("build_dir_clean_crates", act.crates.len() as u64, named);
+    }
+    out
+}
+
 const BUILT_RECORD: &str = ".unit-tests-built-manifest";
 const BUILT_STAMP: &str = ".unit-tests-built-stamp";
 
@@ -620,8 +698,16 @@ const BUILT_STAMP: &str = ".unit-tests-built-stamp";
 /// directory was last made consistent with are cleaned, and `root`'s manifest is recorded.
 /// `release` (a lease's end) also cleans every crate with a file modified since the record. `path` is the PATH cargo is
 /// found on. Ok(the script's output) or Err(why).
-pub fn clean(script: &Path, root: &Path, dir: &Path, path: &str, release: bool) -> Result<String, String> {
+/// `who` and `repo` are the lease's own: what the clean removed is pushed to the metrics store
+/// under them, from the script's report.
+pub fn clean(script: &Path, root: &Path, dir: &Path, path: &str, release: bool, who: &str, repo: Option<&str>) -> Result<String, String> {
+    // A script that never starts writes nothing: an earlier run's report must not be pushed again.
+    let _ = std::fs::remove_file(dir.join(CLEAN_REPORT));
     let r = run_clean(script, root, dir, path, release);
+    if let Some(report) = clean_report(dir) {
+        let series = clean_series(&report, dir, if release { "release" } else { "lease" }, who, repo);
+        let _ = crate::process::metrics_sink("build-dir").try_push_series(&series);
+    }
     if release && r.is_err() {
         let _ = std::fs::remove_file(dir.join(BUILT_RECORD));
         let _ = std::fs::remove_file(dir.join(BUILT_STAMP));
@@ -655,6 +741,7 @@ fn run_clean(script: &Path, root: &Path, dir: &Path, path: &str, release: bool) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn fill(p: &Path, kib: usize) {
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -1062,6 +1149,85 @@ mod tests {
         assert_eq!(value(&s, "build_dir_pool_bytes", None), Some(120.0), "the pool is the directories the budget counts");
         assert_eq!(value(&s, "build_dir_base_bytes", None), Some(3120.0), "the base total includes what the budget does not count");
         assert_eq!(value(&s, "build_dir_budget_bytes", None), Some(777.0));
+    }
+
+    fn report_of(json: &str) -> CleanReport {
+        serde_json::from_str(json).unwrap()
+    }
+
+    const TWO_ACTS: &str = r#"{"at":"2026-09-29T19:18:40.000000007Z","rc":0,"acts":[
+        {"branch":"units-built-after-stamp","cause":"","inputs":[],"crates":["crate-a","crate-b"],"bytes":10,"files":2},
+        {"branch":"whole-workspace","cause":"missing-record","inputs":[],"crates":[],"bytes":null,"files":4}]}"#;
+
+    #[test_id(t6bcla5)]
+    #[test]
+    fn a_clean_reports_each_act_under_every_label_at_the_scripts_own_time() {
+        let r = report_of(TWO_ACTS);
+        let series = clean_series(&r, Path::new("pool/dir.7"), "lease", "sp-x", Some("spira"));
+        let at = SystemTime::UNIX_EPOCH + Duration::new(1_790_709_520, 7);
+        assert!(series.iter().all(|s| s.at == at), "{series:?}");
+        let got: Vec<(&str, f64)> = series.iter().map(|s| (s.name.as_str(), s.value)).collect();
+        assert_eq!(
+            got,
+            [("build_dir_clean_bytes", 10.0), ("build_dir_clean_files", 2.0), ("build_dir_clean_crates", 2.0), ("build_dir_clean_files", 4.0), ("build_dir_clean_crates", 0.0)],
+            "an act whose bytes are unknown has no bytes sample"
+        );
+        let want = [("dir", "pool/dir.7"), ("item", "sp-x"), ("repo", "spira"), ("mode", "lease"), ("branch", "units-built-after-stamp"), ("cause", ""), ("crates", "crate-a crate-b")];
+        let labels = |i: usize| series[i].labels.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect::<Vec<_>>();
+        assert_eq!(labels(0), want[..6]);
+        assert_eq!(labels(2), want);
+        assert!(labels(3).contains(&("cause", "missing-record")));
+    }
+
+    #[test_id(txfsu9s)]
+    #[test]
+    fn a_clean_that_removed_nothing_reports_zeros_under_branch_none() {
+        let r = report_of(r#"{"at":"2026-09-29T19:18:40.000000000Z","rc":0,"acts":[]}"#);
+        let series = clean_series(&r, Path::new("pool/dir.7"), "release", "sp-x", None);
+        let names: Vec<&str> = series.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["build_dir_clean_bytes", "build_dir_clean_files", "build_dir_clean_crates"]);
+        for s in &series {
+            assert_eq!(s.value, 0.0);
+            for (k, v) in [("branch", "none"), ("cause", ""), ("repo", ""), ("mode", "release")] {
+                assert!(s.labels.contains(&(k.to_string(), v.to_string())), "{s:?}");
+            }
+        }
+    }
+
+    #[test_id(tojyer7)]
+    #[test]
+    fn a_report_that_does_not_parse_is_no_report() {
+        let d = testkit::TempDir::new("bdir-report");
+        let write = |text: &str| std::fs::write(d.path().join(CLEAN_REPORT), text).unwrap();
+        write(TWO_ACTS);
+        assert!(clean_report(d.path()).is_some(), "positive control");
+        for bad in [TWO_ACTS.replace(".000000007Z", ""), TWO_ACTS[..40].to_string()] {
+            write(&bad);
+            assert!(clean_report(d.path()).is_none(), "{bad}");
+        }
+    }
+
+    #[test_id(t3pl2q3)]
+    #[test]
+    fn a_clean_series_push_reaches_the_endpoint() {
+        let (addr, h) = spira_otel::metrics::run::fixture_sink();
+        let sink = spira_otel::metrics::MetricsSink::new(Some(&addr), "build-dir", Duration::from_secs(2));
+        let r = report_of(r#"{"at":"2026-09-29T19:18:40.000000000Z","rc":0,"acts":[{"branch":"whole-workspace","cause":"missing-record","inputs":[],"crates":[],"bytes":9,"files":1}]}"#);
+        sink.try_push_series(&clean_series(&r, Path::new("pool/dir.7"), "lease", "sp-x", None)).unwrap();
+        let body = h.join().unwrap();
+        for want in ["build_dir_clean_bytes", "branch", "whole-workspace"] {
+            assert!(body.contains(want), "{want} missing from the push");
+        }
+    }
+
+    #[test_id(tfpunjw)]
+    #[test]
+    fn the_clean_panel_runs_its_pinned_expressions() {
+        let dash: serde_json::Value = serde_json::from_str(include_str!("../../spira/metrics/grafana/dashboards/gate-tooling.json")).unwrap();
+        let title = "build-directory cleans: GB removed per day by branch and cause";
+        let panel = dash["panels"].as_array().unwrap().iter().find(|p| p["title"] == title).expect(title);
+        assert_eq!(panel["targets"][0]["expr"], PANEL_CLEAN_GB_BY_CAUSE);
+        assert_eq!(panel["targets"][1]["expr"], PANEL_CLEAN_GB_BY_MODE);
     }
 
     #[test_id(tba5obp)]

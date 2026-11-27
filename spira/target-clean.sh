@@ -21,6 +21,8 @@
 # outside a release: a tree whose lockfile alone differs cleans only its changed crates. A tree with no Cargo.toml
 # is no cargo workspace: nothing to clean or record.
 #
+# Every run but a stamp writes .target-clean-report.json in the target at exit: what it removed.
+#
 # The record cannot name a build made without this script, and cargo can call such a unit fresh
 # for a different tree. So every run but a release first drops each workspace unit built after
 # the stamp. A release leaves them: they are the lease holder's, judged by edit time.
@@ -34,14 +36,72 @@ esac
 ROOT="${1:?usage: target-clean.sh [--release|--stamp] <root>}"
 cd "$ROOT" || exit 2
 ROOT="$(pwd -P)"
-[ -f Cargo.toml ] || exit 0
 TARGET="${CARGO_TARGET_DIR:-$ROOT/target}"
+REPORT="$TARGET/.target-clean-report.json"
+# An earlier run's report must not be taken for this one's.
+[ -n "$stamp_only" ] || rm -f "$REPORT"
+[ -f Cargo.toml ] || exit 0
 BUILT="$TARGET/.unit-tests-built-manifest"
 STAMP="$TARGET/.unit-tests-built-stamp"
 if [ -n "$stamp_only" ]; then
   mkdir -p "$TARGET" && touch "$STAMP" || exit 2
   exit 0
 fi
+acts=()
+# The arguments as a JSON array of strings; they are package names and build-input paths, which need no escaping.
+json_list() {
+  local sep="" s
+  printf '['
+  for s in "$@"; do printf '%s"%s"' "$sep" "$s"; sep=,; done
+  printf ']'
+}
+# add_act <branch> <cause> <inputs json> <crates json> <bytes|null> <files|null>
+add_act() {
+  acts+=("{\"branch\":\"$1\",\"cause\":\"$2\",\"inputs\":$3,\"crates\":$4,\"bytes\":$5,\"files\":$6}")
+}
+write_report() {
+  local rc=$? IFS=,
+  [ -d "$TARGET" ] || return 0
+  printf '{"at":"%s","rc":%d,"acts":[%s]}\n' "$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ')" "$rc" "${acts[*]}" > "$REPORT"
+}
+trap write_report EXIT
+unit_bytes=0
+unit_files=0
+# Count unit directory $1 into unit_bytes and unit_files, before it is removed.
+measure_unit() {
+  local b f
+  b="$(du -sb -- "$1" | cut -f1)"
+  f="$(find "$1" -type f | wc -l)"
+  unit_bytes=$((unit_bytes + ${b:-0}))
+  unit_files=$((unit_files + f))
+}
+# cargo_clean <branch> <cause> <inputs json> <crates json> <cargo clean args>...: print what cargo
+# said and record the act with cargo's own count of what it removed; null where it gave none.
+cargo_clean() {
+  local branch="$1" cause="$2" inputs="$3" crates="$4" out rc bytes=null files=null unit=1
+  shift 4
+  out="$(CARGO_TERM_COLOR=never cargo clean "$@" 2>&1)"
+  rc=$?
+  [ -z "$out" ] || printf '%s\n' "$out" >&2
+  local summary='Removed ([0-9]+) (files?|director[a-z]+)(, ([0-9.]+)(B|KiB|MiB|GiB|TiB) total)?'
+  if [[ "$out" =~ $summary ]]; then
+    files="${BASH_REMATCH[1]}"
+    case "${BASH_REMATCH[2]}" in director*) files=0 ;; esac
+    case "${BASH_REMATCH[5]}" in
+      KiB) unit=1024 ;;
+      MiB) unit=1048576 ;;
+      GiB) unit=1073741824 ;;
+      TiB) unit=1099511627776 ;;
+    esac
+    if [ -n "${BASH_REMATCH[4]}" ]; then
+      bytes="$(awk -v n="${BASH_REMATCH[4]}" -v u="$unit" 'BEGIN { printf "%.0f", n * u }')"
+    elif [ "${BASH_REMATCH[1]}" = 0 ]; then
+      bytes=0
+    fi
+  fi
+  add_act "$branch" "$cause" "$inputs" "$crates" "$bytes" "$files"
+  return "$rc"
+}
 DEPS_DIR="$TARGET/debug/deps"
 rm -f "$TARGET/.unit-tests-built-tree"
 roots=(Cargo.toml Cargo.lock rust-toolchain.toml rust-toolchain .cargo/config.toml .cargo/config)
@@ -81,32 +141,39 @@ if [ -n "$release" ] && [ -z "$manifest" ]; then
   rm -f "$BUILT" || exit 2
   exit 0
 fi
+# clean_all <cause> [changed build input]...
 clean_all() {
+  local cause="$1"
+  shift
   rm -f "$BUILT" || exit 2
-  cargo clean --workspace -q || { echo "unit-tests: cargo clean --workspace failed" >&2; exit 2; }
+  cargo_clean whole-workspace "$cause" "$(json_list "$@")" '[]' --workspace ||
+    { echo "unit-tests: cargo clean --workspace failed" >&2; exit 2; }
 }
 if [ -z "$release" ] && [ -f "$BUILT" ]; then
   since="$STAMP"
   [ -f "$since" ] || since="$BUILT"
   since="$(ns '%.9Y' "$since")" || exit 2
   dropped=""
+  dropped_names=()
   for m in "${members[@]}"; do
     name="$(package_name "$m")"
     [ -n "$name" ] || continue
     hit=""
     while IFS= read -r d; do
       if built="$(ns '%.9Y' "$d/invoked.timestamp")" && [ "$built" -gt "$since" ]; then
+        measure_unit "$d"
         rm -rf "$d" || exit 2
         hit=1
       fi
     done < <(units_of "$name")
-    [ -z "$hit" ] || dropped+=" $name"
+    [ -z "$hit" ] || { dropped+=" $name"; dropped_names+=("$name"); }
   done
+  [ -z "$dropped" ] || add_act units-built-after-stamp "" '[]' "$(json_list "${dropped_names[@]}")" "$unit_bytes" "$unit_files"
   [ -z "$dropped" ] || echo "unit-tests: units built since the last recorded run, by a build this record does not name — rebuilding:$dropped"
 fi
 if [ -z "$manifest" ] || [ ! -f "$BUILT" ]; then
   echo "unit-tests: no record of the tree this target was built from — cleaning the workspace crates"
-  clean_all
+  if [ -z "$manifest" ]; then clean_all unhashable-tree; else clean_all missing-record; fi
 else
   changed="$(diff <(cat "$BUILT") <(printf '%s\n' "$manifest") | sed -n 's/^[<>] [0-9a-f]\{64\}  //p' | LC_ALL=C sort -u)"
   if [ -n "$release" ]; then
@@ -133,7 +200,13 @@ newest_edit() {
 keep_built_units() {
   local pkg="$1" edit="$2" d kept=1 stamp
   while IFS= read -r d; do
-    if stamp="$(ns '%.9Y' "$d/invoked.timestamp")" && [ "$stamp" -gt "$edit" ]; then kept=0; else rm -rf "$d"; fi
+    if stamp="$(ns '%.9Y' "$d/invoked.timestamp")" && [ "$stamp" -gt "$edit" ]; then
+      kept=0
+    else
+      measure_unit "$d"
+      rm -rf "$d"
+      case " ${stale_names[*]-} " in *" $pkg "*) ;; *) stale_names+=("$pkg") ;; esac
+    fi
   done < <(units_of "$pkg")
   return $kept
 }
@@ -149,9 +222,13 @@ if [ -n "$manifest" ] && [ -f "$BUILT" ] && [ -n "${changed:-}" ]; then
   done
   if [ "${#root_changed[@]}" -gt 0 ] && [ -z "$release" ]; then
     echo "unit-tests: ${root_changed[*]} changed — cleaning the workspace crates"
-    clean_all
+    clean_all build-input-changed "${root_changed[@]}"
   else
     to_clean=()
+    cleaned=()
+    stale_names=()
+    unit_bytes=0
+    unit_files=0
     any_kept=""
     for m in "${members[@]}"; do
       name="$(package_name "$m")"
@@ -172,14 +249,16 @@ if [ -n "$manifest" ] && [ -f "$BUILT" ] && [ -n "${changed:-}" ]; then
         if edit="$(newest_edit "${files[@]}")" && keep_built_units "$name" "$edit"; then any_kept=1; continue; fi
       fi
       to_clean+=(-p "$name")
+      cleaned+=("$name")
     done
+    [ "${#stale_names[@]}" -eq 0 ] || add_act release-units-dropped "" '[]' "$(json_list "${stale_names[@]}")" "$unit_bytes" "$unit_files"
     if [ "${#root_changed[@]}" -gt 0 ] && [ -z "$any_kept" ]; then
       echo "unit-tests: ${root_changed[*]} changed and no built unit is newer — cleaning the workspace crates"
-      clean_all
+      clean_all build-input-changed "${root_changed[@]}"
     elif [ "${#to_clean[@]}" -gt 0 ]; then
       echo "unit-tests: cleaning the workspace crates whose bytes changed:${to_clean[*]//-p/}"
       rm -f "$BUILT" || exit 2
-      cargo clean -q "${to_clean[@]}" || { echo "unit-tests: cargo clean ${to_clean[*]} failed" >&2; exit 2; }
+      cargo_clean per-crate bytes-changed '[]' "$(json_list "${cleaned[@]}")" "${to_clean[@]}" || { echo "unit-tests: cargo clean ${to_clean[*]} failed" >&2; exit 2; }
     else
       if [ -z "$release" ] && grep -qxF Cargo.lock <<< "$changed"; then
         echo "unit-tests: only Cargo.lock changed — cargo keys each unit by its resolved dependencies; nothing cleaned"
