@@ -61,6 +61,7 @@ fn put<B: Backend>(c: &Contract<B>, key: &str, v: Object, id: &str) -> u64 {
 pub struct Interpose<B: Backend> {
     inner: B,
     after_range: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    after_logs: Mutex<Option<(usize, Box<dyn FnOnce() + Send>)>>,
     ambiguous_commit: AtomicBool,
     gc_rows: AtomicUsize,
     returned: Mutex<Vec<String>>,
@@ -71,6 +72,7 @@ impl<B: Backend> Interpose<B> {
         Interpose {
             inner,
             after_range: Mutex::new(None),
+            after_logs: Mutex::new(None),
             ambiguous_commit: AtomicBool::new(false),
             gc_rows: AtomicUsize::new(0),
             returned: Mutex::new(Vec::new()),
@@ -88,6 +90,11 @@ impl<B: Backend> Interpose<B> {
 
     pub fn after_next_range(&self, f: impl FnOnce() + Send + 'static) {
         *self.after_range.lock().unwrap() = Some(Box::new(f));
+    }
+
+    /// Runs `f` inside the `nth` log read from now. A watch's second read follows a full wait.
+    pub fn after_nth_log(&self, nth: usize, f: impl FnOnce() + Send + 'static) {
+        *self.after_logs.lock().unwrap() = Some((nth, Box::new(f)));
     }
 
     /// The rows `gc_range` has returned so far.
@@ -148,7 +155,17 @@ impl<B: Backend> Backend for Interpose<B> {
         Ok(main)
     }
     fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>> {
-        self.inner.log(from, max_mains)
+        let out = self.inner.log(from, max_mains);
+        let mut armed = self.after_logs.lock().unwrap();
+        if let Some((left, f)) = armed.take() {
+            if left > 1 {
+                *armed = Some((left - 1, f));
+            } else {
+                drop(armed);
+                f();
+            }
+        }
+        out
     }
     fn compact(&self, rev: u64) -> Result<()> {
         self.inner.compact(rev)
@@ -495,13 +512,20 @@ fn answered_at_once<B: Backend + 'static>(c: &Arc<Contract<B>>, from: u64) -> Re
 
 pub fn closing_the_watches_answers_a_held_watch_and_every_later_one_with_progress<R: Rig>(rig: &R) {
     let clock = VirtualClock::new(T0);
-    let c = Arc::new(open(rig.fresh(), &clock));
+    let c = Arc::new(open(Interpose::new(rig.fresh()), &clock));
     let head = put(&c, "lifecycle/a", obj(json!(1)), "1");
+    let (waiting_tx, waiting) = std::sync::mpsc::channel();
+    c.backend().after_nth_log(2, move || {
+        let _ = waiting_tx.send(());
+    });
     let (tx, rx) = std::sync::mpsc::channel();
     let held = c.clone();
     std::thread::spawn(move || {
         let _ = tx.send(held.watch_any(&["lifecycle/"], head, 30_000));
     });
+    waiting
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("the watch never waited");
     c.close_watches();
     let got = rx
         .recv_timeout(std::time::Duration::from_secs(1))

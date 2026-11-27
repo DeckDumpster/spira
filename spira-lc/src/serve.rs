@@ -552,9 +552,7 @@ pub fn run(args: &[String]) -> i32 {
     let mut seen = None;
     let (drained, answered) = drain(&flights, &STOPPING, &finished, DRAIN_BOUND, || {
         seen = Some(Instant::now());
-        if let Some(Ok(store)) = crate::control::served::configured() {
-            store.contract().close_watches();
-        }
+        end_watches(crate::control::served::configured());
     });
     let took = seen.map_or(Duration::ZERO, |at| at.elapsed());
     if let Some(spans) = SPANS.get() {
@@ -778,6 +776,13 @@ pub(crate) fn stopping_line(in_flight: usize, wall_ms: u64) -> String {
 
 pub(crate) fn stopped_line(drained: usize, took: Duration, answered: usize, wall_ms: u64) -> String {
     format!("spira-lc serve: {} stopped after draining {drained} in {} ms, answered {answered} at the bound", spira_lc::sections::rfc3339(wall_ms), took.as_millis())
+}
+
+/// The drain's `on_stop`: a held watch would otherwise keep the drain for its whole wait.
+fn end_watches<B: state_store::Backend>(store: Option<Result<Arc<crate::control::store::Store<B>>, String>>) {
+    if let Some(Ok(store)) = store {
+        store.contract().close_watches();
+    }
 }
 
 /// Wait for the accept loop and its connections to finish (`finished`), but for no more than
