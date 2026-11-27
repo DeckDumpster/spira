@@ -245,13 +245,13 @@ anywhere a test module's own `mod name;` loads transitively.
   `SPIRA_CONF`, `SPIRA_HOME_REPO` — "where/who/which copy") trip it on ANY literal default;
   every other `SPIRA_*` key trips it only when the default is PATH-SHAPED (contains `/`).
   A key outside that list with a short, non-path default (`SPIRA_SYSTEMCTL` defaulting to
-  `"systemctl"`, `SPIRA_BD` to `"bd"`, `SPIRA_GH` to `"gh"`) is a PROGRAM NAME this process
+  `"systemctl"`, `SPIRA_GH` to `"gh"`) is a PROGRAM NAME this process
   shells out to on `$PATH` at exec time — not a config value `spira_config` owns, and not
   this defect; a `/` in that default would still mean it is secretly a path, so it still
   counts.
 
   A key with an entry under `spira/conf.d/` (a registered config key, other than a program
-  name: `SPIRA_BD`, `SPIRA_GH`, `SPIRA_FORGE`, `SPIRA_CTRL`, `SPIRA_SYSTEMCTL`) is refused ANY
+  name: `SPIRA_GH`, `SPIRA_FORGE`, `SPIRA_CTRL`, `SPIRA_SYSTEMCTL`) is refused ANY
   literal default and `.unwrap_or_default()` too: the registry owns the default, so an
   env read that supplies its own bypasses the config store.
 
@@ -560,7 +560,7 @@ long as the far side likes, and holds whatever the caller holds meanwhile.
   such word; a `Duration::from_*` literal above 5 s in a statement that names a call
   (`timeout`, `deadline`, `Command`, `connect`, `.output()`, `run(…)`, …).
 - Shell: a command from a fixed set (`bd`, `spira-bd`, `dolt`, `curl`, `wget`, `gh`, `ssh`,
-  `scp`, `rsync`, `nc`, `psql`, `mysql`, `podman`, `docker`, `$BD`, `$SPIRA_BD`, `$DOLT_BIN`,
+  `scp`, `rsync`, `nc`, `psql`, `mysql`, `podman`, `docker`, `$BD`, `$DOLT_BIN`,
   `git fetch|pull|push|clone|ls-remote`) not run under `timeout`, or `curl`/`wget` without
   `--max-time`/`--timeout`; any `timeout` whose literal duration exceeds 5 s.
 

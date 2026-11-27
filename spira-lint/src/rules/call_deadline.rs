@@ -263,7 +263,7 @@ fn duration_secs(n: &[u8], unit: &[u8]) -> f64 {
 const NET_PROGRAMS: &[&str] = &[
     "bd", "spira-bd", "dolt", "mysql", "psql", "curl", "wget", "gh", "ssh", "scp", "rsync", "nc", "ncat", "podman", "docker",
 ];
-const NET_VARS: &[&str] = &["BD", "SPIRA_BD", "DOLT_BIN", "DOLT"];
+const NET_VARS: &[&str] = &["BD", "DOLT_BIN", "DOLT"];
 const GIT_NET: &[&str] = &["fetch", "pull", "push", "clone", "ls-remote"];
 
 fn parse_duration_word(w: &str) -> Option<f64> {
@@ -612,7 +612,7 @@ mod tests {
     #[test]
     fn shell_network_calls_need_a_short_timeout() {
         assert_eq!(sh("#!/bin/sh\nbd list\n").len(), 1);
-        assert_eq!(sh("x=$(\"$SPIRA_BD\" show a)\n").len(), 1);
+        assert_eq!(sh("x=$(\"$BD\" show a)\n").len(), 1);
         assert_eq!(sh("git -C d fetch origin\n").len(), 1);
         assert_eq!(sh("curl -s http://x\n").len(), 1);
         assert_eq!(sh("timeout 60 bd list\n"), vec![(1, over(60.0))]);
