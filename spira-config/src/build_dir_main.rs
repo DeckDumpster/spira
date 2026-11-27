@@ -1,11 +1,13 @@
 //! spira-build-dir — lease an owned build directory for a hand build, from the pool dwarves use.
 //!
-//!   spira-build-dir lease --who <label> --pid <pid> [--root <tree>]
+//!   spira-build-dir lease --who <label> --pid <pid> [--root <tree>] [--repo <name>]
 //!
 //! Prints the directory for `CARGO_TARGET_DIR`; progress goes to stderr. The lease is held by a
 //! detached holder until `--pid` exits (pass the builder shell's `$$`), then the tree at `--root`
 //! (default: the current directory) is recorded as the one the directory holds and the directory
-//! goes idle. The selective clean runs before the path is printed.
+//! goes idle. The selective clean runs before the path is printed. `--repo` names the repository
+//! the tree belongs to: an idle directory that last built it is preferred, and the directory
+//! records it; without it any warm directory is taken and its record is cleared.
 
 use spira_config::build_dir as bd;
 use std::io::{BufRead, BufReader, Write};
@@ -15,7 +17,7 @@ use std::process::{Command, ExitCode, Stdio};
 use std::time::Duration;
 
 const POLL: Duration = Duration::from_millis(500);
-const USAGE: &str = "usage: spira-build-dir lease --who <label> --pid <pid> [--root <tree>]";
+const USAGE: &str = "usage: spira-build-dir lease --who <label> --pid <pid> [--root <tree>] [--repo <name>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -54,6 +56,7 @@ fn lease(args: &[String]) -> Result<(), String> {
     let mut child = Command::new(exe) // batch-job: the holder outlives this call by design, until the build ends
         .args(["__hold", &who, &pid])
         .arg(&root)
+        .arg(flag(args, "--repo").unwrap_or_default())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -86,8 +89,9 @@ fn hold(args: &[String]) -> Result<(), String> {
         args[1].parse::<i32>().map_err(|e| e.to_string())?,
         Path::new(&args[2]),
     );
+    let repo = args.get(3).map(String::as_str).filter(|r| !r.is_empty());
     let mut out = std::io::stdout();
-    let held = take(who, root, &mut out);
+    let held = take(who, root, repo, &mut out);
     let lease = match held {
         Ok(l) => l,
         Err(e) => {
@@ -121,7 +125,7 @@ fn script() -> Result<PathBuf, String> {
     Ok(spira_config::resolve::locate_home_for_process()?.join(bd::CLEAN_SCRIPT))
 }
 
-fn take(who: &str, root: &Path, out: &mut impl Write) -> Result<bd::Lease, String> {
+fn take(who: &str, root: &Path, repo: Option<&str>, out: &mut impl Write) -> Result<bd::Lease, String> {
     let bases = bd::parse_bases(&spira_config::process::cfg(bd::BASE_ENV)?);
     if bases.is_empty() {
         return Err(format!(
@@ -129,7 +133,7 @@ fn take(who: &str, root: &Path, out: &mut impl Write) -> Result<bd::Lease, Strin
             bd::BASE_ENV
         ));
     }
-    let lease = bd::lease(&bases, who).map_err(|e| format!("cannot lease a build directory under {bases:?}: {e}"))?;
+    let lease = bd::lease_for(&bases, who, repo).map_err(|e| format!("cannot lease a build directory under {bases:?}: {e}"))?;
     let path = std::env::var("PATH").unwrap_or_default();
     match bd::clean(&script()?, root, lease.dir(), &path, false) {
         Ok(text) => {

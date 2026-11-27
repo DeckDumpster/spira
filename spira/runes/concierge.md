@@ -163,7 +163,7 @@ forge refuses a second open PR from this installation on a repo; a deliberate se
 `QUEUE_SECOND_PR_CONSIDERED="<why>"` in the environment, and the forge logs the reason.
 
 **A hand build, or a builder subagent you brief, never makes its own worktree target.** Its brief
-says: `export CARGO_TARGET_DIR="$(spira-build-dir lease --who <label> --pid $$ --root <worktree>)"` before
+says: `export CARGO_TARGET_DIR="$(spira-build-dir lease --who <label> --pid $$ --root <worktree> --repo <repo>)"` before
 any cargo command. That leases a directory from the pool dwarves build in (warm reuse, selective
 clean, idle-only eviction) and holds it until that shell (`$$`) exits. Never a fixed directory, never
 `<worktree>/target`.

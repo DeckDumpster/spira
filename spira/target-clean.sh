@@ -17,7 +17,8 @@
 # inputs, and every file outside a crate that a crate's dep-info names (include_str! targets),
 # so an amend that edits a doc cleans nothing and one that edits a crate cleans that crate
 # (cargo rebuilds its dependents from the changed fingerprint). A changed build input, a missing
-# record, or a tree that cannot be hashed cleans the whole workspace. A tree with no Cargo.toml
+# record, or a tree that cannot be hashed cleans the whole workspace. Cargo.lock is the exception
+# outside a release: a tree whose lockfile alone differs cleans only its changed crates. A tree with no Cargo.toml
 # is no cargo workspace: nothing to clean or record.
 #
 # The record cannot name a build made without this script, and cargo can call such a unit fresh
@@ -137,8 +138,15 @@ keep_built_units() {
   return $kept
 }
 if [ -n "$manifest" ] && [ -f "$BUILT" ] && [ -n "${changed:-}" ]; then
+  # A lockfile that differs between two trees is no reason to clean on its own: cargo keys each
+  # unit by the dependencies it resolved, so a unit built against other versions is a different
+  # unit. Only source files need this clean, because cargo trusts their mtimes across trees. A
+  # release still counts it: the lock changed under units this lease built.
   root_changed=()
-  for r in "${roots[@]}"; do grep -qxF "$r" <<< "$changed" && root_changed+=("$r"); done
+  for r in "${roots[@]}"; do
+    [ -z "$release" ] && [ "$r" = Cargo.lock ] && continue
+    grep -qxF "$r" <<< "$changed" && root_changed+=("$r")
+  done
   if [ "${#root_changed[@]}" -gt 0 ] && [ -z "$release" ]; then
     echo "unit-tests: ${root_changed[*]} changed — cleaning the workspace crates"
     clean_all
@@ -173,7 +181,11 @@ if [ -n "$manifest" ] && [ -f "$BUILT" ] && [ -n "${changed:-}" ]; then
       rm -f "$BUILT" || exit 2
       cargo clean -q "${to_clean[@]}" || { echo "unit-tests: cargo clean ${to_clean[*]} failed" >&2; exit 2; }
     else
-      echo "unit-tests: no workspace crate's bytes changed — nothing cleaned"
+      if [ -z "$release" ] && grep -qxF Cargo.lock <<< "$changed"; then
+        echo "unit-tests: only Cargo.lock changed — cargo keys each unit by its resolved dependencies; nothing cleaned"
+      else
+        echo "unit-tests: no workspace crate's bytes changed — nothing cleaned"
+      fi
     fi
   fi
 fi

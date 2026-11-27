@@ -869,7 +869,7 @@ impl Scripts for FScripts {
     fn release_tool(&self) -> Result<PathBuf, String> {
         Ok(PathBuf::from("release"))
     }
-    fn build_release(&self, wt: &Path, who: &str) -> Result<Box<dyn std::any::Any>, String> {
+    fn build_release(&self, wt: &Path, who: &str, _repo: &str) -> Result<Box<dyn std::any::Any>, String> {
         self.calls
             .borrow_mut()
             .push(format!("build_release {} {who}", wt.display()));

@@ -1233,14 +1233,14 @@ impl Scripts for RealScripts {
     fn release_tool(&self) -> Result<PathBuf, String> {
         spira_config::release_env::tool("release").map(PathBuf::from)
     }
-    fn build_release(&self, wt: &Path, who: &str) -> Result<Box<dyn std::any::Any>, String> {
+    fn build_release(&self, wt: &Path, who: &str, repo: &str) -> Result<Box<dyn std::any::Any>, String> {
         use spira_config::build_dir as bd;
         let base = spira_config::process::cfg(bd::BASE_ENV)?;
         let bases = bd::parse_bases(&base);
         if bases.is_empty() {
             return Err(format!("{} is not set — set dwarf_build_base in the config document", bd::BASE_ENV));
         }
-        let lease = bd::lease(&bases, who).map_err(|e| format!("cannot lease a build directory under {base}: {e}"))?;
+        let lease = bd::lease_for(&bases, who, Some(repo)).map_err(|e| format!("cannot lease a build directory under {base}: {e}"))?;
         let held = HeldBuild(Some(lease));
         let dir = held.0.as_ref().map(|l| l.dir().to_path_buf()).unwrap_or_default();
         let script = spira_config::resolve::locate_home_for_process()?.join(bd::CLEAN_SCRIPT);
@@ -2884,7 +2884,7 @@ mod tests {
         let wt = d.path().join("wt");
         fs::create_dir_all(&wt).unwrap();
         crate_tree(&wt, "pub fn f() { let _ = 1; }\n");
-        let held = RealScripts { home: home.clone() }.build_release(&wt, "hand-1").expect("builds");
+        let held = RealScripts { home: home.clone() }.build_release(&wt, "hand-1", "spira").expect("builds");
         let lines: Vec<String> = fs::read_to_string(&log).unwrap().lines().map(String::from).collect();
         let clean = lines.iter().position(|l| l == "clean -q -p crate-a").unwrap_or_else(|| panic!("no clean of crate-a: {lines:?}"));
         let build = lines.iter().position(|l| l.starts_with("build -q --profile release")).expect("built");
@@ -2892,13 +2892,13 @@ mod tests {
         assert!(wt.join("target/release").is_symlink(), "the release symlink is made");
         drop(held);
         fs::write(d.path().join("bin/fail"), "").unwrap();
-        let err = RealScripts { home: home.clone() }.build_release(&wt, "hand-2").expect_err("a failing build fails");
+        let err = RealScripts { home: home.clone() }.build_release(&wt, "hand-2", "spira").expect_err("a failing build fails");
         assert!(err.contains("cargo build --profile release failed (rc=3)"), "{err}");
         fs::remove_file(d.path().join("bin/fail")).unwrap();
         fs::write(d.path().join("bin/failclean"), "").unwrap();
         fs::write(wt.join("a/src/lib.rs"), "pub fn f() { let _ = 2; }\n").unwrap();
         let builds = fs::read_to_string(&log).unwrap().matches("build -q").count();
-        let err = RealScripts { home }.build_release(&wt, "hand-3").expect_err("a failing clean fails");
+        let err = RealScripts { home }.build_release(&wt, "hand-3", "spira").expect_err("a failing clean fails");
         assert!(err.contains("selective clean") && err.contains("emptied"), "{err}");
         assert!(!slot.join(".unit-tests-built-manifest").exists(), "the untrusted directory is emptied");
         assert_eq!(fs::read_to_string(&log).unwrap().matches("build -q").count(), builds, "nothing is built after a failed clean");
