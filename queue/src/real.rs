@@ -2959,9 +2959,8 @@ mod tests {
         crate_tree(&wt, "pub fn f() { let _ = 1; }\n");
         let held = RealScripts { home: home.clone() }.build_release(&wt, "hand-1", "spira").expect("builds");
         let lines: Vec<String> = fs::read_to_string(&log).unwrap().lines().map(String::from).collect();
-        let clean = lines.iter().position(|l| l == "clean -p crate-a").unwrap_or_else(|| panic!("no clean of crate-a: {lines:?}"));
-        let build = lines.iter().position(|l| l.starts_with("build -q --profile release")).expect("built");
-        assert!(clean < build, "clean runs before the build: {lines:?}");
+        assert!(!lines.iter().any(|l| l.starts_with("clean")), "a changed crate loses its fingerprints, not its outputs: no cargo clean: {lines:?}");
+        assert!(lines.iter().any(|l| l.starts_with("build -q --profile release")), "built: {lines:?}");
         assert!(wt.join("target/release").is_symlink(), "the release symlink is made");
         drop(held);
         fs::write(d.path().join("bin/fail"), "").unwrap();
@@ -2970,6 +2969,8 @@ mod tests {
         fs::remove_file(d.path().join("bin/fail")).unwrap();
         fs::write(d.path().join("bin/failclean"), "").unwrap();
         fs::write(wt.join("a/src/lib.rs"), "pub fn f() { let _ = 2; }\n").unwrap();
+        // A workspace manifest change is what still runs cargo clean, so it is what can fail.
+        fs::write(wt.join("Cargo.toml"), format!("{}\n# changed\n", fs::read_to_string(wt.join("Cargo.toml")).unwrap())).unwrap();
         let builds = fs::read_to_string(&log).unwrap().matches("build -q").count();
         let err = RealScripts { home }.build_release(&wt, "hand-3", "spira").expect_err("a failing clean fails");
         assert!(err.contains("selective clean") && err.contains("emptied"), "{err}");

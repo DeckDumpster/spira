@@ -249,7 +249,7 @@ fn a_lease_after_the_holder_exits_reuses_the_warm_directory_with_a_selective_cle
     );
     assert_eq!(
         std::fs::read_to_string(&b.log).unwrap().trim(),
-        "clean -p crate-b",
+        "",
         "only the changed crate is cleaned: {err}"
     );
     let _ = (p2.kill(), p2.wait());
@@ -358,7 +358,7 @@ fn a_release_cleans_a_crate_changed_during_the_lease_and_the_next_lease_trusts_t
     let _ = std::fs::remove_file(&b.log);
     std::fs::write(b.tree.join("a/src/lib.rs"), "pub fn f() { let _ = 2; }\n").unwrap();
     release(&b, &mut p3);
-    assert_eq!(cargo_log(&b), "clean -p crate-a", "release cleans only the crate changed in the lease");
+    assert_eq!(cargo_log(&b), "", "release cleans only the crate changed in the lease");
 
     let a = std::fs::File::options().write(true).open(b.tree.join("a/src/lib.rs")).unwrap();
     std::fs::write(b.tree.join("a/src/lib.rs"), LEASE_BYTES).unwrap();
@@ -369,7 +369,7 @@ fn a_release_cleans_a_crate_changed_during_the_lease_and_the_next_lease_trusts_t
     assert_eq!(d4, d1);
     assert_eq!(
         cargo_log(&b),
-        "clean -p crate-a",
+        "",
         "bytes that differ from the release record are cleaned: {err}"
     );
     let _ = (p4.kill(), p4.wait());
@@ -392,7 +392,7 @@ fn a_file_rewritten_with_the_same_bytes_during_the_lease_is_cleaned_on_release()
     std::fs::write(b.tree.join("a/src/lib.rs"), LEASE_BYTES).unwrap();
     touched_after_record(&d1, &b.tree.join("a/src/lib.rs"));
     release(&b, &mut p1);
-    assert_eq!(cargo_log(&b), "clean -p crate-a");
+    assert_eq!(cargo_log(&b), "");
 }
 
 #[test_id(tx3uue5)]
@@ -429,7 +429,7 @@ fn a_file_outside_every_crate_that_a_crate_read_is_cleaned_on_release_when_touch
     std::fs::write(root.join("doc.txt"), "doc\n").unwrap();
     touched_after_record(&d2, &root.join("doc.txt"));
     release(&b, &mut p2);
-    assert_eq!(cargo_log(&b), "clean -p crate-a");
+    assert_eq!(cargo_log(&b), "");
 }
 
 fn unit(dir: &Path, name: &str, stamp: Option<std::time::SystemTime>) -> PathBuf {
@@ -493,7 +493,7 @@ fn an_edit_with_a_back_dated_mtime_after_the_stamp_drops_the_unit() {
         .set_modified(std::time::SystemTime::now() - Duration::from_secs(3600)).unwrap();
     release(&b, &mut p);
     assert!(!u.exists(), "ctime newer than the stamp drops the unit");
-    assert_eq!(cargo_log(&b), "clean -p crate-a");
+    assert_eq!(cargo_log(&b), "");
 }
 
 #[test_id(tm4w9ze)]
@@ -504,7 +504,7 @@ fn a_unit_with_no_timestamp_is_removed_and_a_deleted_file_cleans_its_crate() {
     let bare = unit(&d, "crate-a-0123456789abcdef", None);
     release(&b, &mut p);
     assert!(!bare.exists(), "a unit with no timestamp is removed");
-    assert_eq!(cargo_log(&b), "clean -p crate-a");
+    assert_eq!(cargo_log(&b), "");
 
     let mut p2 = sleeper();
     let (d2, _) = b.lease("hand-2", &p2);
@@ -513,7 +513,7 @@ fn a_unit_with_no_timestamp_is_removed_and_a_deleted_file_cleans_its_crate() {
     let fresh = unit(&d2, "crate-b-0123456789abcdef", Some(std::time::SystemTime::now() + Duration::from_secs(3600)));
     release(&b, &mut p2);
     assert!(fresh.exists());
-    assert_eq!(cargo_log(&b), "clean -p crate-b", "a deleted file cleans the crate whatever its units");
+    assert_eq!(cargo_log(&b), "", "a deleted file cleans the crate whatever its units");
 }
 
 // These spawn the clean script because it is what is under test: the rule exists only in it.
@@ -559,7 +559,7 @@ fn a_tree_whose_lockfile_and_one_crate_differ_cleans_that_crate_at_lease() {
     std::fs::write(b.tree.join("Cargo.lock"), "# another tree's lock\n").unwrap();
     std::fs::write(b.tree.join("a/src/lib.rs"), "pub fn f() { let _ = 2; }\n").unwrap();
     clean_tree(&b, &d);
-    assert_eq!(cargo_log(&b), "clean -p crate-a");
+    assert_eq!(cargo_log(&b), "");
 }
 
 #[test_id(tq4lk3c)]
@@ -762,6 +762,33 @@ fn an_edited_crate_reports_a_per_crate_clean_naming_it() {
     let a = only_act(&d);
     assert_eq!(kind(&a), ("per-crate", "bytes-changed"));
     assert_eq!(a.crates, ["crate-b"]);
+}
+
+#[test_id(t7aa1jf)]
+#[test]
+fn an_edited_crate_loses_its_fingerprints_in_every_profile_and_keeps_its_outputs() {
+    let b = setup("bdcli-fingerprint-clean");
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    let keep = unit(&d, "crate-a-0123456789abcdef", None);
+    let debug_b = unit(&d, "crate-b-0123456789abcdef", None);
+    std::fs::write(debug_b.join("lib-crate_b"), vec![0u8; 512]).unwrap();
+    let release_b = d.join("release/.fingerprint/crate-b-fedcba9876543210");
+    std::fs::create_dir_all(&release_b).unwrap();
+    let rlib = d.join("debug/deps/libcrate_b-0123456789abcdef.rlib");
+    std::fs::create_dir_all(rlib.parent().unwrap()).unwrap();
+    std::fs::write(&rlib, vec![0u8; 1 << 20]).unwrap();
+    let _ = std::fs::remove_file(&b.log);
+    std::fs::write(b.tree.join("b/src/lib.rs"), "pub fn f() { let _ = 1; }\n").unwrap();
+    clean_tree(&b, &d);
+    assert_eq!(cargo_log(&b), "", "no cargo clean: the outputs stay for rustc to overwrite");
+    assert!(!debug_b.exists() && !release_b.exists(), "crate-b's fingerprints are gone in every profile");
+    assert!(keep.exists(), "an unchanged crate keeps its fingerprint");
+    assert!(rlib.exists(), "crate-b's compiled output stays");
+    let a = only_act(&d);
+    assert_eq!(kind(&a), ("per-crate", "bytes-changed"));
+    assert_eq!(a.crates, ["crate-b"]);
+    assert!(a.bytes.unwrap_or(u64::MAX) < 1 << 20, "the act counts the fingerprints, not the outputs: {a:?}");
 }
 
 #[test_id(tisa3uc)]
