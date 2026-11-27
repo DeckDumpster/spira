@@ -46,6 +46,8 @@ impl Runner {
 pub struct Profile {
     /// The run's worktree, writable: the script and the crates it builds.
     pub tree: PathBuf,
+    /// The real uid of the process that starts `bwrap`.
+    pub caller_uid: u32,
     /// This branch's cargo target, writable, kept between runs.
     pub target: PathBuf,
     /// The caller's home directory, replaced by a tmpfs inside.
@@ -106,6 +108,8 @@ impl Profile {
             .join(":");
         Profile {
             tree: tree.to_path_buf(),
+            // SAFETY: getuid has no preconditions and cannot fail.
+            caller_uid: unsafe { libc::getuid() },
             target: target.to_path_buf(),
             home: home.to_path_buf(),
             gitdir: worktree_gitdir(tree),
@@ -176,6 +180,11 @@ impl Profile {
         .iter()
         .map(|x| x.to_string())
         .collect();
+        // No test runs as uid 0, as in tools/test-sandbox/runner.
+        if self.caller_uid == 0 {
+            let id = crate::container::SPIRA_UID.to_string();
+            a.extend(["--unshare-user".into(), "--uid".into(), id.clone(), "--gid".into(), id]);
+        }
         a.extend(["--tmpfs".into(), s(&self.home)]);
         for p in &self.ro_under_home {
             a.extend(["--ro-bind".into(), s(p), s(p)]);
@@ -592,6 +601,7 @@ mod tests {
     fn profile() -> Profile {
         Profile {
             tree: "tmp/spira-testenv-x/tree".into(),
+            caller_uid: 1000,
             target: "r/t/spira-unit-cargo-target-b".into(),
             home: "h/u".into(),
             gitdir: Some("h/u/repo/.git".into()),
@@ -652,6 +662,16 @@ mod tests {
         for f in ["--unshare-net", "--unshare-pid", "--die-with-parent", "--clearenv"] {
             assert!(a.iter().any(|x| x == f), "{f} missing: {a:?}");
         }
+    }
+
+    #[test_id(tcliuio)]
+    #[test]
+    fn a_root_callers_sandbox_runs_as_the_test_user_and_any_other_callers_keeps_its_own_identity() {
+        let root = Profile { caller_uid: 0, ..profile() }.bwrap_args();
+        let want = ["--unshare-user", "--uid", "1001", "--gid", "1001"];
+        assert!(root.windows(want.len()).any(|w| w == want), "{want:?} missing: {root:?}");
+        let other = profile().bwrap_args();
+        assert!(other.iter().all(|a| !["--unshare-user", "--uid", "--gid"].contains(&a.as_str())), "{other:?}");
     }
 
     #[test_id(tekb5m0)]
