@@ -14,6 +14,7 @@ use reconciler_flow::core::{
     backlog_trend_raw, dwell_raw, dwell_regression_raw, idle_capacity_raw, BindingLimit, round_health_raw, rework_raw, sentinel_overrun_raw, velocity_raw, BacklogObserved, DwellObserved, DwellRegressionObserved,
     ReworkObserved, RoundHealthObserved, SlotsSample, VelocityObserved, DWELL_REGRESSION_STATES,
 };
+use reconciler_flow::io::StateDwell;
 use runtime::event::*;
 use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
@@ -85,7 +86,7 @@ pub struct Stage {
     pub dwell: (f64, u64, f64, u64),
     pub round_health: (u64, u64, u64, u64),
     pub rework: (u64, u64, f64),
-    pub regression: Vec<(String, f64, u64, f64, u64)>,
+    pub regression: Vec<StateDwell>,
 }
 
 /// Every reading is its own `Result`: one that could not be taken is that invariant's
@@ -276,9 +277,9 @@ pub fn judge(cfg: &ReconcilerFlow, now: u64, carry: &Carry, snap: &FlowSnapshot,
         let key = format!("flow:dwell-regression:{}", state_name.to_ascii_lowercase());
         let raw = match &snap.stage {
             Ok(s) => {
-                let observed = match s.regression.iter().find(|(name, ..)| name == state_name) {
-                    Some((_, p90, n, base_p90, base_n)) => DwellRegressionObserved { p90_seconds: *p90, n: *n, baseline_p90_seconds: *base_p90, baseline_n: *base_n },
-                    None => DwellRegressionObserved { p90_seconds: 0.0, n: 0, baseline_p90_seconds: 0.0, baseline_n: 0 },
+                let observed = match s.regression.iter().find(|d| d.state == state_name) {
+                    Some(d) => DwellRegressionObserved { p90_seconds: d.p90_seconds, n: d.n, baseline_p90_seconds: d.baseline_p90_seconds, baseline_n: d.baseline_n, slowest: d.slowest.clone() },
+                    None => DwellRegressionObserved { p90_seconds: 0.0, n: 0, baseline_p90_seconds: 0.0, baseline_n: 0, slowest: Vec::new() },
                 };
                 fresh(&snap.export, dwell_regression_raw(&observed))
             }

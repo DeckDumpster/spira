@@ -9,7 +9,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::core::DWELL_REGRESSION_PERCENTILE;
 
 /// One duckdb -json -c invocation, parsed. Empty stdout (a `SELECT` with no matching rows in
 /// an old duckdb, or a query that legitimately returns nothing) is `Ok(vec![])`, not an
@@ -315,33 +318,63 @@ pub fn rework_metrics(rows: &[Value], now: u64, window_hours: f64) -> (u64, u64,
     (reopens, landed, (now as f64 - oldest).max(0.0) / 3600.0)
 }
 
+/// How many of the current window's longest dwells a [`StateDwell`] names.
+const SLOWEST_NAMED: usize = 3;
+
+/// One lifecycle state's dwell reading, as [`crate::core::DwellRegressionObserved`] takes it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StateDwell {
+    pub state: String,
+    pub p90_seconds: f64,
+    pub n: u64,
+    pub baseline_p90_seconds: f64,
+    pub baseline_n: u64,
+    /// (bead id, dwell seconds) from the current window, slowest first.
+    pub slowest: Vec<(String, f64)>,
+}
+
 /// Per lifecycle state, the p90 dwell (seconds) for the current window and the trailing
 /// baseline, plus how many completed transitions (a bead entering the state, then leaving it
 /// for any next state) each is drawn from. A state with no completed transition in either
 /// window is simply absent from the result — the caller (main.rs) evaluates every state in
 /// [`crate::core::DWELL_REGRESSION_STATES`] regardless, defaulting an absent one to "no
 /// history", the same as a fresh install.
-pub fn dwell_regression_metrics(rows: &[Value], now: u64, window_hours: f64, baseline_hours: f64) -> Vec<(String, f64, u64, f64, u64)> {
+pub fn dwell_regression_metrics(rows: &[Value], now: u64, window_hours: f64, baseline_hours: f64) -> Vec<StateDwell> {
     // Bucketed by when a dwell COMPLETED (the row leaving the state), not when it started —
     // the same convention `dwell_metrics` uses for CERTIFIED->LANDED: a dwell is only knowable
     // once it is over, so "the current window" means "finished recently", and a dwell that
     // started long ago but only just ended still counts as current.
-    let mut by_state: std::collections::BTreeMap<&str, Vec<(f64, f64)>> = Default::default();
-    for (r, before) in transitions(rows, |r| tsd::query::text(r, "key").unwrap_or("").to_string(), |_| true) {
+    let bead = |r: &Value| tsd::query::text(r, "key").unwrap_or("").to_string();
+    let mut by_state: std::collections::BTreeMap<&str, Vec<(f64, f64, String)>> = Default::default();
+    for (r, before) in transitions(rows, bead, |_| true) {
         let Some((prev_state, prev_ts)) = before else { continue };
         let Some(t) = ts_secs(r) else { continue };
-        by_state.entry(prev_state).or_default().push((t, t - prev_ts));
+        by_state.entry(prev_state).or_default().push((t, t - prev_ts, bead(r)));
     }
-    let p90 = |dwells: &[(f64, f64)], hours: f64| {
-        let v: Vec<f64> = dwells.iter().filter(|(t, _)| *t >= cutoff(now, hours)).map(|(_, d)| *d).collect();
-        (tsd::query::quantile(&v, 0.9).unwrap_or(0.0), v.len() as u64)
+    let within = |dwells: &[(f64, f64, String)], hours: f64| -> Vec<(String, f64)> {
+        dwells.iter().filter(|(t, ..)| *t >= cutoff(now, hours)).map(|(_, d, id)| (id.clone(), *d)).collect()
+    };
+    let percentile = |dwells: &[(String, f64)]| {
+        let v: Vec<f64> = dwells.iter().map(|(_, d)| *d).collect();
+        tsd::query::quantile(&v, DWELL_REGRESSION_PERCENTILE as f64 / 100.0).unwrap_or(0.0)
     };
     by_state
         .into_iter()
         .map(|(state, dwells)| {
-            let (cur, cur_n) = p90(&dwells, window_hours);
-            let (base, base_n) = p90(&dwells, baseline_hours);
-            (state.to_string(), cur, cur_n, base, base_n)
+            let mut current = within(&dwells, window_hours);
+            let baseline = within(&dwells, baseline_hours);
+            let p90_seconds = percentile(&current);
+            let n = current.len() as u64;
+            current.sort_by(|a, b| b.1.total_cmp(&a.1));
+            current.truncate(SLOWEST_NAMED);
+            StateDwell {
+                state: state.to_string(),
+                p90_seconds,
+                n,
+                baseline_p90_seconds: percentile(&baseline),
+                baseline_n: baseline.len() as u64,
+                slowest: current,
+            }
         })
         .collect()
 }
@@ -412,5 +445,33 @@ mod backlog_sample_tests {
         let text = std::fs::read_to_string(tsd::family_path(t.path(), "backlog")).unwrap();
         assert_eq!(text.lines().count(), 2, "{text}");
         assert_eq!(backlog_baseline_in_process(t.path(), 1_000_100, 1.0).unwrap(), 8.0);
+    }
+}
+
+#[cfg(test)]
+mod dwell_regression_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test_id(t1i7oi6)]
+    #[test]
+    fn the_ready_reading_names_the_three_slowest_beads_that_left_inside_the_window() {
+        const NOW: u64 = 1_000_000;
+        let row = |key: &str, to: &str, seq: u64, ts: u64| json!({"machine": "bead", "key": key, "to_state": to, "seq": seq, "applied": true, "ts": tsd::iso_utc(ts)});
+        let mut rows = Vec::new();
+        for k in 0..12u64 {
+            let (left, dwell) = (NOW - 100, 100 + (k * 5 % 12) * 10);
+            rows.push(row(&format!("sp-{k}"), "READY", 2 * k, left - dwell));
+            rows.push(row(&format!("sp-{k}"), "WORKING", 2 * k + 1, left));
+        }
+        let before_window = NOW - 2 * 3600;
+        rows.push(row("sp-old", "READY", 100, before_window - 50_000));
+        rows.push(row("sp-old", "WORKING", 101, before_window));
+
+        let got = dwell_regression_metrics(&rows, NOW, 1.0, 24.0);
+        let ready = got.iter().find(|s| s.state == "READY").expect("a READY reading");
+        assert_eq!(ready.n, 12);
+        assert_eq!(ready.baseline_n, 13);
+        assert_eq!(ready.slowest, [("sp-7".to_string(), 210.0), ("sp-2".to_string(), 200.0), ("sp-9".to_string(), 190.0)]);
     }
 }
