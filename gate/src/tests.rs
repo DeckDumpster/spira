@@ -4201,13 +4201,52 @@ fn a_gate_on_a_tree_with_a_proved_fences_verdict_runs_no_fences_phase() {
     *f.base_tree_override.borrow_mut() = Some(BASE_TREE_HEX.into());
     f.files.borrow_mut().insert(
         PathBuf::from(format!("run/verdicts/fences/spira/{BASE_TREE_HEX}")),
-        fencecache::render("harness", "", "bash spira/fence.sh && run-suites", "fence: x checked 3 files"),
+        fencecache::render(
+            "harness",
+            "bash spira/fence.sh && run-suites",
+            &fencecache::deny_id(&Default::default(), ""),
+            "fence: x checked 3 files",
+        ),
     );
     assert_eq!(f.run(), FAIL);
     let cmds = f.cmds.borrow().clone();
     assert_eq!(cmds[0], "bash spira/fence.sh && run-suites", "{cmds:?}");
     assert_eq!(cmds.len(), 3, "the red fence is followed by build and test, and no base trial: {cmds:?}");
     assert!(!meter(&f).contains("base-fences"), "{}", meter(&f));
+}
+
+#[test_id(t3p3xcf)]
+#[test]
+fn a_fences_verdict_is_reused_only_under_the_same_deny_rows_and_own_set() {
+    let gate = |deny: &str, bead: &str, carried: Option<(PathBuf, String)>| {
+        let f = unit_fake(&["gate/src/x.rs"]);
+        f.runs
+            .borrow_mut()
+            .insert(MERGE_SHA.into(), (1, "literal-lint: RED".into()));
+        *f.base_tree_override.borrow_mut() = Some(BASE_TREE_HEX.into());
+        *f.deny.borrow_mut() = Ok(deny.to_string());
+        f.put_var("SPIRA_GATE_BEAD", bead);
+        f.files.borrow_mut().extend(carried);
+        assert_eq!(f.run(), FAIL, "{}", f.stderr());
+        f
+    };
+    let proved = |f: &Fake| {
+        let want = PathBuf::from(format!("run/verdicts/fences/spira/{BASE_TREE_HEX}"));
+        let entry = f.written.borrow().iter().find(|(p, _)| *p == want).cloned();
+        entry.expect("the base trial records its fences PASS")
+    };
+    const ROW: &str = "disabled\ttest:t0aaaaa\tsp-x\t-\n";
+    const OWNED: &str = "disabled\ttest:t0aaaaa\tsp-a\t-\n";
+    for (case, written, read, reused) in [
+        ("unchanged", ("", "sp-a"), ("", "sp-a"), true),
+        ("row added", ("", "sp-a"), (ROW, "sp-a"), false),
+        ("own set changed", (OWNED, "sp-a"), (OWNED, "sp-b"), false),
+        ("another's rows do not split", (ROW, "sp-a"), (ROW, "sp-b"), true),
+    ] {
+        let first = gate(written.0, written.1, None);
+        let second = gate(read.0, read.1, Some(proved(&first)));
+        assert_eq!(!meter(&second).contains("base-fences"), reused, "{case}: {}", meter(&second));
+    }
 }
 
 #[test_id(t4mz4kt)]
