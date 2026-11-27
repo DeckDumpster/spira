@@ -162,6 +162,24 @@ fn a_gone_publish_pr_is_retired_and_pushed_by_the_engine_in_one_tick() {
     assert!(!names.iter().any(|n| n == "publish.pr_close"), "{names:?}");
 }
 
+#[test_id(tya0yen)]
+#[test]
+fn a_publish_step_held_by_a_halt_is_not_driven_again_while_it_is_held() {
+    let mut r = TaskRig::new(1, registration()).unwrap().double(OBSERVE, |_| Ok(serde_json::to_string(&busy()).unwrap()));
+    for e in EFFECTS.iter().filter(|e| **e != OBSERVE) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.deliver(runtime::event::HALT_STREAM, EventKind::new(runtime::event::SCHEDULER_HALTED, "test")).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(CADENCE_MS * 3).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let held: Vec<String> = r.journaled().iter().filter(|e| e.kind.tag == runtime::event::EFFECT_HELD).map(|e| serde_json::from_str::<serde_json::Value>(&e.kind.body).unwrap()["spec"]["name"].as_str().unwrap().to_string()).collect();
+    let count = |name: &str| held.iter().filter(|n| *n == name).count();
+    assert_eq!((count("publish.retire"), count(PUSH_BRANCH)), (1, 1), "{held:?}");
+    r.deliver(runtime::event::HALT_STREAM, EventKind::new(runtime::event::SCHEDULER_RESUMED, "")).unwrap();
+    assert_eq!(r.requested().iter().filter(|q| q.name == PUSH_BRANCH).count(), 1);
+}
+
 /// A close that succeeded and an open step that failed must not leave the stale record in charge.
 #[test_id(t8hg37g)]
 #[test]

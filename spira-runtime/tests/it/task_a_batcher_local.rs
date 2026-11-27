@@ -1870,6 +1870,89 @@ fn a_round_is_cut_within_a_minute_of_a_restart_that_interrupted_the_assemble() {
     assert_eq!((asked(&r, ASSEMBLE), asked(&r, ROUND_OPEN)), (2, 1), "{:?}", r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>());
 }
 
+/// A rig halted before its first tick, left to observe a cuttable pool for three cadences.
+fn halted_cut() -> TaskRig {
+    let assembled = Assembled { merged: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
+    let mut r = TaskRig::new(1, registration())
+        .unwrap()
+        .double(OBSERVE, |_| Ok(serde_json::to_string(&busy()).unwrap()))
+        .double(ASSEMBLE, move |_| Ok(serde_json::to_string(&assembled).unwrap()))
+        .double(ROUND_OPEN, |_| Ok(serde_json::to_string(&Opened { batch: "r9".into(), ..Opened::default() }).unwrap()));
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, ASSEMBLE, ROUND_OPEN].contains(e)) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.deliver(runtime::event::HALT_STREAM, EventKind::new(runtime::event::SCHEDULER_HALTED, "test")).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(CADENCE_MS * 3).unwrap();
+    r
+}
+
+fn held_assembles(r: &TaskRig) -> usize {
+    r.journaled().iter().filter(|e| e.kind.tag == runtime::event::EFFECT_HELD).filter(|e| serde_json::from_str::<serde_json::Value>(&e.kind.body).unwrap()["spec"]["name"] == ASSEMBLE).count()
+}
+
+fn last_state(r: &TaskRig) -> State {
+    let carry: Carry = r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).expect("a recorded carry");
+    carry.repos["spira"].state
+}
+
+/// Resumes, then requires the one released ASSEMBLE and the round opened from its outcome.
+fn resume_and_follow_the_assemble(r: &mut TaskRig) {
+    r.deliver(runtime::event::HALT_STREAM, EventKind::new(runtime::event::SCHEDULER_RESUMED, "")).unwrap();
+    let asked = |name: &str| r.requested().iter().filter(|q| q.name == name).count();
+    assert_eq!((asked(ASSEMBLE), asked(ROUND_OPEN)), (1, 1));
+    assert_eq!(last_state(r), State::Certifying, "the round opened from the released assemble moves on to its suites");
+}
+
+#[test_id(tyk4jmb)]
+#[test]
+fn an_assemble_held_by_a_halt_is_waited_for_and_released_once() {
+    let mut r = halted_cut();
+    kit::assert_unpoisoned(&r, STREAM);
+    assert_eq!((held_assembles(&r), last_state(&r)), (1, State::Assembling));
+    resume_and_follow_the_assemble(&mut r);
+}
+
+#[test_id(tcyez23)]
+#[test]
+fn an_assemble_held_by_a_halt_is_still_waited_for_after_a_restart() {
+    let mut r = halted_cut();
+    r.reopen(registration()).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(CADENCE_MS * 2).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    assert_eq!((held_assembles(&r), last_state(&r)), (1, State::Assembling));
+    resume_and_follow_the_assemble(&mut r);
+}
+
+/// The host accepts a resume before it completes an outcome, so an observe answer can be queued
+/// behind the resume and ahead of what the resume releases. The pool grows so a re-cut has a new
+/// key, which the engine does not refuse.
+#[test_id(t6lo0g1)]
+#[test]
+fn an_observe_answered_just_behind_the_resume_still_sees_the_released_assemble() {
+    use runtime::engine::{Engine, Executor, Outcome};
+    let (journal, clock) = (runtime::journal::MemJournal::new(), runtime::ports::VirtualClock::new(0));
+    let mut engine = Engine::open(journal.clone(), std::sync::Arc::new(clock), vec![registration()], 1).unwrap();
+    engine.submit("halt", runtime::event::HALT_STREAM, EventKind::new(runtime::event::SCHEDULER_HALTED, "test")).unwrap();
+    let probe = |engine: &mut Engine| {
+        engine.start(STREAM, EventKind::new(TICK, ""));
+        engine.run_until_idle().unwrap();
+        engine.pending_effects().into_iter().find(|p| p.spec.name == OBSERVE).expect("an observe probe").key
+    };
+    let world = serde_json::to_string(&busy()).unwrap();
+    let first = probe(&mut engine);
+    engine.complete(&first, Outcome::Succeeded(world.clone())).unwrap();
+    engine.run_until_idle().unwrap();
+    let second = probe(&mut engine);
+    engine.submit("resume", runtime::event::HALT_STREAM, EventKind::new(runtime::event::SCHEDULER_RESUMED, "")).unwrap();
+    let arrived = Snapshot { repos: [("spira".to_string(), repo(vec![member("sp-a", "t1"), member("sp-b", "t2"), member("sp-c", "t3")]))].into(), ..busy() };
+    engine.complete(&second, Outcome::Succeeded(serde_json::to_string(&arrived).unwrap())).unwrap();
+    engine.run_until_idle().unwrap();
+    let assembles = journal.log().iter().filter(|e| e.kind.tag == runtime::event::EFFECT_REQUESTED && e.kind.body.contains(&format!("\"name\":\"{ASSEMBLE}\""))).count();
+    assert_eq!(assembles, 1);
+}
+
 /// The engine's own lost-at-restart outcome for an open round open is asked for again.
 #[test_id(tb8x00y)]
 #[test]

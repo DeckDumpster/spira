@@ -413,6 +413,28 @@ fn a_hanging_batch_open_is_asked_once() {
     assert_eq!(cut_asks(&waiting_out_a_hung(BATCH_OPEN)), [1, 1, 1]);
 }
 
+#[test_id(t842jp4)]
+#[test]
+fn a_forge_assemble_held_by_a_halt_is_waited_for_and_released_once() {
+    let assembled = serde_json::to_string(&spira_runtime::tasks::a::batcher_local::Assembled { merged: vec![("dd-a".into(), "t1".into())], ..Default::default() }).unwrap();
+    let mut r = TaskRig::new(1, BatcherForge::new(BTreeMap::new()).registration())
+        .unwrap()
+        .double(OBSERVE, |_| Ok(serde_json::to_string(&busy()).unwrap()))
+        .double(ASSEMBLE, move |_| Ok(assembled.clone()));
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, ASSEMBLE].contains(e)) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.deliver(runtime::event::HALT_STREAM, EventKind::new(runtime::event::SCHEDULER_HALTED, "test")).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(CADENCE_MS * 3).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let held = r.journaled().iter().filter(|e| e.kind.tag == runtime::event::EFFECT_HELD).filter(|e| serde_json::from_str::<serde_json::Value>(&e.kind.body).unwrap()["spec"]["name"] == ASSEMBLE).count();
+    let carry: Carry = r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).expect("a recorded carry");
+    assert_eq!((held, carry.repos["deckdumpster"].state), (1, State::Assembling));
+    r.deliver(runtime::event::HALT_STREAM, EventKind::new(runtime::event::SCHEDULER_RESUMED, "")).unwrap();
+    assert_eq!(cut_asks(&r), [1, 1, 1]);
+}
+
 #[test_id(t5n898r)]
 #[test]
 fn a_forgotten_round_is_not_cut_again_while_the_forge_is_disabled() {
