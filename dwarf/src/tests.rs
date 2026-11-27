@@ -467,6 +467,43 @@ pub(crate) mod verdict_run {
         assert_eq!(envs[0].get("TMPDIR"), Some(&want));
     }
 
+    struct OneStatute;
+    impl Bd for OneStatute {
+        fn bd(&self, _: &[String]) -> Out {
+            Out::ok(r#"{"law-b":"B text"}"#)
+        }
+    }
+
+    fn statutes_with_release(release: Option<&str>) -> Result<String, String> {
+        let mut vars = super::complete_vars();
+        vars.insert("SPIRA_REPO".into(), "/r/0123abc".into());
+        for k in ["SPIRA_MEMORIES_CACHE", "SPIRA_STATUTE_CORE", "SPIRA_STATUTE_CORE_LOCAL"] {
+            vars.insert(k.into(), String::new());
+        }
+        match release {
+            Some(r) => vars.insert(spira_config::RELEASE_ENV.into(), r.into()),
+            None => vars.remove(spira_config::RELEASE_ENV),
+        };
+        with_run_over(vars, &OneStatute, Dirty(vec![]), &Lc, &|| 0, &Seams(Default::default()), "", |r| r.statutes())
+    }
+
+    #[test_id(tyupble)]
+    #[test]
+    fn a_dwarfs_statute_index_names_rule_sh_through_the_declared_release_not_its_checkout() {
+        let brief = statutes_with_release(Some("/r/current")).unwrap();
+        assert!(brief.contains("/r/current/rule.sh show <slug-without-law-prefix>"), "{brief}");
+        assert!(!brief.contains("/r/0123abc") && !brief.contains("<harness>"), "{brief}");
+    }
+
+    #[test_id(toqpyxi)]
+    #[test]
+    fn a_dwarf_with_an_unset_or_empty_release_refuses_to_render_its_statutes() {
+        for release in [None, Some("")] {
+            let e = statutes_with_release(release).unwrap_err();
+            assert!(e.contains("SPIRA_RELEASE is not set"), "{release:?}: {e}");
+        }
+    }
+
     fn gate_reservation_after_release(submitted: Option<i64>) -> Option<String> {
         let work = testkit::TempDir::new("dwarf-reserve");
         let base = work.path().join("builds");
