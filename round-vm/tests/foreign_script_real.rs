@@ -3,6 +3,7 @@
 extern crate spira_test_id;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use testkit::git;
 
 struct Pass {
     _tmp: testkit::TempDir,
@@ -17,12 +18,6 @@ impl Pass {
     }
 }
 
-fn git(dir: &Path, args: &[&str]) -> String {
-    let o = Command::new("git").arg("-C").arg(dir).args(args).env_clear().env("PATH", system_paths::SYSTEM_PATH_MIN).env("HOME", dir).output().unwrap();
-    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
-    String::from_utf8_lossy(&o.stdout).trim().to_string()
-}
-
 /// One round whose `podman run` does `entry`, under a cap of `cap` seconds.
 fn pass(name: &str, entry: &str, cap: u64) -> Pass {
     let tmp = testkit::TempDir::new(name);
@@ -34,7 +29,7 @@ fn pass(name: &str, entry: &str, cap: u64) -> Pass {
     git(&src, &["init", "--quiet"]);
     std::fs::write(src.join("tracked"), "the round's tree\n").unwrap();
     git(&src, &["add", "tracked"]);
-    git(&src, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "c"]);
+    git(&src, &["commit", "--quiet", "-m", "c"]);
     let sha = git(&src, &["rev-parse", "HEAD"]);
     git(&src, &["update-ref", "refs/rounds/1", &sha]);
     git(&root, &["clone", "--quiet", "--mirror", "src", "mirror.git"]);

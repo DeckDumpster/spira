@@ -7730,7 +7730,10 @@ fn a_ci_entry_that_wrote_no_verdict_is_a_faulted_pass_naming_the_round_fault_not
 /// A one-member own-testenv round whose every pass is cut: the first is re-certified once, the
 /// second is a capacity fault, and the member is charged with neither.
 fn cut_ci_entry_round(rc: i32, files: &[(&str, &str)]) -> T {
-    let t = round_world();
+    let mut t = round_world();
+    t.lib.s.round_wall_secs = 700;
+    let now = t.clock.now.clone();
+    *t.scripts.during_vm.borrow_mut() = Some(Box::new(move || now.set(now.get() + 1406)));
     *t.scripts.repo_testenv.borrow_mut() = RunOut {
         rc,
         out: String::new(),
@@ -7759,9 +7762,11 @@ fn cut_ci_entry_round(rc: i32, files: &[(&str, &str)]) -> T {
 #[test]
 fn a_ci_entry_cut_by_the_hang_guard_names_its_phase_and_recertifies_once_then_is_a_capacity_fault() {
     let t = cut_ci_entry_round(124, &[("round-phases", "clone 100 - -\npull 110 - -\nentry 120 - -\n")]);
-    let line = t.out().lines().find(|l| l.starts_with("fault=FAULT ")).map(str::to_string).unwrap_or_default();
-    assert!(line.starts_with("fault=FAULT over-cap guard=hang-guard phase=entry elapsed="), "{}", t.out());
-    assert!(line.contains(" guard=") && line.contains(" cap="), "{line}");
+    let why = "FAULT over-cap guard=hang-guard phase=entry elapsed=1406s guard=1400s cap=700s";
+    assert!(t.out().lines().any(|l| l == format!("fault={why}")), "{}", t.out());
+    let mails = t.lib.mails.borrow();
+    let page = &mails.iter().find(|(subject, _)| subject.contains("over-cap twice")).expect("the second cut pages").1;
+    assert!(page.contains(why) && !page.contains("suite_cap_s"), "the page names a foreign round's cut, not suites it has none of: {page}");
 }
 
 #[test_id(txlettw)]

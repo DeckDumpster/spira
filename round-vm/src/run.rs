@@ -3528,14 +3528,11 @@ pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scra
 
 /// Pulls the one file `remote_path` through `scratch` to `kept`; a pull that brings nothing leaves `kept` as it was.
 fn salvage_file(remote: &dyn Remote, addr: &str, remote_path: &str, scratch: &Path, kept: &Path) {
-    let Some(name) = Path::new(remote_path).file_name() else { return };
     if let Err(e) = remote.pull(addr, remote_path, scratch) {
         eprintln!("round-vm run: the VM's {remote_path} could not be pulled: {e:?}");
         return;
     }
-    let from = scratch.join(name);
-    let to_dir = kept.parent().unwrap_or(Path::new("."));
-    if let Err(e) = fs::create_dir_all(to_dir).and_then(|_| fs::copy(&from, kept)) {
+    if let Err(e) = keep_pulled(scratch, remote_path, kept) {
         eprintln!("round-vm run: {}: {e}", kept.display());
     }
 }
@@ -3578,8 +3575,7 @@ pub const LAUNCHER_FILES: [(&str, &str); 2] = [("round-batch.out", crate::vm_fau
 fn keep_launcher_output(remote: &dyn Remote, cfg: &Config, addr: &str, scratch: &Path, results_dir: &Path) {
     for (remote_name, kept) in LAUNCHER_FILES {
         let _ = fs::remove_dir_all(scratch);
-        let copied = pull_retry(remote, cfg, addr, remote_name, scratch)
-            .then(|| fs::create_dir_all(results_dir).and_then(|_| fs::copy(scratch.join(remote_name), results_dir.join(kept))));
+        let copied = pull_retry(remote, cfg, addr, remote_name, scratch).then(|| keep_pulled(scratch, remote_name, &results_dir.join(kept)));
         match copied {
             Some(Ok(_)) => {}
             Some(Err(e)) => eprintln!("round-vm run: {kept}: {e}"),
@@ -3589,10 +3585,17 @@ fn keep_launcher_output(remote: &dyn Remote, cfg: &Config, addr: &str, scratch: 
     let _ = fs::remove_dir_all(scratch);
 }
 
+/// Copies the one file a pull of `remote_path` left in `scratch` to `kept`.
+fn keep_pulled(scratch: &Path, remote_path: &str, kept: &Path) -> std::io::Result<()> {
+    let name = Path::new(remote_path).file_name().ok_or_else(|| std::io::Error::other("the path names no file"))?;
+    fs::create_dir_all(kept.parent().unwrap_or(Path::new(".")))?;
+    fs::copy(scratch.join(name), kept).map(|_| ())
+}
+
 fn keep_runner_output(remote: &dyn Remote, cfg: &Config, addr: &str, scratch: &Path, results_dir: &Path) {
     let _ = fs::remove_dir_all(scratch);
     if pull_retry(remote, cfg, addr, REMOTE_RUNNER_OUT, scratch) {
-        let kept = fs::create_dir_all(results_dir).and_then(|_| fs::copy(scratch.join(REMOTE_RUNNER_OUT), results_dir.join(RUNNER_OUT_FILE)));
+        let kept = keep_pulled(scratch, REMOTE_RUNNER_OUT, &results_dir.join(RUNNER_OUT_FILE));
         if let Err(e) = kept {
             eprintln!("round-vm run: {RUNNER_OUT_FILE}: {e}");
         }

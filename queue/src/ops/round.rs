@@ -3874,6 +3874,13 @@ fn rebuild_on_moved_base(
 
 pub(super) use spira_config::sendback::tail;
 
+/// A pass a cap cut off, for the handler that certifies it once more.
+struct Cut {
+    unreached: usize,
+    /// A `ci_entry` round's own account of the cut; a harness round's is its suite counts.
+    why: Option<String>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn certify(
     w: &World,
@@ -3926,7 +3933,7 @@ pub(super) fn certify(
         host_only,
         &mut over,
     );
-    while let Some(unreached) = over.take() {
+    while let Some(Cut { unreached, why }) = over.take() {
         let _g = match lock(w, label, &c) {
             Ok(g) => g,
             // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
@@ -3969,14 +3976,20 @@ pub(super) fn certify(
         if kv.get("capacity-paged") != Some(head.as_str()) {
             let pass = w.lc.batch_pass(batch).map_or(0, |(n, _)| n);
             let results = rounds_dir(&c).join(format!("{batch}.results"));
+            let cut = match &why {
+                Some(why) => format!("was cut on both passes of {head}, the last by: {why}"),
+                None => format!(
+                    "hit testenv's suite cap on both passes of {head}: unreached {first} then {unreached}, suite_cap_s={}",
+                    suite_cap_s(&results).unwrap_or_else(|| "?".into())
+                ),
+            };
             w.lib.notify(
                 &c.s.mailbox,
                 &c.r.name,
                 &format!("Round {batch} over-cap twice on {head}"),
                 &format!(
-                    "Round {batch} of {} was cut by a cap on both passes of {head}: unreached {first} then {unreached}, suite_cap_s={}, passes {} and {pass}. No member is implicated and nobody was ejected; the round stays open. Capacity or the cap is the Concierge's to tune. Results: {}",
+                    "Round {batch} of {} {cut}; passes {} and {pass}. No member is implicated and nobody was ejected; the round stays open. Capacity or the cap is the Concierge's to tune. Results: {}",
                     c.r.name,
-                    suite_cap_s(&results).unwrap_or_else(|| "?".into()),
                     pass.saturating_sub(1),
                     results.display()
                 ),
@@ -4054,7 +4067,7 @@ fn certify_pass(
     attested_ran: Option<usize>,
     rehead: Option<&str>,
     host_only: bool,
-    over: &mut Option<usize>,
+    over: &mut Option<Cut>,
 ) -> i32 {
     let who = actor(w);
     if attest.is_some() && attested_ran.unwrap_or(0) == 0 {
@@ -4251,7 +4264,7 @@ fn certify_pass(
                 tail(&format!("{}{}", out.out, out.err), 40)
             ));
             // A foreign round has no suites to leave unreached.
-            *over = Some(0);
+            *over = Some(Cut { unreached: 0, why: Some(why) });
             return FAULT;
         } else if out.rc == 1 && ci_result_red(&results) {
             let _ = fs::write(
@@ -4417,7 +4430,7 @@ fn certify_pass(
             if !cut.is_empty() {
                 w.err(format!("queue.sh {label}: {why}"));
             }
-            *over = Some(unreached);
+            *over = Some(Cut { unreached, why: None });
             return FAULT;
         }
         if out.rc == VM_LOST {

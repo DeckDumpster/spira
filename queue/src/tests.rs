@@ -803,6 +803,9 @@ impl Scripts for FScripts {
             round.1
         ));
         fs::write(handle, "777").unwrap();
+        if let Some(f) = self.during_vm.borrow().as_ref() {
+            f();
+        }
         fs::create_dir_all(results).unwrap();
         let out = self.repo_testenv.borrow().clone();
         if let Some(fault) = self.repo_round_fault.borrow().as_ref() {
@@ -1868,7 +1871,7 @@ impl ConfigStore for FConfig {
 type MergeHook = Box<dyn Fn(&str)>;
 
 struct FClock {
-    now: Cell<u64>,
+    now: std::rc::Rc<Cell<u64>>,
     /// Milliseconds the world has moved beyond `now`'s whole seconds.
     extra_ms: std::rc::Rc<Cell<u64>>,
     /// Runs on every sleep: the world moving while a verb waits.
@@ -2058,7 +2061,7 @@ impl T {
             lc,
             config: FConfig::default(),
             clock: FClock {
-                now: Cell::new(1_000),
+                now: std::rc::Rc::new(Cell::new(1_000)),
                 extra_ms: Default::default(),
                 on_sleep: RefCell::default(),
             },
