@@ -1,5 +1,5 @@
 use spira_sim::world::{
-    control_store, db_root, down, is_world_serve, lc_pid_file, lc_socket, release_source, serve_argv,
+    broker_pid_file, control_store, db_root, down, is_world_serve, lc_pid_file, lc_socket, release_source, serve_argv,
     ReleaseSource, Steps, RELEASE_ENV, TESTENV_ENV,
 };
 use std::path::{Path, PathBuf};
@@ -12,7 +12,7 @@ struct Fake {
     ups: AtomicUsize,
     downs: AtomicUsize,
     lifecycles: AtomicUsize,
-    /// lc_serve / lc_stop / db_down, in order.
+    /// lc_serve / lc_stop / broker_stop / db_down, in order.
     calls: Mutex<Vec<String>>,
     serve_fails: bool,
 }
@@ -71,7 +71,8 @@ impl Steps for Fake {
     fn broker_up(&self, _: &Path) -> Result<(), String> {
         Ok(())
     }
-    fn broker_stop(&self, _: &Path, _: u32) -> Result<(), String> {
+    fn broker_stop(&self, _: &Path, pid: u32) -> Result<(), String> {
+        self.calls.lock().unwrap().push(format!("broker_stop {pid}"));
         Ok(())
     }
 }
@@ -106,6 +107,21 @@ fn down_refuses_a_directory_that_is_not_a_world() {
     std::fs::create_dir_all(&dir).unwrap();
     assert!(down(&dir, &Fake::default()).is_err());
     assert!(dir.exists());
+}
+
+#[test_id(tphvno3)]
+#[test]
+fn down_stops_the_broker_after_the_serve_that_publishes_to_it_and_before_the_database() {
+    let t = testkit::TempDir::new("simw");
+    let dir = t.join("w");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(spira_sim::world::MARKER), "").unwrap();
+    std::fs::write(lc_pid_file(&dir), "11").unwrap();
+    std::fs::write(broker_pid_file(&dir), "22").unwrap();
+    std::fs::write(dir.join("db.fixture"), "fx").unwrap();
+    let steps = Fake::default();
+    down(&dir, &steps).unwrap();
+    assert_eq!(*steps.calls.lock().unwrap(), ["lc_stop 11", "broker_stop 22", "db_down"]);
 }
 
 /// A directory shaped like `spira-releases/<sha>`.

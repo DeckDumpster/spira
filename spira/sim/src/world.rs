@@ -63,6 +63,8 @@ const LC_STOP_DEADLINE: Duration = Duration::from_secs(5); // batch-job: serve e
 /// The PID world up recorded for the world's mosquitto; world down signals only it.
 const BROKER_PID: &str = "broker.pid";
 const BROKER_LOG: &str = "broker.log";
+/// The HOME world up found the broker's binary under.
+const BROKER_HOME: &str = "broker.home";
 const BROKER_READY_DEADLINE: Duration = Duration::from_secs(30); // batch-job: mosquitto start to its READY=1
 /// Every key declared: a process resolves its config only from a file that declares them all
 /// (spira-config/src/process.rs), so the world's config starts from the complete fixture, read
@@ -563,7 +565,8 @@ impl Steps for ProcessSteps {
     fn release(&self, repo: &Path, tree: &str, cache: &Path) -> Result<PathBuf, String> {
         let hash = git(repo, &["rev-parse", &format!("{tree}^{{tree}}")])?.trim().to_string();
         let out = cache.join(&hash);
-        if out.join(".complete").is_file() {
+        // A cached release with no `systemd/` has no broker config to render.
+        if out.join(".complete").is_file() && out.join("systemd").is_dir() {
             return Ok(out);
         }
         let src = cache.join(format!("{hash}.src"));
@@ -694,7 +697,8 @@ impl Steps for ProcessSteps {
     }
 
     fn broker_up(&self, world: &Path) -> Result<(), String> {
-        let argv = broker_argv(&invoking_home()?, world);
+        let home = invoking_home()?;
+        let argv = broker_argv(&home, world);
         if !Path::new(&argv[0]).is_file() {
             return Err(format!("the world's broker needs {}, which is not there", argv[0]));
         }
@@ -718,6 +722,7 @@ impl Steps for ProcessSteps {
             .spawn()
             .map_err(|e| format!("{}: {e}", argv[0]))?;
         std::fs::write(broker_pid_file(world), child.id().to_string()).map_err(at(world))?;
+        std::fs::write(world.join(BROKER_HOME), &home).map_err(at(world))?;
         let said = |what: String| format!("{what}: {}", std::fs::read_to_string(&log_path).unwrap_or_default().trim());
         let start = Instant::now();
         let mut buf = [0u8; 64];
@@ -736,7 +741,8 @@ impl Steps for ProcessSteps {
     }
 
     fn broker_stop(&self, world: &Path, pid: u32) -> Result<(), String> {
-        let home = invoking_home()?;
+        // The HOME up used, not this caller's: a `down` under another would leave the broker running.
+        let home = std::fs::read_to_string(world.join(BROKER_HOME)).map_err(at(&world.join(BROKER_HOME)))?;
         let cmdline = std::fs::read(format!("{}/{pid}/cmdline", system_paths::PROC)).unwrap_or_default();
         if !alive(pid) || !is_world_broker(&cmdline, &home, world) {
             eprintln!("sim: broker pid {pid} is gone or is no longer this world's broker; nothing signalled");
