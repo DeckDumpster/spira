@@ -55,7 +55,8 @@ impl Repin {
         let Some(held) = self.held(key) else {
             let held = (self.lookup)(key)?;
             let wanted = (self.fresh)(&[key.to_string()])?.remove(key).unwrap_or_default();
-            return Ok(serde_json::json!({ "state": "restart", "held": held, "wanted": wanted }));
+            let state = if wanted == held { "unchanged" } else { "restart" };
+            return Ok(serde_json::json!({ "state": state, "held": held, "wanted": wanted }));
         };
         let wanted = (self.fresh)(&[key.to_string()])?.remove(key).unwrap_or_default();
         let mut st = self.state();

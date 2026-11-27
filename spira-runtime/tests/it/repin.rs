@@ -246,6 +246,17 @@ fn a_key_the_scheduler_pins_only_at_start_is_told_to_restart_and_an_unchanged_on
     assert!(w.ask(&["scheduler", "running", "SPIRA_RUNTIME_STALL_LIMIT"]).unwrap_err().is_refused());
 }
 
+#[test_id(tjdpc9a)]
+#[test]
+fn a_start_only_key_the_scheduler_already_holds_as_written_is_unchanged() {
+    const START_ONLY: &str = "SPIRA_RUNTIME_STALL_LIMIT";
+    let w = world("0");
+    let value = spira_runtime::fixture::lookup("7")(START_ONLY).unwrap();
+    w.change(START_ONLY, &value);
+    let told: serde_json::Value = serde_json::from_str(&w.ask(&["scheduler", "repin", START_ONLY]).unwrap()).unwrap();
+    assert_eq!((told["state"].as_str(), told["held"].as_str(), told["wanted"].as_str()), (Some("unchanged"), Some(value.as_str()), Some(value.as_str())));
+}
+
 /// Answers every observe with an empty world and keeps the pool size each probe was handed.
 struct Probes(Mutex<Vec<String>>);
 impl runtime::host::EffectRunner for Probes {

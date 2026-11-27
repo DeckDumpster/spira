@@ -87,7 +87,7 @@ pub fn told_within(sock: Result<String, String>, key: &str, deadline: Duration) 
     let v: serde_json::Value = serde_json::from_str(&reply).unwrap_or_default();
     let (held, wanted) = (v["held"].as_str().unwrap_or("").to_string(), v["wanted"].as_str().unwrap_or("").to_string());
     let line = match v["state"].as_str() {
-        Some("unchanged") => format!("scheduler already holds {held} for {key}"),
+        Some("unchanged") => format!("in force: the scheduler holds {held} for {key}"),
         Some("restart") => format!("written; the scheduler reads {key} only when it starts and holds {held}; restart it to take {wanted}"),
         Some("pending") => {
             for _ in 0..POLLS {
@@ -194,6 +194,7 @@ impl Limit {
 mod tests {
     use super::{key_of_path, told_within, Limit, Pending};
     use serde_json::json;
+    use std::io::{BufRead, BufReader, Write};
     use std::time::Duration;
 
     #[test_id(tf6t0j3)]
@@ -212,6 +213,27 @@ mod tests {
         assert!(!taken && line.contains("did not answer within") && line.contains("still holds"), "{line}");
         release.send(()).unwrap();
         held.join().unwrap().unwrap();
+    }
+
+    #[test_id(tfxt7we)]
+    #[test]
+    fn a_written_value_the_scheduler_already_holds_is_in_force_and_a_differing_one_asks_for_a_restart() {
+        let dir = testkit::TempDir::new("told-held");
+        let sock = dir.path().join("c.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+        let replies = std::thread::spawn(move || {
+            for body in [json!({"state": "unchanged", "held": "5", "wanted": "5"}), json!({"state": "restart", "held": "5", "wanted": "6"})] {
+                let (mut conn, _) = listener.accept().unwrap();
+                BufReader::new(&conn).read_line(&mut String::new()).unwrap();
+                let body = body.to_string();
+                write!(conn, "{}\n{body}", json!({"exit_code": 0, "len": body.len()})).unwrap();
+            }
+        });
+        let tell = || told_within(Ok(sock.display().to_string()), "SPIRA_MAX_DWARVES", Duration::from_secs(5));
+        assert_eq!(tell(), ("in force: the scheduler holds 5 for SPIRA_MAX_DWARVES".to_string(), true));
+        let (line, taken) = tell();
+        assert!(taken && line.ends_with("restart it to take 6"), "{line}");
+        replies.join().unwrap();
     }
 
     #[test_id(tyx56jb)]
