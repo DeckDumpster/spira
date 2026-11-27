@@ -35,7 +35,7 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     let mut applied: std::collections::BTreeMap<&str, usize> = Default::default();
     let (mut sweep_at_warm, mut sweep_at_idle, mut guard_at_warm, mut towers_at_warm, mut towers_at_idle) = (Vec::new(), Vec::new(), (0, 0), 0, 0);
     let towers = |f: &Fixture| f.seen.lock().unwrap().iter().filter(|(n, _)| n == spira_runtime::tasks::d::watch_tower::OBSERVE).count();
-    let names = ["watch.throughput.observe", "landing.observe", "overrides.apply", "inbox.notify.observe", "asks.ideas.observe", "batcher.local.observe", "cockpit-tier-60s.observe", "cr-cadence.observe", spira_runtime::tasks::d::watch_tower::OBSERVE];
+    let names = ["watch.throughput.observe", "landing.observe", "overrides.apply", "inbox.notify.observe", "batcher.local.observe", "cockpit-tier-60s.observe", "cr-cadence.observe", spira_runtime::tasks::d::watch_tower::OBSERVE];
     let sentinel = ["sentinel-pass.observe"];
     let reads = ["test-registry", "podman", "date", "timeout 5 date"];
     let counts = |f: &Fixture| reads.map(|p| started(f, p));
@@ -161,7 +161,7 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     assert!(idle_passes >= 5, "the sentinel pass observed {idle_passes} times by the end of the idle hour");
     assert_eq!(programs_at_idle.len(), programs_at_warm, "an idle hour started programs:\n{}", programs_at_idle[programs_at_warm..].join("\n"));
     let ran = |name: &str| f.seen.lock().unwrap().iter().filter(|(n, _)| n == name).count();
-    assert!(ran("inbox.notify.observe") >= 12 && ran("asks.ideas.observe") >= 12, "both tasks ran over the hour: {} {}", ran("inbox.notify.observe"), ran("asks.ideas.observe"));
+    assert!(ran("inbox.notify.observe") >= 12, "the task ran over the hour: {}", ran("inbox.notify.observe"));
     assert!(reads_at_warm.iter().take(3).all(|n| *n > 0), "warm-up read the registry, podman and date, so the idle hour proves something: {reads_at_warm:?}");
     assert_eq!(reads_at_idle, reads_at_warm, "an idle hour started test-registry, podman, date or timeout");
     assert_eq!(reads_at_registry[0], reads_at_idle[0] + 2, "a rewritten registry file is read once by each of its two readers");

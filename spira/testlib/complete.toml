@@ -160,7 +160,6 @@ unrounded_noverdict_grace_secs = 3600
 runtime_reconciler_secs = 60
 runtime_socket = "/fixture/userhome/spira/run/runtime-control.sock"
 task_modes = """
-asks.ideas=act
 asks.moot=act
 asks.verify=act
 asks=act

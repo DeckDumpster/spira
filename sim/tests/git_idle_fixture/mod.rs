@@ -391,10 +391,9 @@ pub fn logged_programs(f: &Fixture) -> Vec<String> {
     all.lines().filter(|l| l.starts_with("spira-claim ") || l.contains(" list-units") || IDLE_TASK_PROGRAMS.iter().any(|p| l.split_whitespace().next() == Some(p))).map(str::to_string).collect()
 }
 
-// `date -d @N +%H` is the idea prompt's own hour read, not one of the four reads under test.
 pub fn started(f: &Fixture, program: &str) -> usize {
     let prefix = format!("{program} ");
-    std::fs::read_to_string(&f.started).unwrap_or_default().lines().filter(|l| !l.ends_with(" +%H")).filter(|l| *l == program || l.starts_with(&prefix)).count()
+    std::fs::read_to_string(&f.started).unwrap_or_default().lines().filter(|l| *l == program || l.starts_with(&prefix)).count()
 }
 
 pub fn assert_stubs_log(f: &Fixture) {

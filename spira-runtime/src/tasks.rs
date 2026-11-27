@@ -160,7 +160,7 @@ pub fn contract_page(name: &str) -> String {
 /// (`task-contracts`) and `retired`. Copied here because tests run in the test sandbox, which
 /// hides the home the brain lives in. A contract added there is added here in the commit that
 /// stubs its task. The three `source-*` pages are the sources in `tasks::g`, not rows.
-pub const CONTRACT_PAGES: &[&str] = &["asks-ideas", "asks-moot", "asks-verify", "batcher-forge", "batcher-local", "cockpit-tier-5s", "cockpit-tier-600s", "cockpit-tier-60s", "czar", "gate-check", "gate-worker", "hel-reap-stale", "hel-reap-terminal", "hel-sweep", "inbox-notify", "incident-alarms", "incident-probe", "incident-settle", "intake-filings", "intake-gh", "intake-kit-bump", "landing", "lc-ship", "mail-reconcile", "mail-tidy", "persona-archivist", "persona-ops", "publish", "queue-step", "reconcile-content", "reconcile-goodput", "reconcile-heimdall", "reconcile-section", "roundvm-ami-prune", "roundvm-drain", "sentinel-call", "sentinel-pass", "sift", "source-mail-arrived", "source-submission", "source-unit-ran", "submission-provision", "sweep-archive", "sweep-escape-census", "sweep-export-beads", "sweep-reclaim", "sweep-target", "sweep-tsd", "trigger-groom", "trigger-mimir", "trigger-warden", "watch-ami-stale", "watch-backup-age", "watch-ci-spill", "watch-mend", "watch-off-box", "watch-pass-rate", "watch-perf", "watch-refusals", "watch-runtime", "watch-skew", "watch-sop-lint", "watch-testenv-cap", "watch-tower"];
+pub const CONTRACT_PAGES: &[&str] = &["asks-moot", "asks-verify", "batcher-forge", "batcher-local", "cockpit-tier-5s", "cockpit-tier-600s", "cockpit-tier-60s", "czar", "gate-check", "gate-worker", "hel-reap-stale", "hel-reap-terminal", "hel-sweep", "inbox-notify", "incident-alarms", "incident-probe", "incident-settle", "intake-filings", "intake-gh", "intake-kit-bump", "landing", "lc-ship", "mail-reconcile", "mail-tidy", "persona-archivist", "persona-ops", "publish", "queue-step", "reconcile-content", "reconcile-goodput", "reconcile-heimdall", "reconcile-section", "roundvm-ami-prune", "roundvm-drain", "sentinel-call", "sentinel-pass", "sift", "source-mail-arrived", "source-submission", "source-unit-ran", "submission-provision", "sweep-archive", "sweep-escape-census", "sweep-export-beads", "sweep-reclaim", "sweep-target", "sweep-tsd", "trigger-groom", "trigger-mimir", "trigger-warden", "watch-ami-stale", "watch-backup-age", "watch-ci-spill", "watch-mend", "watch-off-box", "watch-pass-rate", "watch-perf", "watch-refusals", "watch-runtime", "watch-skew", "watch-sop-lint", "watch-testenv-cap", "watch-tower"];
 
 /// Each task name and each stream claimed by more than one row across `families`.
 pub fn clashes(families: &[&[Task]]) -> Vec<String> {
@@ -213,7 +213,6 @@ pub const SIGNAL_SAFE: &[(&str, &str)] = &[
     (e::watch_backup_age::MAIL, "mails an alert (alert::send)"),
     (e::watch_pass_rate::MAIL, "mails an alert (alert::send)"),
     (e::watch_store_unit::MAIL, "mails an alert (alert::send)"),
-    (f::asks_ideas::ASK, "mails the operator the idea prompt (idea_prompt send)"),
 ];
 
 /// Every signal-plane effect of `rows` that is a unit verb or is not reviewed in

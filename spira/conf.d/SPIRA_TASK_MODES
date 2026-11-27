@@ -4,7 +4,6 @@ DOC=Each spira-runtime task as name=observe|act. Observe runs a task's probes an
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # Each spira-runtime task as name=observe|act; every task must be named, or the runtime refuses to start.
     : "${SPIRA_TASK_MODES:=
-asks.ideas=act
 asks.moot=act
 asks.verify=act
 asks=act

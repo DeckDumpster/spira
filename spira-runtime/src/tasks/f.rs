@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 use super::{Reads, Task};
 use crate::watchers::{answers_observe, INBOX_APPEND};
 
-pub mod asks_ideas;
 pub mod intake_filings;
 pub mod intake_gh;
 pub mod intake_gh_closeout;
@@ -123,21 +122,6 @@ pub static TASKS: &[Task] = &[
         ],
         keys: &[trigger_mimir::KEYS],
         build: |s| refuse(trigger_mimir::NAME, trigger_mimir::TriggerMimir::from_settings(s)).registration(),
-    },
-    Task {
-        name: asks_ideas::NAME,
-        reads: Reads::Polled(&["lifecycle/"]),
-        plane: runtime::Plane::Work,
-        signal: &[asks_ideas::ASK],
-        boot: asks_ideas::AsksIdeas::boot,
-        cadence_ms: |s| cadence(s, asks_ideas::CADENCE_KEY),
-        effects: asks_ideas::EFFECTS,
-        runners: &[
-            (asks_ideas::OBSERVE, asks_ideas::run_observe),
-            (asks_ideas::ASK, asks_ideas::run_ask),
-        ],
-        keys: &[asks_ideas::KEYS],
-        build: |s| refuse(asks_ideas::NAME, asks_ideas::AsksIdeas::from_settings(s)).registration(),
     },
     Task {
         name: intake_filings::NAME,
@@ -312,15 +296,15 @@ mod tests {
     #[test]
     fn the_helpers_read_the_settings_they_are_given_not_the_process_config() {
         let mut s = crate::settings::fixture();
-        s.task_config.insert(super::super::asks_ideas::CADENCE_KEY.into(), "42".into());
-        assert_eq!(super::super::cadence(&s, super::super::asks_ideas::CADENCE_KEY), 42_000);
-        assert_eq!(super::super::asks_ideas::AsksIdeas::from_settings(&s).map(|t| t.interval_ms), Ok(42_000), "the row pins what the settings hold");
+        s.task_config.insert(super::super::intake_filings::CADENCE_KEY.into(), "42".into());
+        assert_eq!(super::super::cadence(&s, super::super::intake_filings::CADENCE_KEY), 42_000);
+        assert_eq!(super::super::intake_filings::IntakeFilings::from_settings(&s).map(|t| t.interval_ms), Ok(42_000), "the row pins what the settings hold");
         for row in super::super::TASKS.iter().chain(super::super::super::g::TASKS) {
             let _ = (row.build)(&s);
             let _ = (row.cadence_ms)(&s);
         }
         assert!(super::super::pinned(&s, &["SPIRA_PLANTED_NOT_A_KEY"]).is_err(), "a key the settings lack refuses");
-        s.task_config.insert(super::super::asks_ideas::CADENCE_KEY.into(), "0".into());
-        assert!(super::super::cadence_ms(&s, super::super::asks_ideas::CADENCE_KEY).is_err());
+        s.task_config.insert(super::super::intake_filings::CADENCE_KEY.into(), "0".into());
+        assert!(super::super::cadence_ms(&s, super::super::intake_filings::CADENCE_KEY).is_err());
     }
 }

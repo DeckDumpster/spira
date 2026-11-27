@@ -1210,7 +1210,7 @@ pub fn drop_row(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer
 /// `reopen <id> [cause] [actor]` — the one door for handing a bead back (sp-swh8b8), the mirror of
 /// [`close`]: the row records the transition its state implies FIRST (see the caller verb's
 /// table), and only then is the store reopened, so bd never says open while the row says done.
-/// A bead with no row and no other owner (an insight, an idea: bd is its only state) is reopened in the
+/// A bead with no row and no other owner (an insight: bd is its only state) is reopened in the
 /// store alone. Terminal, refused or unreadable: nothing is written to the store.
 pub fn reopen_cmd(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
     let Some(id) = args.first().filter(|s| !s.is_empty()) else {

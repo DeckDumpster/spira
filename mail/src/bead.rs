@@ -869,7 +869,6 @@ mod door_tests {
             ("landing-pass/src/main.rs", include_str!("../../landing-pass/src/main.rs")),
             ("landing-pass/src/real.rs", include_str!("../../landing-pass/src/real.rs")),
             ("landing-pass/src/land_verify.rs", include_str!("../../landing-pass/src/land_verify.rs")),
-            ("idea-prompt/src/real.rs", include_str!("../../idea-prompt/src/real.rs")),
             ("watchd/src/send.rs", include_str!("../../watchd/src/send.rs")),
             ("watchd/src/context.rs", include_str!("../../watchd/src/context.rs")),
             ("spira-world/src/mail_out.rs", include_str!("../../spira-world/src/mail_out.rs")),
