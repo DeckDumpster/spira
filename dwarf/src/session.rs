@@ -628,6 +628,9 @@ mod tests {
         fn publish(&self, topic: &str, payload: &serde_json::Value) {
             self.0.lock().unwrap().push((topic.into(), payload.clone()));
         }
+        fn clear(&self, topic: &str) {
+            self.publish(topic, &serde_json::json!({"state": "clear"}));
+        }
     }
     impl Recording {
         /// (topic below `session/sp-a/`, the state word, `at`) in publish order.
@@ -661,7 +664,7 @@ mod tests {
 
     #[test_id(tj5ty6p)]
     #[test]
-    fn a_session_publishes_each_age_once_when_it_reaches_it_then_ended_and_nothing_after() {
+    fn a_session_publishes_each_age_once_then_ended_then_clears_its_topics_and_says_nothing_after() {
         let d = tmp("ages");
         let out = Recording::default();
         let (feed, retained) = feed(&out);
@@ -674,11 +677,20 @@ mod tests {
         beat_for(&d, &feed, t + 4300, 70, 1);
         assert_eq!(
             out.seen(),
-            [row("state", "started", t), row("age/15m", "", t + 900), row("age/30m", "", t + 1800), row("age/60m", "", t + 3600), row("state", "ended", t + 4300)]
+            [
+                row("state", "started", t),
+                row("age/15m", "", t + 900),
+                row("age/30m", "", t + 1800),
+                row("age/60m", "", t + 3600),
+                row("state", "ended", t + 4300),
+                row("state", "clear", -1),
+                row("age/15m", "clear", -1),
+                row("age/30m", "clear", -1),
+                row("age/60m", "clear", -1),
+            ]
         );
         assert_eq!(out.0.lock().unwrap()[2].1, serde_json::json!({"at": t + 1800, "sessions": 4}));
-        let again: Vec<String> = retained.messages().into_iter().map(|(t, p)| format!("{t} {}", p["state"].as_str().unwrap_or(""))).collect();
-        assert_eq!(again, ["session/sp-a/state ended", "session/sp-a/age/15m ", "session/sp-a/age/30m ", "session/sp-a/age/60m "], "what a reconnect republishes");
+        assert_eq!(retained.messages(), [], "a reconnect after the end republishes nothing");
     }
 
     #[test_id(t7x5qxw)]

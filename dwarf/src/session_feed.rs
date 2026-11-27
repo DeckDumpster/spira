@@ -1,5 +1,6 @@
 //! The session published about itself as retained state: `session/<bead>/state` and
-//! `session/<bead>/age/<15m|30m|60m>`. A failed publish never changes the session.
+//! `session/<bead>/age/<15m|30m|60m>`, all cleared once the end has been published. A failed
+//! publish never changes the session.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -20,11 +21,17 @@ pub enum Renewal {
 /// Where the feed publishes. A failure is the outlet's to log.
 pub trait Outlet: Send + Sync {
     fn publish(&self, topic: &str, payload: &Value);
+    /// Removes `topic`'s retained value.
+    fn clear(&self, topic: &str);
 }
 
 impl Outlet for spira_pub::Publisher {
     fn publish(&self, topic: &str, payload: &Value) {
         let _ = spira_pub::Publisher::publish(self, spira_pub::Class::State, topic, payload);
+    }
+
+    fn clear(&self, topic: &str) {
+        let _ = spira_pub::Publisher::clear(self, topic);
     }
 }
 
@@ -126,6 +133,16 @@ impl SessionFeed {
         let _order = self.ordered();
         self.retained.lock().ended = true;
         self.state(json!({"state": "ended", "rc": rc, "wall_s": wall_s, "at": at}));
+        // Emptied before the clears are sent: a reconnect must not restore a cleared topic.
+        let ages = {
+            let mut r = self.retained.lock();
+            r.state = None;
+            std::mem::take(&mut r.ages)
+        };
+        self.out.clear(&self.retained.state_topic());
+        for (topic, _) in ages {
+            self.out.clear(&topic);
+        }
     }
 
     /// The outcome of this beat's lease renewal. The item left WORKING at the first refusal

@@ -722,6 +722,7 @@ pub(crate) mod verdict_run {
         fn publish(&self, _: &str, payload: &serde_json::Value) {
             self.0.lock().unwrap().push(payload["state"].as_str().unwrap_or_default().to_string());
         }
+        fn clear(&self, _: &str) {}
     }
 
     /// What the feed had said by the time the world was taken down.
