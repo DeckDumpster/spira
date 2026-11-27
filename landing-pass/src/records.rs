@@ -113,15 +113,16 @@ impl Graphs {
         self.with(at, base, |g| g.known.insert((tip.to_string(), q), (answer, true)));
     }
 
-    /// The remembered answer for `tip`, else `ask`'s. It is kept only if the base and, per
-    /// `still`, the thing asked about did not move while git was answering.
+    /// The remembered answer for `tip`, else `ask`'s. It is kept only if git answered and the
+    /// base and, per `still`, the thing asked about did not move meanwhile.
     pub fn answer(&self, at: Against, tip: &str, q: Question, still: impl FnOnce() -> bool, ask: impl FnOnce() -> bool) -> bool {
         let Some(base) = at.base_sha() else { return ask() };
         if let Some(a) = self.get(at, &base, tip, q) {
             return a;
         }
+        let faults = at.git.unanswered();
         let a = ask();
-        if still() && at.base_sha().as_ref() == Some(&base) {
+        if at.git.unanswered() == faults && still() && at.base_sha().as_ref() == Some(&base) {
             self.put(at, &base, tip, q, a);
         }
         a
@@ -144,9 +145,10 @@ impl Graphs {
         if known.iter().all(Option::is_some) {
             return refs.iter().zip(known).filter(|(_, a)| *a == Some(true)).map(|((br, _), _)| br.clone()).collect();
         }
+        let faults = at.git.unanswered();
         let merged = at.git.merged_spira_refs(at.path, at.base_fq);
         let now = at.git.spira_refs(at.path);
-        if at.base_sha().as_ref() == Some(&base) {
+        if at.git.unanswered() == faults && at.base_sha().as_ref() == Some(&base) {
             for r in refs.iter().filter(|r| now.contains(r)) {
                 self.put(at, &base, &r.1, Question::Ancestor, merged.contains(&r.0));
             }
@@ -154,10 +156,12 @@ impl Graphs {
         merged
     }
 
-    /// Write the repository's consulted answers; one never opened this pass keeps its file.
+    /// Write the repository's consulted answers; with none asked this pass, drop its file.
     pub fn write(&self, files: &Files, name: &str) {
-        if let Some(g) = self.0.borrow().get(name) {
-            let _ = atomic_write(&Graphs::file(files, name), &g.render());
+        let file = Graphs::file(files, name);
+        match self.0.borrow().get(name) {
+            Some(g) => drop(atomic_write(&file, &g.render())),
+            None => drop(fs::remove_file(file)),
         }
     }
 }

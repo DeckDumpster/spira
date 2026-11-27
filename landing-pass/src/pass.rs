@@ -226,7 +226,10 @@ impl<'a> Pass<'a> {
         for repo in self.rotated() {
             self.settle_landed_rows(repo);
             self.walk_repo(repo);
-            self.graphs.write(&self.files, &repo.name);
+            // A pr-mode repository's file is the pr pass's.
+            if repo.mode != LandMode::Pr {
+                self.graphs.write(&self.files, &repo.name);
+            }
         }
         self.files.prune_graphs(&names);
 
