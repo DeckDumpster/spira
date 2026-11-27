@@ -36,6 +36,7 @@ mod list_batches;
 mod list_claim_view;
 mod list_live;
 mod list_page;
+mod open_items;
 mod queue_fields;
 mod readiness;
 mod requeue_orphans;
@@ -176,6 +177,19 @@ impl<B: Backend> Rig<B> {
             refused,
             serde_json::from_value(e.value.data["evidence"][branch].clone()).unwrap(),
         )
+    }
+}
+
+/// Lifecycle records written straight into `state`, as `(id, repo, state)`, 100 to a transaction.
+fn put_records<B: Backend>(r: &Rig<B>, rows: &[(String, &str, BeadState)]) {
+    for chunk in rows.chunks(100) {
+        let mut txn = state_store::Txn::new();
+        for (id, repo, state) in chunk {
+            let mut rec = crate::control::records::LifecycleRecord::born(id, Some(repo), None, AT);
+            rec.row.state = *state;
+            txn = txn.put(&keys::lifecycle(id), state_store::Object::new(crate::control::records::encode(&rec).unwrap()));
+        }
+        r.s.contract().txn(&txn, &r.req()).unwrap();
     }
 }
 

@@ -268,6 +268,16 @@ pub struct Latency {
 
 static LATENCY: Mutex<Latency> = Mutex::new(Latency { samples: BTreeMap::new(), red: BTreeSet::new() });
 
+/// The name a request's counts and slow-log lines are filed under: its first word, except where
+/// that would hide which read was slow.
+pub fn measured_of<'a>(verb: &'a str, method: &'a str) -> &'a str {
+    if verb == "ops-view" || method == "work:open-items" {
+        method
+    } else {
+        verb
+    }
+}
+
 /// The method a request is measured under: the verb, and for `work` the lane verb after the
 /// bead id, so a slow brokered tool does not hide behind `work show`; for `ops-view` the view.
 pub fn method_of(argv: &[String]) -> String {
@@ -285,7 +295,7 @@ pub fn method_of(argv: &[String]) -> String {
 /// Brokered batch jobs run a harness tool; they are bounded by their own deadline, not the
 /// store-call ceiling.
 fn is_batch_method(method: &str) -> bool {
-    method.strip_prefix("work:").is_some_and(|v| crate::work::brokers_tool(v) && !crate::work::exec_verb(v) && !crate::work::answered_write(v))
+    method.strip_prefix("work:").is_some_and(|v| crate::work::brokers_tool(v) && !crate::work::exec_verb(v) && !crate::work::held_to_latency_limit(v))
 }
 
 pub fn sample(method: &str, caller: &str, took: Duration) {
@@ -742,6 +752,16 @@ mod tests {
             assert!(!is_batch_method(&method_of(&argv)), "{verb}");
         }
         assert!(is_batch_method("work:read"));
+    }
+
+    #[test_id(tubxbzw)]
+    #[test]
+    fn a_slow_open_items_is_held_to_the_limit_and_named_in_its_own_log_lines() {
+        let argv: Vec<String> = ["work", "-", "open-items", "--repo", "spira"].map(String::from).to_vec();
+        let method = method_of(&argv);
+        assert!(limits(&[]).is_over(&method, 150), "not exempted as a batch job");
+        assert_eq!(measured_of("work", &method), "work:open-items");
+        assert_eq!(measured_of("work", "work:list"), "work");
     }
 
     #[test_id(tlpkksv)]

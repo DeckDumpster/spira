@@ -217,6 +217,15 @@ pub static ENTRIES: &[Entry] = &[
         refusals: &[Refusal { id: R::ForFlag, text: "--for is the client's to send (it files as your own persona)", fix: "drop --for" }],
     },
     Entry {
+        verb: "open-items",
+        group: Group::Followups,
+        does: "Lists one repository's READY and REWORK items: id, state, priority, title and the text under each `## Outcome` heading (null with none).",
+        when: "Before you draft or file work, to see what is already waiting.",
+        args: &["--repo <name>   (required)", "[--exclude <id,…>]", "[--json]"],
+        checks: &["the broker's allow row for your persona names this verb"],
+        refusals: &[],
+    },
+    Entry {
         verb: "split",
         group: Group::Followups,
         does: "Files a bead for a piece of your own bead's scope: a child of it, or with `--prerequisite` a bead beside it that yours waits on.",
