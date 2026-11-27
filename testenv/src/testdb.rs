@@ -346,6 +346,48 @@ pub fn on_tmpfs(p: &Path) -> bool {
     false
 }
 
+/// Ready = a greeting on `addr` from a socket `pid` itself listens on. A port handed to two
+/// fixtures at once is bound by one server, and the other's greeting check would otherwise
+/// accept it and share its database.
+fn server_ready(pid: u32, addr: &SocketAddr) -> bool {
+    greets(addr) && pid_listens_on(pid, addr.port())
+}
+
+/// The inodes of the sockets listening on `port` in a `/proc/<pid>/net/tcp{,6}` table.
+pub fn listening_inodes(table: &str, port: u16) -> Vec<u64> {
+    const LISTEN: &str = "0A";
+    table
+        .lines()
+        .skip(1)
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            let local_port = f.get(1)?.rsplit(':').next()?;
+            (u16::from_str_radix(local_port, 16).ok()? == port && *f.get(3)? == LISTEN)
+                .then(|| f.get(9)?.parse().ok())
+                .flatten()
+        })
+        .collect()
+}
+
+fn pid_listens_on(pid: u32, port: u16) -> bool {
+    let proc = Path::new(system_paths::PROC).join(pid.to_string());
+    let inodes: Vec<u64> = ["tcp", "tcp6"]
+        .iter()
+        .filter_map(|t| fs::read_to_string(proc.join("net").join(t)).ok())
+        .flat_map(|t| listening_inodes(&t, port))
+        .collect();
+    let Ok(fds) = fs::read_dir(proc.join("fd")) else {
+        return false;
+    };
+    fds.flatten().any(|fd| {
+        fs::read_link(fd.path()).is_ok_and(|l| {
+            l.to_str()
+                .and_then(|l| l.strip_prefix("socket:[")?.strip_suffix(']')?.parse::<u64>().ok())
+                .is_some_and(|i| inodes.contains(&i))
+        })
+    })
+}
+
 /// Start `dolt sql-server` for `data` on `port`; returns its pid once it greets.
 fn start_server(dolt: &Path, data: &Path, port: u16, log: &Path) -> Result<u32, String> {
     let cfg = data.join("config.yaml");
@@ -379,7 +421,7 @@ fn start_server(dolt: &Path, data: &Path, port: u16, log: &Path) -> Result<u32, 
                 "dolt sql-server on port {port} exited before accepting"
             ));
         }
-        if greets(&addr) && pid_alive(pid) {
+        if server_ready(pid, &addr) {
             return Ok(pid);
         }
         sleep(Duration::from_millis(20));
