@@ -30,9 +30,13 @@ mod object_tests {
     #[test]
     fn committed_bpf_object_matches_its_source() {
         let manifest = include_str!("../bpf/proc_starts.bpf.manifest");
-        let recorded = |key: &str| {
-            manifest.lines().find_map(|line| line.split_once('=').filter(|(k, _)| *k == key)).map(|(_, v)| v).unwrap_or_else(|| panic!("{key} missing from bpf/proc_starts.bpf.manifest: run proc-starts/bpf/regen.sh"))
-        };
+        let mut fields = std::collections::BTreeMap::new();
+        for line in manifest.lines() {
+            let (key, value) = line.split_once('=').unwrap_or_else(|| panic!("bpf/proc_starts.bpf.manifest: line without '=': {line}"));
+            assert!(["source_sha256", "object_sha256", "clang", "flags"].contains(&key), "bpf/proc_starts.bpf.manifest: unknown key {key}");
+            assert!(fields.insert(key, value).is_none(), "bpf/proc_starts.bpf.manifest: duplicate key {key}");
+        }
+        let recorded = |key: &str| *fields.get(key).unwrap_or_else(|| panic!("{key} missing from bpf/proc_starts.bpf.manifest: run proc-starts/bpf/regen.sh"));
         let sha256 = |bytes: &[u8]| Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect::<String>();
         assert_eq!(sha256(include_bytes!("../bpf/proc_starts.bpf.c")), recorded("source_sha256"), "bpf/proc_starts.bpf.c changed without its object: run proc-starts/bpf/regen.sh and commit both");
         assert_eq!(sha256(include_bytes!("../bpf/proc_starts.bpf.o")), recorded("object_sha256"), "bpf/proc_starts.bpf.o was changed outside proc-starts/bpf/regen.sh: run proc-starts/bpf/regen.sh and commit the object with its manifest");
