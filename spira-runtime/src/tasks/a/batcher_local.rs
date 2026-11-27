@@ -50,10 +50,12 @@
 //! | Mending | `mending.settled` or timer 900 s (`main.rs:368`) | Certifying |
 //! | Certifying | `unit.ran` green | Landing (`lc_certify`, `land`) |
 //! | Certifying | `unit.ran` red with no `red-output=`, first time (VM lost, no output and refused eject excepted) | Attributing, `after_certify` (the certify pass's own results are the prior) |
+//! | Certifying | `unit.ran` red after the attribution, one member, no `red-output=`, reds named, first time | Attributing, `after_certify`, as the first (rerun, base, member alone); the second attribution is spent |
 //! | Certifying | `unit.ran` red after the attribution, two or more members, no `red-output=`, reds named, first time | Attributing, `after_certify` and `confirmed` (suspects named from the red suites' `# covers:` and the diffs) |
-//! | Certifying | `unit.ran` red after both attributions, two or more members, no `red-output=`, a red suite no attribution of the round covered | Attributing, `after_certify` (its rerun reaches the flip handling; once per red suite) |
-//! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
-//! | Certifying | `unit.ran` failed naming no verdict and no suite, after the attribution | Done (output kept, round left open, pace Infra) |
+//! | Certifying | `unit.ran` red after both attributions, any member count, no `red-output=`, a red suite no attribution of the round covered | Attributing, `after_certify` (its rerun reaches the flip handling; once per red suite) |
+//! | Certifying | `unit.ran` red past the rows above, one member, `red-output=` | the member is ejected on that output, and the emptied round is forgotten |
+//! | Certifying | `unit.ran` red / failed otherwise | Done (eject those `red-output=` implicates, `abandon`, verdict red, pace Red) |
+//! | Certifying | `unit.ran` failed naming no verdict, no suite and no `red-output=`, after the attribution, any member count | Done (output kept, round left open, pace Infra) |
 //! | Corpus, Attributing, Certifying | observe: the round's open round is green on the carried head | Landing (`land`), or Certified when stacked; the carried leg is stopped in the same tick |
 //! | Attributing | observe: the round's record no longer holds a member the leg carries (ejected by another actor; the batcher's own eject is the leg's work: the leg stays carried and adopts the record's moved head) | Certifying for the record's survivors at its head, certify held until no pass runs; the attribution leg is stopped (a batcher eject: stays Attributing) |
 //! | Attributing | `unit.ran` land | Certifying, certify held until no pass of the round is running (a scope its pass has left is stopped, not waited on) |
@@ -477,7 +479,7 @@ pub enum Trigger {
     MendTimeout,
     CertifyGreen,
     CertifyRed,
-    /// The round's first red certify: it is attributed, once, from that pass's results.
+    /// A red certify attributed from that pass's results, every member alike.
     CertifyRedFirst,
     /// A red that survived its attribution is attributed once more, by suspect.
     CertifyRedConfirmed,
@@ -706,7 +708,7 @@ pub struct RepoCarry {
     /// This round's unnamed certify red has already been attributed.
     #[serde(default)]
     pub attributed: bool,
-    /// The red survived its attribution and was attributed once more, by suspect.
+    /// The second attribution is spent: by suspect when there are members to compare.
     #[serde(default)]
     pub confirmed: bool,
     /// Red suites an attribution of this round already covered; a red naming one outside it is attributed afresh.
@@ -2470,18 +2472,24 @@ impl Machine<'_> {
                 self.go(Trigger::CertifyRedFirst);
                 self.attribute_after_certify();
             }
+            (State::Certifying, false) if self.rc.attributed && !self.rc.confirmed && self.rc.members.len() == 1 && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) && !certify_red_evidence(out).1.is_empty() => {
+                self.rc.confirmed = true;
+                self.record_attributed_reds(out);
+                self.go(Trigger::CertifyRedFirst);
+                self.attribute_after_certify();
+            }
             (State::Certifying, false) if self.rc.attributed && !self.rc.confirmed && self.rc.members.len() >= 2 && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) && !certify_red_evidence(out).1.is_empty() => {
                 self.rc.confirmed = true;
                 self.record_attributed_reds(out);
                 self.go(Trigger::CertifyRedConfirmed);
                 self.attribute_confirmed();
             }
-            (State::Certifying, false) if self.rc.attributed && self.rc.confirmed && self.rc.members.len() >= 2 && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) && self.unattributed_reds(out) => {
+            (State::Certifying, false) if self.rc.attributed && self.rc.confirmed && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) && self.unattributed_reds(out) => {
                 self.record_attributed_reds(out);
                 self.go(Trigger::CertifyRedFirst);
                 self.attribute_after_certify();
             }
-            (State::Certifying, false) if self.rc.members.len() != 1 && certify_red_evidence(out).0.is_none() && certify_red_evidence(out).1.is_empty() && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) => self.certify_faulted(exit, out),
+            (State::Certifying, false) if certify_red_evidence(out).0.is_none() && certify_red_evidence(out).1.is_empty() && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) => self.certify_faulted(exit, out),
             (State::Certifying, false) => {
                 let (verdict, reds) = certify_red_evidence(out);
                 let why = match (&verdict, reds.is_empty()) {
@@ -2490,8 +2498,8 @@ impl Machine<'_> {
                     (None, true) => "queue round certify judged the round red (its output named no verdict and no suite)".into(),
                 };
                 let output = out.lines().rev().find_map(|l| l.strip_prefix(RED_OUTPUT)).map(str::trim);
-                if let [(id, tip)] = self.rc.members.clone().as_slice() {
-                    let evidence = output.map_or_else(|| why.clone(), |o| format!("{why}; output kept at {o}"));
+                if let ([(id, tip)], Some(o)) = (self.rc.members.clone().as_slice(), output) {
+                    let evidence = format!("{why}; output kept at {o}");
                     let key = format!("{}:{}{SOLE_KEY}", self.repo, self.rc.batch.clone().unwrap_or_default());
                     self.acts.push(Leg { bead: id.clone(), head: tip.clone(), why: evidence, reds, key, ..self.leg() }.act(EJECT));
                     self.rc.leg = None;
