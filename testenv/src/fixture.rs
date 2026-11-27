@@ -1415,6 +1415,7 @@ pub mod fake {
             ExecOutcome { rc, output: String::new() }
         }
         fn exec(&self, req: &ExecRequest) -> ExecOutcome {
+            self.note_cut();
             if let Some(o) = self.exec_plan(req) {
                 return o;
             }
