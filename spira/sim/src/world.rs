@@ -1395,7 +1395,7 @@ mod locator_tests {
         assert!(e.contains("env -u SPIRA_LC_SOCKET -u SPIRA_TOML") && e.contains("--pilgrim"), "{e}");
     }
 
-    #[test_id(tyitj65)]
+    #[test_id(tkun65k)]
     #[test]
     fn a_pilgrim_session_names_its_store_tools_from_the_fixture_bd_with_no_bd_on_path() {
         let t = testkit::TempDir::new("pilgrim-tools");
