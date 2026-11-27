@@ -1791,7 +1791,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             .and_then(|r| r.strip_prefix("refs/heads/").map(str::to_string));
         let volume = crate::container::unit_target_volume(branch.as_deref(), &tree);
         let item = branch.unwrap_or_else(|| tree.clone());
-        return run_sandboxed(args, deps, &s, &wt.path, &volume, (&item, &repo.name), &results, rec);
+        return run_sandboxed(args, deps, &s, &wt.path, &CleanLabels { volume, item, repo: &repo.name }, &results, rec);
     }
     // ---- build in place (or stage the prebuilt set: D8) -----------------------------
     let (pdir, artifacts) = match &prebuilt {
@@ -2987,6 +2987,13 @@ fn sweep_scratch(deps: &Deps) {
     }
 }
 
+/// The branch's target volume name, and what the run's clean is recorded under.
+struct CleanLabels<'a> {
+    volume: String,
+    item: String,
+    repo: &'a str,
+}
+
 /// Regenerate `spira/conf.d.*.generated.sh` on the host, as the worktree's owner, before the
 /// container mounts it for its unprivileged user: conf.sh refuses a stale file and cannot
 /// rewrite one there. Runs on the prebuilt-artifacts path too, which skips [`build`].
@@ -2994,8 +3001,9 @@ fn sweep_scratch(deps: &Deps) {
 /// A filtered unit run in the sandbox (sp-yx0yu9): `spira/unit-tests.sh` under bwrap in this
 /// run's worktree, its cargo target kept per branch under `testenv.sandbox_target_root`. The
 /// same `.out`/`.result` files and verdict as the container path; no image, volume or test DB.
-fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume: &str, (item, repo): (&str, &str), results: &Path, rec: &std::cell::RefCell<gate::unitrecord::UnitRecord>) -> Finish {
+fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, labels: &CleanLabels, results: &Path, rec: &std::cell::RefCell<gate::unitrecord::UnitRecord>) -> Finish {
     let script = crate::unit::SCRIPT;
+    let CleanLabels { volume, item, repo } = labels;
     // THE SESSION'S ONE TARGET (sp-ke0uk8): a dwarf session's owned build directory, else the
     // branch's own under the sandbox root.
     let owned = spira_config::build_dir::owned((deps.env)("CARGO_TARGET_DIR").map(Into::into), &spira_config::build_dir::configured_bases());
