@@ -551,9 +551,10 @@ fn kind(a: &spira_config::build_dir::CleanAct) -> (&str, &str) {
     (&a.branch, &a.cause)
 }
 
-fn du_sb(p: &Path) -> u64 {
-    let out = Command::new("du").arg("-sb").arg(p).output().expect("du runs");
-    String::from_utf8_lossy(&out.stdout).split_whitespace().next().unwrap().parse().unwrap()
+/// Whether `bytes` is `du -sb` of a unit holding `files` bytes: coreutils differ on counting the
+/// directory's own size, `dir_len`.
+fn is_du_of(bytes: Option<u64>, files: u64, dir_len: u64) -> bool {
+    bytes == Some(files) || bytes == Some(files + dir_len)
 }
 
 #[test_id(tblk8bl)]
@@ -561,10 +562,10 @@ fn du_sb(p: &Path) -> u64 {
 fn a_directory_with_no_record_reports_a_whole_workspace_clean_with_cargos_count() {
     let b = setup("bdcli-report-new");
     let d = b.base.join("dir.1");
-    let before = std::time::SystemTime::now() - Duration::from_secs(1);
     clean_tree(&b, &d);
     let r = report(&d);
-    assert!(r.rc == 0 && r.at > before, "stamped by the script's own clock: {r:?}");
+    let stamped = std::fs::metadata(d.join(".unit-tests-built-stamp")).unwrap().modified().unwrap();
+    assert!(r.rc == 0 && r.at >= stamped, "stamped by the script's own clock, at its exit: {r:?}");
     let a = only_act(&d);
     assert_eq!(kind(&a), ("whole-workspace", "missing-record"));
     assert_eq!((a.bytes, a.files), (Some(1_610_612_736), Some(3)));
@@ -615,14 +616,13 @@ fn a_unit_built_after_the_stamp_reports_the_bytes_and_files_it_removed() {
     let later = std::time::SystemTime::now() + Duration::from_secs(3600);
     let u = unit(&d, "crate-a-0123456789abcdef", Some(later));
     std::fs::write(u.join("lib"), vec![0u8; 4096]).unwrap();
-    let want = du_sb(&u);
-    // The 4096-byte file and the empty stamp; whether `du` also counts the directory's own size differs by coreutils.
-    assert!(want == 4096 || want == 4096 + std::fs::metadata(&u).unwrap().len(), "{want}");
+    let dir_len = std::fs::metadata(&u).unwrap().len();
     clean_tree(&b, &d);
     let a = only_act(&d);
     assert_eq!(kind(&a), ("units-built-after-stamp", ""));
     assert_eq!(a.crates, ["crate-a"]);
-    assert_eq!((a.bytes, a.files), (Some(want), Some(2)));
+    assert!(is_du_of(a.bytes, 4096, dir_len), "{a:?}");
+    assert_eq!(a.files, Some(2), "the file and the unit's stamp");
 }
 
 #[test_id(taeli5n)]
@@ -633,12 +633,13 @@ fn a_release_that_drops_a_stale_unit_reports_it() {
     let now = std::time::SystemTime::now();
     let stale = unit(&d, "crate-a-0123456789abcdef", Some(now - Duration::from_secs(3600)));
     unit(&d, "crate-a-fedcba9876543210", Some(now + Duration::from_secs(3600)));
-    let want = du_sb(&stale);
+    let dir_len = std::fs::metadata(&stale).unwrap().len();
     release(&b, &mut p);
     let a = only_act(&d);
     assert_eq!(kind(&a), ("release-units-dropped", ""));
     assert_eq!(a.crates, ["crate-a"]);
-    assert_eq!((a.bytes, a.files), (Some(want), Some(1)));
+    assert!(is_du_of(a.bytes, 0, dir_len), "{a:?}");
+    assert_eq!(a.files, Some(1));
 }
 
 #[test_id(trel889)]
@@ -684,4 +685,39 @@ fn cargos_removal_summary_is_read_in_every_unit_it_prints() {
         let a = only_act(&d);
         assert_eq!((a.files, a.bytes), (Some(files), Some(bytes)), "{line}");
     }
+}
+
+#[test_id(tu44o0v)]
+#[test]
+fn a_tree_that_is_no_cargo_workspace_reports_no_act() {
+    let b = setup("bdcli-report-no-cargo");
+    std::fs::remove_file(b.tree.join("Cargo.toml")).unwrap();
+    let d = b.base.join("dir.1");
+    std::fs::create_dir_all(&d).unwrap();
+    clean_tree(&b, &d);
+    assert_eq!(report(&d).acts, []);
+}
+
+// The sink answers one connection, and the clean's push is the first a lease makes.
+#[test_id(tr12pkq)]
+#[test]
+fn a_lease_pushes_what_its_clean_removed_under_its_holder_and_mode() {
+    let b = setup("bdcli-report-push");
+    let (addr, sink) = spira_otel::metrics::run::fixture_sink_within(Duration::from_secs(20));
+    let toml = spira_config::process::fixture_toml(
+        b._d.path(),
+        &[
+            ("SPIRA_DWARF_BUILD_BASE", b.base.to_str().unwrap()),
+            ("SPIRA_DWARF_BUILD_BUDGET_GIB", "60"),
+            ("SPIRA_METRICS_ENDPOINT", &addr),
+        ],
+    );
+    let b = Box_ { toml, ..b };
+    let mut p = sleeper();
+    b.lease("hand-pushes", &p);
+    let body = sink.join().unwrap().expect("the lease pushed");
+    for want in ["build_dir_clean_bytes", "hand-pushes", "lease", "whole-workspace", "missing-record"] {
+        assert!(body.contains(want), "{want} missing from the push: {body}");
+    }
+    let _ = (p.kill(), p.wait());
 }

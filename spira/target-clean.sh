@@ -40,13 +40,6 @@ TARGET="${CARGO_TARGET_DIR:-$ROOT/target}"
 REPORT="$TARGET/.target-clean-report.json"
 # An earlier run's report must not be taken for this one's.
 [ -n "$stamp_only" ] || rm -f "$REPORT"
-[ -f Cargo.toml ] || exit 0
-BUILT="$TARGET/.unit-tests-built-manifest"
-STAMP="$TARGET/.unit-tests-built-stamp"
-if [ -n "$stamp_only" ]; then
-  mkdir -p "$TARGET" && touch "$STAMP" || exit 2
-  exit 0
-fi
 acts=()
 # The arguments as a JSON array of strings; they are package names and build-input paths, which need no escaping.
 json_list() {
@@ -61,19 +54,33 @@ add_act() {
 }
 write_report() {
   local rc=$? IFS=,
-  [ -d "$TARGET" ] || return 0
+  [ -z "$stamp_only" ] && [ -d "$TARGET" ] || return 0
   printf '{"at":"%s","rc":%d,"acts":[%s]}\n' "$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ')" "$rc" "${acts[*]}" > "$REPORT"
 }
 trap write_report EXIT
+[ -f Cargo.toml ] || exit 0
+BUILT="$TARGET/.unit-tests-built-manifest"
+STAMP="$TARGET/.unit-tests-built-stamp"
+if [ -n "$stamp_only" ]; then
+  mkdir -p "$TARGET" && touch "$STAMP" || exit 2
+  exit 0
+fi
 unit_bytes=0
 unit_files=0
-# Count unit directory $1 into unit_bytes and unit_files, before it is removed.
-measure_unit() {
+# Remove unit directory $1, counting it into unit_bytes and unit_files only once it is gone.
+remove_unit() {
   local b f
   b="$(du -sb -- "$1" | cut -f1)"
   f="$(find "$1" -type f | wc -l)"
+  rm -rf "$1" || return
   unit_bytes=$((unit_bytes + ${b:-0}))
   unit_files=$((unit_files + f))
+}
+# add_units_act <branch> [package]...: the units removed, when any package lost one.
+add_units_act() {
+  local branch="$1"
+  shift
+  [ "$#" -eq 0 ] || add_act "$branch" "" '[]' "$(json_list "$@")" "$unit_bytes" "$unit_files"
 }
 # cargo_clean <branch> <cause> <inputs json> <crates json> <cargo clean args>...: print what cargo
 # said and record the act with cargo's own count of what it removed; null where it gave none.
@@ -161,14 +168,17 @@ if [ -z "$release" ] && [ -f "$BUILT" ]; then
     hit=""
     while IFS= read -r d; do
       if built="$(ns '%.9Y' "$d/invoked.timestamp")" && [ "$built" -gt "$since" ]; then
-        measure_unit "$d"
-        rm -rf "$d" || exit 2
+        if ! remove_unit "$d"; then
+          [ -z "$hit" ] || dropped_names+=("$name")
+          add_units_act units-built-after-stamp "${dropped_names[@]}"
+          exit 2
+        fi
         hit=1
       fi
     done < <(units_of "$name")
     [ -z "$hit" ] || { dropped+=" $name"; dropped_names+=("$name"); }
   done
-  [ -z "$dropped" ] || add_act units-built-after-stamp "" '[]' "$(json_list "${dropped_names[@]}")" "$unit_bytes" "$unit_files"
+  add_units_act units-built-after-stamp "${dropped_names[@]}"
   [ -z "$dropped" ] || echo "unit-tests: units built since the last recorded run, by a build this record does not name — rebuilding:$dropped"
 fi
 if [ -z "$manifest" ] || [ ! -f "$BUILT" ]; then
@@ -203,9 +213,9 @@ keep_built_units() {
     if stamp="$(ns '%.9Y' "$d/invoked.timestamp")" && [ "$stamp" -gt "$edit" ]; then
       kept=0
     else
-      measure_unit "$d"
-      rm -rf "$d"
-      case " ${stale_names[*]-} " in *" $pkg "*) ;; *) stale_names+=("$pkg") ;; esac
+      if remove_unit "$d"; then
+        case " ${stale_names[*]-} " in *" $pkg "*) ;; *) stale_names+=("$pkg") ;; esac
+      fi
     fi
   done < <(units_of "$pkg")
   return $kept
@@ -227,8 +237,6 @@ if [ -n "$manifest" ] && [ -f "$BUILT" ] && [ -n "${changed:-}" ]; then
     to_clean=()
     cleaned=()
     stale_names=()
-    unit_bytes=0
-    unit_files=0
     any_kept=""
     for m in "${members[@]}"; do
       name="$(package_name "$m")"
@@ -251,7 +259,7 @@ if [ -n "$manifest" ] && [ -f "$BUILT" ] && [ -n "${changed:-}" ]; then
       to_clean+=(-p "$name")
       cleaned+=("$name")
     done
-    [ "${#stale_names[@]}" -eq 0 ] || add_act release-units-dropped "" '[]' "$(json_list "${stale_names[@]}")" "$unit_bytes" "$unit_files"
+    add_units_act release-units-dropped "${stale_names[@]}"
     if [ "${#root_changed[@]}" -gt 0 ] && [ -z "$any_kept" ]; then
       echo "unit-tests: ${root_changed[*]} changed and no built unit is newer — cleaning the workspace crates"
       clean_all build-input-changed "${root_changed[@]}"
