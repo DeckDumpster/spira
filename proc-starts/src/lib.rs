@@ -1,6 +1,10 @@
 //! proc-starts: every process start on the host counted inside the kernel, by unit class, unit,
 //! program and starter, drained every [`run::INTERVAL`] and pushed as cumulative series.
 //! Holds CAP_BPF and CAP_PERFMON only while it loads and attaches.
+//!
+//! The kernel side is the committed `bpf/proc_starts.bpf.o`, built from `bpf/proc_starts.bpf.c`.
+//! After any edit to the source, run `proc-starts/bpf/regen.sh` with the flake's clang and commit
+//! the object and `bpf/proc_starts.bpf.manifest` together.
 
 #[cfg(test)]
 #[macro_use]
@@ -25,10 +29,13 @@ mod object_tests {
     #[test_id(ttxdm1t)]
     #[test]
     fn committed_bpf_object_matches_its_source() {
-        let source = include_bytes!("../bpf/proc_starts.bpf.c");
-        let recorded = include_str!("../bpf/proc_starts.bpf.c.sha256").trim();
-        let actual: String = Sha256::digest(source).iter().map(|b| format!("{b:02x}")).collect();
-        assert_eq!(actual, recorded, "bpf/proc_starts.bpf.c changed without its object: run proc-starts/bpf/regen.sh and commit both");
+        let manifest = include_str!("../bpf/proc_starts.bpf.manifest");
+        let recorded = |key: &str| {
+            manifest.lines().find_map(|line| line.split_once('=').filter(|(k, _)| *k == key)).map(|(_, v)| v).unwrap_or_else(|| panic!("{key} missing from bpf/proc_starts.bpf.manifest: run proc-starts/bpf/regen.sh"))
+        };
+        let sha256 = |bytes: &[u8]| Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect::<String>();
+        assert_eq!(sha256(include_bytes!("../bpf/proc_starts.bpf.c")), recorded("source_sha256"), "bpf/proc_starts.bpf.c changed without its object: run proc-starts/bpf/regen.sh and commit both");
+        assert_eq!(sha256(include_bytes!("../bpf/proc_starts.bpf.o")), recorded("object_sha256"), "bpf/proc_starts.bpf.o was changed outside proc-starts/bpf/regen.sh: run proc-starts/bpf/regen.sh and commit the object with its manifest");
     }
 
     #[test_id(ttw13gi)]
