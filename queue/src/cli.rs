@@ -130,6 +130,13 @@ pub enum Cmd {
         by: String,
         reason: Text,
     },
+    /// `regate --bead <id> --by <actor> --reason <why>`: drop the branch's gate back-off so the next landing walk gates it.
+    Regate {
+        id: String,
+        repo: Option<String>,
+        by: String,
+        reason: Text,
+    },
     LandLocal {
         repo: Option<String>,
         head: String,
@@ -308,7 +315,7 @@ pub enum Round {
     },
 }
 
-pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh backfill-carriers [--apply] | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh batch open [--repo <repo>] [--members <id[@tip]>,...] [--head <sha> --body-file <path|->] [--name <id> [--lease-token <t>]] [--owner <who>] [--skip-pregate] [--dry-run] [--replace --reason <why>] (alias: open-batch [<repo>]) | queue.sh batch sweep --repo <repo> | queue.sh batch show --repo <repo> [--ended <n>] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh resubmit <id> [<repo>] --tip <40-hex> --by concierge --reason <why> | queue.sh rework <id> [<repo>] --by <concierge|operator> --reason <evidence> | queue.sh absolve <id> [<repo>] --by <concierge|operator> --reason <why> --evidence <checks> --evidence-tip <tip> | queue.sh settle-landed <id> [<repo>] --by <actor> --evidence-tip <sha> | queue.sh forced-suites <id> [<repo>] [--clear --by <concierge|operator> --reason <why>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh hand-land <id> [<repo>] --tip <40-hex> --by <actor> --reason <why> --evidence <checks> --evidence-tip <tip> [--evidence-full-suite] --round <wait|subvert> [--worktree <dir>] [--dry-run] | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh mode-switch <repo> <queue.forge|queue.local> | queue.sh rollback-local [<repo>] | queue.sh rebase-waiting [<repo>] | queue.sh round open [<repo>] --by <actor> --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] --by <actor> [--attest <head> --ran <n>] [--rehead <head>] [--place host] [--lease-token <t>] | queue.sh round eject <batch> <id> [<repo>] --by <actor> --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] [--with <id>[,<id>...]] [--lease-token <t>] | queue.sh round land <batch> [<repo>] --by <actor> [--lease-token <t>] | queue.sh round abandon <batch> [<repo>] --by <actor> --reason <text> [--cause <word>] [--lease-token <t>] | queue.sh round sweep-locks [--repo <repo> | --all] | queue.sh round pass-start <batch> [<repo>] [--resume] | queue.sh round suites-started <batch> [<repo>] | queue.sh round failed <batch> [<repo>] --suite <name> | queue.sh round mended <batch> <failure> [<repo>] --tips <id:tip,...> --checked <crate:x|suite:y,...> [--ask <id>] [--reason <text>] [--by <concierge|operator> --evidence <checks> --evidence-tip <tip>] | queue.sh round return <batch> <failure> [<repo>] --members <id,...> --reason <text> | queue.sh round environment|flaky|unsure <batch> <failure> [<repo>] --reason <text> | queue.sh round triage-ended <batch> <failure> [<repo>] | queue.sh round await-ask <batch> <failure> [<repo>] --ask <id> | queue.sh round pass-verdict <batch> [<repo>] --verdict <green|red|incomplete> [--red-suites <csv>] [--suites-s <n>] [--build-s <n>] [--reason <text>] | queue.sh round stop [<repo>] --by <owner> --reason <text> --until <condition> | queue.sh round start [<repo>] --by <owner> --reason <text> | queue.sh round status [<repo>] (round=open|none and rounds=<n>, 0 when none, say whether a round is in progress; phase= is the head round's batch state, which reads opened before the first certify and again between an eject and the re-certify) | queue.sh round stage [<repo>] --by <actor> --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round stage-test [<repo>] --by <actor> | queue.sh round promote [<repo>] --by <actor> | queue.sh round discard [<repo>] --by <actor> --reason <text>";
+pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh backfill-carriers [--apply] | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh batch open [--repo <repo>] [--members <id[@tip]>,...] [--head <sha> --body-file <path|->] [--name <id> [--lease-token <t>]] [--owner <who>] [--skip-pregate] [--dry-run] [--replace --reason <why>] (alias: open-batch [<repo>]) | queue.sh batch sweep --repo <repo> | queue.sh batch show --repo <repo> [--ended <n>] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh resubmit <id> [<repo>] --tip <40-hex> --by concierge --reason <why> | queue.sh rework <id> [<repo>] --by <concierge|operator> --reason <evidence> | queue.sh absolve <id> [<repo>] --by <concierge|operator> --reason <why> --evidence <checks> --evidence-tip <tip> | queue.sh settle-landed <id> [<repo>] --by <actor> --evidence-tip <sha> | queue.sh forced-suites <id> [<repo>] [--clear --by <concierge|operator> --reason <why>] | queue.sh regate --bead <id> [--repo <repo>] --by <batcher|concierge|operator> --reason <why> | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh hand-land <id> [<repo>] --tip <40-hex> --by <actor> --reason <why> --evidence <checks> --evidence-tip <tip> [--evidence-full-suite] --round <wait|subvert> [--worktree <dir>] [--dry-run] | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh mode-switch <repo> <queue.forge|queue.local> | queue.sh rollback-local [<repo>] | queue.sh rebase-waiting [<repo>] | queue.sh round open [<repo>] --by <actor> --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] --by <actor> [--attest <head> --ran <n>] [--rehead <head>] [--place host] [--lease-token <t>] | queue.sh round eject <batch> <id> [<repo>] --by <actor> --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] [--with <id>[,<id>...]] [--lease-token <t>] | queue.sh round land <batch> [<repo>] --by <actor> [--lease-token <t>] | queue.sh round abandon <batch> [<repo>] --by <actor> --reason <text> [--cause <word>] [--lease-token <t>] | queue.sh round sweep-locks [--repo <repo> | --all] | queue.sh round pass-start <batch> [<repo>] [--resume] | queue.sh round suites-started <batch> [<repo>] | queue.sh round failed <batch> [<repo>] --suite <name> | queue.sh round mended <batch> <failure> [<repo>] --tips <id:tip,...> --checked <crate:x|suite:y,...> [--ask <id>] [--reason <text>] [--by <concierge|operator> --evidence <checks> --evidence-tip <tip>] | queue.sh round return <batch> <failure> [<repo>] --members <id,...> --reason <text> | queue.sh round environment|flaky|unsure <batch> <failure> [<repo>] --reason <text> | queue.sh round triage-ended <batch> <failure> [<repo>] | queue.sh round await-ask <batch> <failure> [<repo>] --ask <id> | queue.sh round pass-verdict <batch> [<repo>] --verdict <green|red|incomplete> [--red-suites <csv>] [--suites-s <n>] [--build-s <n>] [--reason <text>] | queue.sh round stop [<repo>] --by <owner> --reason <text> --until <condition> | queue.sh round start [<repo>] --by <owner> --reason <text> | queue.sh round status [<repo>] (round=open|none and rounds=<n>, 0 when none, say whether a round is in progress; phase= is the head round's batch state, which reads opened before the first certify and again between an eject and the re-certify) | queue.sh round stage [<repo>] --by <actor> --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round stage-test [<repo>] --by <actor> | queue.sh round promote [<repo>] --by <actor> | queue.sh round discard [<repo>] --by <actor> --reason <text>";
 
 /// A usage error: the message queue.sh printed (without trailing newline) and exit 2.
 #[derive(Debug, PartialEq, Eq)]
@@ -1036,6 +1043,35 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
                 by,
                 reason,
             })
+        }
+        "regate" => {
+            let mut w = Walk {
+                cmd: "regate",
+                args,
+                i: 0,
+            };
+            let (mut id, mut repo, mut by, mut reason) = (String::new(), None, String::new(), Text::None);
+            while let Some(t) = w.next() {
+                match t {
+                    Tok::Opt(k, v) if reason_opt(&mut w, k, v.clone(), &mut reason) => {}
+                    Tok::Opt("bead", v) => id = w.value(v),
+                    Tok::Opt("repo", v) => repo = Some(w.value(v)),
+                    Tok::Opt("by", v) => by = w.value(v),
+                    Tok::Opt(k, _) => return Err(w.unknown(k)),
+                    Tok::Pos(p) => {
+                        return Err(Usage(format!(
+                            "queue.sh regate: unexpected argument '{p}' — name the bead with --bead <id>"
+                        )))
+                    }
+                }
+            }
+            if id.is_empty() {
+                return Err(Usage("queue.sh regate: --bead is required".into()));
+            }
+            if by.is_empty() {
+                return Err(Usage("queue.sh regate: --by is required".into()));
+            }
+            Ok(Cmd::Regate { id, repo, by, reason })
         }
         "rework" => {
             let id = pos(0).ok_or_else(|| Usage("queue.sh rework: bead id required".into()))?;

@@ -320,6 +320,8 @@ phase=gate; `land_mark GATING tip`; run the gate. Then by outcome:
     backs off only `gate_backoff`. `$SPIRA_RUN/certifies-nothing/<branch>` records the tip such a
     back-off rests on the row's mark for: a row found without the mark (a closed batch's requeue)
     lifts the back-off and is gated again. `queue.local` records nothing.
+    A back-off names the release that wrote it. One naming another release, or none, is logged,
+    removed and not honoured: the tip is gated again. `queue regate` removes one by hand.
   - BASE_FAIL: "held — the base fails its own gate (suite S)"; a base-fix branch green on its
     suite, or (S=`-`, a fence red with no suite named) green on every suite
     (`basefail_fix_decision`) → re-read status, closed → `CERTIFIED` + submitted

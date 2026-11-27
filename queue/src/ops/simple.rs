@@ -1179,6 +1179,69 @@ pub fn forced_suites(
     OK
 }
 
+const REGATERS: [&str; 3] = ["batcher", "concierge", "operator"];
+
+/// Drops `id`'s gate back-off so the next landing walk gates its branch again.
+pub fn regate(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text) -> i32 {
+    let Ok(c) = resolve(w, "regate", repo) else {
+        return FAIL;
+    };
+    if idents(w, "regate", &[("bead id", id)]).is_err() {
+        return FAIL;
+    }
+    let reason = match read_text(w, reason) {
+        Ok(r) if !r.trim().is_empty() => r.trim().to_string(),
+        Ok(_) => {
+            w.err("queue.sh regate: --reason is required — say why the back-off no longer holds");
+            return USAGE;
+        }
+        Err(e) => {
+            w.err(format!("queue.sh regate: cannot read the reason: {e}"));
+            return USAGE;
+        }
+    };
+    if !REGATERS.contains(&by) {
+        w.err(format!(
+            "queue.sh regate: refused — only {} may clear a gate back-off (--by {by})",
+            REGATERS.join(" or ")
+        ));
+        return FAIL;
+    }
+    let files = landing_pass::records::Files::new(&c.s.run);
+    let branch = format!("spira/{id}");
+    let Some((tip, until)) = files.backoff(&branch) else {
+        w.out(format!("queue.sh regate: {id} has no gate back-off"));
+        return OK;
+    };
+    files.clear_backoff(&branch);
+    if files.backoff(&branch).is_some() {
+        w.err(format!("queue.sh regate: cannot remove {id}'s gate back-off — it still holds"));
+        return FAIL;
+    }
+    w.lib.comment(
+        id,
+        &format!(
+            "Gate back-off cleared by {by} (tip {tip}, was until {}): {reason}",
+            tsd::iso_utc(until)
+        ),
+    );
+    let one_line = reason.split_whitespace().collect::<Vec<_>>().join(" ");
+    landing_log(
+        &c.s.run,
+        &format!(
+            "QUEUE REGATE {} branch={branch} by={by} tip={tip} until={until} reason={one_line}",
+            w.clock.now()
+        ),
+    );
+    w.lib.event(
+        "gate.backoff-cleared",
+        &format!("{id}: gate back-off cleared by {by}"),
+        &format!("by {by} at tip {tip}: {reason}"),
+    );
+    w.out(format!("queue.sh regate: cleared {id}'s gate back-off at {tip}; the next landing walk gates it"));
+    OK
+}
+
 /// The places a red outlives the row, then the bead's own account of why it was withdrawn.
 fn withdraw_red(
     w: &World,
