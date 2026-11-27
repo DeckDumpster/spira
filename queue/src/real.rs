@@ -3157,6 +3157,24 @@ mod tests {
         assert!(git.fork_point(repo, &missing, &base).is_err());
     }
 
+    #[test_id(thmcx0z)]
+    #[test]
+    fn a_grep_under_github_tells_a_match_from_no_match_from_a_git_that_cannot_say() {
+        let dir = testkit::TempDir::new("queue-grep-files");
+        let repo = dir.path();
+        testkit::git(repo, &["init", "-q", "-b", "main"]);
+        std::fs::create_dir_all(repo.join(".github/workflows")).unwrap();
+        std::fs::write(repo.join(".github/workflows/ci.yml"), "v: ${{ vars.WANTED }}\n").unwrap();
+        std::fs::write(repo.join("README"), "vars.ELSEWHERE\n").unwrap();
+        testkit::git(repo, &["add", "."]);
+        testkit::git(repo, &["commit", "-q", "-m", "base"]);
+        let base = testkit::git(repo, &["rev-parse", "HEAD"]);
+        let git = RealGit;
+        assert_eq!(git.grep_files(repo, &base, "vars.WANTED", ".github/**"), Ok(vec![".github/workflows/ci.yml".to_string()]));
+        assert_eq!(git.grep_files(repo, &base, "vars.ELSEWHERE", ".github/**"), Ok(vec![]));
+        assert!(git.grep_files(repo, &"0".repeat(40), "vars.WANTED", ".github/**").is_err());
+    }
+
     #[test_id(tu0q60g)]
     #[test]
     fn probe_asks_for_the_head_revision_not_a_listing() {
