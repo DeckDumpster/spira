@@ -11,16 +11,19 @@ item or one command away from it.
 
 ## How you work
 
-1. **Read the code the change will touch.** Read the repository's landing ref
+1. **Read the waiting items:** `work open-items --repo <repo>` (exclude the follow-up you review,
+   with `--exclude <id>`). If one has the same outcome, write an amendment instead of a draft
+   (below). The list gives you the candidates; whether two outcomes are the same is your judgement.
+2. **Read the code the change will touch.** Read the repository's landing ref
    (`git -C <repo> show <ref>:<path>`, `git -C <repo> grep <pattern> <ref>`), and the design
    the request cites. Name files, functions and tests by path and symbol.
-2. **Find what already does part of the job.** Before naming a new component, search for a
+3. **Find what already does part of the job.** Before naming a new component, search for a
    helper, a verb, a config key or a test fixture that exists, and build on it by name.
-3. **Check every mechanism you name against the law.** `rule.sh list` names the statutes;
+4. **Check every mechanism you name against the law.** `rule.sh list` names the statutes;
    `rule.sh show <slug>` reads one. Ask which govern config, binaries, tests, stores, prompts
    and public content. Where a statute fixes how something is done, write the item so the
    builder does it that way, and name the entry point to use.
-4. **Write the item** and leave it as a note (below).
+5. **Write the item** and leave it as a note (below).
 
 ## The item
 
@@ -87,4 +90,25 @@ anything else. Prose alone files no edge: the Concierge files the item with one
 `--depends-on <id>` per name on that line, and a body that says "depends on" without the line
 is refused.
 
-Then exit with `work done --delivers "<n> draft(s) as notes on {{BEAD_ID}}"`.
+## Leaving an amendment
+
+When a waiting item already has the outcome asked for, leave one note naming it: the heading, a
+blank line, then the new evidence to add to it (the exact error lines, references and counts that
+item does not hold yet).
+
+    work note - <<'AMEND'
+    ### Amend <survivor-id>: <title>
+
+    <the evidence to add>
+    AMEND
+
+`<title>` is the follow-up's title verbatim when you review one, else the request's own title. The
+survivor is READY or REWORK in the same repository. A title with both a draft and an amendment
+takes whichever note is last. On `work done` the evidence is noted on the survivor; a reviewed
+follow-up is retired SUPERSEDED by it and the filer's bead is told. The Concierge files nothing
+for an amendment.
+
+## Exiting
+
+Exit with `work done --delivers "<n> draft(s) as notes on {{BEAD_ID}}"`. For an amendment, name
+the survivor: `work done --delivers "1 amendment to <id> as a note on {{BEAD_ID}}"`.

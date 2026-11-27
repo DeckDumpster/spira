@@ -171,6 +171,20 @@ fn bead(bead_id: &str) -> Result<Option<Bead>, String> {
     store(|sql, db| content_sql::bead(sql, db, bead_id))
 }
 
+fn text_of(bead_id: &str, column: &str) -> Result<String, String> {
+    let found = bead(bead_id)?.ok_or_else(|| format!("{NO_SUCH} {bead_id:?}"))?;
+    Ok(found.text.get(column).cloned().unwrap_or_default())
+}
+
+/// `bead_id`'s notes alone.
+pub fn notes(bead_id: &str) -> Result<String, String> {
+    text_of(bead_id, "notes")
+}
+
+pub fn description(bead_id: &str) -> Result<String, String> {
+    text_of(bead_id, "description")
+}
+
 /// `bead_id`'s external reference; `Ok(None)` when it has none or the store holds no such bead.
 pub fn external_ref_of(bead_id: &str) -> Result<Option<String>, String> {
     Ok(bead(bead_id)?.and_then(|b| b.external_ref).filter(|r| !r.trim().is_empty()))
@@ -362,9 +376,19 @@ pub fn amend_replace(id: &str, body: &str) -> Result<(), String> {
     content_write(&["update", id, "--body-file", "-"], body)
 }
 
-/// Notes `text` on `id` unless it is already there as a whole line.
+/// Whether `held` already carries `text`: as a whole line, or, for several lines, as a block.
+fn already_noted(held: &str, text: &str) -> bool {
+    let text = text.trim();
+    if text.contains('\n') {
+        format!("\n{held}\n").contains(&format!("\n{text}\n"))
+    } else {
+        held.lines().any(|l| l.trim() == text)
+    }
+}
+
+/// Notes `text` on `id` unless it is already there.
 pub fn amend_note(id: &str, text: &str) -> Result<(), String> {
-    if show(id)?.lines().any(|l| l.trim() == text.trim()) {
+    if already_noted(&show(id)?, text) {
         return Ok(());
     }
     content_write(&["note", id, "--stdin"], text)
@@ -572,6 +596,21 @@ mod settled_tests {
     #[test]
     fn a_successful_close_is_never_reread() {
         assert!(settled(Ok(()), "sp-a", || panic!("must not read")).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod noted_tests {
+    use super::already_noted;
+
+    #[test_id(t0ukt6y)]
+    #[test]
+    fn evidence_of_several_lines_is_noted_once() {
+        let held = "○ sp-x\n\nNOTES\nAmended by Skuld: sp-r1\n\nnew evidence\nlater note\n";
+        assert!(already_noted(held, "Amended by Skuld: sp-r1\n\nnew evidence\n"));
+        assert!(!already_noted(held, "Amended by Skuld: sp-r1\n\nother evidence"));
+        assert!(already_noted(held, "later note"));
+        assert!(!already_noted(held, "later"));
     }
 }
 

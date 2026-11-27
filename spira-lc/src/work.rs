@@ -938,14 +938,17 @@ fn skuld_draft_refusal(bead_id: &str) -> Option<(i32, String)> {
     if label.is_empty() || !labels.contains(&label) {
         return None;
     }
-    match crate::bd::show(bead_id) {
+    match crate::bd::notes(bead_id) {
         Ok(notes) => skuld_draft_notes_refusal(bead_id, &notes),
         Err(e) => Some((CANNOT_TELL, format!("cannot tell: {e}"))),
     }
 }
 
-/// A Skuld request that reviews follow-ups rewrites each one's body with its draft before the
-/// request is done. `None` lets `Done` proceed.
+/// A Skuld request applies its notes before it is done: each follow-up it reviews takes its draft
+/// as a body, or is folded into the waiting item its amendment names. A request that reviews
+/// nothing adds its amendments' evidence to their items. `None` lets `Done` proceed.
+///
+/// Only the request's notes are read: its description shows the headings as a template.
 fn skuld_review_apply(bead_id: &str) -> Option<(i32, String)> {
     let label = match spira_config::process::cfg("SPIRA_SKULD_LABEL") {
         Ok(l) => l,
@@ -958,50 +961,166 @@ fn skuld_review_apply(bead_id: &str) -> Option<(i32, String)> {
     if label.is_empty() || !labels.contains(&label) {
         return None;
     }
-    let dependents = match crate::bd::blocked_dependents(bead_id) {
-        Ok(d) if d.is_empty() => return None,
-        Ok(d) => d,
+    let read = crate::bd::blocked_dependents(bead_id).and_then(|d| Ok((d, crate::bd::description(bead_id)?, crate::bd::notes(bead_id)?)));
+    let (dependents, description, notes) = match read {
+        Ok(r) => r,
         Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
     };
-    let notes = match crate::bd::show(bead_id) {
-        Ok(n) => n,
-        Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
-    };
-    apply_reviews(bead_id, &dependents, &notes, crate::bd::amend_replace, crate::bd::amend_note)
+    let filed = ::bead::review_filed_from(&description);
+    if !dependents.is_empty() {
+        apply_reviews(bead_id, filed.as_ref(), &dependents, &notes, filed_item, crate::bd::amend_replace, crate::bd::amend_note, supersede_into)
+    } else if filed.is_none() {
+        apply_amends(bead_id, &notes, filed_item, crate::bd::amend_note)
+    } else {
+        None
+    }
 }
 
+/// What an amendment is judged against: an item's lifecycle state and repo, and its title.
+struct Item {
+    state: Option<bead::BeadState>,
+    repo: Option<String>,
+    title: String,
+}
+
+fn filed_item(id: &str) -> Result<Item, String> {
+    let state = crate::plane::bead(id).map_err(|e| format!("{e:?}"))?.map(|r| r.state);
+    let repo = crate::plane::repo(id).map_err(|e| format!("{e:?}"))?;
+    Ok(Item { state, repo, title: crate::bd::title(id)?.unwrap_or_default() })
+}
+
+/// Retires `dep` as SUPERSEDED by `survivor`, on its row and then in the content store. A row
+/// already retired that way is left alone, so a repeat finishes the content half.
+fn supersede_into(dep: &str, survivor: &str) -> Result<(), String> {
+    let row = crate::plane::bead(dep).map_err(|e| format!("{e:?}"))?;
+    if !row.is_some_and(|r| r.state == bead::BeadState::Superseded && r.reason.as_deref() == Some(survivor)) {
+        let (code, out) = crate::plane::apply(dep, SKULD_PERSONA, BeadEventKind::Supersede { by: survivor.to_string() });
+        if code != 0 {
+            return Err(out);
+        }
+    }
+    crate::bd::write(&["supersede", dep, "--with", survivor]).map(|_| ())
+}
+
+/// The survivor, when it is a waiting item of `repo`; else the refusal. `instead` is what to do
+/// other than name another one.
+fn waiting_survivor(item: &impl Fn(&str) -> Result<Item, String>, survivor: &str, repo: Option<&str>, instead: &str) -> Result<Item, (i32, String)> {
+    let found = item(survivor).map_err(|e| (CANNOT_TELL, format!("cannot tell: reading {survivor}: {e}")))?;
+    let waiting = matches!(found.state, Some(bead::BeadState::Ready | bead::BeadState::Rework));
+    if waiting && repo.is_some() && found.repo.as_deref() == repo {
+        return Ok(found);
+    }
+    let state = found.state.map_or("unknown", |s| s.as_str());
+    let repo = repo.unwrap_or("an unnamed repo");
+    Err((REFUSED, format!("refused: work done: {survivor} is {state}, not a waiting item of {repo}; {instead}name a waiting item")))
+}
+
+enum Verdict {
+    Draft(::bead::Draft),
+    Amend { evidence: String, survivor: String, survivor_title: String },
+}
+
+/// Every dependent's note is judged before any of them is applied, so a refusal changes nothing.
+#[allow(clippy::too_many_arguments)]
 fn apply_reviews(
     request: &str,
+    filed: Option<&(String, String)>,
     dependents: &[(String, String)],
     notes: &str,
+    item: impl Fn(&str) -> Result<Item, String>,
     mut replace: impl FnMut(&str, &str) -> Result<(), String>,
     mut note: impl FnMut(&str, &str) -> Result<(), String>,
+    mut supersede: impl FnMut(&str, &str) -> Result<(), String>,
 ) -> Option<(i32, String)> {
-    let mut drafts = Vec::new();
+    let amends = ::bead::amend_notes(notes);
+    let amend_of = |title: &str| amends.iter().find(|a| a.title == title.trim());
+    let mut verdicts = Vec::new();
     for (dep, title) in dependents {
-        match ::bead::draft_body(notes, title) {
-            Some(d) => drafts.push((dep, d)),
-            None => {
-                return Some((
-                    REFUSED,
-                    format!(
-                        "refused: work done: {request} reviews {dep} (\"{title}\"); no note holds a draft headed \"### Draft: {title}\". \
-                         Write it with work note - (the heading verbatim, a blank line, the item), then run work done again"
-                    ),
-                ))
+        let verdict = if let Some(a) = amend_of(title) {
+            if a.survivor == *dep || dependents.iter().any(|(d, t)| *d == a.survivor && amend_of(t).is_some()) {
+                return Some((REFUSED, format!("refused: work done: {} is itself being folded by {request}; draft {dep} instead or name a waiting item", a.survivor)));
+            }
+            let repo = match item(dep) {
+                Ok(i) => i.repo,
+                Err(e) => return Some((CANNOT_TELL, format!("cannot tell: reading {dep}: {e}"))),
+            };
+            match waiting_survivor(&item, &a.survivor, repo.as_deref(), &format!("draft {dep} instead or ")) {
+                Ok(s) => Verdict::Amend { evidence: a.evidence.clone(), survivor: a.survivor.clone(), survivor_title: s.title },
+                Err(refusal) => return Some(refusal),
+            }
+        } else if let Some(d) = ::bead::draft_body(notes, title) {
+            Verdict::Draft(d)
+        } else {
+            return Some((
+                REFUSED,
+                format!(
+                    "refused: work done: {request} reviews {dep} (\"{title}\"); no note holds a draft headed \"### Draft: {title}\" or an amendment headed \"### Amend <survivor-id>: {title}\". \
+                     Write one with work note - (the heading verbatim, a blank line, the text), then run work done again"
+                ),
+            ));
+        };
+        verdicts.push((dep, verdict));
+    }
+    for (dep, verdict) in verdicts {
+        match verdict {
+            Verdict::Draft(d) => {
+                if let Err(e) = replace(dep, &format!("Drafted by Skuld: {request}\n\n{}\n", d.body)) {
+                    return Some((CANNOT_TELL, format!("cannot tell: {request} was left WORKING; the draft could not replace the body of {dep}, which keeps waiting (run work done again): {e}")));
+                }
+                if let Some(open) = &d.open {
+                    if let Err(e) = note(dep, open) {
+                        return Some((CANNOT_TELL, format!("cannot tell: {request} was left WORKING; {dep}'s body was replaced but the question could not be noted on it (run work done again): {e}")));
+                    }
+                }
+                crate::bd::record_event("spira_skuld_drafts_applied", "done");
+            }
+            Verdict::Amend { evidence, survivor, survivor_title } => {
+                let from = filed.map_or(String::new(), |(filer, bound)| format!(" filed by {filer} from {bound}"));
+                if let Err(e) = note(&survivor, &format!("Amended by Skuld: {request}, from {dep}{from}\n\n{evidence}")) {
+                    return Some((CANNOT_TELL, format!("cannot tell: {request} was left WORKING; the evidence could not be noted on {survivor}, and {dep} keeps waiting (run work done again): {e}")));
+                }
+                if let Err(e) = supersede(dep, &survivor) {
+                    return Some((CANNOT_TELL, format!("cannot tell: {request} was left WORKING; the evidence note was written on {survivor} but {dep} could not be superseded by it (run work done again): {e}")));
+                }
+                if let Some((_, bound)) = filed {
+                    let folded = format!("{dep} was folded into {survivor} (\"{survivor_title}\")");
+                    if let Err(e) = note(bound, &folded) {
+                        return Some((CANNOT_TELL, format!("cannot tell: {request} was left WORKING; the evidence was noted on {survivor} and {dep} superseded by it, but {bound} was not told `{folded}` (run work done again to close the request): {e}")));
+                    }
+                }
+                crate::bd::record_event("spira_skuld_amendments_applied", "done");
             }
         }
     }
-    for (dep, d) in drafts {
-        if let Err(e) = replace(dep, &format!("Drafted by Skuld: {request}\n\n{}\n", d.body)) {
-            return Some((CANNOT_TELL, format!("cannot tell: {request} was left WORKING; the draft could not replace the body of {dep}, which keeps waiting (run work done again): {e}")));
+    None
+}
+
+/// A request with no follow-up to retire: each amendment's evidence goes onto its waiting item.
+fn apply_amends(
+    request: &str,
+    notes: &str,
+    item: impl Fn(&str) -> Result<Item, String>,
+    mut note: impl FnMut(&str, &str) -> Result<(), String>,
+) -> Option<(i32, String)> {
+    let amends = ::bead::amend_notes(notes);
+    if amends.is_empty() {
+        return None;
+    }
+    let repo = match item(request) {
+        Ok(i) => i.repo,
+        Err(e) => return Some((CANNOT_TELL, format!("cannot tell: reading {request}: {e}"))),
+    };
+    if let Some(refusal) = amends.iter().find_map(|a| waiting_survivor(&item, &a.survivor, repo.as_deref(), "draft instead or ").err()) {
+        return Some(refusal);
+    }
+    let mut noted = Vec::new();
+    for a in amends {
+        if let Err(e) = note(&a.survivor, &format!("Amended by Skuld: {request}\n\n{}", a.evidence)) {
+            let done = if noted.is_empty() { "nothing".to_string() } else { noted.join(" ") };
+            return Some((CANNOT_TELL, format!("cannot tell: {request} was left WORKING; the evidence could not be noted on {} (noted so far: {done}; run work done again): {e}", a.survivor)));
         }
-        if let Some(open) = &d.open {
-            if let Err(e) = note(dep, open) {
-                return Some((CANNOT_TELL, format!("cannot tell: {request} was left WORKING; {dep}'s body was replaced but the question could not be noted on it (run work done again): {e}")));
-            }
-        }
-        crate::bd::record_event("spira_skuld_drafts_applied", "done");
+        noted.push(a.survivor);
+        crate::bd::record_event("spira_skuld_amendments_applied", "done");
     }
     None
 }
@@ -1208,7 +1327,7 @@ fn review_followup(
     wait: impl FnOnce(&str, &str) -> Result<(), String>,
 ) -> (i32, String) {
     let request_title = format!("Draft {followup}: {}", f.title);
-    let request_body = ::bead::review_request_body(followup, f.title, f.actor, f.bound, f.body.unwrap_or(""));
+    let request_body = ::bead::review_request_body(followup, f.title, f.repo, f.actor, f.bound, f.body.unwrap_or(""));
     let request = match file(&request_title, &request_body) {
         Ok(r) => r,
         Err(e) => return (CANNOT_TELL, format!("{followup} was filed but its Skuld review could not be filed (do not file it again; file the review and make {followup} wait on it): {e}")),
@@ -2646,6 +2765,7 @@ mod tests {
         assert_eq!(out.lines().next(), Some("sp-f1"));
         assert!(out.lines().nth(1).unwrap().contains("sp-r1"));
         assert!(filed.borrow()[0].1.contains("### Draft: Fix x\n\n"));
+        assert!(filed.borrow()[0].1.contains("work open-items --repo spira --exclude sp-f1\n"));
         assert_eq!(*edges.borrow(), vec![("sp-f1".to_string(), "sp-r1".to_string())]);
     }
 
@@ -2677,9 +2797,9 @@ mod tests {
     #[test_id(t3yn5fy)]
     #[test]
     fn done_on_a_review_refuses_with_the_exit_when_no_draft_matches() {
-        let (code, out) = super::apply_reviews("sp-r1", &deps(), "### Draft: Other\n\nbody\n", |_, _| panic!("no amend"), |_, _| panic!("no note")).unwrap();
+        let (code, out) = super::apply_reviews("sp-r1", None, &deps(), "### Draft: Other\n\nbody\n", no_item, |_, _| panic!("no amend"), |_, _| panic!("no note"), no_supersede).unwrap();
         assert_eq!(code, super::REFUSED);
-        assert!(out.contains("### Draft: Fix x") && out.contains("work note -"), "{out}");
+        assert!(out.contains("### Draft: Fix x") && out.contains("### Amend <survivor-id>: Fix x") && out.contains("work note -"), "{out}");
     }
 
     #[test_id(tx6bpmv)]
@@ -2690,8 +2810,10 @@ mod tests {
         let notes = "### Draft: Fix x\n\n## Build\nbetter\nOpen: which?; default: a\n";
         let out = super::apply_reviews(
             "sp-r1",
+            None,
             &deps(),
             notes,
+            no_item,
             |id, b| {
                 amended.borrow_mut().push((id.to_string(), b.to_string()));
                 Ok(())
@@ -2700,6 +2822,7 @@ mod tests {
                 noted.borrow_mut().push((id.to_string(), t.to_string()));
                 Ok(())
             },
+            no_supersede,
         );
         assert!(out.is_none());
         assert_eq!(*amended.borrow(), vec![("sp-f1".to_string(), "Drafted by Skuld: sp-r1\n\n## Build\nbetter\n".to_string())]);
@@ -2709,9 +2832,125 @@ mod tests {
     #[test_id(tv5jvx6)]
     #[test]
     fn done_on_a_review_whose_amend_fails_leaves_the_request_working() {
-        let (code, out) = super::apply_reviews("sp-r1", &deps(), "### Draft: Fix x\n\nb\n", |_, _| Err("no".into()), |_, _| Ok(())).unwrap();
+        let (code, out) = super::apply_reviews("sp-r1", None, &deps(), "### Draft: Fix x\n\nb\n", no_item, |_, _| Err("no".into()), |_, _| Ok(()), no_supersede).unwrap();
         assert_eq!(code, super::CANNOT_TELL);
         assert!(out.contains("WORKING"), "{out}");
+    }
+
+    fn no_item(id: &str) -> Result<super::Item, String> {
+        panic!("a draft reads no item, not {id}")
+    }
+
+    fn no_supersede(_: &str, _: &str) -> Result<(), String> {
+        panic!("nothing is superseded")
+    }
+
+    /// A plane where the follow-up and the request are spira's, and `sp-x` is `state` in `repo`.
+    fn plane(state: bead::BeadState, repo: &'static str) -> impl Fn(&str) -> Result<super::Item, String> {
+        move |id| {
+            let (state, repo) = if id == "sp-x" { (state, repo) } else { (bead::BeadState::Ready, "spira") };
+            Ok(super::Item { state: Some(state), repo: Some(repo.to_string()), title: format!("title of {id}") })
+        }
+    }
+
+    const AMEND: &str = "### Amend sp-x: Fix x\n\nnew evidence\n";
+
+    type Effects = std::cell::RefCell<Vec<(&'static str, String, String)>>;
+
+    fn amend_review(item: impl Fn(&str) -> Result<super::Item, String>, supersede: Result<(), String>) -> (Option<(i32, String)>, Vec<(&'static str, String, String)>) {
+        let effects = Effects::default();
+        let log = |what, a: &str, b: &str| effects.borrow_mut().push((what, a.to_string(), b.to_string()));
+        let filed = ("builder".to_string(), "sp-b0".to_string());
+        let out = super::apply_reviews(
+            "sp-r1",
+            Some(&filed),
+            &deps(),
+            AMEND,
+            item,
+            |_, _| panic!("an amendment replaces no body"),
+            |id, t| {
+                log("note", id, t);
+                Ok(())
+            },
+            |dep, survivor| {
+                log("supersede", dep, survivor);
+                supersede.clone()
+            },
+        );
+        (out, effects.into_inner())
+    }
+
+    fn effect(what: &'static str, a: &str, b: &str) -> (&'static str, String, String) {
+        (what, a.to_string(), b.to_string())
+    }
+
+    #[test_id(tfkfl8x)]
+    #[test]
+    fn done_on_a_review_that_amends_notes_the_survivor_supersedes_the_followup_and_tells_the_filer() {
+        for state in [bead::BeadState::Ready, bead::BeadState::Rework] {
+            let (out, effects) = amend_review(plane(state, "spira"), Ok(()));
+            assert_eq!(out, None);
+            assert_eq!(
+                effects,
+                [
+                    effect("note", "sp-x", "Amended by Skuld: sp-r1, from sp-f1 filed by builder from sp-b0\n\nnew evidence"),
+                    effect("supersede", "sp-f1", "sp-x"),
+                    effect("note", "sp-b0", "sp-f1 was folded into sp-x (\"title of sp-x\")"),
+                ]
+            );
+        }
+    }
+
+    #[test_id(t0gwg4h)]
+    #[test]
+    fn an_amendment_of_an_item_that_is_not_waiting_in_that_repo_is_refused_and_changes_nothing() {
+        for (state, repo) in [(bead::BeadState::Working, "spira"), (bead::BeadState::Landed, "spira"), (bead::BeadState::Ready, "deck")] {
+            let (out, effects) = amend_review(plane(state, repo), Ok(()));
+            let (code, out) = out.unwrap();
+            assert_eq!(code, super::REFUSED);
+            assert_eq!(out, format!("refused: work done: sp-x is {}, not a waiting item of spira; draft sp-f1 instead or name a waiting item", state.as_str()));
+            assert!(effects.is_empty(), "{effects:?}");
+        }
+    }
+
+    #[test_id(tfzotau)]
+    #[test]
+    fn an_amendment_naming_the_followup_it_would_retire_is_refused() {
+        let (code, out) = super::apply_reviews("sp-r1", None, &deps(), "### Amend sp-f1: Fix x\n\ne\n", no_item, |_, _| panic!("no replace"), |_, _| panic!("no note"), no_supersede).unwrap();
+        assert_eq!(code, super::REFUSED, "{out}");
+    }
+
+    #[test_id(tydp651)]
+    #[test]
+    fn a_failed_supersede_leaves_the_request_working_and_says_the_note_was_written() {
+        let (out, effects) = amend_review(plane(bead::BeadState::Ready, "spira"), Err("no".into()));
+        let (code, out) = out.unwrap();
+        assert_eq!(code, super::CANNOT_TELL);
+        assert!(out.contains("WORKING") && out.contains("the evidence note was written on sp-x"), "{out}");
+        assert_eq!(effects.iter().map(|e| e.0).collect::<Vec<_>>(), ["note", "supersede"]);
+    }
+
+    #[test_id(tocrefe)]
+    #[test]
+    fn a_request_with_nothing_to_retire_notes_each_amendment_on_its_item() {
+        let noted = std::cell::RefCell::new(Vec::new());
+        let note = |id: &str, t: &str| {
+            noted.borrow_mut().push((id.to_string(), t.to_string()));
+            Ok(())
+        };
+        assert_eq!(super::apply_amends("sp-r1", AMEND, plane(bead::BeadState::Ready, "spira"), note), None);
+        assert_eq!(*noted.borrow(), [("sp-x".to_string(), "Amended by Skuld: sp-r1\n\nnew evidence".to_string())]);
+        assert_eq!(super::apply_amends("sp-r1", "### Draft: New\n\nbody\n", no_item, |_, _| panic!("a draft files nothing")), None);
+        assert_eq!(super::skuld_draft_notes_refusal("sp-r1", AMEND), None);
+    }
+
+    #[test_id(ta56fwl)]
+    #[test]
+    fn a_request_amending_an_item_that_is_not_waiting_notes_none_of_them() {
+        let notes = "### Amend sp-y: One\n\ne\n### Amend sp-x: Two\n\ne\n";
+        let (code, out) = super::apply_amends("sp-r1", notes, plane(bead::BeadState::Landed, "spira"), |_, _| panic!("no note")).unwrap();
+        assert_eq!(code, super::REFUSED);
+        assert!(out.contains("sp-x is LANDED, not a waiting item of spira"), "{out}");
     }
     fn queued_json(id: &str) -> String {
         let r = crate::control::work_requests::WorkRequest { id: id.into(), bead: "sp-x".into(), actor: "a".into(), argv: vec![], stdin: None, bound_ms: 1, state: "queued".into(), code: None, output: String::new(), truncated: false, queued_at: 0, started_at: None, finished_at: None };

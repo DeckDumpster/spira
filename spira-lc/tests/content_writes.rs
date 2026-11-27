@@ -1600,3 +1600,86 @@ fn work_blocked_delivers_a_classed_sectioned_ask_and_holds_the_bead_ask() {
     }
     assert_eq!(holds(), ["ask"]);
 }
+
+/// `bead.sh` on the service's PATH, as the release ships it: the real `bead` over this tree's home.
+fn filing_through_the_real_bead(lc: &Lc) {
+    for program in ["spira-lc", "spira-config"] {
+        std::os::unix::fs::symlink(testkit::bin_exe(program), lc.dir.join("release/bin").join(program)).unwrap();
+    }
+    let shim = format!("#!/bin/sh\nexec {} --home {} \"$@\"\n", testkit::bin_exe("bead").display(), lc.home.display());
+    testkit::write_exe(&lc.dir.join("release/bin/bead.sh"), &shim);
+}
+
+#[test_id(t3xplmr)]
+#[test]
+fn a_second_filing_of_a_waiting_outcome_is_folded_into_the_first_and_leaves_no_new_row() {
+    let Some(store) = Store::up() else { return };
+    let writer = store.dir.join("fold.writer");
+    let map = spira_config::process::fixture_repo_map(&store.dir, &["spira"]).display().to_string();
+    let mut lc = Lc::with_keys(&store, "fold", &writer.display().to_string(), &[("SPIRA_REPO_MAP", &map)]);
+    provision(&lc);
+    lc.admin("admin-provision-writer");
+    filing_through_the_real_bead(&lc);
+    lc.serve();
+    let ok = |args: &[&str], stdin: Option<&str>| {
+        let (rc, out) = lc.settled(args, stdin);
+        let (rc, out) = lc.finished(rc, out);
+        assert_eq!(rc, 0, "{args:?}: {out}");
+        out
+    };
+    let claim = |id: &str, persona: &str| {
+        let kind = format!(r#"{{"Claim":{{"holder":"{persona}-{id}","lease_until":4102444800,"persona":"{persona}"}}}}"#);
+        let (rc, out) = lc.run(&["show", id], None);
+        assert_eq!(rc, 0, "{out}");
+        let shown: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let version = shown["bead"]["version"].to_string().replace('"', "");
+        ok(&["event", "bead", id, "--expect", "READY", "--version", &version, "--actor", "test", "--kind", &kind], None);
+    };
+    let builder = || {
+        let id = first_line(&ok(&["content", "create", "a builder's own bead", "--silent", "--labels", "repo:spira"], None));
+        ok(&["create-bead", &id, "--ready", "--repo", "spira"], None);
+        claim(&id, "builder");
+        id
+    };
+    let file = |bound: &str, title: &str| {
+        let out = ok(&["work", bound, "file-followup", title, "--for", "builder", "--repo", "spira", "--body-file", "-", "--stdin", "## Build\nthe artifact, in spira-lc\n", "--actor", "builder"], None);
+        let followup = first_line(&out);
+        let request = out.lines().nth(1).and_then(|l| l.split_whitespace().next()).unwrap_or_else(|| panic!("no review filed: {out}")).to_string();
+        (followup, request)
+    };
+    let review = |request: &str, note: &str| {
+        claim(request, "skuld");
+        ok(&["work", request, "note", "-", "--stdin", note, "--actor", "skuld"], None);
+        lc.settled(&["work", request, "done", "--delivers", "x", "--actor", "skuld"], None)
+    };
+    let field = |id: &str, key: &str| {
+        let shown: serde_json::Value = serde_json::from_str(&lc.shows(id)).unwrap();
+        let one = shown.as_array().map_or(&shown, |a| &a[0]);
+        one[key].as_str().unwrap_or_default().to_string()
+    };
+
+    let b0 = builder();
+    let (f1, s1) = file(&b0, "Fix x");
+    let (rc, out) = review(&s1, "### Draft: Fix x\n\n## Outcome\nx is fixed\n");
+    assert_eq!(rc, 0, "{out}");
+    assert!(field(&f1, "description").starts_with(&format!("Drafted by Skuld: {s1}")), "{}", field(&f1, "description"));
+
+    let b1 = builder();
+    let (f2, s2) = file(&b1, "Fix x once more");
+    let (rc, out) = review(&s2, &format!("### Amend {f1}: Fix x once more\n\nthe second sighting:\nexit 127 from kill\n"));
+    assert_eq!(rc, 0, "{out}");
+
+    let (rc, row) = lc.run(&["show", &f2], None);
+    let row: serde_json::Value = serde_json::from_str(&row).unwrap_or_else(|e| panic!("{rc} {e}: {row}"));
+    assert_eq!((row["bead"]["state"].as_str(), row["bead"]["reason"].as_str()), (Some("SUPERSEDED"), Some(f1.as_str())), "{row}");
+    assert_eq!(field(&f2, "status"), "closed");
+    let held = field(&f1, "notes");
+    assert!(held.contains(&format!("Amended by Skuld: {s2}, from {f2} filed by builder from {b1}")) && held.contains("the second sighting:\nexit 127 from kill"), "{held}");
+    let told = field(&b1, "notes");
+    assert!(told.contains(&format!("{f2} was folded into {f1} (\"Fix x\")")), "{told}");
+    assert!(state_of(&lc, &s2).contains("DONE"), "{}", state_of(&lc, &s2));
+    let waiting = ok(&["work", "-", "open-items", "--repo", "spira", "--json", "--actor", "skuld"], None);
+    let waiting: Vec<serde_json::Value> = serde_json::from_str(&waiting).unwrap();
+    let waiting: Vec<&str> = waiting.iter().filter_map(|w| w["id"].as_str()).collect();
+    assert!(waiting.contains(&f1.as_str()) && !waiting.contains(&f2.as_str()), "{waiting:?}");
+}
