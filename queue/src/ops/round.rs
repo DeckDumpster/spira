@@ -2105,6 +2105,11 @@ fn open_timed(
     let named: Vec<String> = wanted.iter().map(|m| m.id.clone()).collect();
     let mut blockers: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut provisional: Vec<String> = Vec::new();
+    let in_force = super::in_force::InForce::new(w, &c, &path, &landed_sha);
+    let riding: Vec<(String, String)> = named
+        .iter()
+        .filter_map(|id| w.lc.bead_row(id).filter(|r| r.state == "CERTIFIED" || r.state == "SUBMITTED").and_then(|r| Some((id.clone(), r.tip?))))
+        .collect();
     for m in wanted {
         if let Some(by) = super::integrate::carried_by(w, &c, &m.id) {
             skips.push(skip(
@@ -2134,7 +2139,9 @@ fn open_timed(
                 Some(tip) if tip.starts_with(&m.tip) && batch_red_at(&c, &m.id, &tip) => {
                     skips.push(skip(&m.id, "batch-red", format!("{}: {tip} already went red in a batch — not admitted until the tip changes", m.id)))
                 }
-                Some(tip) if tip.starts_with(&m.tip) => match r.blocked_by.iter().find(|d| !named.contains(d)) {
+                Some(tip) if tip.starts_with(&m.tip) => match super::in_force::refusal(&m.id, in_force.not_in_force(&m.id, &riding), "admitted") {
+                    Some((class, why)) => skips.push(skip(&m.id, class, why)),
+                    None => match r.blocked_by.iter().find(|d| !named.contains(d)) {
                     Some(dep) => {
                         let state = w.lc.bead_row(dep).map(|d| d.state).unwrap_or_else(|| "unknown".into());
                         skips.push(skip(&m.id, "blocked", format!("{}: depends on {dep} ({state}) — not admitted until it lands", m.id)))
@@ -2149,6 +2156,7 @@ fn open_timed(
                         blockers.insert(m.id.clone(), r.blocked_by.clone());
                         admitted.push(Member { id: m.id, tip })
                     }
+                    },
                 },
                 Some(tip) => skips.push(skip(&m.id, "tip-moved", format!("{}: {} is not its row's tip {tip} — not admitted", m.id, m.tip))),
                 None => skips.push(skip(&m.id, "no-tip", format!("{}: no submitted tip — not admitted", m.id))),

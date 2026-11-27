@@ -198,6 +198,12 @@ pub fn stage(
             m.id
         ));
     }
+    let Some(landed_sha) = c.r.landref.as_deref().and_then(|base| w.git.rev_parse(&path, base)) else {
+        w.err(format!(
+            "queue.sh {label}: cannot resolve the landing ref for {repo_name}"
+        ));
+        return FAIL;
+    };
     let (admitted, blocked_by, more, provisional) = admit(w, by, wanted);
     skips.extend(more);
 
@@ -221,6 +227,12 @@ pub fn stage(
         ));
         return FAIL;
     }
+    let in_force = super::in_force::InForce::new(w, &c, &path, &landed_sha);
+    // A record's tip may be a rebase onto its round, which would carry the others' paths.
+    let mut riding: Vec<(String, String)> = ahead
+        .iter()
+        .map(|a| (a.id.clone(), w.lc.bead_row(&a.id).and_then(|r| r.tip).unwrap_or_else(|| a.tip.clone())))
+        .collect();
     let mut merged: Vec<Member> = Vec::new();
     for m in admitted {
         let blocker = blocked_by.get(&m.id).and_then(|bs| {
@@ -231,7 +243,12 @@ pub fn stage(
             skips.push(format!("{}: blocked by {b}, which has not landed and is not merged ahead of it — not staged", m.id));
             continue;
         }
+        if let Some((_, why)) = super::in_force::refusal(&m.id, in_force.not_in_force(&m.id, &riding), "staged") {
+            skips.push(why);
+            continue;
+        }
         if super::round::merge_member(w, &c, &wt, &m.id, &m.tip) {
+            riding.push((m.id.clone(), m.tip.clone()));
             merged.push(m);
         } else {
             w.git.merge_abort(&wt);
