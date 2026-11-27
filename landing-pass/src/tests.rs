@@ -336,7 +336,7 @@ struct FakeTools {
     gate_calls: RefCell<Vec<(String, String, String)>>,
     confine: RefCell<HashMap<String, (i32, String)>>,
     status: RefCell<Option<String>>,
-    skews: RefCell<Vec<PathBuf>>,
+    skews: RefCell<Vec<(PathBuf, Vec<String>)>>,
     /// Advance the fake clock by this much per gate (to exercise the budget).
     gate_cost: Cell<u64>,
     clock: RefCell<Option<std::rc::Rc<FakeClock>>>,
@@ -421,8 +421,8 @@ impl Tools for FakeTools {
     fn confine(&self, id: &str, _: &str, _: &Path, _: &str, _: &str) -> (i32, String) {
         self.confine.borrow().get(id).cloned().unwrap_or((0, String::new()))
     }
-    fn skew_refresh(&self, repo: &Path) -> String {
-        self.skews.borrow_mut().push(repo.into());
+    fn skew_refresh(&self, repo: &Path, flags: &[&str]) -> String {
+        self.skews.borrow_mut().push((repo.into(), flags.iter().map(|f| f.to_string()).collect()));
         String::new()
     }
     fn ensure(&self, _: &Path) -> Vec<String> {
@@ -1339,6 +1339,22 @@ fn the_pass_runs_no_queue_step_and_the_skew_refresh_stays() {
     assert_eq!(h.tools.skews.borrow().len(), 1, "queue(forge) refreshes the checkout");
 }
 
+/// With a branch and with none: the pass has fetched the remote itself before it tells skew not to.
+#[test_id(tm19kh8)]
+#[test]
+fn a_forge_queue_pass_fetches_once_and_refreshes_with_no_fetch() {
+    for branch in [false, true] {
+        let h = H::new(LandMode::Queue);
+        if branch {
+            empty_submit(&h);
+        }
+        h.run();
+        let path = h.repos[0].path.clone();
+        assert_eq!(*h.tools.skews.borrow(), [(path.clone(), vec!["--no-fetch".to_string()])], "branch={branch}");
+        assert_eq!(asked(&h, "fetch"), ["origin"], "branch={branch}");
+    }
+}
+
 #[test_id(tc1accu)]
 #[test]
 fn a_settled_branch_costs_no_git_call_and_the_walk_line_counts_it() {
@@ -1974,8 +1990,8 @@ impl Tools for Injecting<'_> {
     fn confine(&self, a: &str, b: &str, c: &Path, d: &str, e: &str) -> (i32, String) {
         self.t.confine(a, b, c, d, e)
     }
-    fn skew_refresh(&self, r: &Path) -> String {
-        self.t.skew_refresh(r)
+    fn skew_refresh(&self, r: &Path, flags: &[&str]) -> String {
+        self.t.skew_refresh(r, flags)
     }
     fn ensure(&self, s: &Path) -> Vec<String> {
         self.t.ensure(s)

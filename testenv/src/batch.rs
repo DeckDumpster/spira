@@ -235,10 +235,15 @@ impl Shared<'_> {
         let raw = self.raw_path(suite);
         req.output = Some(raw.clone());
         let _running = crate::cap::running(suite);
+        _running.log(&raw);
+        _running.step("exec");
         let t0 = Instant::now();
         let out = self.session.rt.exec(&req);
         let secs = t0.elapsed().as_secs();
-        let _ = fs::remove_file(raw);
+        // The over-cap report names this file, and a cut suite gets no `.out`.
+        if out.rc != crate::runtime::RC_CANCELLED {
+            let _ = fs::remove_file(&raw);
+        }
         (out.rc, secs, out.output)
     }
 
@@ -685,6 +690,40 @@ mod tests {
         let mut s = Session::new(rt, "i1", "dwarf");
         s.liveness_sleep = Duration::from_millis(1);
         s
+    }
+
+    #[test_id(thdl32c)]
+    #[test]
+    fn a_suite_cut_at_its_cap_names_its_step_and_log() {
+        crate::cap::ONLY_MY_UNITS.with(|o| o.set(true));
+        let rt = FakeRuntime::new();
+        rt.suite("test-a.sh", 0, "ok 1 - a\n");
+        let dir = tmpdir("cut-report");
+        let s = session(&rt);
+        let c = cfg(Mode::Serial, &dir, 1);
+        with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh"])));
+        let cuts = rt.cut_here.lock().unwrap();
+        let (what, report) = &cuts[0];
+        assert_eq!(what, "tier/suite test-a.sh (in exec)");
+        let log = crate::cap::log_line("test-a.sh", &dir.join(".test-a.sh.raw"));
+        assert!(report.contains(&log), "{report:?}");
+    }
+
+    #[test_id(t0t4olq)]
+    #[test]
+    fn a_cancelled_suite_keeps_its_raw_output() {
+        let rt = FakeRuntime::new();
+        rt.suite("test-a.sh", crate::runtime::RC_CANCELLED, "half done\n");
+        rt.suite("test-b.sh", 0, "ok 1 - b\n");
+        let dir = tmpdir("cut-raw");
+        let s = session(&rt);
+        let c = cfg(Mode::Serial, &dir, 1);
+        with_hooks(|h, _| {
+            run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-a.sh", "test-b.sh"]))
+        });
+        let kept = fs::read_to_string(dir.join(".test-a.sh.raw")).unwrap();
+        assert!(kept.contains("half done"), "{kept:?}");
+        assert!(!dir.join(".test-b.sh.raw").exists());
     }
 
     #[test_id(tal286u)]

@@ -240,13 +240,13 @@ impl<'a> Pass<'a> {
         ));
 
         for r in self.repos {
-            if !matches!(r.mode, LandMode::Push | LandMode::Queue) || r.path.as_os_str().is_empty() {
+            if !r.mode.refreshed() || r.path.as_os_str().is_empty() {
                 continue;
             }
             if !r.path.join(".git").exists() {
                 continue;
             }
-            let o = self.tools.skew_refresh(&r.path);
+            let o = self.tools.skew_refresh(&r.path, &["--no-fetch"]);
             if !o.is_empty() {
                 self.log(&o);
             }
@@ -358,6 +358,10 @@ impl<'a> Pass<'a> {
                 self.lib.ask_repo_unreadable(name, &repo.path);
             }
             return;
+        }
+        // Ahead of every early return: the pass's refresh of this checkout does not fetch.
+        if repo.mode.refreshed() {
+            self.fetch_once(repo);
         }
         let refs = self.git.spira_refs(&repo.path);
         if refs.is_empty() {

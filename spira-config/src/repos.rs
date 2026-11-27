@@ -718,10 +718,15 @@ pub fn publishes_nowhere(reg: &Registry, name: &str, env: &BTreeMap<String, Stri
 }
 
 /// `_spira_gitstore <path>` — its shared git directory, canonicalized, or `None` when `path`
-/// is not inside a git checkout at all. `--git-common-dir` and not `--git-dir`: a worktree has
+/// is not inside a git checkout at all. A checkout's root is read in-process; git is asked only
+/// about a path with no `.git` of its own (below a root, or a bare store). `--git-common-dir` and not `--git-dir`: a worktree has
 /// a private git dir and a shared common one, and only the shared one identifies the
 /// repository (see [`same_repo`]'s own doc).
-fn gitstore(path: &str) -> Option<PathBuf> {
+pub fn gitstore(path: &str) -> Option<PathBuf> {
+    if Path::new(path).join(".git").exists() {
+        let (_, common) = crate::git_refs::git_dirs(Path::new(path))?;
+        return std::fs::canonicalize(common).ok();
+    }
     let out = crate::bounded::bounded("git").args(["-C", path, "rev-parse", "--git-common-dir"]).output().ok()?;
     if !out.status.success() {
         return None;

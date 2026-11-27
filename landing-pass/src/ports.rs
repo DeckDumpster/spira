@@ -151,7 +151,8 @@ pub trait Tools {
     fn gate_cancel(&self, bead: &str, why: &str) -> (i32, String);
     /// confine.sh <id> <branch> <repo-path> <base> <labels> → (status, output).
     fn confine(&self, id: &str, branch: &str, repo: &Path, base: &str, labels: &str) -> (i32, String);
-    fn skew_refresh(&self, repo: &Path) -> String;
+    /// `skew refresh <repo> [flags…]` → its output.
+    fn skew_refresh(&self, repo: &Path, flags: &[&str]) -> String;
     /// An ensure program, by bare name (`unit-ensure`, `target-reap`), or a script path
     /// (systemd/ is not on PATH), when executable → its lines.
     fn ensure(&self, script: &Path) -> Vec<String>;

@@ -302,7 +302,8 @@ pub fn worktree_digest(repo: &Path) -> Option<u64> {
 /// The commit both refs name when the ref files say they name the same one: nothing separates
 /// them, so there is nothing to fetch against or measure.
 pub fn same_tip(repo: &Path, a: &str, b: &str) -> Option<String> {
-    let (a, b) = (sha_of(repo, a)?, sha_of(repo, b)?);
+    let tip = |name: &str| if name == "HEAD" { head_sha(repo) } else { sha_of(repo, name) };
+    let (a, b) = (tip(a)?, tip(b)?);
     (a == b).then_some(a)
 }
 

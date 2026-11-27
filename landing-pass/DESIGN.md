@@ -168,7 +168,7 @@ All paths under `$SPIRA_RUN` unless absolute. Formats unchanged (§3).
 | `gate.sh <branch> <repo>` | env `SPIRA_GATE_LOCK_WAIT=<secs>`, `SPIRA_GATE_BEAD=<id>`; stdout+stderr captured together | push/hold/queue walk |
 | `gate-run.sh --status <branch> <repo>` | read-only | cert-gate-red note |
 | `confine.sh <id> <branch> <repo-path> <base> <labels>` | labels are the bead's own label words | push/hold |
-| `skew refresh <repo-path>` | | push, queue |
+| `skew refresh <repo-path> --no-fetch` | | push, queue |
 | `unit-ensure` (sp-31dm0, bare name on the launcher PATH — was `$SPIRA_REPO/systemd/unit-ensure.sh`, since systemd/ is not on PATH), `target-reap` (sp-z61hj) | | once per pass |
 | `testenv container down --name <c> --volumes --force-foreign` | | `halt` |
 | `forge pr-state/pr-create/pr-list-open/pr-automerge <repo> …` | `pr-create`'s body on stdin | `pr_branch`'s `land_pr`/needs_refresh decision (sp-t4y60) |
@@ -279,8 +279,9 @@ enum BranchVerdict { Gone, NotClosed, WrongRepo, Superseded, CutoverRound, Eject
 6. For each repository — the walk (§4.1 push/hold, §4.2 queue).
 7. **Prune** (§5).
 8. Log `landing: walk complete — N branch(es), S settled from memory`.
-9. `skew refresh <path>` for push and queue(forge) repositories (queue.local's base is
-   local; its refresh belongs to land-local, as before).
+9. `skew refresh <path> --no-fetch` for push and queue(forge) repositories (queue.local's base
+   is local; its refresh belongs to land-local, as before). The walk fetches each of these
+   repositories' base remote before any early return, with or without branches.
 10. `unit-ensure` (sp-31dm0), `target-reap` (lines logged; sp-z61hj replaced `land-build-ensure.sh`).
 11. The pass-complete line; status file; remove `landing.run`/`landing.containers`.
 
@@ -289,8 +290,9 @@ enum BranchVerdict { Gone, NotClosed, WrongRepo, Superseded, CutoverRound, Eject
 - Enumerate `refs/heads/spira/*` with tips (count them all into `branches`, pr included).
   None → next repository. pr → nothing more here.
 - No landref → "CHECK6 <name>: cannot resolve the ref its branches land on — skipped. …".
-  Fetch the base's remote if it has one. push: ensure the landing worktree, checking out
-  `-B landing <base_fq>` only when it is not already on `landing` at the base.
+  Fetch the base's remote if it has one (push and queue(forge): before enumerating, §4 step 9).
+  push: ensure the landing worktree, checking out `-B landing <base_fq>` only when it is not
+  already on `landing` at the base.
 - One bulk bead read for every id. Order by `certify_order` (bucket 0 base-fix
   `external_ref = basefail:<name>:*`, 1 express label, 2 rest; each by priority then
   closed_at). Log the base-fix and express fronts.

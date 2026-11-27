@@ -233,6 +233,9 @@ impl World for SnapWorld<'_> {
     fn same_repo(&self, a: &Path, b: &Path) -> bool {
         a == b
     }
+    fn repo_store(&self, path: &Path) -> Option<PathBuf> {
+        Some(path.to_path_buf())
+    }
     fn home_repo(&self) -> String {
         HOME.into()
     }
@@ -439,7 +442,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, _now_ms: u64, cfg: &Config) -> (Ca
     let repo = PathBuf::from(&snap.repo);
     match snap.mode {
         Mode::Local => {
-            skew::refresh(&w, None);
+            skew::refresh(&w, None, false);
         }
         Mode::Release | Mode::Checkout => match (w.running(), snap.tip.as_ref()) {
             (Some(running), Some(tip)) if running != tip => {
@@ -532,7 +535,7 @@ pub fn log(_: &crate::Effects, _: &str, spec: &EffectSpec) -> Result<String, Str
 /// `watch.skew.refresh`: skew's own refresh of the repo, on the host (fetch, stage-and-swap or
 /// release build/verify/activate, then overrides). Under `queue.local` it is never asked.
 pub fn refresh(_: &crate::Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
-    match skew::refresh(&real()?, Some(&spec.input)) {
+    match skew::refresh(&real()?, Some(&spec.input), false) {
         0 => Ok(format!("refreshed {}", spec.input)),
         rc => Err(format!("skew refresh of {} exited {rc}", spec.input)),
     }

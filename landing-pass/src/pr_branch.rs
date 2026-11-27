@@ -467,7 +467,7 @@ mod tests {
         fn confine(&self, _: &str, _: &str, _: &Path, _: &str, _: &str) -> (i32, String) {
             (self.confine.get(), "confine says no\n".into())
         }
-        fn skew_refresh(&self, _: &Path) -> String {
+        fn skew_refresh(&self, _: &Path, _: &[&str]) -> String {
             String::new()
         }
         fn ensure(&self, _: &Path) -> Vec<String> {

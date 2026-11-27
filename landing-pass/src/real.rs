@@ -1232,10 +1232,10 @@ impl Tools for RealTools {
         let (rc, s) = combined(c);
         (rc, s.trim_end_matches('\n').to_string())
     }
-    fn skew_refresh(&self, repo: &Path) -> String {
+    fn skew_refresh(&self, repo: &Path, flags: &[&str]) -> String {
         // `skew` is a compiled binary now (sp-yyk47), same bare-name PATH resolution.
         let mut c = command("skew");
-        c.arg("refresh").arg(repo);
+        c.arg("refresh").arg(repo).args(flags);
         combined(c).1.trim_end_matches('\n').to_string()
     }
     fn ensure(&self, script: &Path) -> Vec<String> {

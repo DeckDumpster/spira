@@ -1263,7 +1263,7 @@ pub mod fake {
         pub once_rc: Mutex<std::collections::HashMap<String, i32>>,
         /// Tiers that run until the run is cancelled, then answer the cancelled rc.
         pub once_hang: Mutex<std::collections::HashSet<String>>,
-        /// What a cap tripping inside each `run_once` and `purge` would have reported.
+        /// What a cap tripping inside each `exec`, `run_once` and `purge` would have reported.
         pub cut_here: Mutex<Vec<(String, Vec<String>)>>,
         /// `(from, to)` of every rename; a rename fails while `rename_fails` is set.
         pub renames: Mutex<Vec<(String, String)>>,
@@ -1415,6 +1415,7 @@ pub mod fake {
             ExecOutcome { rc, output: String::new() }
         }
         fn exec(&self, req: &ExecRequest) -> ExecOutcome {
+            self.note_cut();
             if let Some(o) = self.exec_plan(req) {
                 return o;
             }
