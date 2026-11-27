@@ -213,7 +213,8 @@ impl Handler for ConciergeEnsure {
                     }
                     carry_commands(&carry, &next, acts)
                 }
-                Some(START) => {
+                // A start lost at a restart was not refused: the next observe decides.
+                Some(START) if !crate::watchers::lost_at_restart(ev) => {
                     let mut next = carry.clone();
                     if let Some(s) = next.started.as_mut() {
                         s.start_failed = ev.kind.tag != EFFECT_SUCCEEDED;
@@ -489,5 +490,21 @@ mod tests {
         assert!(o.settings_mtime_ms.is_some_and(|m| m > 0));
         assert_eq!(o.release_target.as_deref(), Some("spira-releases/abc"));
         let _ = &t.dir;
+    }
+
+    #[test_id(t4aak8k)]
+    #[test]
+    fn a_start_lost_at_a_restart_is_not_alerted_as_refused() {
+        use runtime::taskrig::TaskRig;
+        let config = Config { run: PathBuf::new(), projects: PathBuf::new(), settings: PathBuf::new(), releases: PathBuf::new(), proc: PathBuf::new() };
+        let registration = || ConciergeEnsure::new(config.clone()).registration();
+        let down = serde_json::to_string(&snap(Observation { holder: None, ..observed() })).unwrap();
+        let mut r = TaskRig::new(1, registration()).unwrap().hanging(START).double(OBSERVE, move |_| Ok(down.clone()));
+        r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+        assert!(r.requested().iter().any(|q| q.name == START), "{:?}", r.requested());
+        r.reopen(registration()).unwrap();
+        r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+        assert!(!r.requested().iter().any(|q| q.name == ALERT), "{:?}", r.requested());
+        assert_eq!(r.requested().iter().filter(|q| q.name == START).count(), 2, "it is started again");
     }
 }

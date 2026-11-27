@@ -66,7 +66,8 @@
 //! | Open | `batch.settled` | Idle |
 //!
 //! `shots` is requested on `batch_open`'s answer, for the PR just opened, also when `observe` adopted
-//! that PR first; its outcome moves no state.
+//! that PR first; its outcome moves no state. An adoption with no such answer asks for no shots.
+//! Adopting writes no verdict or round metric, and leaves an unarmed auto-merge to the reconciler.
 //!
 //! Illegal: a second `batch_open` while the projection shows one open is refused naming `Open`.
 //!
@@ -405,12 +406,6 @@ impl Machine<'_> {
         self.rc = RepoCarry { state: kept.state, held: kept.held, base_moved: kept.base_moved, conflict_streaks: kept.conflict_streaks, held_keys: kept.held_keys, left_noted: kept.left_noted, ..RepoCarry::default() };
     }
 
-    /// Whether `batch` holds exactly the members of the carried round.
-    fn is_round(&self, batch: &Batch) -> bool {
-        let carried: BTreeSet<&str> = self.rc.members.iter().map(|(id, _)| id.as_str()).collect();
-        !carried.is_empty() && carried == batch.members.iter().map(String::as_str).collect()
-    }
-
     /// The effect the state waits on, when the scheduler says it holds none in flight for the repo.
     fn unsent(&self, repo: &Repo) -> Option<&'static str> {
         let effect = match self.rc.state {
@@ -424,7 +419,7 @@ impl Machine<'_> {
     fn observe(&mut self, policy: &Policy, enabled: bool, repo: &Repo) {
         // Ahead of `unsent`: a PR opened just before a restart is adopted, not cut again.
         // A record with no PR is an open cut short, not one to adopt.
-        if self.rc.state == State::Opening && repo.open_batch.as_ref().is_some_and(|b| b.pr != 0 && self.is_round(b)) {
+        if self.rc.state == State::Opening && repo.open_batch.as_ref().is_some_and(|b| b.pr != 0 && same_members(&self.rc.members, b.members.iter().map(String::as_str))) {
             self.go(Trigger::BatchOpened);
         }
         // Ahead of the disabled gate: a forgotten round must not be cut again under the hold.
@@ -603,6 +598,11 @@ impl Machine<'_> {
             self.open();
         }
     }
+}
+
+/// Whether a batch holding the ids `held` is the round of `members`.
+fn same_members<'a>(members: &'a [(String, String)], held: impl Iterator<Item = &'a str>) -> bool {
+    !members.is_empty() && members.iter().map(|(id, _)| id.as_str()).collect::<BTreeSet<_>>() == held.collect()
 }
 
 fn store(carry: &mut Carry, repo: &str, rc: RepoCarry) {
@@ -802,8 +802,7 @@ pub mod edge {
 
     /// The PR of the open batch that holds exactly `members`, once it has one.
     pub fn already_open(open: Option<&io::OpenBatch>, members: &[(String, String)]) -> Option<String> {
-        let ids = |m: &[(String, String)]| m.iter().map(|(id, _)| id.clone()).collect::<std::collections::BTreeSet<_>>();
-        open.filter(|o| !o.pr.is_empty() && ids(&o.members) == ids(members)).map(|o| o.pr.trim_start_matches('#').to_string())
+        open.filter(|o| !o.pr.is_empty() && super::same_members(members, o.members.iter().map(|(id, _)| id.as_str()))).map(|o| o.pr.trim_start_matches('#').to_string())
     }
 
     /// The batch PR (`open_round_pr`), or the one already open for these members, since an open
@@ -812,10 +811,15 @@ pub mod edge {
     pub fn batch_open(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
         let repo = batcher_cut::find_repo(&env, &leg.repo)?;
-        if let Some(pr) = already_open(io::read_open_batch(&env, &leg.repo)?.as_ref(), &leg.members) {
-            return json(&Opened { pr, head: io::head_of(std::path::Path::new(&leg.wt))? });
+        json(&open_or_adopt(&env, &repo, &leg, io::read_open_batch(&env, &leg.repo)?.as_ref())?)
+    }
+
+    /// [`batch_open`] on a resolved repo whose open batch is `open`.
+    pub fn open_or_adopt(env: &io::Env, repo: &io::Repo, leg: &Leg, open: Option<&io::OpenBatch>) -> Result<Opened, String> {
+        match already_open(open, &leg.members) {
+            Some(pr) => Ok(Opened { pr, head: io::head_of(std::path::Path::new(&leg.wt))? }),
+            None => open_pr(env, repo, leg),
         }
-        json(&open_pr(&env, &repo, &leg)?)
     }
 
     /// [`batch_open`] on a resolved repo, with no batch open for it yet.

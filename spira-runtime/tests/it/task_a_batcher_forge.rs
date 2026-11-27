@@ -660,3 +660,16 @@ fn a_pr_adopted_before_its_open_answered_still_gets_its_shots_once() {
     let shots: Vec<Leg> = acts.iter().filter(|a| a.effect == SHOTS).map(|a| serde_json::from_str(&a.input).unwrap()).collect();
     assert_eq!(shots.iter().map(|l| (l.pr.as_str(), l.head.as_str())).collect::<Vec<_>>(), [("378", "h-round")]);
 }
+
+#[test_id(twi5h39)]
+#[test]
+fn the_batch_open_runner_adopts_the_open_pr_without_asking_queue_for_another() {
+    let d = testkit::TempDir::new("forge-edge-adopt");
+    let (env, repo, leg) = forge_fixture(d.path());
+    let open = batcher_cut::io::OpenBatch { pr: "378".into(), members: leg.members.clone() };
+    let opened = edge::open_or_adopt(&env, &repo, &leg, Some(&open)).unwrap();
+    assert_eq!((opened.pr.as_str(), opened.head.as_str()), ("378", leg.head.as_str()));
+    assert!(!d.path().join("body").exists(), "queue was asked to open a second batch");
+    edge::open_or_adopt(&env, &repo, &leg, None).unwrap();
+    assert!(d.path().join("body").exists(), "control: with none open, queue opens it");
+}
