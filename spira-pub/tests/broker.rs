@@ -68,6 +68,26 @@ fn a_published_state_is_retained_for_a_later_subscriber_and_chatter_is_not() {
     assert_eq!(topic, "release/active", "chatter was retained");
 }
 
+#[test_id(t36nrc0)]
+#[test]
+fn a_cleared_state_topic_is_handed_to_no_later_subscriber_and_only_state_can_be_cleared() {
+    let broker = Broker::up();
+    let p = publisher("t", broker.socket());
+
+    p.publish("release/active", &json!({"release": "r1"})).unwrap();
+    p.clear("release/active").unwrap();
+    p.publish("host/pressure", &json!({"cpu": 1})).unwrap();
+    let chatter = p.clear("progress/sp-a");
+    let undeclared = p.clear("nosuch/topic");
+    p.flush(FAILSAFE).unwrap();
+
+    // Retained messages arrive in subscription order, so a retained release would be first.
+    let (topic, ..) = value(Subscriber::to(broker.socket(), &["release/active", "host/pressure"]).recv());
+    assert_eq!(topic, "host/pressure", "the cleared topic was still retained");
+    assert!(matches!(chatter, Err(PubError::WrongClass { .. })), "{chatter:?}");
+    assert!(matches!(undeclared, Err(PubError::UndeclaredFamily { .. })), "{undeclared:?}");
+}
+
 #[test_id(tjetwgp)]
 #[test]
 fn a_subscriber_to_two_retained_topics_receives_both_in_subscription_order() {

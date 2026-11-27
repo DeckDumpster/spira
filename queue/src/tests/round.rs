@@ -254,6 +254,24 @@ fn a_round_subscriber_sees_open_then_green_then_land() {
 }
 
 #[cfg(feature = "integration")]
+#[test_id(t2857wx)]
+#[test]
+fn a_subscriber_attaching_after_a_land_is_handed_no_retained_ending() {
+    let broker = testkit::broker::Broker::up();
+    let mut t = round_world();
+    t.rounds = bus_on(broker.socket());
+
+    let (batch, codes) = a_green_round(&t);
+    assert_eq!(codes, [0, 0, 0], "{}", t.err());
+    t.rounds.flush(std::time::Duration::from_secs(30)).unwrap();
+
+    // Retained messages arrive in subscription order, so a retained round topic would be first.
+    let topic = format!("round/spira/{batch}");
+    let first = testkit::broker::Subscriber::to(broker.socket(), &[&topic, "publisher/queue"]).recv();
+    assert_eq!(first.topic, "publisher/queue", "{}", String::from_utf8_lossy(&first.payload));
+}
+
+#[cfg(feature = "integration")]
 #[test_id(t2v7sq6)]
 #[test]
 fn an_open_round_is_republished_to_a_broker_that_lost_it() {

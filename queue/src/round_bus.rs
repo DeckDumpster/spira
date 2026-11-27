@@ -115,6 +115,12 @@ impl RoundBus {
             .as_ref()
     }
 
+    /// Waits until the broker has taken everything announced.
+    #[cfg(all(test, feature = "integration"))]
+    pub(crate) fn flush(&self, deadline: std::time::Duration) -> Result<(), PubError> {
+        self.publisher.get().and_then(Option::as_ref).expect("a round was published").flush(deadline)
+    }
+
     /// For a round that ended with no event of its own: publishes its ending, when this host
     /// still keeps an event for it as open.
     pub fn close(&self, run: &Path, repo: &str, batch: &str, kind: &str, event: Value, open: &dyn Fn(&str) -> Result<Vec<String>, String>) {
