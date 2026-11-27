@@ -3419,6 +3419,48 @@ fn open_batch_admits_a_named_submitted_bead_whose_gate_certifies_nothing() {
     assert!(cut_a_batch(&t));
 }
 
+#[test_id(tk61bv0)]
+#[test]
+fn open_batch_opens_a_certifies_nothing_member_without_its_pre_flight_gate() {
+    let t = certifies_nothing_world();
+    t.lc_row_certifies_nothing("sp-s", "ts", 1);
+    t.lib.pf_rc.set(1);
+    assert_eq!(t.run(&["open-batch", "--members", "sp-s"]), 0, "{}\n{}", t.out(), t.err());
+    assert!(cut_a_batch(&t));
+    assert!(!t.lib.has("pf_gate"));
+    assert!(t.out().contains("pre-flight gate not run — sp-s certifies nothing"), "{}", t.out());
+}
+
+#[test_id(t6fdoec)]
+#[test]
+fn open_batch_records_its_provisional_members() {
+    let t = certifies_nothing_world();
+    t.git.set("refs/heads/spira/sp-c", "tc");
+    t.git.branches.borrow_mut().push(("spira/sp-c".into(), "tc".into()));
+    t.lc_row_certifies_nothing("sp-s", "ts", 1);
+    t.lc_row("sp-c", "CERTIFIED", "tc", 2);
+    assert_eq!(t.run(&["open-batch"]), 0, "{}\n{}", t.out(), t.err());
+    let _ = t.out();
+    assert_eq!(t.run(&["batch", "show"]), 0, "{}", t.err());
+    let out = t.out();
+    assert!(out.lines().any(|l| l == "provisional=sp-s"), "{out}");
+}
+
+#[test_id(tttk1b4)]
+#[test]
+fn open_batch_refuses_an_all_certified_batch_whose_pre_flight_gate_fails() {
+    let t = certifies_nothing_world();
+    t.git.set("refs/heads/spira/sp-c", "tc");
+    t.git.branches.borrow_mut().push(("spira/sp-c".into(), "tc".into()));
+    t.lc_row("sp-c", "CERTIFIED", "tc", 2);
+    t.lib.pf_rc.set(1);
+    assert_eq!(t.run(&["open-batch"]), 1, "{}", t.out());
+    assert!(t.err().contains("local pre-flight gate failed"), "{}", t.err());
+    assert!(t.err().contains("retry with --skip-pregate"), "{}", t.err());
+    assert!(t.lib.has("pf_gate"));
+    assert!(!cut_a_batch(&t));
+}
+
 #[test_id(trbzc61)]
 #[test]
 fn open_batch_cuts_a_certifies_nothing_bead_from_the_pool() {

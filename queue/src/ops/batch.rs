@@ -906,6 +906,7 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
     // the work verbs never move it). A row the machine cannot read is not admitted
     // (DESIGN.md §8 D8).
     let mut admitted = Vec::new();
+    let mut provisional_ids: Vec<String> = Vec::new();
     for (id, tip) in cands {
         let Some(r) = w.lc.bead_row(&id) else {
             skips.push(format!(
@@ -932,6 +933,9 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
         } else if let Some(p) = barred_prereq(w, &r) {
             skips.push(format!("{id}: stacked on held {p} — not admitted"));
         } else {
+            if provisional {
+                provisional_ids.push(id.clone());
+            }
             admitted.push((id, tip));
         }
     }
@@ -963,6 +967,7 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
             &path,
             a,
             &members,
+            &provisional_ids,
             &head,
             None,
             &base_sha,
@@ -1016,6 +1021,7 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
         w.git.worktree_remove(&path, &wt);
         return FAIL;
     }
+    provisional_ids.retain(|id| members.iter().any(|m| &m.id == id));
     w.lib.format_batch(&wt, &base_sha, &name);
     let head = w.git.rev_parse(&wt, "HEAD").unwrap_or_default();
     publish(
@@ -1024,6 +1030,7 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
         &path,
         a,
         &members,
+        &provisional_ids,
         &head,
         Some(&wt),
         &base_sha,
@@ -1040,6 +1047,7 @@ fn publish(
     path: &std::path::Path,
     a: &OpenArgs,
     members: &[Member],
+    provisional: &[String],
     head: &str,
     wt: Option<&std::path::Path>,
     base_sha: &str,
@@ -1057,6 +1065,10 @@ fn publish(
     let stamp = w.clock.stamp();
     let batch_br = format!("spira/queue/{stamp}");
     let rendered = crate::model::render_members(members);
+    // A member that certifies nothing leaves the local gate no verdict to give.
+    let skip_for_provisional = !a.skip_pregate && !provisional.is_empty();
+    let certifies = if provisional.len() == 1 { "certifies" } else { "certify" };
+    let provisional = provisional.join(" ");
 
     if a.dry_run {
         w.out(format!("queue.sh open-batch: dry-run for {name}"));
@@ -1070,6 +1082,9 @@ fn publish(
         w.out(format!("  head={head}"));
         w.out(format!("  base={base_sha}"));
         w.out(format!("  members={rendered}"));
+        if !provisional.is_empty() {
+            w.out(format!("  provisional={provisional}"));
+        }
         w.out("  opened=<pending>");
         w.out(format!("  branch={batch_br}"));
         w.out(format!("  owner={actor}"));
@@ -1091,6 +1106,8 @@ fn publish(
         w.out(
             "queue.sh open-batch: pre-flight gate skipped (--skip-pregate) — CI is the authority",
         );
+    } else if skip_for_provisional {
+        w.out(format!("queue.sh open-batch: pre-flight gate not run — {provisional} {certifies} nothing at their tips; the batch PR's CI is their check"));
     } else {
         let (mut rc, out) = w
             .lib
@@ -1117,6 +1134,9 @@ fn publish(
             );
             if a.skip_pregate {
                 body.push_str("Opened with --skip-pregate: the local pre-flight gate was not run for this batch; CI is the gate.\n\n");
+            }
+            if skip_for_provisional {
+                body.push_str(&format!("Opened without the local pre-flight gate: {provisional} {certifies} nothing at their tips; CI is their check.\n\n"));
             }
             for id in &ids {
                 body.push_str(&format!("- {id} — {}\n", title_line(&titles, id)));
@@ -1156,6 +1176,9 @@ fn publish(
         ("owner", actor),
     ] {
         rec.push(k, v);
+        if k == "members" && !provisional.is_empty() {
+            rec.push("provisional", &provisional);
+        }
     }
     let title = format!("queue: {} beads for {name}", members.len());
     let pr_req = PrRequest {
