@@ -43,6 +43,9 @@ pub struct Answer {
     /// `(bead, reason)` store closes still owed once the answer is sent; the caller settles each
     /// through `reconcile_content::settle_owed`, and reconcile-content redrives any that fail.
     pub owed: Box<[(String, String)]>,
+    /// A refusal that wrote nothing and may not hold next time: the request ledger answers one
+    /// send with it, then frees the id so a later send is judged again.
+    pub rejudge: bool,
 }
 
 impl Answer {

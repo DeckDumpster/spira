@@ -229,7 +229,8 @@ pub fn guard(args: &mut Vec<String>, body: &mut Option<String>, g: &Guards, m: &
     } else {
         bead::filing::amend_text(args, body, g.repo_of, &policy, &vars)
     }
-    .map_err(|r| Answer { code: r.code, stderr: r.text, ..Default::default() })?;
+    // Never the filing contract's own code: on the wire that one is "cannot tell", which is sent again.
+    .map_err(|r| Answer { code: bead::guard::REFUSED, stderr: r.text, ..Default::default() })?;
     log.push_str(&shown);
     Ok(log)
 }
@@ -427,7 +428,7 @@ pub fn run(
     let mut args = args.to_vec();
     let log = match guard(&mut args, &mut body) {
         Ok(log) => log,
-        Err(refused) => return refused,
+        Err(refused) => return Answer { rejudge: true, ..refused },
     };
     let res = write(&args, body.as_deref());
     let report = match &res {
@@ -1002,12 +1003,17 @@ mod tests {
         for (name, persona, repo, body, env) in &cases {
             let fix = name.ends_with("contract-fix");
             let (beadsh, door) = (through_beadsh(persona, *repo, "T", body, env, fix), through_the_door(persona, *repo, "T", body, env, fix));
-            assert_eq!(door, beadsh, "{name}");
+            let text = |v: &Verdict| v.clone().map_err(|r| r.1);
+            assert_eq!(text(&door), text(&beadsh), "{name}");
+            if let Err((code, _)) = door {
+                assert_eq!(code, bead::guard::REFUSED, "{name}");
+                assert_ne!(code, spira_store::lc_call::CANNOT_TELL, "{name}: a refusal must not read as a lost write");
+            }
             refused += usize::from(beadsh.is_err());
         }
         assert_eq!(refused, 12, "the table refuses where it should: an unrefused filing proves nothing");
         let refusal = |name: &str| through_the_door(cases.iter().find(|c| c.0 == name).unwrap().1, cases.iter().find(|c| c.0 == name).unwrap().2, "T", &cases.iter().find(|c| c.0 == name).unwrap().3, &cases.iter().find(|c| c.0 == name).unwrap().4, false).unwrap_err();
-        assert_eq!(refusal("no repo"), (2, "bead: --repo <name> required\n".to_string()));
+        assert_eq!(refusal("no repo"), (bead::guard::REFUSED, "bead: --repo <name> required\n".to_string()));
         assert!(refusal("no build spec").1.starts_with("bead: refusing: a bead for builder must name what to build under a `## Build` heading"));
         // literal-ok: the override's name is bead.sh's refusal text
         assert!(refusal("lane not admitted").1.contains("bead: repo:deck does not admit lane mimir-sweep — refused by its admitted lanes (plan,incident,groom,spike)\nbead: override: SPIRA_BEAD_LANE_OVERRIDE=1"));

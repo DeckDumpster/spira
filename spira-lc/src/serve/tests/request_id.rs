@@ -121,3 +121,81 @@ fn a_retry_after_a_deadline_gets_the_workers_real_answer_and_the_note_exists_onc
     assert_eq!(third.0, 0, "{third:?}");
     assert_eq!(r.notes.mutations(), ["note sp-a x"]);
 }
+
+/// [`Filing`] whose builder persona stops requiring a build spec once `repaired`.
+struct Repairable<'w> {
+    filing: Filing<'w>,
+    repaired: bool,
+}
+
+impl crate::composed::Content for Repairable<'_> {
+    fn read(&self, args: &[String]) -> Result<String, crate::composed::ReadError> {
+        self.filing.read(args)
+    }
+    fn write(&self, args: &[&str]) -> Result<String, String> {
+        self.filing.write(args)
+    }
+    fn write_stdin(&self, args: &[String], stdin: Option<&str>) -> Result<String, String> {
+        self.filing.write_stdin(args, stdin)
+    }
+    fn mutate(&self, m: &crate::content_write::Mutation) -> Result<String, String> {
+        self.filing.mutate(m)
+    }
+    fn delete(&self, ids: &[String]) -> Result<(), String> {
+        self.filing.delete(ids)
+    }
+    fn ask_label(&self) -> Result<String, String> {
+        self.filing.ask_label()
+    }
+    fn registry(&self) -> spira_config::repos::Registry {
+        self.filing.registry()
+    }
+    fn policy(&self) -> Result<bead::filing::Policy, String> {
+        let mut policy = self.filing.policy()?;
+        policy.personas[0].requires_build_spec = !self.repaired;
+        Ok(policy)
+    }
+}
+
+#[test_id(tskmn24)]
+#[test]
+fn a_refused_filing_sent_again_under_one_request_id_is_judged_again() {
+    let ledger = super::Ledger::new(Duration::from_secs(60));
+    let world = Arc::new(Mutex::new(World::new()));
+    let repaired = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (w, r) = (Arc::clone(&world), Arc::clone(&repaired));
+    let work: super::Work = Arc::new(move |req| {
+        let world = w.lock().unwrap();
+        let c = Repairable { filing: Filing(&world, "sp-new"), repaired: r.load(std::sync::atomic::Ordering::SeqCst) };
+        let (mut m, mut b) = (&*world, &*world);
+        super::answer(req, &mut m, &mut b, &c, &|| Err("no run dir here".to_string()))
+    });
+    let door = Arc::new(super::Door { ledger, work, personas: Default::default(), deadlines: three_seconds() });
+    let argv = ["content", "create", "T", "--labels", "builder-lane,repo:spira", "--body-file", "-", "--silent"];
+    let first = send_body(&door, &argv, Some("no build spec"), Some("req-1"));
+    assert_eq!(first.0, bead::guard::REFUSED, "{first:?}");
+    repaired.store(true, std::sync::atomic::Ordering::SeqCst);
+    let again = send_body(&door, &argv, Some("no build spec"), Some("req-1"));
+    assert_eq!(again.0, 0, "{again:?}");
+    let replay = send_body(&door, &argv, Some("no build spec"), Some("req-1"));
+    assert_eq!(replay, again, "an applied filing is replayed");
+}
+
+#[test_id(t8vip31)]
+#[test]
+fn a_refusal_that_outlived_its_send_is_given_to_the_next_one_before_it_is_judged_again() {
+    let ledger = super::Ledger::new(Duration::from_secs(60));
+    let refusal = || crate::callers::Answer { code: 1, stderr: "refused".into(), rejudge: true, ..Default::default() };
+    let (release, release_rx) = std::sync::mpsc::channel::<()>();
+    let cut = ledger.answer_in_time("r", Duration::from_millis(30), move || {
+        release_rx.recv().unwrap();
+        refusal()
+    });
+    assert!(cut.is_none(), "the judging outlived the send");
+    release.send(()).unwrap();
+    assert!(ledger.await_done("r", Duration::from_secs(5)));
+    let late = ledger.answer_in_time("r", Duration::from_secs(1), || panic!("the stored refusal is owed to this send")).unwrap();
+    assert_eq!(late.stderr, "refused");
+    let fresh = ledger.answer_in_time("r", Duration::from_secs(1), || crate::callers::Answer::out(0, "filed".to_string())).unwrap();
+    assert_eq!(fresh.stdout, "filed");
+}
