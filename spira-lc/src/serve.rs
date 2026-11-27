@@ -549,12 +549,17 @@ pub fn run(args: &[String]) -> i32 {
     if let Err(e) = notify_ready(std::env::var("NOTIFY_SOCKET").ok().as_deref()) {
         eprintln!("spira-lc serve: {e}");
     }
-    let (drained, answered) = drain(&flights, &STOPPING, &finished, DRAIN_BOUND);
+    let mut seen = None;
+    let (drained, answered) = drain(&flights, &STOPPING, &finished, DRAIN_BOUND, || {
+        seen = Some(Instant::now());
+        end_watches(crate::control::served::configured());
+    });
+    let took = seen.map_or(Duration::ZERO, |at| at.elapsed());
     if let Some(spans) = SPANS.get() {
         spans.flush();
     }
     crate::disk::flush();
-    eprintln!("spira-lc serve: stopped after draining {drained}, answered {answered} at the bound");
+    eprintln!("{}", stopped_line(drained, took, answered, wall_ms()));
     if let Some(t) = loop_thread {
         match t.join() {
             Ok(cut) => eprintln!("spira-lc serve: the loop stopped, answered {cut} at the bound"),
@@ -765,18 +770,40 @@ impl Flights {
     }
 }
 
+pub(crate) fn stopping_line(in_flight: usize, wall_ms: u64) -> String {
+    format!("spira-lc serve: {} stopping: {in_flight} in flight", spira_lc::sections::rfc3339(wall_ms))
+}
+
+pub(crate) fn stopped_line(drained: usize, took: Duration, answered: usize, wall_ms: u64) -> String {
+    format!("spira-lc serve: {} stopped after draining {drained} in {} ms, answered {answered} at the bound", spira_lc::sections::rfc3339(wall_ms), took.as_millis())
+}
+
+/// The drain's `on_stop`: a held watch would otherwise keep the drain for its whole wait.
+fn end_watches<B: state_store::Backend>(store: Option<Result<Arc<crate::control::store::Store<B>>, String>>) {
+    if let Some(Ok(store)) = store {
+        store.contract().close_watches();
+    }
+}
+
 /// Wait for the accept loop and its connections to finish (`finished`), but for no more than
-/// `bound` after `stopping` was seen; then answer every connection still unanswered.
-/// Returns (in flight when the stop was seen, answered at the bound).
-fn drain(flights: &Flights, stopping: &AtomicBool, finished: &std::sync::mpsc::Receiver<()>, bound: Duration) -> (usize, usize) {
+/// `bound` after `stopping` was seen, running `on_stop` before that wait; then answer every
+/// connection still unanswered. Returns (in flight when the stop was seen, answered at the bound).
+fn drain(flights: &Flights, stopping: &AtomicBool, finished: &std::sync::mpsc::Receiver<()>, bound: Duration, on_stop: impl FnOnce()) -> (usize, usize) {
     use std::sync::mpsc::RecvTimeoutError::{Disconnected, Timeout};
-    while !stopping.load(Ordering::SeqCst) {
-        match finished.recv_timeout(Duration::from_millis(50)) {
-            Ok(()) | Err(Disconnected) => return (0, 0),
-            Err(Timeout) => {}
-        }
+    let mut done = false;
+    while !done && !stopping.load(Ordering::SeqCst) {
+        done = !matches!(finished.recv_timeout(Duration::from_millis(50)), Err(Timeout));
+    }
+    // An idle accept loop can finish between the stop and this thread seeing it.
+    if !stopping.load(Ordering::SeqCst) {
+        return (0, 0);
     }
     let drained = flights.len();
+    eprintln!("{}", stopping_line(drained, wall_ms()));
+    on_stop();
+    if done {
+        return (drained, 0);
+    }
     match finished.recv_timeout(bound) {
         Ok(()) | Err(Disconnected) => (drained, 0),
         Err(Timeout) => (drained, flights.refuse_unanswered()),

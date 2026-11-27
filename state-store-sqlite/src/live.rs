@@ -187,6 +187,8 @@ live_scenarios!(
     list_pages_and_list_rev_come_from_one_snapshot_while_a_commit_lands_between_pages,
     watch_resumes_from_a_revision,
     a_watch_on_a_quiet_prefix_returns_progress_rev,
+    closing_the_watches_answers_a_held_watch_and_every_later_one_with_progress,
+    closing_the_watches_still_delivers_events_already_committed,
     a_value_overwritten_or_deleted_inside_the_ring_reads_as_of_a_revision_between_the_writes,
     get_many_answers_what_get_answers_per_key_at_the_head_and_below_it,
     a_lock_expires_on_the_virtual_clock,
