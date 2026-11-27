@@ -30,14 +30,18 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
 
 /// `create-ask <id> [--work-bead W]`: an ask that exists already is left as it is.
 fn create<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
-    let Some(id) = args.first().filter(|i| is_row_key(i)) else {
+    let prefix = match call.inputs.row_prefix() {
+        Ok(p) => p,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: create-ask: {e}")),
+    };
+    let Some(id) = args.first().filter(|i| is_row_key(&prefix, i)) else {
         return (
             CANNOT_TELL,
             "create-ask: missing or malformed <ask-id>".into(),
         );
     };
     let work = flag(args, "--work-bead").filter(|w| !w.is_empty());
-    if work.as_deref().is_some_and(|w| !is_row_key(w)) {
+    if work.as_deref().is_some_and(|w| !is_row_key(&prefix, w)) {
         return (
             CANNOT_TELL,
             "create-ask: --work-bead is not a bead id".into(),

@@ -11,7 +11,7 @@ fn refuse(verb: &str, why: &str) -> Answer {
     Answer { code: REFUSED, stderr: format!("spira-lc {verb}: {why}\n"), ..Default::default() }
 }
 
-use crate::cutover::is_row_key as bead_id;
+use crate::cutover::is_row_key;
 
 fn call(verb: &str, args: &[&str], bd: &dyn Fn(&[&str]) -> Result<String, String>) -> Answer {
     match bd(args) {
@@ -20,11 +20,11 @@ fn call(verb: &str, args: &[&str], bd: &dyn Fn(&[&str]) -> Result<String, String
     }
 }
 
-pub fn supersede(args: &[String], bd: &dyn Fn(&[&str]) -> Result<String, String>) -> Answer {
+pub fn supersede(prefix: &str, args: &[String], bd: &dyn Fn(&[&str]) -> Result<String, String>) -> Answer {
     let [id, succ] = args else {
         return Answer { code: CANNOT_TELL, stderr: "usage: spira-lc bd-supersede <bead-id> <successor-id>\n".into(), ..Default::default() };
     };
-    if !bead_id(id) || !bead_id(succ) {
+    if !is_row_key(prefix, id) || !is_row_key(prefix, succ) {
         return refuse("bd-supersede", "both arguments must be bead ids");
     }
     if id == succ {
@@ -33,11 +33,11 @@ pub fn supersede(args: &[String], bd: &dyn Fn(&[&str]) -> Result<String, String>
     call("bd-supersede", &["supersede", id, "--with", succ], bd)
 }
 
-pub fn note(args: &[String], bd: &dyn Fn(&[&str]) -> Result<String, String>) -> Answer {
+pub fn note(prefix: &str, args: &[String], bd: &dyn Fn(&[&str]) -> Result<String, String>) -> Answer {
     let [id, text] = args else {
         return Answer { code: CANNOT_TELL, stderr: "usage: spira-lc bd-note <bead-id> <text>\n".into(), ..Default::default() };
     };
-    if !bead_id(id) {
+    if !is_row_key(prefix, id) {
         return refuse("bd-note", "the first argument must be a bead id");
     }
     if text.trim().is_empty() {
@@ -66,7 +66,7 @@ mod tests {
     #[test]
     fn supersede_calls_bd_with_the_successor() {
         let calls = RefCell::new(vec![]);
-        let ans = supersede(&v(&["sp-a", "sp-b"]), &recording(&calls));
+        let ans = supersede("sp", &v(&["sp-a", "sp-b"]), &recording(&calls));
         assert_eq!(ans.code, 0);
         assert_eq!(*calls.borrow(), ["supersede sp-a --with sp-b"]);
     }
@@ -76,16 +76,16 @@ mod tests {
     fn supersede_refuses_bad_ids_and_self_before_calling_bd() {
         let never = |_: &[&str]| -> Result<String, String> { panic!("bd must not run") };
         for bad in [&["sp-a", "sp-a"][..], &["-x", "sp-b"], &["sp-a", ""], &["sp-a", "--force"], &["sp a", "sp-b"], &[system_paths::ETC_PASSWD, "sp-b"]] {
-            assert_eq!(supersede(&v(bad), &never).code, REFUSED, "{bad:?}");
+            assert_eq!(supersede("sp", &v(bad), &never).code, REFUSED, "{bad:?}");
         }
-        assert_eq!(supersede(&v(&["sp-a"]), &never).code, CANNOT_TELL);
+        assert_eq!(supersede("sp", &v(&["sp-a"]), &never).code, CANNOT_TELL);
     }
 
     #[test_id(t1lrscj)]
     #[test]
     fn note_passes_the_text_as_one_argument() {
         let calls = RefCell::new(vec![]);
-        let ans = note(&v(&["sp-a", "supersede-request confirmed: sp-b is LANDED"]), &recording(&calls));
+        let ans = note("sp", &v(&["sp-a", "supersede-request confirmed: sp-b is LANDED"]), &recording(&calls));
         assert_eq!(ans.code, 0);
         assert_eq!(*calls.borrow(), ["note sp-a supersede-request confirmed: sp-b is LANDED"]);
     }
@@ -94,17 +94,17 @@ mod tests {
     #[test]
     fn note_refuses_empty_text_and_option_ids_before_calling_bd() {
         let never = |_: &[&str]| -> Result<String, String> { panic!("bd must not run") };
-        assert_eq!(note(&v(&["sp-a", "  "]), &never).code, REFUSED);
-        assert_eq!(note(&v(&["--x", "t"]), &never).code, REFUSED);
-        assert_eq!(note(&v(&["sp-a"]), &never).code, CANNOT_TELL);
+        assert_eq!(note("sp", &v(&["sp-a", "  "]), &never).code, REFUSED);
+        assert_eq!(note("sp", &v(&["--x", "t"]), &never).code, REFUSED);
+        assert_eq!(note("sp", &v(&["sp-a"]), &never).code, CANNOT_TELL);
     }
 
     #[test_id(tmsvgo9)]
     #[test]
     fn a_failing_bd_is_exit_1_with_its_message() {
         let down = |_: &[&str]| -> Result<String, String> { Err("bd down\n".into()) };
-        let ans = supersede(&v(&["sp-a", "sp-b"]), &down);
+        let ans = supersede("sp", &v(&["sp-a", "sp-b"]), &down);
         assert_eq!((ans.code, ans.stderr.as_str()), (1, "spira-lc bd-supersede: bd down\n"));
-        assert_eq!(note(&v(&["sp-a", "t"]), &down).code, 1);
+        assert_eq!(note("sp", &v(&["sp-a", "t"]), &down).code, 1);
     }
 }

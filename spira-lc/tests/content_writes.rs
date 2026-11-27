@@ -101,7 +101,11 @@ impl Store {
 
     /// A bead the writes land on, planted as a row: the writer under test is never its author.
     fn create_bead(&self) -> String {
-        let id = format!("sp-seed{}", self.seeded.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        self.create_bead_under("sp")
+    }
+
+    fn create_bead_under(&self, prefix: &str) -> String {
+        let id = format!("{prefix}-seed{}", self.seeded.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
         self.sql(&format!("INSERT INTO issues (id, title, description, design, acceptance_criteria, notes) VALUES ('{id}', 'a bead the writes land on', '', '', '', '')"));
         id
     }
@@ -140,6 +144,11 @@ struct Lc {
 
 impl Lc {
     fn new(store: &Store, name: &str, writer_file: &str) -> Lc {
+        Lc::with_keys(store, name, writer_file, &[])
+    }
+
+    /// [`Lc::new`] with `keys` laid over the fixture's config.
+    fn with_keys(store: &Store, name: &str, writer_file: &str, keys: &[(&str, &str)]) -> Lc {
         let dir = store.dir.join(name);
         let run = dir.join("run");
         std::fs::create_dir_all(&run).unwrap();
@@ -154,9 +163,7 @@ impl Lc {
         let (d, r, ctl, sock) = (dir.display().to_string(), run.display().to_string(), dir.join("control.db").display().to_string(), dir.join("s").display().to_string());
         let (rf, db) = (reader.display().to_string(), store.db.clone());
         let (mail, index, kinds) = (dir.join("mail").display().to_string(), dir.join("mail/index").display().to_string(), harness.join("mail/kinds").display().to_string());
-        let toml = spira_config::process::fixture_toml(
-            &dir,
-            &[
+        let mut declared: Vec<(&str, &str)> = vec![
                 ("SPIRA_WORKSPACES", &d),
                 ("SPIRA_RUN", &r),
                 ("SPIRA_LC_STORE_PATH", &ctl),
@@ -173,8 +180,9 @@ impl Lc {
                 ("SPIRA_MAIL", &mail),
                 ("SPIRA_MAIL_INDEX", &index),
                 ("SPIRA_MAIL_KINDS", &kinds),
-            ],
-        );
+        ];
+        declared.extend_from_slice(keys);
+        let toml = spira_config::process::fixture_toml(&dir, &declared);
         let home = spira_config::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
         let otel = spira_otel::dir_of(&run);
         Lc { toml, home, dir, otel, bd_log, bd: bd_program, child: None, runner: None, cut: Default::default() }
@@ -408,8 +416,12 @@ fn a_content_write_against_a_store_with_no_writer_key_is_refused_by_the_key_and_
 }
 
 fn writer_lc(store: &Store, name: &str) -> Lc {
+    writer_lc_with(store, name, &[])
+}
+
+fn writer_lc_with(store: &Store, name: &str, keys: &[(&str, &str)]) -> Lc {
     let writer = store.dir.join(format!("{name}.writer"));
-    let mut lc = Lc::new(store, name, &writer.display().to_string());
+    let mut lc = Lc::with_keys(store, name, &writer.display().to_string(), keys);
     provision(&lc);
     lc.admin("admin-provision-writer");
     lc.serve();
@@ -436,6 +448,35 @@ fn a_create_gets_its_id_from_the_server_in_the_one_transaction_and_starts_no_pro
     assert_ne!(lc.run(&["show", &seed], None).0, 0, "a bead made outside the door has no lifecycle row");
     let (rc, row) = lc.run(&["show", &id], None);
     assert!(rc == 0 && row.to_lowercase().contains("ready"), "create-bead files the lifecycle row from the create's output ({rc}): {row}");
+}
+
+#[test_id(txs80y6)]
+#[test]
+fn on_an_installation_with_another_prefix_a_create_gets_a_row_and_a_dep_edge_is_mirrored() {
+    let Some(store) = Store::up() else { return };
+    store.sql("UPDATE config SET value='zz' WHERE `key`='issue_prefix'");
+    let (a, b) = (store.create_bead_under("zz"), store.create_bead_under("zz"));
+    let lc = writer_lc_with(&store, "z", &[("SPIRA_ID_PREFIX", "zz")]);
+    let (rc, out) = lc.settled(&["content", "dep", "add", &a, &b, "--type", "blocks"], None);
+    assert!(rc == 0 && !out.contains("was not mirrored"), "({rc}) {out}");
+    let (rc, listed) = lc.settled(&["content", "dep", "list", &a], None);
+    assert!(rc == 0 && listed.contains(&b), "({rc}) {listed}");
+    let (rc, out) = lc.settled(&["content", "create", "T", "--type", "task", "--labels", "repo:spira", "--silent", "--body-file", "-"], Some("what the bead says\n"));
+    assert!(rc == 0 && !out.contains("NO lifecycle row"), "({rc}) {out}");
+    let id = first_line(&out);
+    assert!(id.starts_with("zz-"), "{out}");
+    let (rc, row) = lc.run(&["show", &id], None);
+    assert!(rc == 0 && row.to_lowercase().contains("ready"), "({rc}): {row}");
+}
+
+#[test_id(tl3v9t3)]
+#[test]
+fn an_installation_naming_no_prefix_is_refused_by_the_key_and_no_prefix_is_assumed() {
+    let Some(store) = Store::up() else { return };
+    let (a, b) = (store.create_bead(), store.create_bead());
+    let lc = writer_lc_with(&store, "n", &[("SPIRA_ID_PREFIX", "")]);
+    let (rc, out) = lc.settled(&["content", "dep", "add", &a, &b, "--type", "blocks"], None);
+    assert!(out.contains("SPIRA_ID_PREFIX") && out.contains("was not mirrored"), "({rc}) {out}");
 }
 
 #[test_id(t2itwbv)]

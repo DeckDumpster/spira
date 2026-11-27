@@ -436,7 +436,11 @@ fn set_repo<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32,
             "set-repo: usage: set-repo <bead-id> <repo>|--clear [--only-if <repo>]".into(),
         );
     };
-    if !crate::cutover::is_row_key(id) {
+    let prefix = match call.inputs.row_prefix() {
+        Ok(p) => p,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: set-repo: {e}")),
+    };
+    if !crate::cutover::is_row_key(&prefix, id) {
         return (CANNOT_TELL, format!("set-repo: {id:?} is not a bead id"));
     }
     let only_if = flag(args, "--only-if");
@@ -464,7 +468,11 @@ fn values(args: &[String], name: &str) -> Vec<String> {
 /// `set-claim-inputs <bead-id> [--parent P] [--block ID]... [--label L]... [--only-if-unset]`: the whole set the
 /// record's `claim` holds from now on. No record is answered 1 and none is made.
 fn set_claim_inputs<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
-    let Some(id) = args.first().filter(|id| crate::cutover::is_row_key(id)) else {
+    let prefix = match call.inputs.row_prefix() {
+        Ok(p) => p,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: set-claim-inputs: {e}")),
+    };
+    let Some(id) = args.first().filter(|id| crate::cutover::is_row_key(&prefix, id)) else {
         return (CANNOT_TELL, "set-claim-inputs: takes <bead-id> [--parent P] [--block ID]... [--label L]...".into());
     };
     let inputs = ClaimInputs { blocks: values(args, "--block"), parent: flag(args, "--parent"), labels: values(args, "--label") };
@@ -492,7 +500,11 @@ fn set_carrier<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i
     let by = flag(args, "--by");
     let clear = args.iter().any(|a| a == "--clear");
     let only_if_unset = args.iter().any(|a| a == "--only-if-unset");
-    if members.is_empty() || by.is_some() == clear || members.iter().any(|m| !crate::cutover::is_row_key(m)) {
+    let prefix = match call.inputs.row_prefix() {
+        Ok(p) => p,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: set-carrier: {e}")),
+    };
+    if members.is_empty() || by.is_some() == clear || members.iter().any(|m| !crate::cutover::is_row_key(&prefix, m)) {
         return (CANNOT_TELL, "set-carrier: takes <member>... (--by <integration-id> | --clear) [--only-if-unset]".into());
     }
     let req = Request::new(call.request, "set-carrier", "lc.set-carrier");
@@ -517,7 +529,11 @@ fn set_carrier<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i
 /// prerequisite enters or leaves the record's readiness. Only a `blocks` edge blocks, so an
 /// edge re-added under another type no longer does.
 fn edge<B: Backend>(store: &Store<B>, verb: &str, args: &[String], call: &Call) -> (i32, String) {
-    let is_key = crate::cutover::is_row_key;
+    let prefix = match call.inputs.row_prefix() {
+        Ok(p) => p,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {verb}: {e}")),
+    };
+    let is_key = |x: &str| crate::cutover::is_row_key(&prefix, x);
     let (id, dep) = match (args.first(), args.get(1)) {
         (Some(id), Some(dep)) if is_key(id) && is_key(dep) => (id, dep),
         _ => {
@@ -539,7 +555,11 @@ fn edge<B: Backend>(store: &Store<B>, verb: &str, args: &[String], call: &Call) 
 /// `delete-bead-row <bead-id>`: `drop-row` has already judged the bead a kind with no
 /// lifecycle, so the record goes now rather than waiting for the planning plane to close it.
 fn delete_row<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
-    let Some(id) = args.first().filter(|id| crate::cutover::is_row_key(id)) else {
+    let prefix = match call.inputs.row_prefix() {
+        Ok(p) => p,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: delete-bead-row: {e}")),
+    };
+    let Some(id) = args.first().filter(|id| crate::cutover::is_row_key(&prefix, id)) else {
         return (CANNOT_TELL, "delete-bead-row: takes <bead-id>".into());
     };
     let req = Request::new(call.request, "drop-row", "lc.delete-bead-row");

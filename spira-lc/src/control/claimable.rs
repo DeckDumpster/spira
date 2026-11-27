@@ -201,6 +201,8 @@ pub fn judge(
 /// What the verb reads besides the control store.
 pub trait Inputs {
     fn config(&self) -> Result<Config, String>;
+    /// The installation's bead id prefix, which makes an id a lifecycle key.
+    fn row_prefix(&self) -> Result<String, String>;
     /// `(issue_type, status)` of each id the content store holds.
     fn statuses(&self, ids: &[String]) -> Result<BTreeMap<String, (String, String)>, String>;
     /// The plan rows of each id the content store holds, as `plan items --ids` prints them.
@@ -226,6 +228,10 @@ pub struct Config {
 pub struct Live;
 
 impl Inputs for Live {
+    fn row_prefix(&self) -> Result<String, String> {
+        crate::cutover::row_prefix()
+    }
+
     fn config(&self) -> Result<Config, String> {
         use spira_config::process::{cfg, cfg_parse};
         Ok(Config {
@@ -291,6 +297,10 @@ impl<I: Inputs> Inputs for Pinned<I> {
         }
         let read = self.inner.config()?;
         Ok(self.config.get_or_init(|| read).clone())
+    }
+
+    fn row_prefix(&self) -> Result<String, String> {
+        self.inner.row_prefix()
     }
 
     fn statuses(&self, ids: &[String]) -> Result<BTreeMap<String, (String, String)>, String> {
@@ -458,6 +468,10 @@ pub(crate) static FIXED: Fixed = Fixed;
 
 #[cfg(test)]
 impl Inputs for Fixed {
+    fn row_prefix(&self) -> Result<String, String> {
+        Ok("sp".into())
+    }
+
     fn config(&self) -> Result<Config, String> {
         Ok(Config {
             queue_wait: "queue-wait".into(),
@@ -500,6 +514,10 @@ pub(crate) static UNREADABLE: Unreadable = Unreadable;
 
 #[cfg(test)]
 impl Inputs for Unreadable {
+    fn row_prefix(&self) -> Result<String, String> {
+        Err("SPIRA_ID_PREFIX is unreadable".into())
+    }
+
     fn config(&self) -> Result<Config, String> {
         Err("SPIRA_STACK_MAX_DEPTH is unreadable".into())
     }

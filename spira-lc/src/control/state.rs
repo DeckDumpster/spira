@@ -615,7 +615,11 @@ fn create<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, S
     let Some(id) = args.first() else {
         return (CANNOT_TELL, "create-bead: missing <bead-id>".into());
     };
-    if !crate::cutover::is_row_key(id) {
+    let prefix = match call.inputs.row_prefix() {
+        Ok(p) => p,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: create-bead: {e}")),
+    };
+    if !crate::cutover::is_row_key(&prefix, id) {
         return (CANNOT_TELL, format!("create-bead: {id:?} is not a bead id"));
     }
     if let Some(planning) = ["--title", "--priority"].into_iter().find(|f| args.iter().any(|a| a == f)) {

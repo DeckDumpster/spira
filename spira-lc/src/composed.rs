@@ -204,8 +204,11 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
         "drop-bead" => callers::drop_bead(rest, m, bd),
         "drop-row" => callers::drop_row(rest, m, bd),
         "reopen" => callers::reopen_cmd(rest, m, bd),
-        "bd-supersede" => crate::store_write::supersede(rest, &|a| content.write(a)),
-        "bd-note" => crate::store_write::note(rest, &|a| content.write(a)),
+        "bd-supersede" | "bd-note" => match crate::cutover::row_prefix() {
+            Ok(prefix) if verb == "bd-note" => crate::store_write::note(&prefix, rest, &|a| content.write(a)),
+            Ok(prefix) => crate::store_write::supersede(&prefix, rest, &|a| content.write(a)),
+            Err(e) => Answer { code: callers::CANNOT_TELL, stderr: format!("spira-lc {verb}: cannot tell: {e}\n"), ..Default::default() },
+        },
         "content" if rest.first().map(String::as_str) == Some("purge-alerts") => match run_dir() {
             Ok(dir) => crate::content::purge_alerts(&rest[1..], &|a| content.read(a).map_err(|e| e.text), &|ids| content.delete(ids), &dir, now),
             Err(e) => Answer { code: callers::CANNOT_TELL, stderr: format!("spira-lc content purge-alerts: {e}\n"), ..Default::default() },

@@ -119,7 +119,7 @@ impl Machine for &World {
                 let (_, out) = self.plan_answer(&argv);
                 Ok(serde_json::from_str::<Value>(&out).unwrap()["items"].as_array().cloned().unwrap_or_default())
             };
-            if let Some(refused) = crate::cutover::refuse_no_record_type(&args[1..], &mut read) {
+            if let Some(refused) = crate::cutover::refuse_no_record_type("sp", &args[1..], &mut read) {
                 return refused;
             }
         }
