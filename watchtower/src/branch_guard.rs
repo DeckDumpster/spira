@@ -70,7 +70,7 @@ fn landref(reg: &Registry, name: &str, root: &str) -> Option<String> {
 
 /// The remote `landref` names, if its first component is one: `local/main` is a local branch.
 /// [`repos::ref_remote`] runs an unheld git for a config the files cannot answer for
-/// (`worktreeConfig`, `include`), so that read is made here.
+/// (an `include`), so that read is made here.
 fn remote_of(root: &Path, landref: &str) -> Option<String> {
     let prefix = landref.split_once('/')?.0;
     let names = match remotes(root) {
