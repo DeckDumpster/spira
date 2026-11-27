@@ -80,7 +80,7 @@ fn cmd_list(env: &Env, bd: &incident::real::RealBd) -> ExitCode {
     if env.db.is_none() {
         return require_db(env);
     }
-    let rows = match bd.list_beads(incident::decide::Scope::Unfinished, Some(&env.labels), None) {
+    let rows = match bd.list_beads(incident::decide::Scope::Unfinished, Some(&env.labels), None, None) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("incident: list: {e}");

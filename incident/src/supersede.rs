@@ -52,7 +52,7 @@ pub struct RealSuperseder<'a> {
 
 impl Superseder for RealSuperseder<'_> {
     fn open_incidents(&self) -> Result<Vec<OpenRed>, String> {
-        let rows = self.bd.list_beads(crate::decide::Scope::Unfinished, Some(&self.incident_label), None)?;
+        let rows = self.bd.list_beads(crate::decide::Scope::Unfinished, Some(&self.incident_label), None, None)?;
         Ok(rows
             .into_iter()
             .map(|(row, bead)| {

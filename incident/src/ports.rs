@@ -10,12 +10,14 @@ pub trait Bd {
     /// <date>] --json` for the content, each bead's state from its lifecycle row (sp-jgjvh:
     /// incident beads are work beads; bd status is never read). Err when bd or the lifecycle
     /// machine could not be reached (distinct from an empty Ok(vec![]), a real "nothing").
+    /// `external_ref` keeps only beads whose `external_ref` equals it.
     fn list(
         &self,
         db: &str,
         scope: Scope,
         label: Option<&str>,
         closed_after: Option<&str>,
+        external_ref: Option<&str>,
     ) -> Result<Vec<BeadRow>, String>;
 
     /// `bd -C db create <title> --type T --priority P --labels L --external-ref R

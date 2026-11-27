@@ -142,7 +142,7 @@ pub fn refuse_whole_history(args: &[String], caller: &str) -> Option<Answer> {
     }
     Some(Answer {
         code: REFUSED,
-        stderr: format!("spira-lc content: `list --all --limit 0` reads every bead ever filed and is refused from {caller} (exit {REFUSED}); read open beads, or bound the read with --id, --parent or --updated-after/--closed-after\n"),
+        stderr: format!("spira-lc content: `list --all --limit 0` reads every bead ever filed and is refused from {caller} (exit {REFUSED}); read open beads, or bound the read with --id, --external-ref, --parent or --updated-after/--closed-after\n"),
         ..Default::default()
     })
 }

@@ -154,11 +154,23 @@ pub fn join_lc(rows: Vec<BeadRow>, lc: &std::collections::HashMap<String, spira_
 
 impl RealBd {
     /// [`Bd::list`] with each row's bead as the door gave it (its labels and edges).
-    pub fn list_beads(&self, scope: Scope, label: Option<&str>, closed_after: Option<&str>) -> Result<Vec<(BeadRow, serde_json::Value)>, String> {
+    pub fn list_beads(
+        &self,
+        scope: Scope,
+        label: Option<&str>,
+        closed_after: Option<&str>,
+        external_ref: Option<&str>,
+    ) -> Result<Vec<(BeadRow, serde_json::Value)>, String> {
         // A machine that cannot answer is Err, never "no incident". The door refuses a list
         // of every bead, so the unfinished ones are named by id from the lifecycle.
-        let (beads, lc) = if let Some(c) = closed_after {
-            let mut extra = vec!["--closed-after", c];
+        let (beads, lc) = if closed_after.is_some() || external_ref.is_some() {
+            let mut extra = Vec::new();
+            if let Some(x) = external_ref {
+                extra.extend(["--external-ref", x]);
+            }
+            if let Some(c) = closed_after {
+                extra.extend(["--closed-after", c]);
+            }
             if let Some(l) = label {
                 extra.extend(["--label", l]);
             }
@@ -180,8 +192,8 @@ impl RealBd {
 }
 
 impl Bd for RealBd {
-    fn list(&self, _db: &str, scope: Scope, label: Option<&str>, closed_after: Option<&str>) -> Result<Vec<BeadRow>, String> {
-        Ok(self.list_beads(scope, label, closed_after)?.into_iter().map(|(r, _)| r).collect())
+    fn list(&self, _db: &str, scope: Scope, label: Option<&str>, closed_after: Option<&str>, external_ref: Option<&str>) -> Result<Vec<BeadRow>, String> {
+        Ok(self.list_beads(scope, label, closed_after, external_ref)?.into_iter().map(|(r, _)| r).collect())
     }
 
     fn create(
@@ -413,7 +425,7 @@ mod tests {
         let rows: Vec<_> = (0..250).map(|i| serde_json::json!({"id": format!("sp-{i:03}"), "status": "open", "labels": ["incident"]})).collect();
         let fake = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows).with_live(live));
         let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
-        assert_eq!(bd.list("", Scope::Unfinished, Some("incident"), None).unwrap().len(), 250);
+        assert_eq!(bd.list("", Scope::Unfinished, Some("incident"), None, None).unwrap().len(), 250);
         let seen = fake.requests();
         assert_eq!(seen.len(), 1 + 3, "{seen:?}");
         assert!(seen[1..].iter().all(|r| r.iter().any(|a| a == "--id")), "{seen:?}");
@@ -427,10 +439,30 @@ mod tests {
         let live = vec![serde_json::json!({"bead_id": "sp-1", "state": "LANDED"})];
         let fake = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows).with_live(live));
         let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
-        bd.list("", Scope::HandedOn, Some("incident"), Some("2026-01-01")).unwrap();
+        bd.list("", Scope::HandedOn, Some("incident"), Some("2026-01-01"), None).unwrap();
         let seen = fake.requests();
         let lists: Vec<_> = seen.iter().filter(|r| r.iter().any(|a| a == "--closed-after")).collect();
         assert_eq!(lists.len(), 1, "{seen:?}");
+    }
+
+    #[test_id(tihykg4)]
+    #[test]
+    fn a_list_by_reference_asks_the_door_for_that_reference_in_both_scopes() {
+        for (scope, state, label, since) in [(Scope::Unfinished, "WORKING", None, None), (Scope::HandedOn, "LANDED", Some("incident"), Some("2026-01-01"))] {
+            let rows = vec![
+                serde_json::json!({"id": "sp-1", "external_ref": "incident:x", "labels": ["incident"], "closed_at": "2026-01-02"}),
+                serde_json::json!({"id": "sp-2", "external_ref": "incident:y", "labels": ["incident"], "closed_at": "2026-01-02"}),
+            ];
+            let live = vec![serde_json::json!({"bead_id": "sp-1", "state": state})];
+            let fake = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows).with_live(live));
+            let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
+            let found = bd.list("", scope, label, since, Some("incident:x")).unwrap(); // BDQ_READ_CONSIDERED="a test of the store door against its fake, not a bd read"
+            assert_eq!(found.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["sp-1"], "{scope:?}");
+            let mut want = vec!["content", "list", "--all", "--limit", "0", "--json", "--external-ref", "incident:x"]; // BDQ_READ_CONSIDERED="the argv a test expects, not a read"
+            want.extend(since.iter().flat_map(|d| ["--closed-after", d]));
+            want.extend(label.iter().flat_map(|l| ["--label", l]));
+            assert_eq!(fake.requests(), [want, vec!["list", "--ids", "sp-1"]], "{scope:?}"); // BDQ_READ_CONSIDERED="the argv a test expects, not a read"
+        }
     }
 
     #[test_id(t6823r3)]
