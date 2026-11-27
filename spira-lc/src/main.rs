@@ -118,7 +118,7 @@ fn main() {
     }
 
     name_cli_call(&args);
-    // Here and not in `dispatch`: the content door's mirror reaches these verbs over the socket.
+    // Here and not in `dispatch`, which serves the content door's mirror.
     if let Some((code, why)) = spira_lc::cli_refusal(&args) {
         eprintln!("{why}");
         std::process::exit(code);
