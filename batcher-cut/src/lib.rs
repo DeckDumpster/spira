@@ -164,9 +164,22 @@ pub use state_store::limits::MAX_CUT_MEMBERS;
 /// Whether a round tree declares its own testenv (`gate::own`), which certifies it with no suites.
 pub use gate::own::declares_own_testenv;
 
-/// A forge round's PR, once the base is confirmed and the head carries no foreign commits:
-/// `queue batch open` with the members' titles and `shots` appended, the verdict green, the
-/// round metric. The PR number, and whether auto-merge was armed.
+/// The base a forge round's PR opens on: re-confirmed, and refused when the head carries a
+/// non-member's commits.
+pub fn round_pr_base(repo: &Repo, merged: &[batcher::core::Member], batch_head: &str) -> Result<String, String> {
+    let base_sha = io::confirm_base(repo, batch_head)?;
+    let ids: Vec<String> = merged.iter().map(|m| m.id.clone()).collect();
+    let foreign = io::foreign_beads(repo, &base_sha, batch_head, &ids)?;
+    if !foreign.is_empty() {
+        return Err(format!(
+            "round head carries commits of non-member bead(s) {} — refusing to open",
+            foreign.join(", ")
+        ));
+    }
+    Ok(base_sha)
+}
+
+/// [`round_pr_base`], then [`open_round_pr_on`] it.
 #[allow(clippy::too_many_arguments)]
 pub fn open_round_pr(
     env_: &Env,
@@ -179,16 +192,26 @@ pub fn open_round_pr(
     regreen_seconds: Option<u64>,
     deny: Option<&vm::DenySnapshot>,
 ) -> Result<(String, Result<(), String>), String> {
-    let base_sha = io::confirm_base(repo, batch_head)?;
-    let base_sha = base_sha.as_str();
-    let ids: Vec<String> = merged.iter().map(|m| m.id.clone()).collect();
-    let foreign = io::foreign_beads(repo, base_sha, batch_head, &ids)?;
-    if !foreign.is_empty() {
-        return Err(format!(
-            "round head carries commits of non-member bead(s) {} — refusing to open",
-            foreign.join(", ")
-        ));
-    }
+    let base_sha = round_pr_base(repo, merged, batch_head)?;
+    open_round_pr_on(env_, repo, merged, batch_head, &base_sha, shots, round_start, attribution_seconds, regreen_seconds, deny)
+}
+
+/// A forge round's PR on a base [`round_pr_base`] answered: `queue batch open` with the
+/// members' titles and `shots` appended, the verdict green, the round metric. The PR number,
+/// and whether auto-merge was armed.
+#[allow(clippy::too_many_arguments)]
+pub fn open_round_pr_on(
+    env_: &Env,
+    repo: &Repo,
+    merged: &[batcher::core::Member],
+    batch_head: &str,
+    base_sha: &str,
+    shots: &str,
+    round_start: u64,
+    attribution_seconds: Option<u64>,
+    regreen_seconds: Option<u64>,
+    deny: Option<&vm::DenySnapshot>,
+) -> Result<(String, Result<(), String>), String> {
     let prr = batcher::core::pr_record(merged);
     let base_branch = repo
         .base
@@ -246,6 +269,8 @@ pub fn open_round_pr(
 
 #[cfg(test)]
 mod open_round_pr_tests {
+    //! Spawns git and a `queue` stub: the body under test is what `open_round_pr` pipes to
+    //! `queue batch open`, after reading the round from a real checkout.
     use super::*;
 
     #[test_id(tq1j0uu)]

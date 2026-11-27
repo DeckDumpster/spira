@@ -702,7 +702,7 @@ fn in_flight(view: &Projection, stream: &StreamKey, snap: &mut Snapshot) {
 pub mod edge {
     use batcher_cut::io;
 
-    use super::super::batcher_local::edge::{env, leg};
+    use super::super::batcher_local::{edge::{env, leg}, Leg};
     use super::{Batch, Opened, Repo, Snapshot};
     use crate::{Effects, EffectSpec};
 
@@ -763,9 +763,14 @@ pub mod edge {
     pub fn shots(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
         let loom = spira_config::process::cfg("SPIRA_LOOM_ADDR").ok();
-        let section = io::batch_shots_section(&env.testenv_bin, &env.run, loom.as_deref(), &leg.repo, &leg.base, &leg.head);
+        post_shots(&env, &batcher_cut::find_repo(&env, &leg.repo)?, &leg, loom.as_deref())
+    }
+
+    /// [`shots`] on a resolved repo.
+    pub fn post_shots(env: &io::Env, repo: &io::Repo, leg: &Leg, loom: Option<&str>) -> Result<String, String> {
+        let section = io::batch_shots_section(&env.testenv_bin, &env.run, loom, &repo.name, &leg.base, &leg.head);
         if !section.is_empty() {
-            io::forge_pr_comment(&batcher_cut::find_repo(&env, &leg.repo)?, &leg.pr, &section)?;
+            io::forge_pr_comment(repo, &leg.pr, &section)?;
         }
         Ok(section)
     }
@@ -774,19 +779,23 @@ pub mod edge {
     /// the head carries a non-member's commits.
     pub fn batch_open(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
-        let repo = batcher_cut::find_repo(&env, &leg.repo)?;
+        json(&open_pr(&env, &batcher_cut::find_repo(&env, &leg.repo)?, &leg)?)
+    }
+
+    /// [`batch_open`] on a resolved repo.
+    pub fn open_pr(env: &io::Env, repo: &io::Repo, leg: &Leg) -> Result<Opened, String> {
         let members: Vec<batcher::core::Member> = leg.members.iter().map(|(id, tip)| batcher::core::Member { id: id.clone(), tip: tip.clone(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![], provisional: false }).collect();
-        let moved = io::moved_members(&repo, &leg.base, &members);
+        let moved = io::moved_members(repo, &leg.base, &members);
         if !moved.is_empty() {
             return Err(format!("refused to open — {} changed since the round was built (new patches); rebuild and retest", moved.join(", ")));
         }
         let head = io::head_of(std::path::Path::new(&leg.wt))?;
         // No shots here: a capture outlives this effect's deadline; `shots` comments them later.
-        let (pr, armed) = batcher_cut::open_round_pr(&env, &repo, &members, &head, "", spira_config::vtime::now_epoch(), None, None, None)?;
+        let (pr, armed) = batcher_cut::open_round_pr(env, repo, &members, &head, "", spira_config::vtime::now_epoch(), None, None, None)?;
         if let Err(e) = armed {
             eprintln!("batcher.forge {}: PR {pr} opened, auto-merge not armed ({e}) — the reconciler arms it", leg.repo);
         }
-        json(&Opened { pr, head })
+        Ok(Opened { pr, head })
     }
 
     /// The judgement a twice-red round files against its members.

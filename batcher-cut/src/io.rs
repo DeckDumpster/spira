@@ -3501,7 +3501,7 @@ pub fn forge_pr_comment(repo: &Repo, pr: &str, body: &str) -> Result<(), String>
     if r.ok() {
         Ok(())
     } else {
-        Err(format!("forge pr-comment {pr} exited {}: {}", r.code, r.err.trim()))
+        Err(format!("forge pr-comment {pr} exited {}: {}", r.code, format!("{}{}", r.out, r.err).trim()))
     }
 }
 
