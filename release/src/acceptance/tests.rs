@@ -171,6 +171,7 @@ fn usage_errors() {
     assert_eq!(parse_args(&s(&["t"])).unwrap_err(), "--scratch-repo is required");
     assert!(parse_args(&s(&["t", "u", "--scratch-repo", "r"])).unwrap_err().contains("too many"));
     assert!(parse_args(&s(&["t", "--scratch-repo", "r", "--bogus"])).unwrap_err().contains("unknown option"));
+    assert!(parse_args(&s(&["t", "--scratch-repo", "r", "--file-defects"])).unwrap_err().contains("unknown option: --file-defects"));
     assert!(parse_args(&s(&["t", "--scratch-repo"])).unwrap_err().contains("needs a value"));
 }
 
@@ -205,8 +206,6 @@ struct Fake {
     /// The claim view holds every probe blocked.
     never_claimable: bool,
     seed_create_fails: bool,
-    /// Ids of the defects the content door took.
-    defects: Cell<u32>,
     uninstalled: Cell<bool>,
     sidecar_wrong: bool,
     failed_unit: bool,
@@ -263,7 +262,6 @@ impl Fake {
             already_claimed: false,
             never_claimable: false,
             seed_create_fails: false,
-            defects: Cell::new(0),
             uninstalled: Cell::new(false),
             sidecar_wrong: false,
             failed_unit: false,
@@ -364,9 +362,6 @@ impl Fake {
                 let probe = labels.starts_with("acceptance,");
                 if labels == "acceptance-seed" && self.seed_create_fails {
                     return refused("cannot tell\n".into());
-                }
-                if args.contains(&"bug") {
-                    self.defects.set(self.defects.get() + 1);
                 }
                 self.next_id.set(self.next_id.get() + 1);
                 let id = format!("sp-{}{}", if probe { "p" } else { "s" }, self.next_id.get());
@@ -765,19 +760,6 @@ fn a_forensics_snapshot_reads_the_store_through_spira_lc() {
     Run::new(&f, b.opts(&[])).snapshot("x");
     let ran = lines(&f);
     assert!(ran.iter().any(|l| l == "spira-lc content list --all --limit 0 --json") && ran.iter().any(|l| l == "spira-lc claimable"), "{ran:#?}");
-}
-
-#[test_id(t9mzbdk)]
-#[test]
-fn a_failed_run_asked_to_file_defects_files_one_the_door_admits() {
-    let b = Box_::new();
-    let mut f = b.fake();
-    f.sidecar_wrong = true;
-    let prev_tb = b.root.join("spira-20260901T000000Z.tar.gz").display().to_string();
-    let mut extra = PREV.to_vec();
-    extra.extend([prev_tb.as_str(), "--file-defects"]);
-    assert_eq!(phases::run(&f, b.opts(&extra)), 1);
-    assert_eq!(f.defects.get(), 1, "{:#?}", lines(&f));
 }
 
 #[test_id(t3dhpwo)]

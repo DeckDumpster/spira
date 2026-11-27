@@ -19,7 +19,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub const USAGE: &str = "usage: release acceptance <tag> --scratch-repo <path> [--prev-tag <tag>] [--record]
-                          [--notes-repo <path>] [--file-defects] [--agent <path>]
+                          [--notes-repo <path>] [--agent <path>]
                           [--waive-upgrade] [--tarball <path>] [--prev-tarball <path>]
                           [--aged-tag <tag> [--aged-tarball <path>]]";
 
@@ -43,7 +43,6 @@ pub struct Args {
     pub scratch_repo: PathBuf,
     pub prev_tag: Option<String>,
     pub record: bool,
-    pub file_defects: bool,
     pub waive_upgrade: bool,
     /// The commit an operator declared a waiver for (WAIVE_UPGRADE_COMMIT). Lets a cut waive
     /// again after a waived predecessor, but only when it names this cut's own commit.
@@ -89,7 +88,6 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--agent" => a.agent = Some(val()?).filter(|s| !s.is_empty()),
             "--notes-repo" => a.notes_repo = Some(val()?.into()),
             "--record" => a.record = true,
-            "--file-defects" => a.file_defects = true,
             "--waive-upgrade" => a.waive_upgrade = true,
             "--standing-waiver" => a.standing_waiver = true,
             "--declared-waiver" => a.declared_waiver = Some(val()?).filter(|s| !s.is_empty()),

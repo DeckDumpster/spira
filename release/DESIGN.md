@@ -408,7 +408,7 @@ the tag's checkout, which was the same commit by another route.
 
 ```
 release acceptance <tag> --scratch-repo <path> [--prev-tag <tag>] [--record]
-                   [--notes-repo <path>] [--file-defects]
+                   [--notes-repo <path>]
                    [--agent <path>] [--waive-upgrade] [--tarball <path>]
                    [--prev-tarball <path>]
 ```
@@ -475,8 +475,6 @@ predecessor must have the content writer: acceptance accepts the previous releas
 - The installed instance's `db` is `$HOME/.local/share/spira/db`.
 - The installer's answers include `metrics_flush_minutes` and `gate_target_cap_mib`: typed keys with
   no registered default.
-- The `--file-defects` bead carries no `repo:` label: the instance's repo map holds only the
-  scratch repositories.
 
 **Structure, where the script had text.** The `acceptance-run` spira-lint rule held the
 script to about 55 textual invariants, because the script ran for real only on a clean

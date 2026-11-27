@@ -1066,15 +1066,6 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
             println!("warning: could not write git note (verdict still printed above)");
         }
     }
-    if r.o.a.file_defects && r.fail > 0 {
-        let title = format!("acceptance-run {tag}: {} phase(s) failed", r.fail);
-        let desc = format!("release acceptance found {} failure(s) against tag {tag}. See the acceptance log for detail.", r.fail);
-        let create = r.content(&["create", "--title", &title, "--labels", "defect,discovered-from:sp-ewwwq", "--type", "bug", "--body-file", "-"]).stdin(desc);
-        let filed = h.run(&create);
-        if filed.rc != 0 {
-            println!("warning: the defect was not filed (exit {}): {}", filed.rc, tail(&filed.text, 3));
-        }
-    }
     println!("forensics: {}", r.o.forensics.display());
     if r.fail == 0 {
         0
