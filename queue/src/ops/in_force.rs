@@ -43,11 +43,11 @@ impl<'a> InForce<'a> {
     /// `blockers_in_round` is (id, tip) of each member that would ride with it or ahead of it.
     pub(super) fn not_in_force(&self, member_id: &str, blockers_in_round: &[(String, String)]) -> Result<Option<String>, Unread> {
         let unread = |dep: &str, error: String| Unread { dep: dep.to_string(), error };
-        let def = self.def.get_or_init(|| match self.w.git.file_at(self.path, self.base_sha, gate::def::PATH) {
-            None => Ok(None),
-            Some(text) => gate::def::parse(&text)
+        let def = self.def.get_or_init(|| {
+            let Some(text) = self.w.git.read_at(self.path, self.base_sha, gate::def::PATH)? else { return Ok(None) };
+            gate::def::parse(&text)
                 .map(|d| (!d.own.is_empty()).then_some(d))
-                .map_err(|e| format!("{} on the landing ref does not read: {e}", gate::def::PATH)),
+                .map_err(|e| format!("{} on the landing ref does not read: {e}", gate::def::PATH))
         });
         let def = match def {
             Ok(None) => return Ok(None),
@@ -106,7 +106,7 @@ impl<'a> InForce<'a> {
 
     /// `git diff a...b`.
     fn changed_since_fork(&self, a: &str, b: &str) -> Result<Vec<String>, String> {
-        let from = self.w.git.merge_base(self.path, a, b).unwrap_or_else(|| a.to_string());
+        let from = self.w.git.fork_point(self.path, a, b)?;
         self.changed(&from, b)
     }
 
@@ -119,11 +119,7 @@ impl<'a> InForce<'a> {
     /// its first parent, or `commit...sha` when no merge took it in.
     fn landed_paths(&self, commit: &str, sha: &str) -> Result<Vec<String>, String> {
         let git = self.w.git;
-        // `is_ancestor` answers false for a commit git cannot read, which would admit.
-        if !git.commit_exists(self.path, sha) {
-            return Err(format!("the checkout has no commit {sha}"));
-        }
-        if !git.is_ancestor(self.path, sha, self.base_sha) || git.is_ancestor(self.path, sha, commit) {
+        if !git.ancestry(self.path, sha, self.base_sha)? || git.ancestry(self.path, sha, commit)? {
             return Ok(Vec::new());
         }
         let log = git.log_range(self.path, &format!("{sha}..{}", self.base_sha))?;
