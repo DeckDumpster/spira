@@ -144,10 +144,6 @@ fn attr(span: &serde_json::Value, key: &str) -> Option<i64> {
     a["value"]["intValue"].as_i64().or_else(|| a["value"]["intValue"].as_str()?.parse().ok())
 }
 
-fn nanos(span: &serde_json::Value, key: &str) -> u64 {
-    span[key].as_str().and_then(|n| n.parse().ok()).or_else(|| span[key].as_u64()).unwrap_or(0)
-}
-
 fn marker(w: &World, name: &str) -> String {
     std::fs::read_to_string(w.dir.join(name)).unwrap_or_default()
 }
@@ -166,15 +162,23 @@ fn who_ran_me(w: &World, out: &str) -> String {
 #[test]
 fn a_tool_verb_is_recorded_by_the_service_and_run_by_the_scheduler_in_work_exec() {
     let w = world();
-    w.stub("groomer", &format!("sleep 1\n{}", who_ran_me(&w, "swept")));
+    // clock-safe: the signal waited on is the service's `work` span on disk; the shell sleep only caps that wait, under the client's own.
+    // A cut call also writes a span, but the service never answered it.
+    let wait_for_span = format!(
+        "n=0\nuntil grep -shF '\"name\":\"work\"' {otel}/*.jsonl | grep -qvF '\"spira.serve.cut\",\"value\":{{\"boolValue\":true}}'; do\n  n=$((n+1))\n  [ $n -gt 600 ] && break\n  sleep 0.1\ndone\nif [ $n -gt 600 ]; then : > {missing}; else : > {first}; fi",
+        otel = w.dir.join("run/otel").display(),
+        missing = w.dir.join("span-missing").display(),
+        first = w.dir.join("span-first").display()
+    );
+    w.stub("groomer", &format!("{wait_for_span}\n{}", who_ran_me(&w, "swept")));
     let (code, out, ran) = w.work("groomer", &["groom", "sweep"]);
+    assert!(w.dir.join("span-first").exists(), "the service's `work` span was not written while the program ran: the service waited for the program (client: {code} {out}; ran: {ran:?})");
     assert_eq!((code, out.trim()), (0, "swept"), "the client prints the program's answer: {out}");
     assert!(ran.iter().any(|r| r.contains("ran, exit 0")), "the scheduler ran the request: {ran:?}");
     assert!(marker(&w, "ran-by").contains("work-exec"), "the program ran under work-exec, not the service: {}", marker(&w, "ran-by"));
     let spans = w.spans("work");
     assert_eq!(spans.len(), 1, "the service served the one verb: {spans:?}");
     assert_eq!(attr(&spans[0], "spira.children"), None, "the service started no program for it: {:?}", spans[0]["attributes"]);
-    assert!(nanos(&spans[0], "endTimeUnixNano") - nanos(&spans[0], "startTimeUnixNano") < 900_000_000, "the service answered inside the program's second");
 }
 
 #[test_id(tbheoky)]
