@@ -20,8 +20,8 @@ impl Pass {
     }
 }
 
-/// One round whose `podman run` does `entry`, under a cap of `cap` seconds.
-fn pass(name: &str, entry: &str, cap: u64) -> Pass {
+/// One round whose `podman run` does `entry`, under a cap of `cap` seconds and the task limit `pids`.
+fn pass(name: &str, entry: &str, cap: u64, pids: &str) -> Pass {
     let tmp = testkit::TempDir::new(name);
     let root = tmp.path().to_path_buf();
     let (src, home, stub, mirror) = (root.join("src"), root.join("home"), root.join("stub"), root.join("mirror.git"));
@@ -42,13 +42,14 @@ fn pass(name: &str, entry: &str, cap: u64) -> Pass {
     // The script pins its own PATH and fetches over git://; both are pointed at the fixture.
     let url = "\"git://${host_addr}:${port}/mirror.git\"";
     assert!(round_vm::run::FOREIGN_SCRIPT.contains(url));
+    testkit::write_exe(stub.join("the-entry"), "#!/bin/sh\necho the-entry-ran\n");
     let path_line = round_vm::run::FOREIGN_SCRIPT.lines().find(|l| l.starts_with("export PATH=")).unwrap();
     let script = round_vm::run::FOREIGN_SCRIPT
         .replace(url, &format!("\"{}\"", mirror.display()))
         .replace(path_line, &format!("export PATH=\"{}:{}\"", stub.display(), system_paths::SYSTEM_PATH_MIN));
     std::fs::write(root.join("round.sh"), script).unwrap();
     let cap = cap.to_string();
-    let args = ["host", "1", "", "1", "", "", "", "1", &cap, "1", "", "refs/rounds/1", &sha, "the-entry", "", "", "", "", "", "", "image", ""];
+    let args = ["host", "1", "", "1", "", "", "", "1", &cap, "1", "", "refs/rounds/1", &sha, "the-entry", "", "", "", "", "", "", "image", "", "", pids];
     let o = Command::new("bash").arg(root.join("round.sh")).args(args).env_clear().env("HOME", &home).env("PATH", system_paths::SYSTEM_PATH_MIN).stdin(Stdio::null()).output().unwrap();
     let calls = std::fs::read_to_string(&log).unwrap_or_default();
     Pass { calls, cidfile: home.join("round-entry.cid"), work: home.join("round-work"), code: o.status.code(), said: String::from_utf8_lossy(&o.stderr).into_owned(), _tmp: tmp }
@@ -61,7 +62,7 @@ fn stamped(p: &Pass) -> Vec<String> {
 #[test_id(tke7w2w)]
 #[test]
 fn an_entry_past_the_cap_is_cut_and_recorded_with_its_phase_and_no_verdict() {
-    let p = pass("foreign-cut", "exec sleep 30", 1);
+    let p = pass("foreign-cut", "exec sleep 30", 1, "12345");
     assert_eq!(p.code, Some(124), "{}", p.said);
     assert_eq!(std::fs::read_to_string(p.work.join("tracked")).unwrap(), "the round's tree\n", "the round's commit is checked out");
     assert_eq!(stamped(&p), ["clone", "pull", "entry"], "{}", p.said);
@@ -76,12 +77,34 @@ fn an_entry_past_the_cap_is_cut_and_recorded_with_its_phase_and_no_verdict() {
 #[test_id(td99zl4)]
 #[test]
 fn an_entry_that_passes_is_green_and_one_that_exits_124_early_is_an_ordinary_red() {
-    let green = pass("foreign-green", "exit 0", 600);
+    let green = pass("foreign-green", "exit 0", 600, "12345");
     assert_eq!(green.code, Some(0), "{}", green.said);
     assert!(green.result("ci.result").unwrap_or_default().starts_with("ok "), "{}", green.said);
     assert_eq!(green.result("round-fault-kind"), None);
-    let early = pass("foreign-early", "exit 124", 600);
+    let early = pass("foreign-early", "exit 124", 600, "12345");
     assert_eq!(early.code, Some(1), "{}", early.said);
     assert!(early.result("ci.result").unwrap_or_default().starts_with("red "), "{}", early.said);
     assert_eq!(early.result("round-fault-kind"), None, "the entry's own status is not the cap's cut");
+}
+
+#[test_id(tmx4vs4)]
+#[test]
+fn the_container_gets_the_sent_task_limit_and_ci_out_reports_what_it_reads_before_the_entry() {
+    // The fake runs what follows the image, as podman would inside the container.
+    let p = pass("foreign-pids", "while [ \"$1\" != image ]; do shift; done; shift; exec \"$@\"", 600, "12345");
+    assert_eq!(p.code, Some(0), "{}", p.said);
+    assert!(p.calls.lines().any(|l| l.starts_with("run ") && l.contains(" --pids-limit 12345 ")), "{}", p.calls);
+    let out = p.result("ci.out").unwrap();
+    let lines: Vec<&str> = out.lines().skip_while(|l| *l == "entry-output").collect();
+    assert!(lines[0].starts_with("round-vm: container pids.max "), "{out}");
+    assert_eq!(lines[1], "the-entry-ran", "{out}");
+}
+
+#[test_id(t1euvba)]
+#[test]
+fn a_round_sent_no_task_limit_is_refused_before_the_clone() {
+    let p = pass("foreign-no-pids", "exit 0", 600, "");
+    assert_eq!(p.code, Some(2), "{}", p.said);
+    assert!(p.said.contains("round-vm: the host sent no pids limit"), "{}", p.said);
+    assert!(!p.work.exists() && p.calls.is_empty(), "{}", p.calls);
 }
