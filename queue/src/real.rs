@@ -1367,9 +1367,9 @@ impl Scripts for RealScripts {
     }
     /// A unit that is `Absent` was collected on exit: its exit is unknown, so rc is 0 and the log
     /// is `err`; `deploy::activate_once` decides from `<releases>/current`.
-    fn release_detached(&self, key: &str, bin: &Path, args: &[String], db: &str, log: &Path) -> RunOut {
+    fn release_detached(&self, key: &str, bin: &Path, args: &[String], db: &str, log: &Path) -> Detached {
         use runtime::units::{UnitHandle, UnitProps, UnitSpec, Units};
-        let fail = |why: String| RunOut { rc: 127, out: String::new(), err: why };
+        let fail = |why: String| Detached::Ended(cannot_run(why));
         let units = match runtime::units::SystemdUnits::connect(std::sync::Arc::new(runtime::ports::WallClock)) {
             Ok(u) => u,
             Err(e) => return fail(format!("cannot reach systemd to start the release in a unit of its own: {}", e.0)),
@@ -1387,25 +1387,7 @@ impl Scripts for RealScripts {
             Err(e) => return fail(format!("cannot start release in a unit of its own: {}", e.0)),
         };
         let started = std::time::Instant::now();
-        let waited = await_detached(
-            &handle.name,
-            log,
-            || units.facts(&handle).map_err(|e| e.0),
-            || fs::metadata(log).is_ok_and(|m| m.len() > 0),
-            || started.elapsed().as_secs(),
-            || std::thread::sleep(std::time::Duration::from_millis(500)),
-        );
-        let rc = match waited {
-            Ok(DetachedEnd { rc, uncollected }) => {
-                if uncollected {
-                    let _ = units.reset_failed(&handle);
-                }
-                rc
-            }
-            Err(why) => return fail(why),
-        };
-        let err = fs::read_to_string(log).unwrap_or_default();
-        RunOut { rc, out: String::new(), err }
+        await_detached(&units, &handle, log, &|| started.elapsed().as_secs(), &std::thread::sleep)
     }
     fn stop_round_legs(&self, repo: &str, batch: &str) -> Result<Vec<String>, String> {
         let units =
@@ -3281,23 +3263,92 @@ mod tests {
         runtime::units::UnitFacts { state, exit, ..runtime::units::UnitFacts::absent() }
     }
 
-    /// Drive the waiter over `polls` (the last repeats), one second per pause.
-    fn waited_on(polls: &[(runtime::units::UnitFacts, bool)]) -> (Result<DetachedEnd, String>, u64) {
-        let (at, secs) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
-        let now = || &polls[at.get().min(polls.len() - 1)];
-        let end = await_detached(
-            "u.service",
-            Path::new("act.log"),
-            || Ok(now().0.clone()),
-            || now().1,
-            || secs.get(),
-            || {
-                at.set(at.get() + 1);
-                secs.set(secs.get() + 1);
-                assert!(secs.get() <= 1000, "the waiter never ended");
-            },
-        );
+    /// A [`ScriptedUnits`] whose reads fail where `fails` says so, by read number. Each other
+    /// read answers the next of `polls` (the last repeats), writing the log when a poll says
+    /// it has text, or with no polls what the scripted manager itself says.
+    struct FlakyUnits {
+        scripted: runtime::units::ScriptedUnits,
+        fails: fn(u32) -> bool,
+        answered: std::sync::atomic::AtomicUsize,
+        polls: Vec<(runtime::units::UnitFacts, bool)>,
+        log: PathBuf,
+        reads: std::sync::atomic::AtomicU32,
+        collected: std::sync::atomic::AtomicBool,
+    }
+
+    impl FlakyUnits {
+        fn new(log: &Path, fails: fn(u32) -> bool, polls: &[(runtime::units::UnitFacts, bool)]) -> FlakyUnits {
+            FlakyUnits {
+                scripted: runtime::units::ScriptedUnits::new(Arc::new(runtime::ports::VirtualClock::new(0))),
+                fails,
+                answered: Default::default(),
+                polls: polls.to_vec(),
+                log: log.to_path_buf(),
+                reads: Default::default(),
+                collected: Default::default(),
+            }
+        }
+        fn reads(&self) -> u32 {
+            self.reads.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl runtime::units::Units for FlakyUnits {
+        fn start(&self, spec: &runtime::units::UnitSpec) -> runtime::Result<runtime::units::UnitHandle> {
+            self.scripted.start(spec)
+        }
+        fn stop(&self, h: &runtime::units::UnitHandle) -> runtime::Result<()> {
+            self.scripted.stop(h)
+        }
+        fn restart(&self, h: &runtime::units::UnitHandle) -> runtime::Result<()> {
+            self.scripted.restart(h)
+        }
+        fn facts(&self, h: &runtime::units::UnitHandle) -> runtime::Result<runtime::units::UnitFacts> {
+            let read = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            assert!(read < 1000, "the waiter never ended");
+            if (self.fails)(read) {
+                return Err(runtime::RuntimeError::refused("systemd: LoadUnit: no reply within 5s"));
+            }
+            let Some(last) = self.polls.len().checked_sub(1) else {
+                return self.scripted.facts(h);
+            };
+            let answered = self.answered.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let (facts, has_text) = &self.polls[answered.min(last)];
+            if *has_text {
+                fs::write(&self.log, "release: said\n").unwrap();
+            }
+            Ok(facts.clone())
+        }
+        fn reset_failed(&self, _h: &runtime::units::UnitHandle) -> runtime::Result<()> {
+            self.collected.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    /// Drive the waiter over `units`, one second per pause.
+    fn await_on(units: &FlakyUnits, handle: &runtime::units::UnitHandle) -> (Detached, u64) {
+        let secs = std::cell::Cell::new(0);
+        let end = await_detached(units, handle, &units.log, &|| secs.get(), &|_| secs.set(secs.get() + 1));
         (end, secs.get())
+    }
+
+    /// The waiter over `polls`: its end, the seconds it paused, and whether it collected the unit.
+    fn waited_on(polls: &[(runtime::units::UnitFacts, bool)]) -> (Detached, u64, bool) {
+        let d = testkit::TempDir::new("real-await-detached");
+        let units = FlakyUnits::new(&d.join("act.log"), |_| false, polls);
+        let (end, secs) = await_on(&units, &runtime::units::UnitHandle::named("u.service"));
+        let end = match end {
+            Detached::Ended(mut r) => {
+                r.err = r.err.replace(&d.path().display().to_string(), "<dir>");
+                Detached::Ended(r)
+            }
+            unread => unread,
+        };
+        (end, secs, units.collected.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
+    fn ended(rc: i32, err: &str) -> Detached {
+        Detached::Ended(RunOut { rc, out: String::new(), err: err.into() })
     }
 
     #[test_id(tawx6tg)]
@@ -3306,8 +3357,8 @@ mod tests {
         use runtime::units::UnitState::*;
         let queued = unit_facts(Inactive, None);
         assert_eq!(detached_poll(&queued, false, false), DetachedPoll::Wait);
-        let (end, _) = waited_on(&[(queued, false), (unit_facts(Active, None), false), (unit_facts(Absent, None), true)]);
-        assert_eq!(end, Ok(DetachedEnd { rc: 0, uncollected: false }));
+        let (end, _, collected) = waited_on(&[(queued, false), (unit_facts(Active, None), false), (unit_facts(Absent, None), true)]);
+        assert_eq!((end, collected), (ended(0, "release: said\n"), false));
     }
 
     #[test_id(tcphvkn)]
@@ -3319,7 +3370,8 @@ mod tests {
         assert_eq!(detached_poll(&unit_facts(Inactive, Some(Exit::Code(0))), false, true), DetachedPoll::Ended(0));
         assert_eq!(detached_poll(&unit_facts(Failed, Some(Exit::Signal(9))), true, true), DetachedPoll::Ended(1));
         assert_eq!(detached_poll(&unit_facts(Inactive, None), true, true), DetachedPoll::Ended(1));
-        assert_eq!(waited_on(&[(failed, true)]).0, Ok(DetachedEnd { rc: 1, uncollected: true }));
+        let (end, _, collected) = waited_on(&[(failed, true)]);
+        assert_eq!((end, collected), (ended(1, "release: said\n"), true));
         let reason = crate::ops::deploy::step_failure("activate", 1, "release: restarting x.service\nx.service: restart failed: boom\n");
         assert!(reason.contains("x.service: restart failed: boom"), "{reason}");
     }
@@ -3330,9 +3382,9 @@ mod tests {
         use runtime::units::UnitState::*;
         let gone = unit_facts(Absent, None);
         assert!(matches!(detached_poll(&gone, true, false), DetachedPoll::Lost(_)));
-        assert_eq!(waited_on(&[(gone, false)]).0, Err("u.service ended without a trace in act.log".into()));
-        let (end, secs) = waited_on(&[(unit_facts(Inactive, None), false)]);
-        assert_eq!(end, Err(format!("u.service never started within {DETACHED_START_WAIT_SECS}s")));
+        assert_eq!(waited_on(&[(gone, false)]).0, ended(127, "u.service ended without a trace in <dir>/act.log"));
+        let (end, secs, _) = waited_on(&[(unit_facts(Inactive, None), false)]);
+        assert_eq!(end, ended(127, &format!("u.service never started within {DETACHED_START_WAIT_SECS}s")));
         assert_eq!(secs, DETACHED_START_WAIT_SECS);
     }
 
@@ -3342,7 +3394,44 @@ mod tests {
         use runtime::units::UnitState::*;
         let mut polls = vec![(unit_facts(Active, None), true); 2 * DETACHED_START_WAIT_SECS as usize];
         polls.push((unit_facts(Absent, None), true));
-        assert_eq!(waited_on(&polls).0, Ok(DetachedEnd { rc: 0, uncollected: false }));
+        assert_eq!(waited_on(&polls).0, ended(0, "release: said\n"));
+    }
+
+    #[test_id(tgg1vm2)]
+    #[test]
+    fn a_few_failed_reads_of_a_unit_are_retried_until_its_own_end_is_read() {
+        let d = testkit::TempDir::new("real-await-flaky");
+        let log = d.join("act.log");
+        let units = FlakyUnits::new(&log, |read| read < 3, &[]);
+        units.scripted.script("release-activate", 0, runtime::units::Exit::Code(0));
+        let spec = runtime::units::UnitSpec { task: "release-activate".into(), key: "abc".into(), argv: vec!["release".into()], env: Vec::new(), cwd: None };
+        let handle = runtime::units::Units::start(&units, &spec).unwrap();
+        fs::write(&log, "release: abc active\n").unwrap();
+        assert_eq!(await_on(&units, &handle).0, ended(0, "release: abc active\n"));
+    }
+
+    #[test_id(tl1cpf9)]
+    #[test]
+    fn a_unit_whose_state_never_reads_is_given_up_as_unread_after_the_bounded_retries() {
+        let d = testkit::TempDir::new("real-await-unread");
+        let units = FlakyUnits::new(&d.join("act.log"), |_| true, &[]);
+        let (end, _) = await_on(&units, &runtime::units::UnitHandle::named("u.service"));
+        let Detached::Unread(why) = end else { panic!("{end:?}") };
+        assert_eq!(units.reads(), DETACHED_READ_RETRIES);
+        assert_eq!(why, format!("cannot read the state of u.service: systemd: LoadUnit: no reply within 5s, {DETACHED_READ_RETRIES} reads in a row"));
+    }
+
+    #[test_id(ta9m43w)]
+    #[test]
+    fn a_read_that_succeeds_starts_the_count_of_failed_reads_again() {
+        use runtime::units::UnitState::*;
+        let d = testkit::TempDir::new("real-await-reset");
+        // Three runs of one fewer than the bound, a good read after each.
+        let alive = (unit_facts(Active, None), false);
+        let polls = [alive.clone(), alive.clone(), alive, (unit_facts(Absent, None), true)];
+        let fails = |read| read < 3 * DETACHED_READ_RETRIES && (read + 1) % DETACHED_READ_RETRIES != 0;
+        let units = FlakyUnits::new(&d.join("act.log"), fails, &polls);
+        assert_eq!(await_on(&units, &runtime::units::UnitHandle::named("u.service")).0, ended(0, "release: said\n"));
     }
 }
 
@@ -3426,34 +3515,56 @@ fn detached_poll(f: &runtime::units::UnitFacts, ran: bool, log_has_text: bool) -
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-struct DetachedEnd {
-    rc: i32,
-    /// The manager still holds the ended unit.
-    uncollected: bool,
+/// Consecutive failed reads of a detached unit's state before it is given up as unread.
+const DETACHED_READ_RETRIES: u32 = 24;
+
+/// Between two reads of a detached unit's state.
+const DETACHED_POLL: std::time::Duration = std::time::Duration::from_millis(500);
+
+fn cannot_run(why: String) -> RunOut {
+    RunOut { rc: 127, out: String::new(), err: why }
 }
 
-/// Poll `unit` until its own end; `Err` is the refusal, naming the unit.
+/// Poll the unit until its own end, collecting it if the manager still holds it. A failed read
+/// says nothing about the unit, which may still be switching, so it is read again.
 fn await_detached(
-    unit: &str,
+    units: &dyn runtime::units::Units,
+    handle: &runtime::units::UnitHandle,
     log: &Path,
-    mut facts: impl FnMut() -> Result<runtime::units::UnitFacts, String>,
-    mut log_has_text: impl FnMut() -> bool,
-    mut waited_secs: impl FnMut() -> u64,
-    mut pause: impl FnMut(),
-) -> Result<DetachedEnd, String> {
+    waited_secs: &dyn Fn() -> u64,
+    sleep: &dyn Fn(std::time::Duration),
+) -> Detached {
     use runtime::units::UnitState;
+    let unit = &handle.name;
     let mut ran = false;
+    let mut unread = 0;
     loop {
-        let f = facts().map_err(|e| format!("cannot read the state of {unit}: {e}"))?;
-        ran |= f.exit.is_some() || matches!(f.state, UnitState::Activating | UnitState::Active | UnitState::Deactivating);
-        match detached_poll(&f, ran, log_has_text()) {
-            DetachedPoll::Wait if !ran && waited_secs() >= DETACHED_START_WAIT_SECS => {
-                return Err(format!("{unit} never started within {DETACHED_START_WAIT_SECS}s"));
+        let f = match units.facts(handle) {
+            Ok(f) => f,
+            Err(e) => {
+                unread += 1;
+                if unread >= DETACHED_READ_RETRIES {
+                    return Detached::Unread(format!("cannot read the state of {unit}: {}, {unread} reads in a row", e.0));
+                }
+                sleep(DETACHED_POLL);
+                continue;
             }
-            DetachedPoll::Wait => pause(),
-            DetachedPoll::Ended(rc) => return Ok(DetachedEnd { rc, uncollected: f.state != UnitState::Absent }),
-            DetachedPoll::Lost(why) => return Err(format!("{unit} {why} in {}", log.display())),
+        };
+        unread = 0;
+        ran |= f.exit.is_some() || matches!(f.state, UnitState::Activating | UnitState::Active | UnitState::Deactivating);
+        match detached_poll(&f, ran, fs::metadata(log).is_ok_and(|m| m.len() > 0)) {
+            DetachedPoll::Wait if !ran && waited_secs() >= DETACHED_START_WAIT_SECS => {
+                return Detached::Ended(cannot_run(format!("{unit} never started within {DETACHED_START_WAIT_SECS}s")));
+            }
+            DetachedPoll::Wait => sleep(DETACHED_POLL),
+            DetachedPoll::Ended(rc) => {
+                if f.state != UnitState::Absent {
+                    let _ = units.reset_failed(handle);
+                }
+                let err = fs::read_to_string(log).unwrap_or_default();
+                return Detached::Ended(RunOut { rc, out: String::new(), err });
+            }
+            DetachedPoll::Lost(why) => return Detached::Ended(cannot_run(format!("{unit} {why} in {}", log.display()))),
         }
     }
 }

@@ -10,6 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::World;
+use crate::ports::Detached;
 
 /// Bound on `release activate`'s wait for running units to finish their pass. Far below a
 /// round's cap: the merge has already landed, so this is bookkeeping a caller must not have to
@@ -102,8 +103,16 @@ fn release_bin(
     }
 }
 
+/// Why a `release` step gave no success.
+enum StepFail {
+    /// The fault text of a non-zero exit.
+    Exited(String),
+    /// A detached step whose end was never observed: what could not be read.
+    Unread(String),
+}
+
 /// Run one `release` step; forward its stderr (release prefixes its own lines); Err is the
-/// fault text for a non-zero exit.
+/// fault text.
 fn step(
     w: &World,
     plan: &Plan,
@@ -111,7 +120,11 @@ fn step(
     what: &str,
     a: Vec<String>,
 ) -> Result<String, String> {
-    step_in(w, plan, bin, what, a, None).map(|(out, _)| out)
+    step_in(w, plan, bin, what, a, None)
+        .map(|(out, _)| out)
+        .map_err(|e| match e {
+            StepFail::Exited(why) | StepFail::Unread(why) => why,
+        })
 }
 
 /// [`step`], run in a transient unit of its own named for `detached` when that is given.
@@ -122,10 +135,13 @@ fn step_in(
     what: &str,
     mut a: Vec<String>,
     detached: Option<(&str, &Path)>,
-) -> Result<(String, String), String> {
+) -> Result<(String, String), StepFail> {
     a.extend(plan.common());
     let r = match detached {
-        Some((key, log)) => w.scripts.release_detached(key, bin, &a, &plan.db, log),
+        Some((key, log)) => match w.scripts.release_detached(key, bin, &a, &plan.db, log) {
+            Detached::Ended(r) => r,
+            Detached::Unread(why) => return Err(StepFail::Unread(why)),
+        },
         None => w.scripts.release(bin, &a, &plan.db),
     };
     let err = r.err.trim_end_matches('\n');
@@ -133,7 +149,7 @@ fn step_in(
         w.err(err);
     }
     if r.rc != 0 {
-        return Err(step_failure(what, r.rc, err));
+        return Err(StepFail::Exited(step_failure(what, r.rc, err)));
     }
     Ok((r.out, err.to_string()))
 }
@@ -271,7 +287,7 @@ fn activate_once(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
     let key: String = sha.chars().take(12).collect();
     let log = plan.run.join(format!("release-activate-{key}.log"));
     let detached = w.scripts.own_unit_restarted_by(&plan.releases.join(sha)).map(|_| (key.as_str(), log.as_path()));
-    let (out, failure) = step_in(
+    let ran = step_in(
         w,
         plan,
         &bin,
@@ -287,7 +303,20 @@ fn activate_once(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
             &LAND_DRAIN_WAIT_SECS.to_string(),
         ]),
         detached,
-    )?;
+    );
+    let (out, failure) = match ran {
+        Ok(said) => said,
+        Err(StepFail::Exited(why)) => return Err(why),
+        // The release state, not the failed read, says whether the activation took.
+        Err(StepFail::Unread(why)) => {
+            let cur = current_name(&plan.releases);
+            if cur != sha {
+                return Err(format!("release activate {sha}: {why}; current is {cur}"));
+            }
+            w.err(format!("queue.sh land-local: {why}; current is {sha}, so release {sha} is in effect"));
+            return Ok(());
+        }
+    };
     let out = out.trim_end_matches('\n');
     if !out.is_empty() {
         w.out(out);
