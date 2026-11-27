@@ -5,9 +5,10 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use spira_store::lc_call::{LcClient, Reply, Transport};
+use spira_store::lc_call::{LcClient, Reply, Transport, CANNOT_TELL};
+use spira_store::lifecycle_row::{Pace, Retry};
 
-use crate::ports::{Lc, Lib, Rerun, RoundLease};
+use crate::ports::{Lc, Lib, NotFiled, Rerun, RoundLease};
 use crate::real::{self, RealLc, RealLib};
 
 /// Answers each call from a script, oldest first, and records argv and stdin.
@@ -15,6 +16,8 @@ use crate::real::{self, RealLc, RealLib};
 struct Scripted {
     answers: Mutex<Vec<Result<Reply, String>>>,
     seen: Mutex<Vec<(Vec<String>, Option<String>)>>,
+    /// The request id each call went out under.
+    ids: Mutex<Vec<Option<String>>>,
 }
 
 impl Transport for Scripted {
@@ -28,6 +31,10 @@ impl Transport for Scripted {
             .lock()
             .unwrap()
             .push((argv.to_vec(), stdin.map(str::to_string)));
+        self.ids
+            .lock()
+            .unwrap()
+            .push(spira_store::lc_call::current_request_id());
         let mut a = self.answers.lock().unwrap();
         if a.is_empty() {
             return Err("cannot tell: nothing scripted".into());
@@ -245,6 +252,19 @@ fn the_forges_answers_map_as_its_childs_did() {
     );
 }
 
+/// A clock only sleeping advances.
+#[derive(Default)]
+struct Slept(Mutex<Duration>);
+
+impl Pace for Slept {
+    fn now(&self) -> Duration {
+        *self.0.lock().unwrap()
+    }
+    fn sleep(&self, d: Duration) {
+        *self.0.lock().unwrap() += d;
+    }
+}
+
 type Logged = Arc<Mutex<Vec<String>>>;
 
 fn lib(answers: Vec<Result<Reply, String>>) -> (RealLib, Arc<Scripted>, Logged) {
@@ -255,6 +275,9 @@ fn lib(answers: Vec<Result<Reply, String>>) -> (RealLib, Arc<Scripted>, Logged) 
         home: "h".into(),
         store,
         warn: Arc::new(move |m: &str| sink.lock().unwrap().push(m.to_string())),
+        retry: Arc::new(|| {
+            Ok(Retry::within(Duration::from_secs(10)).with_pace(Arc::new(Slept::default())))
+        }),
     };
     (lib, t, logged)
 }
@@ -300,7 +323,7 @@ fn a_refused_comment_logs_the_reason() {
 fn a_bug_is_filed_with_its_body_on_stdin_and_the_actor_on_the_first_line() {
     let (lib, t, logged) = lib(vec![reply(0, "sp-new1\n")]);
     let id = lib.create_bug("queue.sh", "publish PR 7 red", "1", "spira,plan,repo:spira", "## Build\nfix it\n");
-    assert_eq!(id.as_deref(), Some("sp-new1"));
+    assert_eq!(id.as_deref(), Ok("sp-new1"));
     assert_eq!(
         sent(&t),
         [call(
@@ -315,7 +338,7 @@ fn a_bug_is_filed_with_its_body_on_stdin_and_the_actor_on_the_first_line() {
 #[test]
 fn a_refused_create_files_nothing_and_logs_the_reason() {
     let (lib, _, logged) = lib(vec![reply(1, "bead: --repo <name> required")]);
-    assert_eq!(lib.create_bug("q", "t", "1", "spira", "b"), None);
+    assert!(lib.create_bug("q", "t", "1", "spira", "b").is_err());
     let logged = logged.lock().unwrap();
     assert!(logged[0].contains("bead: --repo <name> required"), "{logged:?}");
 }
@@ -324,7 +347,7 @@ fn a_refused_create_files_nothing_and_logs_the_reason() {
 #[test]
 fn a_create_that_names_no_id_files_nothing_and_says_so() {
     let (lib, _, logged) = lib(vec![reply(0, "\n")]);
-    assert_eq!(lib.create_bug("q", "t", "1", "spira", "b"), None);
+    assert!(matches!(lib.create_bug("q", "t", "1", "spira", "b"), Err(NotFiled::Unknown(_))));
     assert_eq!(logged.lock().unwrap().len(), 1);
 }
 
@@ -332,7 +355,7 @@ fn a_create_that_names_no_id_files_nothing_and_says_so() {
 #[test]
 fn a_live_bead_is_noted_with_the_body_on_stdin() {
     let (lib, t, _) = lib(vec![row("REWORK"), reply(0, "")]);
-    assert!(lib.amend_bug("queue.sh", "sp-a", "red again"));
+    assert_eq!(lib.amend_bug("queue.sh", "sp-a", "red again"), Ok(true));
     assert_eq!(
         sent(&t),
         [
@@ -346,7 +369,7 @@ fn a_live_bead_is_noted_with_the_body_on_stdin() {
 #[test]
 fn a_refused_note_is_not_an_amendment_and_logs_the_reason() {
     let (lib, _, logged) = lib(vec![row("READY"), reply(3, "note refused here")]);
-    assert!(!lib.amend_bug("q", "sp-a", "n"));
+    assert_eq!(lib.amend_bug("q", "sp-a", "n"), Err(NotFiled::Refused("note refused here".into())));
     let logged = logged.lock().unwrap();
     assert!(logged[0].contains("note refused here"), "{logged:?}");
 }
@@ -356,7 +379,7 @@ fn a_refused_note_is_not_an_amendment_and_logs_the_reason() {
 fn a_terminal_bead_is_neither_amended_nor_live() {
     for state in ["LANDED", "SUPERSEDED", "DROPPED", "DONE"] {
         let (lib, t, _) = lib(vec![row(state), row(state)]);
-        assert!(!lib.amend_bug("q", "sp-a", "n"), "{state}");
+        assert_eq!(lib.amend_bug("q", "sp-a", "n"), Ok(false), "{state}");
         assert!(!lib.bead_live("sp-a"), "{state}");
         assert_eq!(sent(&t), [call(&["show", "sp-a"], None), call(&["show", "sp-a"], None)], "{state}");
     }
@@ -374,7 +397,7 @@ fn an_unreadable_row_is_neither_amended_nor_live() {
         Err("cannot tell: lost".to_string()),
     ] {
         let (lib, t, _) = lib(vec![answer.clone(), answer]);
-        assert!(!lib.amend_bug("q", "sp-a", "n"));
+        assert_eq!(lib.amend_bug("q", "sp-a", "n"), Ok(false));
         assert!(!lib.bead_live("sp-a"));
         assert!(sent(&t).iter().all(|c| c.0[0] == "show"));
     }
@@ -385,4 +408,47 @@ fn an_unreadable_row_is_neither_amended_nor_live() {
 fn a_bead_with_a_fix_in_flight_is_live() {
     let (lib, _, _) = lib(vec![row("WORKING")]);
     assert!(lib.bead_live("sp-a"));
+}
+
+#[test_id(tdqyfjy)]
+#[test]
+fn a_create_the_store_could_not_answer_is_resent_under_one_request_id_and_filed() {
+    let (lib, t, logged) = lib(vec![reply(CANNOT_TELL, "cannot tell: deadline"), reply(0, "sp-new1\n")]);
+    let id = lib.create_bug("queue.sh", "publish PR 7 red", "1", "spira,plan,repo:spira", "## Build\nfix it\n");
+    assert_eq!(id.as_deref(), Ok("sp-new1"));
+    let ids = t.ids.lock().unwrap().clone();
+    assert_eq!(ids.len(), 2);
+    assert!(ids[0].as_deref().is_some_and(|i| i.starts_with("file:")), "{ids:?}");
+    assert_eq!(ids[0], ids[1]);
+    assert!(logged.lock().unwrap().is_empty(), "a filed bead is not reported unfiled");
+}
+
+#[test_id(tdgfeej)]
+#[test]
+fn a_refused_create_is_sent_once_and_carries_the_doors_text() {
+    const WHY: &str = "bead: refusing: x does not meet the landing contract\nbead: set BEAD_CONTRACT_CONSIDERED";
+    let (lib, t, _) = lib(vec![reply(1, &format!("{WHY}\n")), reply(0, "sp-never\n")]);
+    assert_eq!(
+        lib.create_bug("queue.sh", "t", "1", "spira", "b"),
+        Err(NotFiled::Refused(WHY.into()))
+    );
+    assert_eq!(sent(&t).len(), 1);
+}
+
+#[test_id(tp6tosm)]
+#[test]
+fn a_create_never_answered_is_unknown_never_refused() {
+    let (lib, t, _) = lib(vec![reply(CANNOT_TELL, "cannot tell: deadline")]);
+    assert!(matches!(lib.create_bug("q", "t", "1", "spira", "b"), Err(NotFiled::Unknown(_))));
+    assert!(sent(&t).len() > 1);
+}
+
+#[test_id(th71o72)]
+#[test]
+fn a_note_the_store_could_not_answer_is_resent_under_one_request_id() {
+    let (lib, t, _) = lib(vec![row("REWORK"), reply(CANNOT_TELL, "cannot tell: deadline"), reply(0, "")]);
+    assert_eq!(lib.amend_bug("queue.sh", "sp-a", "red again"), Ok(true));
+    let ids = t.ids.lock().unwrap().clone();
+    assert_eq!(ids.len(), 3);
+    assert!(ids[1].is_some() && ids[1] == ids[2], "{ids:?}");
 }

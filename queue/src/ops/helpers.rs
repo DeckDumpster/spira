@@ -16,8 +16,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use super::Ctx;
 use crate::ports::{Divergence, Git, Lc, World};
 use crate::real::{RealGit, RealLc};
+use crate::records::write_atomic;
 
 /// `queue_certified_list <repo-path>`: every `spira/*` branch whose lifecycle row is
 /// CERTIFIED, as `(id, tip, epoch)` — the selection primitive any cutter (the batcher, the
@@ -277,6 +279,27 @@ pub fn notify(mailbox: &str, name: &str, subject: &str, body: &str) {
             let _ = si.write_all(full_body.as_bytes());
         }
         let _ = child.wait();
+    }
+}
+
+/// Mails the session mailbox what the content door refused, once per title and refusal text:
+/// stderr goes to a journal nothing reads.
+pub fn report_refused_filing(w: &World, c: &Ctx, title: &str, labels: &str, why: &str) {
+    let stamp = bead::filing::digest(&[title, why]);
+    let file = c.queue_file("refused-filings");
+    let mut sent = std::fs::read_to_string(&file).unwrap_or_default();
+    if sent.lines().any(|l| l == stamp) {
+        return;
+    }
+    w.lib.notify(
+        &c.s.mailbox,
+        &c.r.name,
+        "filing refused",
+        &format!("The content door refused a queue filing, so nothing was written.\n\nTitle: {title}\nLabels: {labels}\n\n{why}\n"),
+    );
+    sent.push_str(&format!("{stamp}\n"));
+    if let Err(e) = write_atomic(&file, &sent) {
+        w.err(format!("queue: WARNING — the refusal of {title:?} was mailed but not stamped, so it will be mailed again: {e}"));
     }
 }
 

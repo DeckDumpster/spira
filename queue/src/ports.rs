@@ -230,6 +230,15 @@ pub trait Bd {
     fn show(&self, ids: &[String]) -> Result<Vec<BeadRow>, String>;
 }
 
+/// Why the content door filed or noted nothing, in the door's own words.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotFiled {
+    /// The door judged the write and refused it: sending it again changes nothing.
+    Refused(String),
+    /// No answer to act on: the write may have committed.
+    Unknown(String),
+}
+
 /// The lib.sh seam (DESIGN.md §6). Every value travels on the child's stdin.
 pub trait Lib {
     /// R1: settings and, when `repo` is Some (or the home repo), that repository.
@@ -292,7 +301,7 @@ pub trait Lib {
     /// `_pf_gate` under a wall of `wall_secs`: (rc, output); 124 = wall hit.
     fn pf_gate(&self, branch: &str, name: &str, stamp: &str, wall_secs: u64) -> (i32, String);
     /// R23: `content create <title> --type bug`, `actor` on the body's first line → the new
-    /// id (None, with the reason logged, when nothing was created).
+    /// id, or why there is none (logged too).
     fn create_bug(
         &self,
         actor: &str,
@@ -300,10 +309,10 @@ pub trait Lib {
         priority: &str,
         labels: &str,
         body: &str,
-    ) -> Option<String>;
-    /// Append `note` to bead `id` when it is still open; false when it is closed, unknown
-    /// or the note did not land — the caller then files a new bead.
-    fn amend_bug(&self, actor: &str, id: &str, note: &str) -> bool;
+    ) -> Result<String, NotFiled>;
+    /// Append `note` to bead `id` when it is still open: `Ok(false)` when it is closed or
+    /// unknown, `Err` when the note did not land — either way the caller then files a new bead.
+    fn amend_bug(&self, actor: &str, id: &str, note: &str) -> Result<bool, NotFiled>;
     /// True when bead `id` has a lifecycle row that is not terminal (a fix in flight).
     fn bead_live(&self, id: &str) -> bool;
 }

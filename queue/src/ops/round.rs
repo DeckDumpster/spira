@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::batch::lc_return;
+use super::helpers::report_refused_filing;
 use super::land::land_local_deferring;
 use super::round_files;
 use super::round_rerun;
@@ -23,7 +24,7 @@ use crate::cli::{Round, Text};
 use crate::ident::bounded_text;
 use crate::lock::Guard;
 use crate::model::{parse_members, render_members, EjectCause, LandMode, Member};
-use crate::ports::{ref_branch, AmiBuild, AmiLookup, ImageCheck, RunOut};
+use crate::ports::{ref_branch, AmiBuild, AmiLookup, ImageCheck, NotFiled, RunOut};
 use crate::records::{self, one_line, write_atomic, Kv};
 use spira_config::scoped_stop;
 use spira_config::sendback::failure_excerpt;
@@ -738,12 +739,17 @@ pub(super) fn call_mender(
     labels.push_str(&format!(",repo:{}", c.r.name));
     let title = format!("mend {suite} red in pass {pass} of round {batch}");
     match w.lib.create_bug(&actor(w), &title, "1", &labels, &body) {
-        Some(id) => {
+        Ok(id) => {
             w.lc.create_bead_in(&id, &c.r.name);
             let _ = write_atomic(&marker, &format!("{id}\n"));
             w.out(format!("queue.sh round failed: mender bead {id} filed for {suite} in pass {pass} of {batch}"));
         }
-        None => w.err(format!("queue.sh round failed: WARNING — the mender bead for {suite} of {batch} could not be filed; report the failure again to retry")),
+        Err(not_filed) => {
+            if let NotFiled::Refused(why) = &not_filed {
+                report_refused_filing(w, c, &title, &labels, why);
+            }
+            w.err(format!("queue.sh round failed: WARNING — the mender bead for {suite} of {batch} could not be filed; report the failure again to retry"));
+        }
     }
 }
 

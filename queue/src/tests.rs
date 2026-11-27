@@ -307,7 +307,11 @@ struct FLib {
     push_ok: Cell<bool>,
     /// What `create_bug` answers (None: bd created nothing).
     bug_id: RefCell<Option<String>>,
+    /// When set, what `create_bug` fails with, whatever `bug_id` holds.
+    bug_not_filed: RefCell<Option<NotFiled>>,
     amend_ok: Cell<bool>,
+    /// When set, what `amend_bug` fails with.
+    note_not_filed: RefCell<Option<NotFiled>>,
     dead_beads: RefCell<Vec<String>>,
     pf_rc: Cell<i32>,
     /// R22's answer (step --all).
@@ -459,15 +463,22 @@ impl Lib for FLib {
         prio: &str,
         labels: &str,
         body: &str,
-    ) -> Option<String> {
+    ) -> Result<String, NotFiled> {
         self.log(format!(
             "create_bug {actor} {prio} {labels} {title}\n{body}"
         ));
-        self.bug_id.borrow().clone()
+        if let Some(why) = self.bug_not_filed.borrow().clone() {
+            return Err(why);
+        }
+        let id = self.bug_id.borrow().clone();
+        id.ok_or_else(|| NotFiled::Unknown("bd created nothing".into()))
     }
-    fn amend_bug(&self, actor: &str, id: &str, note: &str) -> bool {
+    fn amend_bug(&self, actor: &str, id: &str, note: &str) -> Result<bool, NotFiled> {
         self.log(format!("amend_bug {actor} {id} {note}"));
-        self.amend_ok.get()
+        match self.note_not_filed.borrow().clone() {
+            Some(why) => Err(why),
+            None => Ok(self.amend_ok.get()),
+        }
     }
     fn bead_live(&self, id: &str) -> bool {
         !self.dead_beads.borrow().iter().any(|d| d == id)
@@ -2033,7 +2044,9 @@ impl T {
             cannot_check: Cell::new(false),
             push_ok: Cell::new(true),
             bug_id: RefCell::new(Some("sp-fix1".into())),
+            bug_not_filed: RefCell::default(),
             amend_ok: Cell::new(true),
+            note_not_filed: RefCell::default(),
             dead_beads: RefCell::new(Vec::new()),
             pf_rc: Cell::new(0),
             repos: RefCell::new(Ok(vec!["spira".into()])),

@@ -6,8 +6,10 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use super::helpers::report_refused_filing;
 use super::{actor, Ctx, World};
 use crate::model::Member;
+use crate::ports::NotFiled;
 use crate::records::write_atomic;
 
 const RECORD: &str = "integrations";
@@ -284,11 +286,17 @@ pub(super) fn file(
         return None;
     };
     let labels = format!("{scope}{plan},{KIND_LABEL},repo:{}", c.r.name);
-    let Some(id) = w.lib.create_bug(&actor(w), &title, "1", &labels, &body) else {
-        w.err(format!(
-            "queue.sh {label}: WARNING — the integration bead for {list} could not be filed; the collision stays on today's path"
-        ));
-        return None;
+    let id = match w.lib.create_bug(&actor(w), &title, "1", &labels, &body) {
+        Ok(id) => id,
+        Err(not_filed) => {
+            if let NotFiled::Refused(why) = &not_filed {
+                report_refused_filing(w, c, &title, &labels, why);
+            }
+            w.err(format!(
+                "queue.sh {label}: WARNING — the integration bead for {list} could not be filed; the collision stays on today's path"
+            ));
+            return None;
+        }
     };
     w.lc.create_bead_in(&id, &c.r.name);
     let mut text = std::fs::read_to_string(c.queue_file(RECORD)).unwrap_or_default();

@@ -582,6 +582,95 @@ fn publish_red_with_no_bead_filed_is_a_fault_but_still_marks_the_head() {
     assert!(t.out().contains("filed fix-forward <create-failed>"));
 }
 
+const CONTRACT_REFUSAL: &str = "bead: refusing: spira does not meet the landing contract\nnot met submit-checks: .spira/checks.toml does not exist\nbead: set BEAD_CONTRACT_CONSIDERED=\"<why>\" to file anyway";
+
+fn red_publish_pass(t: &T) {
+    publish_record(t);
+    t.forge
+        .status
+        .borrow_mut()
+        .push(Some("red\nred-suite: test-a.sh\n".into()));
+    t.run(&["verdict", "spira"]);
+}
+
+fn refusal_mails(t: &T) -> Vec<String> {
+    t.lib
+        .mails
+        .borrow()
+        .iter()
+        .filter(|(subject, _)| subject == "filing refused")
+        .map(|(_, body)| body.clone())
+        .collect()
+}
+
+#[test_id(t66scf8)]
+#[test]
+fn a_refused_publish_red_filing_mails_the_doors_text_once_until_it_changes() {
+    let t = T::new(LandMode::QueueLocal);
+    *t.lib.bug_not_filed.borrow_mut() = Some(NotFiled::Refused(CONTRACT_REFUSAL.into()));
+    red_publish_pass(&t);
+    let mails = refusal_mails(&t);
+    assert_eq!(mails.len(), 1, "{:?}", t.lib.mails.borrow());
+    assert!(
+        mails[0].contains("Title: publish PR 77 red for spira: test-a.sh\n")
+            && mails[0].contains("Labels: spira,plan,repo:spira\n")
+            && mails[0].contains(CONTRACT_REFUSAL),
+        "{}",
+        mails[0]
+    );
+    assert!(
+        t.lib.mails.borrow().iter().any(|(s, b)| s == "publish PR 77 red"
+            && b.contains(CONTRACT_REFUSAL)
+            && !b.contains("<create failed>")),
+        "{:?}",
+        t.lib.mails.borrow()
+    );
+
+    red_publish_pass(&t);
+    assert_eq!(refusal_mails(&t).len(), 1, "the same refusal is not mailed again");
+
+    *t.lib.bug_not_filed.borrow_mut() = Some(NotFiled::Refused("bead: --repo <name> required".into()));
+    red_publish_pass(&t);
+    let mails = refusal_mails(&t);
+    assert_eq!(mails.len(), 2);
+    assert!(mails[1].contains("bead: --repo <name> required"), "{}", mails[1]);
+}
+
+#[test_id(tbt680r)]
+#[test]
+fn a_publish_red_filing_of_unknown_outcome_is_not_reported_refused() {
+    let t = T::new(LandMode::QueueLocal);
+    *t.lib.bug_not_filed.borrow_mut() = Some(NotFiled::Unknown("cannot tell: deadline".into()));
+    red_publish_pass(&t);
+    assert!(refusal_mails(&t).is_empty());
+    assert!(
+        t.lib.mails.borrow().iter().any(|(s, b)| s == "publish PR 77 red"
+            && b.contains("cannot tell: deadline")
+            && b.contains("publish PR 77 red for spira: test-a.sh")),
+        "{:?}",
+        t.lib.mails.borrow()
+    );
+}
+
+#[test_id(t6vrsa3)]
+#[test]
+fn a_refused_fix_forward_note_mails_the_doors_text_and_still_files_a_new_bead() {
+    let t = T::new(LandMode::QueueLocal);
+    red_publish_pass(&t);
+    t.lib.calls.borrow_mut().clear();
+    *t.lib.note_not_filed.borrow_mut() = Some(NotFiled::Refused(CONTRACT_REFUSAL.into()));
+    red_publish_pass(&t);
+    let mails = refusal_mails(&t);
+    assert_eq!(mails.len(), 1, "{:?}", t.lib.mails.borrow());
+    assert!(
+        mails[0].contains("Title: note on sp-fix1: publish PR 77 red for spira: test-a.sh\n")
+            && mails[0].contains(CONTRACT_REFUSAL),
+        "{}",
+        mails[0]
+    );
+    assert!(t.lib.has("create_bug"));
+}
+
 #[test_id(t73dqf8)]
 #[test]
 fn publish_settle_skips_its_turn_when_the_queue_lock_is_held() {
