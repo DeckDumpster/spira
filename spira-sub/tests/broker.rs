@@ -278,6 +278,42 @@ fn after_a_broker_restart_the_client_reconnects_and_holds_the_same_state_values(
     assert_eq!(newcomer.next(), "[sub:s2] gate/r/sp-b rc=0");
 }
 
+#[test_id(tp8m1pd)]
+#[test]
+fn a_topic_cleared_while_run_was_away_is_news_when_it_is_said_again() {
+    let broker = Broker::up();
+    let world = World::new(broker.socket());
+    let run = world.run(broker.socket());
+    let first = world.follow();
+    world.ok(&["add", "bead/+/state"]);
+    world.ok(&["add", "release/active"]);
+    let p = publisher("t", broker.socket());
+    for (bead, state) in [("sp-a", "A"), ("sp-b", "B")] {
+        publish(&p, &format!("bead/{bead}/state"), json!({"state": state}));
+        assert_eq!(first.next(), format!("[sub:s1] bead/{bead}/state state={state}"));
+    }
+    drop(first);
+    let mut watching = Subscriber::to(broker.socket(), &["subscriber/concierge"]);
+    drop(run);
+    until(&mut watching, "gone");
+    let saved = std::fs::read_to_string(world.set_file()).unwrap();
+    assert!(saved.contains("bead/sp-a/state"), "positive control: {saved}");
+    p.clear("bead/sp-a/state").unwrap();
+    p.flush(FAILSAFE).unwrap();
+
+    let _again = world.run(broker.socket());
+    // Acknowledged after the restart's `up`, whose echo has therefore reached `run` by now.
+    world.ok(&["add", "round/#"]);
+    let saved = std::fs::read_to_string(world.set_file()).unwrap();
+    assert!(!saved.contains("bead/sp-a/state") && saved.contains("bead/sp-b/state"), "{saved}");
+    let follow = world.follow();
+    publish(&p, "bead/sp-a/state", json!({"state": "A"}));
+    assert_eq!(follow.next(), "[sub:s1] bead/sp-a/state state=A");
+    publish(&p, "bead/sp-b/state", json!({"state": "B"}));
+    publish(&p, "release/active", json!({"release": "r1"}));
+    assert_eq!(follow.next(), "[sub:s2] release/active release=r1");
+}
+
 /// Waits out one batch of `topic`, so what is published next falls early in a fresh interval.
 fn at_the_start_of_an_interval(follow: &Follow, p: &Publisher, topic: &str, value: Value) {
     publish(p, topic, value);
