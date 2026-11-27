@@ -887,9 +887,17 @@ fn a_lease_pushes_what_its_clean_removed_under_its_holder_and_mode() {
 #[test]
 fn a_hand_lease_over_budget_says_why_it_evicted_another_repositorys_idle_folder() {
     let b = setup("bdcli-over-budget");
+    // Registered, so only the budget can take it.
+    let map = spira_config::process::fixture_repo_map(b._d.path(), &["spira", "other"]);
     let toml = spira_config::process::fixture_toml(
         b._d.path(),
-        &[("SPIRA_DWARF_BUILD_BASE", b.base.to_str().unwrap()), ("SPIRA_DWARF_BUILD_BUDGET_GIB", "0"), ("SPIRA_DWARF_BUILD_FOLDERS_PER_REPO", "5")],
+        &[
+            ("SPIRA_DWARF_BUILD_BASE", b.base.to_str().unwrap()),
+            ("SPIRA_DWARF_BUILD_BUDGET_GIB", "0"),
+            ("SPIRA_DWARF_BUILD_FOLDERS_PER_REPO", "5"),
+            ("SPIRA_REPO_MAP", map.to_str().unwrap()),
+            ("SPIRA_HOME_REPO", "spira"),
+        ],
     );
     let b = Box_ { toml, ..b };
     let theirs = b.base.join("other/1");
