@@ -1026,7 +1026,7 @@ mod tests {
         let (o, _) = w.run(deadline, &log).run("a");
         assert_eq!(o, Outcome::Pass);
         assert_eq!(w.started(), 1, "the tier ran once");
-        assert!(w.deadlines()[0] >= deadline + HELD, "short by {:?}", (deadline + HELD).duration_since(w.deadlines()[0]));
+        assert!(w.deadlines()[0] >= deadline + HELD, "short by {:?}", (deadline + HELD).duration_since(w.deadlines()[0])); // clock-safe: a lower bound set by the sleep inside the wait; load only adds to it
     }
 
     #[test_id(tv0zike)]
@@ -1089,7 +1089,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(60);
         w.run(deadline, &log).run_all(&["a".to_string(), "b".to_string()]);
         let got = w.deadlines();
-        assert!(got.len() == 2 && got.iter().all(|d| *d >= deadline + HELD), "{} tiers", got.len());
+        assert!(got.len() == 2 && got.iter().all(|d| *d >= deadline + HELD), "{} tiers", got.len()); // clock-safe: a lower bound set by the sleep inside the wait; load only adds to it
     }
 
     #[test_id(tjidpjv)]
