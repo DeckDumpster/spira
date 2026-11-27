@@ -673,3 +673,49 @@ fn the_batch_open_runner_adopts_the_open_pr_without_asking_queue_for_another() {
     edge::open_or_adopt(&env, &repo, &leg, None).unwrap();
     assert!(d.path().join("body").exists(), "control: with none open, queue opens it");
 }
+
+#[test_id(t9mjifz)]
+#[test]
+fn the_batch_open_runner_answers_pending_for_a_record_of_its_members_with_no_pr_yet() {
+    let d = testkit::TempDir::new("forge-edge-pending");
+    let (env, repo, leg) = forge_fixture(d.path());
+    let open = batcher_cut::io::OpenBatch { pr: String::new(), members: leg.members.clone() };
+    let opened = edge::open_or_adopt(&env, &repo, &leg, Some(&open)).unwrap();
+    assert!(!d.path().join("body").exists(), "queue was asked to open a second batch");
+    assert_eq!(serde_json::to_value(&opened).unwrap(), serde_json::json!({ "pr": "", "head": "", "pending": true }));
+}
+
+fn opening_round() -> Carry {
+    let rc = RepoCarry { state: State::Opening, round_key: Some("dd-a:t1".into()), members: vec![("dd-a".into(), "t1".into())], ..RepoCarry::default() };
+    Carry { repos: [("deckdumpster".to_string(), rc)].into() }
+}
+
+#[test_id(tzua6ux)]
+#[test]
+fn a_pending_open_answer_keeps_the_round_opening_and_writes_no_verdict() {
+    let leg = spira_runtime::tasks::a::batcher_local::Leg::on("deckdumpster");
+    let (next, acts) = on_outcome(&opening_round(), BATCH_OPEN, true, r#"{"pending":true}"#, &leg, NOW);
+    assert_eq!(next, opening_round());
+    assert!(acts.iter().all(|a| a.effect != VERDICT_WRITE), "{acts:?}");
+}
+
+#[test_id(tv94dw6)]
+#[test]
+fn a_round_waits_on_its_record_with_no_pr_until_it_gains_one_or_is_released() {
+    let seen = |record: Option<Batch>| {
+        // An empty pool: a forgotten round is not cut again in the same pass.
+        let mut s = idle();
+        let repo = s.repos.get_mut("deckdumpster").unwrap();
+        repo.open_batch = record;
+        repo.in_flight = Some(vec![]);
+        decide(&opening_round(), &s).0
+    };
+    let record = |pr, member: &str| Some(Batch { pr, head: String::new(), members: vec![member.into()] });
+    assert_eq!(seen(record(0, "dd-a")), opening_round(), "the record is waited for");
+    assert_eq!(seen(record(12, "dd-a")).repos["deckdumpster"].state, State::Open, "its PR is adopted");
+    // Released, the round is forgotten; a record of other members is then settled like any open batch.
+    for (released, state) in [(None, State::Idle), (record(0, "dd-z"), State::Settling)] {
+        let rc = seen(released.clone()).repos.get("deckdumpster").cloned().unwrap_or_default();
+        assert_eq!((rc.state, rc.round_key), (state, None), "{released:?}");
+    }
+}

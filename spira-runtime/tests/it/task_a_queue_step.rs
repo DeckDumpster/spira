@@ -326,3 +326,117 @@ fn a_repo_judging_a_batch_still_wakes_publish_on_a_green_record() {
     let (_, acts) = decide_with(&Policy::default(), &carry, &with(green_publish()), 5);
     assert_eq!(acts.iter().filter(|a| a.effect == PUBLISH_WANTED).count(), 1);
 }
+
+/// The rig with `hung` in flight at a restart, then reopened and settled.
+fn restarted_with(hung: &str, snap: Snapshot) -> TaskRig {
+    let snap = serde_json::to_string(&snap).unwrap();
+    let mut r = TaskRig::new(1, QueueStep::new(BTreeMap::new()).registration()).unwrap().hanging(hung).double(OBSERVE, move |_| Ok(snap.clone()));
+    for e in EFFECTS.iter().filter(|e| **e != OBSERVE) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    assert_eq!(inputs(&r, hung).len(), 1, "{hung} is in flight at the restart: {:?}", r.requested());
+    r.reopen(QueueStep::new(BTreeMap::new()).registration()).unwrap();
+    r.run_until_idle().unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    r
+}
+
+fn inputs<'a>(r: &'a TaskRig, effect: &str) -> Vec<&'a str> {
+    r.requested().iter().filter(|q| q.name == effect).map(|q| q.input.as_str()).collect()
+}
+
+fn asked_again_and_nothing_refused(effect: &str) {
+    let r = restarted_with(effect, busy());
+    let asked = inputs(&r, effect);
+    assert!(matches!(asked[..], [a, b] if a == b), "{effect} is asked twice with one input: {asked:?}");
+    assert_eq!(inputs(&r, NOTIFY), Vec::<&str>::new());
+}
+
+#[test_id(twfoj1n)]
+#[test]
+fn a_push_lost_at_a_restart_is_asked_again_and_no_refusal_is_told() {
+    asked_again_and_nothing_refused(PUSH);
+}
+
+#[test_id(tbzpcbz)]
+#[test]
+fn a_land_lost_at_a_restart_is_asked_again_and_no_refusal_is_told() {
+    asked_again_and_nothing_refused(LAND);
+}
+
+#[test_id(t0dv7p3)]
+#[test]
+fn a_judgement_lost_at_a_restart_stays_judging_and_tells_no_refusal() {
+    let red = with(Repo { check: Check::Red, ..busy().repos["spira"].clone() });
+    let r = restarted_with(JUDGEMENT, red);
+    assert_eq!(inputs(&r, NOTIFY), Vec::<&str>::new());
+    let carry: Carry = r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).expect("a recorded carry");
+    assert_eq!(carry.repos["spira"].state, State::Judging);
+}
+
+/// The carry and act input of a repo whose `state` waits on an effect for batch-7.
+fn waiting_in(state: State) -> (Carry, Step) {
+    let rc = RepoCarry { state, batch: Some("batch-7:3".into()), leg: Some("spira.j1".into()), ..RepoCarry::default() };
+    let step = Step { repo: "spira".into(), mode: "queue.local".into(), batch: "batch-7".into(), version: 3, head: "h7".into(), ..Step::default() };
+    (Carry { repos: [("spira".to_string(), rc)].into() }, step)
+}
+
+fn notified(acts: &[Act]) -> Vec<Step> {
+    acts.iter().filter(|a| a.effect == NOTIFY).map(|a| serde_json::from_str(&a.input).unwrap()).collect()
+}
+
+#[test_id(tgwh3z0)]
+#[test]
+fn a_push_or_land_that_failed_for_a_reason_still_tells_its_refusal() {
+    for (state, effect, subject) in [(State::Pushing, PUSH, "batch batch-7 not landed — the fast-forward was refused"), (State::Landing, LAND, "batch batch-7 pushed but not landed on the store")] {
+        let (carry, step) = waiting_in(state);
+        let (next, acts) = on_outcome(&carry, effect, false, "refused: not an ancestor", &step, 1);
+        assert_eq!(notified(&acts).iter().map(|s| s.subject.as_str()).collect::<Vec<_>>(), [subject]);
+        assert_eq!(next.repos.get("spira").map_or(State::Idle, |r| r.state), State::Idle, "{effect}");
+        assert_eq!(next.repos.get("spira").and_then(|r| r.batch.clone()), None, "{effect}");
+    }
+}
+
+#[test_id(tndqfxh)]
+#[test]
+fn a_judgement_that_failed_for_a_reason_is_a_failed_judgement() {
+    let (carry, step) = waiting_in(State::Judging);
+    let (next, acts) = on_outcome(&carry, JUDGEMENT, false, "SPIRA_BATCHER_ENABLE=0: no judgement", &step, 1);
+    let told = notified(&acts);
+    assert_eq!(told.iter().map(|s| (s.subject.as_str(), s.body.as_str())).collect::<Vec<_>>(), [("judgement for batch-7 failed", "the judgement did not start: SPIRA_BATCHER_ENABLE=0: no judgement")]);
+    assert_eq!(next.repos["spira"].state, State::Idle);
+}
+
+/// A store that refuses `land` and answers `show-batch` with the batch in `state`.
+struct RefusingStore(&'static str);
+
+impl spira_store::lc_call::Transport for RefusingStore {
+    fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+        let (code, out, err) = match argv.first().map(String::as_str) {
+            Some("land") => (3, String::new(), "refused: expectation mismatch".to_string()),
+            Some("show-batch") => (0, format!(r#"{{"state":"{}","version":4}}"#, self.0), String::new()),
+            _ => (2, String::new(), format!("unexpected verb {argv:?}")),
+        };
+        Ok(spira_store::lc_call::Reply { code, out, err, read_ended: false })
+    }
+}
+
+fn land_against(state: &'static str) -> Result<String, String> {
+    let client = spira_store::lc_call::LcClient::over(std::sync::Arc::new(RefusingStore(state)), true);
+    let lc = queue::real::RealLc { bin: None, client: Some(client) };
+    edge::land_on(&lc, &waiting_in(State::Landing).1)
+}
+
+#[test_id(tq371jv)]
+#[test]
+fn a_land_refused_because_the_batch_already_landed_succeeds() {
+    assert_eq!(land_against("LANDED"), Ok("{}".to_string()));
+}
+
+#[test_id(tu8ceq6)]
+#[test]
+fn a_land_refused_while_the_batch_is_not_landed_is_still_refused() {
+    let refused = land_against("GREEN").expect_err("a GREEN batch was not landed");
+    assert!(refused.starts_with("spira-lc land refused for batch-7 (rc=3)"), "{refused}");
+}
