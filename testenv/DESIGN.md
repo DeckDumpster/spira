@@ -1172,8 +1172,12 @@ admitted after any queue gets its full cap, and its verdict line carries `slot_w
 `SPIRA_TESTENV_SLOT_WAIT` bounds only the scan's allowance below. At the cap the run cancels through the signal path, killing its
 containers, and finishes `VERDICT FAULT rc=2 reason=over-cap`, logging
 `over-cap: <tier/suite or phase> was still running at the <N>s cap`, each foreign tier with its step
-(`container`, or `warm-cache merge` with the container's rc and seconds), then each such tier's
-`log (<tier>)` path and the log's last 60 lines;
+(`container`, or `warm-cache merge` with the container's rc and seconds) and each suite with its own
+(`exec`, or `record` with the exec's rc and seconds), then each such unit's `log (<unit>)` path
+(a suite's is its `.<suite>.raw` in the results dir) and the log's last 60 lines. Only the 4
+(`TAIL_UNITS`) longest-registered units get their lines; later ones get the path alone, and a
+closing line names them. A suite's raw log is removed once its `.out` is written, so one cut with
+no record keeps it until the results dir is pruned;
 the verdict is recorded in `run.events`. If it has not unwound 30 s later it kills its descendants
 and exits itself, printing the same report before the VERDICT line: nothing buffered survives that
 exit.

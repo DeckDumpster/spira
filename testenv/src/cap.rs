@@ -20,6 +20,8 @@ pub const SETTLE: u64 = 30;
 pub const GRACE: u64 = 60;
 /// After tripping, how long the run gets to unwind before it is cut off from inside.
 const UNWIND: Duration = Duration::from_secs(30);
+/// How many cut units the report quotes; every parallel suite may be running at the cap.
+const TAIL_UNITS: usize = 4;
 
 pub const SUBCOMMANDS: &[&str] = &[
     "lint", "preflight", "status", "testdb", "wait", "container", "plan", "warm", "test-bins", "sandbox-supervise",
@@ -172,9 +174,13 @@ fn with_verdict(mut lines: Vec<String>) -> Vec<String> {
 
 fn explain(cut: &[Unit], what: &str, secs: u64, source: &str) -> Vec<String> {
     let mut out = vec![over_cap_line(what, secs, source)];
-    for u in cut {
-        let Some(path) = &u.log else { continue };
+    let mut held_back = Vec::new();
+    for (i, (u, path)) in cut.iter().filter_map(|u| Some((u, u.log.as_ref()?))).enumerate() {
         out.push(log_line(&u.name, path));
+        if i >= TAIL_UNITS {
+            held_back.push(u.name.as_str());
+            continue;
+        }
         match std::fs::read(path) {
             Ok(bytes) => {
                 out.push(format!("  last 60 lines ({}):", u.name));
@@ -183,6 +189,13 @@ fn explain(cut: &[Unit], what: &str, secs: u64, source: &str) -> Vec<String> {
             }
             Err(e) => out.push(format!("  log ({}) unreadable: {e}", u.name)),
         }
+    }
+    if !held_back.is_empty() {
+        out.push(format!(
+            "  last lines held back for {} more units (cap {TAIL_UNITS}): {}",
+            held_back.len(),
+            held_back.join(",")
+        ));
     }
     out
 }
@@ -651,6 +664,36 @@ mod tests {
         want.push("    ==> CI passed in 450s.".into());
         want.push("VERDICT FAULT rc=2 ran=0 reason=over-cap".into());
         assert_eq!(got, want);
+    }
+
+    #[test_id(tld4p25)]
+    #[test]
+    fn a_trip_report_tails_only_the_oldest_units_and_names_the_rest() {
+        ONLY_MY_UNITS.with(|o| o.set(true));
+        let dir = testkit::TempDir::new("testenv-cap-bound");
+        let body: String = (1..=100).map(|n| format!("line {n}\n")).collect();
+        let names: Vec<String> = (1..=6).map(|n| format!("unit-{n}")).collect();
+        let units: Vec<(Running, PathBuf)> = names
+            .iter()
+            .map(|name| {
+                let log = dir.path().join(name);
+                std::fs::write(&log, &body).unwrap();
+                let unit = running(name);
+                unit.log(&log);
+                (unit, log)
+            })
+            .collect();
+        let got = trip_report(&describe(), 600, "suite cap");
+        assert_eq!(got.iter().filter(|l| l.starts_with("    line ")).count(), 4 * 60);
+        for (name, (_, log)) in names.iter().zip(&units) {
+            assert!(got.contains(&log_line(name, log)), "{name}");
+            assert!(got[0].contains(name.as_str()), "{name}");
+        }
+        assert!(got.contains(&"  last 60 lines (unit-4):".to_string()));
+        assert_eq!(
+            got[got.len() - 2],
+            "  last lines held back for 2 more units (cap 4): unit-5,unit-6"
+        );
     }
 
     #[test_id(thjs95r)]

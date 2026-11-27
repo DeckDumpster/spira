@@ -1348,6 +1348,7 @@ pub mod fake {
             let out = ans.map(|a| a(req)).unwrap_or_default();
             if let Some(p) = &req.output {
                 let _ = std::fs::write(p, &out.output);
+                self.note_cut();
             }
             out
         }
