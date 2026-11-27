@@ -150,7 +150,7 @@ fn landing(p: &dyn Ports, repo: &str) -> Judged {
         return Ok(Outcome::Met(format!("{} registration pieces ok; forge workflow {name:?} is under {WORKFLOWS}/", pieces.len())));
     }
     if mode == "pr" {
-        if let Some(gate) = pieces.iter().find(|x| x.name == "gate") {
+        if let Some(gate) = pieces.iter().find(|x| x.name == "gate" && x.detail.starts_with("certifies nothing")) {
             return Ok(Outcome::Met(format!("gate: {}", gate.detail)));
         }
     }
@@ -402,6 +402,8 @@ mod tests {
         f.mode = "pr";
         f.gate_piece = Some("certifies nothing; the pull request's CI judges");
         assert_eq!(line(&f, Clause::Landing), "met landing: gate: certifies nothing; the pull request's CI judges");
+        f.gate_piece = Some("gate.steps on origin/main");
+        assert_eq!(line(&f, Clause::Landing), "met landing: 2 registration pieces ok; land mode pr");
     }
 
     #[test_id(tk9j71x)]

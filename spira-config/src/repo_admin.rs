@@ -770,26 +770,17 @@ fn check_cutting_in(reg: &Registry, name: &str, tree_root: &dyn Fn() -> Result<P
             );
             piece!("publish", publish_piece(reg, name, &path, &land));
         }
-        "queue" | "queue.forge" => {
+        "queue" | "queue.forge" | "pr" => {
+            let needs = if mode == "pr" { "pr" } else { "queue.forge" };
             piece!(
                 "queue-mode",
                 if remote.is_some() {
                     Ok(format!("{land} tracks a remote"))
                 } else {
-                    Err(format!(
-                        "queue.forge needs a remote landing ref, {land} is local"
-                    ))
+                    Err(format!("{needs} needs a remote landing ref, {land} is local"))
                 }
             );
         }
-        "pr" => piece!(
-            "queue-mode",
-            if remote.is_some() {
-                Ok(format!("{land} tracks a remote"))
-            } else {
-                Err(format!("pr needs a remote landing ref, {land} is local"))
-            }
-        ),
         other => piece!(
             "queue-mode",
             Err(format!("land mode {other:?} has no queue to open"))
