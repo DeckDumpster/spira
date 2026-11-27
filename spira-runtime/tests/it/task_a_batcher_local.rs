@@ -1870,6 +1870,53 @@ fn a_round_is_cut_within_a_minute_of_a_restart_that_interrupted_the_assemble() {
     assert_eq!((asked(&r, ASSEMBLE), asked(&r, ROUND_OPEN)), (2, 1), "{:?}", r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>());
 }
 
+/// A rig halted before its first tick, left to observe a cuttable pool for three cadences.
+fn halted_cut() -> TaskRig {
+    let assembled = Assembled { merged: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
+    let mut r = TaskRig::new(1, registration())
+        .unwrap()
+        .double(OBSERVE, |_| Ok(serde_json::to_string(&busy()).unwrap()))
+        .double(ASSEMBLE, move |_| Ok(serde_json::to_string(&assembled).unwrap()))
+        .double(ROUND_OPEN, |_| Ok(serde_json::to_string(&Opened { batch: "r9".into(), ..Opened::default() }).unwrap()));
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, ASSEMBLE, ROUND_OPEN].contains(e)) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r.deliver(runtime::event::HALT_STREAM, EventKind::new(runtime::event::SCHEDULER_HALTED, "test")).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(CADENCE_MS * 3).unwrap();
+    r
+}
+
+fn held_assembles(r: &TaskRig) -> usize {
+    r.journaled().iter().filter(|e| e.kind.tag == runtime::event::EFFECT_HELD).filter(|e| serde_json::from_str::<serde_json::Value>(&e.kind.body).unwrap()["spec"]["name"] == ASSEMBLE).count()
+}
+
+fn last_state(r: &TaskRig) -> State {
+    let carry: Carry = r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).expect("a recorded carry");
+    carry.repos["spira"].state
+}
+
+#[test_id(tyk4jmb)]
+#[test]
+fn an_assemble_held_by_a_halt_is_waited_for_and_released_once() {
+    let mut r = halted_cut();
+    kit::assert_unpoisoned(&r, STREAM);
+    assert_eq!((held_assembles(&r), last_state(&r)), (1, State::Assembling));
+    r.deliver(runtime::event::HALT_STREAM, EventKind::new(runtime::event::SCHEDULER_RESUMED, "")).unwrap();
+    assert_eq!(r.requested().iter().filter(|q| q.name == ASSEMBLE).count(), 1);
+}
+
+#[test_id(tcyez23)]
+#[test]
+fn an_assemble_held_by_a_halt_is_still_waited_for_after_a_restart() {
+    let mut r = halted_cut();
+    r.reopen(registration()).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r.advance(CADENCE_MS * 2).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    assert_eq!((held_assembles(&r), last_state(&r)), (1, State::Assembling));
+}
+
 /// The engine's own lost-at-restart outcome for an open round open is asked for again.
 #[test_id(tb8x00y)]
 #[test]

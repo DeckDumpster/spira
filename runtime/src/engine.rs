@@ -544,7 +544,12 @@ impl Engine {
         let bad = |what: &str, err: serde_json::Error| RuntimeError::new(format!("kept {what} of {} is not readable: {err}", row.task));
         match (row.task.as_str(), row.skey.as_str()) {
             (SCHEDULER_TASK, HALTED_KEY) => self.halted = row.value == "1",
-            (SCHEDULER_TASK, HELD_KEY) => self.held = serde_json::from_str(&row.value).map_err(|e| bad(HELD_KEY, e))?,
+            (SCHEDULER_TASK, HELD_KEY) => {
+                self.held = serde_json::from_str(&row.value).map_err(|e| bad(HELD_KEY, e))?;
+                for held in &self.held {
+                    self.projection.push(held);
+                }
+            }
             (_, CARRY_KEY) => {
                 let events: Vec<Event> = serde_json::from_str(&row.value).map_err(|e| bad(CARRY_KEY, e))?;
                 for ev in events {

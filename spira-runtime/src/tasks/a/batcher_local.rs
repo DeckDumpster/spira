@@ -2989,15 +2989,19 @@ fn in_flight(view: &Projection, stream: &runtime::event::StreamKey, snap: &mut S
     }
 }
 
-/// The names of the effects the stream has requested and not had answered, by the repo `repo_of`
-/// reads from each one's input.
+/// The names of the effects the stream has requested and not had answered, or that a halt holds
+/// for it and has not released, by the repo `repo_of` reads from each one's input.
 pub(super) fn flying_by_repo(view: &Projection, stream: &runtime::event::StreamKey, repo_of: impl Fn(&str) -> Option<String>) -> BTreeMap<String, Vec<String>> {
     let events = view.events(stream);
     let answered: std::collections::BTreeSet<&runtime::event::EventId> = events.iter().filter(|e| [EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT].contains(&e.kind.tag.as_str())).filter_map(|e| e.cause.as_ref()).collect();
+    let body = |e: &Event| serde_json::from_str::<serde_json::Value>(&e.kind.body).ok();
+    let requested = events.iter().filter(|e| e.kind.tag == EFFECT_REQUESTED && !answered.contains(&e.id)).filter_map(body);
+    // The resume releases everything held before it, including a release the engine refuses.
+    let since_resume = view.events(&runtime::event::StreamKey(HALT_STREAM.into())).rsplit(|e| e.kind.tag == SCHEDULER_RESUMED).next().unwrap_or_default();
+    let held = since_resume.iter().filter(|e| e.kind.tag == EFFECT_HELD).filter_map(body).filter(|b| b["stream"] == stream.0.as_str());
     let mut flying: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for req in events.iter().filter(|e| e.kind.tag == EFFECT_REQUESTED && !answered.contains(&e.id)) {
-        let Ok(body) = serde_json::from_str::<serde_json::Value>(&req.kind.body) else { continue };
-        let (Some(name), Some(input)) = (body["spec"]["name"].as_str(), body["spec"]["input"].as_str()) else { continue };
+    for b in requested.chain(held) {
+        let (Some(name), Some(input)) = (b["spec"]["name"].as_str(), b["spec"]["input"].as_str()) else { continue };
         if let Some(repo) = repo_of(input) {
             flying.entry(repo).or_default().push(name.to_string());
         }
