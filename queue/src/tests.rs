@@ -170,7 +170,8 @@ impl Git for FGit {
     fn fork_point(&self, repo: &Path, a: &str, b: &str) -> Result<String, String> {
         self.merge_base(repo, a, b).ok_or_else(|| format!("no merge base of {a} and {b}"))
     }
-    fn grep_files(&self, _: &Path, rev: &str, needle: &str, _: &str) -> Result<Vec<String>, String> {
+    fn grep_files(&self, _: &Path, rev: &str, needle: &str, glob: &str) -> Result<Vec<String>, String> {
+        self.calls.borrow_mut().push(format!("grep {rev} {needle} {glob}"));
         if self.cannot_say.borrow().contains("grep") {
             return Err("git cannot grep".into());
         }
@@ -3639,8 +3640,15 @@ fn deny_list_reader_world() -> T {
     t.git.set("refs/heads/spira/sp-c", "tc");
     *t.git.branches.borrow_mut() = vec![("spira/sp-c".into(), "tc".into())];
     t.lc_row("sp-c", "CERTIFIED", "tc", 1);
-    t.git.greps.borrow_mut().insert("vars.SPIRA_TEST_DENY_LIST".into(), vec![".github/workflows/ci.yml".into()]);
+    reads_the_list_at(&t, "merged-tc", "      run: echo \"${{ vars.SPIRA_TEST_DENY_LIST }}\" > deny\n");
     t
+}
+
+/// `head`'s workflow holds `body`; no other revision mentions the list.
+fn reads_the_list_at(t: &T, head: &str, body: &str) {
+    const CI: &str = ".github/workflows/ci.yml";
+    t.git.greps.borrow_mut().insert(format!("{head}:vars.SPIRA_TEST_DENY_LIST"), vec![CI.into()]);
+    t.git.files.borrow_mut().insert(format!("{head}:{CI}"), body.into());
 }
 
 const DENY_SNAPSHOT: &str = "# test-registry deny-list at=9 rows=1\ndisabled\ttest:t0aaaaa\tsp-x\t-\n";
@@ -3703,6 +3711,16 @@ fn open_batch_pushes_nothing_when_git_cannot_say_whether_the_workflows_read_the_
     let err = t.err();
     assert!(err.contains("SPIRA_TEST_DENY_LIST") && err.contains("git cannot grep"), "{err}");
     assert_nothing_pushed(&t);
+}
+
+#[test_id(tn3qvkm)]
+#[test]
+fn open_batch_leaves_the_variable_alone_when_only_a_comment_mentions_it() {
+    let t = deny_list_reader_world();
+    reads_the_list_at(&t, "merged-tc", "  # vars.SPIRA_TEST_DENY_LIST is read elsewhere\n");
+    assert_eq!(open_sp_c(&t), 0, "{}\n{}", t.out(), t.err());
+    assert!(variable_writes(&t).is_empty());
+    assert!(t.git.calls.borrow().iter().any(|c| c == "grep merged-tc vars.SPIRA_TEST_DENY_LIST .github/**/*.y*ml"), "{:?}", t.git.calls.borrow());
 }
 
 #[test_id(tlsnmpy)]

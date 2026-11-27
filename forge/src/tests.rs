@@ -2234,3 +2234,18 @@ fn variable_set_refuses_an_empty_name_or_value_without_calling_gh() {
     assert_eq!(variable_set(&gh, repo(), "NAME", b"").code, 1);
     assert!(gh.calls.borrow().is_empty());
 }
+
+#[test_id(tkmuev8)]
+#[test]
+fn the_verb_table_routes_variable_set_with_its_stdin() {
+    let dir = testkit::TempDir::new("forge-variable-set-dispatch");
+    let mut env = spira_config::process::fixture_metrics_env(dir.path(), "", &[]);
+    env.retain(|(k, _)| matches!(*k, "SPIRA_TOML" | "SPIRA_HOME"));
+    let edits: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, Some(v.as_str()))).collect();
+    let _env = testkit::env(&edits);
+    let gh = FakeGh::default();
+    gh.on(&["variable", "set", "NAME"], 0, "");
+    let out = crate::client::dispatch(&gh, &NoProc, "variable-set", repo(), &["NAME".to_string()], Some(b"v\n"));
+    assert_eq!(out.code, 0, "{:?}", crate::diag::take());
+    assert_eq!(*gh.inputs.borrow(), [Some(b"v\n".to_vec())]);
+}

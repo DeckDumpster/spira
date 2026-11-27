@@ -128,14 +128,14 @@ first on eject, abandon, open-batch, land-local, publish and rollback-local, as 
 #### The deny-list variable
 
 A repository whose CI reads the flip deny list takes it from the repository variable
-`SPIRA_TEST_DENY_LIST`. A repository reads it when a file under `.github/` in the batch head
-holds `vars.SPIRA_TEST_DENY_LIST`; no config names it, so the batch that introduces the
+`SPIRA_TEST_DENY_LIST`. A repository reads it when a `.yml`/`.yaml` file under `.github/` in the
+batch head holds `vars.SPIRA_TEST_DENY_LIST` on a line that is not a comment; no config names it, so the batch that introduces the
 reader is already served. Before that head is pushed (`open-batch`, and the verdict's rebuild
 of a batch on a moved base) the queue sets the variable to `test-registry deny-list --at <now>`
 through `forge variable-set`. If git cannot say whether the head reads it, the list cannot be
 read, or the forge does not write it, the queue names the cause and pushes nothing:
-`open-batch` leaves no record and no branch, and the rebuild keeps the open batch as it is for
-the next pass. A push that fails after the write leaves the newer snapshot in the variable.
+`open-batch` leaves no record and no branch, and the rebuild keeps the open batch for the next
+pass, mailing the operator once per moved base with `queue abandon` as the way through. A push that fails after the write leaves the newer snapshot in the variable.
 
 The variable is one value shared by every run of the repository; a run is not pinned to the
 snapshot of its cut. GitHub's documentation does not say when `vars` is resolved, so assume any
@@ -147,6 +147,9 @@ still queued (a cancel that failed), or any other run of the repository (another
 its main branch), may see a later snapshot than the one it was started beside: tests disabled
 since are skipped, and tests cleared or expired since run again. The queue reads no verdict
 from an ended batch's run.
+
+Only `queue.forge` batches are served. `queue.local`'s publish PRs do not write the variable,
+so a reader repository in that mode sees whatever was last written, or nothing.
 
 The App token `gh` runs as needs write access to the repository's variables. GitHub limits one
 variable's size (48 KB); a larger list is refused by the forge and so pushes nothing.

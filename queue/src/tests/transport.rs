@@ -466,3 +466,18 @@ fn the_real_forge_adapter_asks_the_configured_forge_for_the_flip_rerun_by_its_fl
     }
     assert_eq!(std::fs::read_to_string(&log).unwrap(), "workflow-rerun repo 77 --flip\nworkflow-rerun repo 77\n");
 }
+
+#[test_id(tdqfuol)]
+#[test]
+fn the_real_forge_adapter_hands_variable_set_its_value_on_stdin_and_keeps_the_forges_refusal() {
+    let dir = testkit::TempDir::new("queue-variable-set");
+    let log = dir.path().join("call");
+    let forge = dir.path().join("forge");
+    testkit::write_exe(&forge, &format!("#!/bin/sh\n{{ echo \"$@\"; cat; }} > {}\n", log.display()));
+    use crate::ports::Forge as _;
+    let repo = std::path::Path::new("repo");
+    assert_eq!(crate::real::RealForge.variable_set(&forge, repo, "NAME", "a\nb\n"), Ok(()));
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "variable-set repo NAME\na\nb\n");
+    testkit::write_exe(&forge, "#!/bin/sh\ncat >/dev/null\necho HTTP 403 >&2\nexit 1\n");
+    assert_eq!(crate::real::RealForge.variable_set(&forge, repo, "NAME", "v"), Err("rc=1: HTTP 403".into()));
+}

@@ -857,7 +857,7 @@ fn a_rebuild_on_a_moved_base_gives_the_new_head_its_own_flip_rerun() {
 fn rebuild_world() -> T {
     let t = flip_world();
     t.git.set("origin/main", "b1");
-    t.git.greps.borrow_mut().insert("vars.SPIRA_TEST_DENY_LIST".into(), vec![".github/workflows/ci.yml".into()]);
+    reads_the_list_at(&t, "merged-tb", "      run: echo \"${{ vars.SPIRA_TEST_DENY_LIST }}\" > deny\n");
     t
 }
 
@@ -881,6 +881,9 @@ fn a_rebuild_whose_variable_write_fails_pushes_nothing_and_keeps_the_batch_open(
     assert!(!t.lib.has("push origin +"), "{:?}", t.lib.calls.borrow());
     assert!(!has_call(&t.forge.calls, "pr-close"));
     assert!(record(&t).contains("head=h1\nbase=b0\n"), "{}", record(&t));
+    assert_eq!(pass_on(&t, "green\nhead-sha: h1\n"), 1);
+    assert_eq!(t.lib.mails.borrow().len(), 1, "{:?}", t.lib.mails.borrow());
+    assert!(t.lib.mails.borrow()[0].1.contains("queue abandon"), "{:?}", t.lib.mails.borrow());
     *t.forge.variable_err.borrow_mut() = None;
     assert_eq!(pass_on(&t, "green\nhead-sha: h1\n"), 0, "{}", t.err());
     assert!(t.lib.has("push origin +"), "{:?}", t.lib.calls.borrow());
