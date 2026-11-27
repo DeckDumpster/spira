@@ -654,32 +654,6 @@ pub struct ShowRow {
     pub parent: Option<String>,
 }
 
-/// An open idea in `bd list --json`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IdeaRow {
-    pub id: String,
-    pub title: String,
-    pub created_at: String,
-}
-
-/// The open rows of a `bd list --json` array, newest first. A row bd reports as anything
-/// but open is not in the holding area.
-pub fn idea_rows(json: &str) -> Vec<IdeaRow> {
-    use spira_config::nonwork::{is_open, Kind};
-    let Ok(serde_json::Value::Array(rows)) = serde_json::from_str::<serde_json::Value>(json) else {
-        return Vec::new();
-    };
-    let text = |r: &serde_json::Value, k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
-    let mut out: Vec<IdeaRow> = rows
-        .iter()
-        .filter(|r| is_open(Kind::Idea, spira_config::nonwork::status_of(Kind::Idea, r)))
-        .map(|r| IdeaRow { id: text(r, "id"), title: text(r, "title"), created_at: text(r, "created_at") })
-        .filter(|r| !r.id.is_empty())
-        .collect();
-    out.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| b.id.cmp(&a.id)));
-    out
-}
-
 /// Parses one `bd show --json` payload — an object, or a one-element array of one (both
 /// shapes appear depending on how many ids were asked for).
 pub fn parse_show_row(json: &str) -> Option<ShowRow> {
@@ -1569,20 +1543,6 @@ mod tests {
         let got = non_work_labels("testscope", None, None);
         assert_eq!(got, "testscope");
         assert!(!got.contains("plan"));
-    }
-
-    #[test_id(tn5r2ct)]
-    #[test]
-    fn idea_rows_are_open_only_newest_first() {
-        let got = idea_rows(r#"[{"id":"sp-a","title":"old","status":"open","created_at":"2026-10-01T00:00:00Z"},{"id":"sp-b","title":"new","status":"open","created_at":"2026-10-20T00:00:00Z"},{"id":"sp-c","title":"gone","status":"closed","created_at":"2026-10-25T00:00:00Z"}]"#);
-        assert_eq!(got.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["sp-b", "sp-a"]);
-        assert!(idea_rows("not json").is_empty());
-    }
-
-    #[test_id(tpr56p7)]
-    #[test]
-    fn idea_kind_carries_the_idea_label_and_no_partition() {
-        assert_eq!(non_work_labels("testscope", Some("idea"), Some("spira")), "testscope,idea,repo:spira");
     }
 
     #[test_id(tuarkk5)]

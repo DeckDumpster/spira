@@ -42,7 +42,6 @@ fn main() {
         "label" => cmd_label(&home, &rest),
         "drop" => cmd_drop(&rest),
         "contract" => cmd_contract(&home),
-        "ideas" => cmd_ideas(&rest),
         "lint" => cmd_lint(&home, &rest),
         "judge-create" => cmd_judge_create(&home, &rest),
         "event" => cmd_event(&rest),
@@ -67,7 +66,7 @@ fn main() {
         },
         _ => {
             eprintln!(
-                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted --tip <sha>] [--contract-fix] [--depends-on <id>]... [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--part N (proposal)] [--priority N] [--body-file F] [--express] [--submitted --tip <sha>] [--json]\n       --submitted --tip <sha> files the item SUBMITTED at <sha> and creates refs/heads/spira/<id> there in the repo checkout\n       bead.sh pilgrimage <design-file> --repo <name> --after <build-id>... [--priority N]\n       bead.sh amend <id> [--note \"<text>\"] [--priority N] [--body-file F --replace | --append-body F] [--express]\n       bead.sh amend <id> --live --note \"<text>\" | --append-body F [--ack-within <dur>]\n       bead.sh amend <id> --ack <amend-id> --accept | --decline \"<why>\"\n       bead.sh amend --enforce <amend-id>\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh ideas [--json]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
+                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted --tip <sha>] [--contract-fix] [--depends-on <id>]... [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--part N (proposal)] [--priority N] [--body-file F] [--express] [--submitted --tip <sha>] [--json]\n       --submitted --tip <sha> files the item SUBMITTED at <sha> and creates refs/heads/spira/<id> there in the repo checkout\n       bead.sh pilgrimage <design-file> --repo <name> --after <build-id>... [--priority N]\n       bead.sh amend <id> [--note \"<text>\"] [--priority N] [--body-file F --replace | --append-body F] [--express]\n       bead.sh amend <id> --live --note \"<text>\" | --append-body F [--ack-within <dur>]\n       bead.sh amend <id> --ack <amend-id> --accept | --decline \"<why>\"\n       bead.sh amend --enforce <amend-id>\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
             );
             2
         }
@@ -1021,7 +1020,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             return 2;
         }
         let scope_label = schema_name(home, "scope");
-        let insight_label = if kind == "insight" || kind == "idea" {
+        let insight_label = if kind == "insight" {
             Some(schema_name(home, &kind))
         } else {
             None
@@ -1611,44 +1610,6 @@ fn amend_enforce(aid: &str) -> i32 {
         eprintln!("bead: amend: slay --bead {id} failed ({slay}); the amendment is merged and marked enforced");
     }
     rc | slay
-}
-
-// =========================================================================================
-// ideas
-// =========================================================================================
-
-fn cmd_ideas(args: &[String]) -> i32 {
-    let json = match args {
-        [] => false,
-        [a] if a == "--json" => true,
-        _ => {
-            eprintln!("usage: bead.sh ideas [--json]");
-            return 2;
-        }
-    };
-    let label = bead::door::IDEA_LABEL;
-    let client = match spira_store::lc_call::LcClient::configured() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("bead: {e}");
-            return DOOR_UNREACHABLE;
-        }
-    };
-    let rows = match bead::door::ideas(&client, label) {
-        Ok(rows) => rows,
-        Err(code) => {
-            eprintln!("bead: ideas: content list exited {code}");
-            return 1;
-        }
-    };
-    if json {
-        println!("{}", serde_json::Value::Array(rows.iter().map(|r| serde_json::json!({"id": r.id, "title": r.title, "created_at": r.created_at})).collect()));
-    } else {
-        for r in &rows {
-            println!("{}\t{}", r.id, r.title);
-        }
-    }
-    0
 }
 
 // =========================================================================================

@@ -50,12 +50,9 @@ SCHEMA_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # enumerates types while buying nothing. It is a closed `chore`
 # carrying the `insight` label at P4.
 #
-# `idea` is an open `proposal` carrying the `idea` label and no partition label: no persona
-# claims it, and the proposal type is outside every work query and every lifecycle row.
-#
 # `gate` is bd's own type, backing await_type/await_id/timeout/waiters. It is listed here so
 # that exhaustive registration does not retire it by omission.
-SCHEMA_KINDS="work:task event:event escalation:escalation proposal:proposal idea:proposal insight:chore gate:gate"
+SCHEMA_KINDS="work:task event:event escalation:escalation proposal:proposal insight:chore gate:gate"
 
 # The kinds a work query returns. Anything not here is excluded by type.
 SCHEMA_WORK_TYPES="task bug feature epic chore spike"
@@ -101,7 +98,6 @@ schema_name() {          # schema_name <key> -> the name; exit 2 on an undeclare
         world_stop)    printf '%s' "${SPIRA_WORLD_STOP_LABEL:-world-stop}" ;;
         no_loop)       printf '%s' "${SPIRA_NO_LOOP_LABEL:-no-loop}" ;;
         insight)       printf '%s' 'insight' ;;
-        idea)          printf '%s' 'idea' ;;
         # FAIL CLOSED. An undeclared key must not resolve to the empty string: an empty label
         # in a query is a well-formed question about nothing, which returns [] truthfully and
         # reads exactly like "no work" — that is sp-xrkuu, where the pane printed a confident
@@ -111,7 +107,7 @@ schema_name() {          # schema_name <key> -> the name; exit 2 on an undeclare
             return 2 ;;
     esac
 }
-schema_names() { printf '%s\n' ask ci scope plan incident spike groomer mimir mimir_remedy review world_stop no_loop insight idea; }
+schema_names() { printf '%s\n' ask ci scope plan incident spike groomer mimir mimir_remedy review world_stop no_loop insight; }
 
 # schema_default <key> — the declared default value, ignoring env and conf.
 # Used by literal-lint.sh to build its pattern list without the ambient environment
@@ -132,7 +128,6 @@ schema_default() {
         world_stop)     printf '%s' "world-stop" ;;
         no_loop)        printf '%s' "no-loop" ;;
         insight)        printf '%s' "insight" ;;
-        idea)           printf '%s' "idea" ;;
         *)  printf 'schema: no such name: %s\n' "${k:-<empty>}" >&2
             printf 'schema: declared names: %s\n' "$(schema_names | tr '\n' ' ')" >&2
             return 2 ;;

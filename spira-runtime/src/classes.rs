@@ -13,8 +13,6 @@ use runtime::pools::EffectClass::{self, Broker, Container, Forge, Git, Host, Sto
 
 /// Every registered effect by name, with its class.
 pub const CLASSES: &[(&str, EffectClass)] = &[
-    ("asks.ideas.ask", Store),
-    ("asks.ideas.observe", Store),
     ("asks.moot.check", Host),
     ("asks.moot.observe", Store),
     ("asks.moot.resolve", Store),

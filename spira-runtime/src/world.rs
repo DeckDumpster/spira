@@ -2323,7 +2323,7 @@ mod bounded_store_tests {
 }
 
 /// The epoch of `hour`:00 in zone `tz`, `days_after` local days after the local day of epoch `at`.
-/// The zone conversion is the `date` program's, as in `idea-prompt`. The answer is held for the
+/// The zone conversion is the `date` program's. The answer is held for the
 /// local day `at` falls in, bounded by the epochs `date` gave for that day's start and the next's.
 pub fn cr_open_epoch(tz: &str, hour: u32, at: u64, days_after: u32) -> Result<u64, String> {
     static HELD: std::sync::OnceLock<HeldEpochs> = std::sync::OnceLock::new();

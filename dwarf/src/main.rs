@@ -163,6 +163,17 @@ fn run_search_fence(args: &[String]) -> i32 {
     0
 }
 
+/// `dwarf bash-stdin`: the PreToolUse hook reading the payload on stdin; a rewrite is the JSON on
+/// stdout, anything else prints nothing. Always exit 0.
+fn run_bash_stdin() -> i32 {
+    let mut raw = String::new();
+    let _ = std::io::stdin().read_to_string(&mut raw);
+    if let Some(out) = dwarf::bash_stdin::hook_output(&raw) {
+        println!("{out}");
+    }
+    0
+}
+
 fn main() {
     spira_otel::run::begin("dwarf", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
     let t0 = util::now_epoch();
@@ -184,6 +195,9 @@ fn main() {
     }
     if args.first().map(String::as_str) == Some("search-fence") {
         { let code = run_search_fence(&args[1..]); spira_otel::run::finish(code); std::process::exit(code) };
+    }
+    if args.first().map(String::as_str) == Some("bash-stdin") {
+        { let code = run_bash_stdin(); spira_otel::run::finish(code); std::process::exit(code) };
     }
     if args.first().map(String::as_str) == Some("stop") {
         { let code = run_stop(&args[1..]); spira_otel::run::finish(code); std::process::exit(code) };
@@ -298,7 +312,7 @@ fn main() {
 /// The bounded operation label of an argv: a subcommand, `escape`, or the run mode.
 fn operation_of(args: &[String]) -> String {
     match args.first().map(String::as_str) {
-        Some(c @ ("dwarf-named" | "fast-tier" | "search-fence" | "stop" | "capacity")) => c.to_string(),
+        Some(c @ ("dwarf-named" | "fast-tier" | "search-fence" | "bash-stdin" | "stop" | "capacity")) => c.to_string(),
         Some("direct") => "direct".into(),
         _ if args.iter().any(|a| a == "--directed") => "directed".into(),
         _ if args.iter().any(|a| a == "--escape") => "escape".into(),

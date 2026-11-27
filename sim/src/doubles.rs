@@ -131,7 +131,6 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("trigger.mimir", &["trigger.mimir.observe", "trigger.mimir.file"]),
     ("persona.ops", &["persona.ops.observe", "persona.ops.intake_install", "persona.ops.incident_drain", "persona.ops.brief", "unit.start", "unit.stop", "persona.ops.ledger", "persona.ops.cleanup", "inbox.append"]),
     ("persona.archivist", &["persona.archivist.observe", "persona.archivist.brief", "unit.start", "unit.stop", "persona.archivist.commit", "persona.archivist.settle", "persona.archivist.digest_send", "persona.archivist.mark", "persona.archivist.forget"]),
-    ("asks.ideas", &["asks.ideas.observe", "asks.ideas.ask"]),
     ("intake.filings", &["intake.filings.observe", "intake.filings.file", "intake.filings.append", "intake.filings.ack", "inbox.append"]),
     ("intake.kit_bump", &["intake.kit_bump.observe", "intake.kit_bump.file", "intake.kit_bump.amend"]),
     ("cockpit.ensure", &["cockpit.ensure.observe", "unit.start_installed"]),
