@@ -115,10 +115,9 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             let release = env("SPIRA_RELEASE").filter(|v| !v.is_empty()).ok_or("SPIRA_RELEASE is not set: a pilgrim world is built from the active release")?;
             let release = world::prebuilt_release(std::path::Path::new(&release))?;
-            let pinned = spira_config::process::cfg("SPIRA_BD").ok();
             let release_str = release.display().to_string();
             let seen = |k: &str| if k == "SPIRA_RELEASE" { Some(release_str.clone()) } else { env(k) };
-            let (sets, removes) = world::pilgrim_session_env(&seen, pinned);
+            let (sets, removes) = world::pilgrim_session_env(&seen);
             for (k, v) in sets {
                 std::env::set_var(k, v);
             }

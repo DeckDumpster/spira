@@ -20,7 +20,6 @@ set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh"
 
 DIR="$SPIRA_HOME/statutes"
-spira_require bd || exit 1
 [ -d "$DIR" ] || { echo "seed: no statutes directory at $DIR" >&2; exit 1; }
 # A missing `.beads` is a real fault to report, never a reason to quietly write whatever
 # database the working directory happens to resolve to.
@@ -29,7 +28,7 @@ spira_require bd || exit 1
     echo "      Set SPIRA_DB in ${SPIRA_CONF_FILE:-spira.conf}, or run spira-install to create the store" >&2
     exit 1; }
 
-# Every key in force, one per line. Asked once: `bd recall` per statute is a round trip each,
+# Every key in force, one per line. Asked once: a recall per statute is a round trip each,
 # and this runs over twenty of them.
 in_force() {
     timeout 5 spira-lc content memories --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
@@ -90,7 +89,7 @@ for f in "$DIR"/law-*.txt; do
         printf '  wrote %s\n' "$key"; wrote=$((wrote+1))
     else
         printf '  FAILED %s\n' "$key" >&2
-        printf '    %s\n' "${_bd_err:-no output (timed out after 30 s, or bd was killed)}" | head -1 >&2
+        printf '    %s\n' "${_bd_err:-no output (timed out after 30 s, or the write was killed)}" | head -1 >&2
         failed=$((failed+1))
     fi
     unset _bd_err

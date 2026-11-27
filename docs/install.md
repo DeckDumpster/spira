@@ -8,10 +8,10 @@ list is `spira/deps.toml`, which `doctor` reads:
 
 | Tier | Tools | Notes |
 |---|---|---|
-| runtime (the loop cannot run) | `bd`, `dolt`, `git`, `python3`, `flock`, `tar`, `gunzip`, `duckdb` | `bd`, `dolt`, `duckdb`, `gh`, `jq`, `zstd`, `sccache`, `awscli2`, `inotify-tools`, `aerc`, `go`, `nodejs`, `openssl`, `terraform` and `tailscale` are pinned in `flake.nix` as the `spira-env` package; the installer builds it with `nix build` when `nix` is present. |
+| runtime (the loop cannot run) | `dolt`, `git`, `python3`, `flock`, `tar`, `gunzip`, `duckdb` | `dolt`, `duckdb`, `gh`, `jq`, `zstd`, `sccache`, `awscli2`, `inotify-tools`, `aerc`, `go`, `nodejs`, `openssl`, `terraform` and `tailscale` are pinned in `flake.nix` as the `spira-env` package; the installer builds it with `nix build` when `nix` is present. |
 | optional (one feature off) | `claude` (the agent CLI; `SPIRA_AGENT` names the binary), `tmux` (cockpit), `gh` + `openssl` (`pr`-mode repositories), `jq`, `zstd`, `aws` (EC2 spill), `node`, `cargo` | With no `claude` the loop is armed and calls nothing; `ready.sh` warns. |
 | operator | `sccache` (WebDAV backend), `inotifywait`, `aerc`, `hunk`, `go` | The installer fetches `duckdb`, `sccache`, `inotifywait` into `~/.local/bin` and copies a vendored `aerc` from the release when they are missing. |
-| development | `rustup` (toolchain pinned by `rust-toolchain.toml`), `nix`, `podman`, `bd-embedded`, `terraform` | `podman` runs the test containers; `bd-embedded` is the embedded-Dolt build of `bd` used as the test-fixture engine. |
+| development | `rustup` (toolchain pinned by `rust-toolchain.toml`), `nix`, `podman`, `bd`, `bd-embedded`, `terraform` | `podman` runs the test containers; `bd` serves test fixtures only (pinned in `flake.nix` as `spira-dev-env`; a running box needs none), and `bd-embedded` is its embedded-Dolt build. |
 
 ## Build and install
 

@@ -100,7 +100,7 @@ _dwarf_thrash_meta() {
 /// all — ad hoc overrides or lib.sh literals, never conf.sh's.
 ///
 /// UNTIL WAVE 4.8 this list also carried every name conf.sh's own registry resolves
-/// (SPIRA_RUN, SPIRA_DB, SPIRA_BD, SPIRA_WIKI, SPIRA_ASK_LABEL, SPIRA_MAX_DWARVES, ...): `_dwarf_snapshot`
+/// (SPIRA_RUN, SPIRA_DB, SPIRA_WIKI, SPIRA_ASK_LABEL, SPIRA_MAX_DWARVES, ...): `_dwarf_snapshot`
 /// read each one back out of the bash process that had just sourced conf.sh, a second,
 /// bash-shaped derivation of values `main.rs`'s `merge_resolved_config` now computes
 /// in-process and merges into `Snapshot.vars` after this seam call returns — see that
@@ -125,7 +125,7 @@ pub const SNAPSHOT_VARS: &[&str] = &[
 /// in-process instead (`main.rs`'s `merge_resolved_config`) — kept as its own list so a
 /// parity check can diff this crate's old and new answers key by key.
 pub const RETIRED_SNAPSHOT_VARS: &[&str] = &[
-    "SPIRA_RUN", "SPIRA_DB", "SPIRA_BD", "SPIRA_MAIL", "SPIRA_WIKI",
+    "SPIRA_RUN", "SPIRA_DB", "SPIRA_MAIL", "SPIRA_WIKI",
     "SPIRA_RUNES_OVERLAY", "SPIRA_TESTDB_LIB", "SPIRA_WORLD_STOP_LABEL",
     "SPIRA_ASK_LABEL", "SPIRA_SUBMITTED_LABEL", "SPIRA_SCOPE_LABEL",
     "SPIRA_REPO_MAP", "SPIRA_HOME_REPO", "SPIRA_THRASH_MINUTES",

@@ -1063,7 +1063,7 @@ pub struct EmbeddedUp {
     pub dir: PathBuf,
     pub baseline: PathBuf,
     pub bin: Option<PathBuf>,
-    /// What the caller should export as `SPIRA_BD`/`TESTDB_BD`: the absolute path `bd`
+    /// What the caller should export as `TESTDB_BD`: the absolute path `bd`
     /// resolved to, or `bd` itself if that lookup fails despite init succeeding (matches
     /// testdb.sh's `${_bd_real:-$TESTDB_BD}` fallback).
     pub bd: String,

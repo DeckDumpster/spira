@@ -846,6 +846,8 @@ pub struct RetiredKey {
 /// the all-time set, and a key present in history but neither active nor listed here is
 /// reported as silently dropped.
 pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
+    RetiredKey { key: "bd", bead: "sp-ftpshc" },
+    RetiredKey { key: "bd_tag", bead: "sp-ftpshc" },
     // Spira works the whole backlog continuously; there is no single goal bead (per Ryan,
     // 2026-09-30, sp-2f9sa). The id prefix it used to imply is its own key now: id_prefix.
     RetiredKey { key: "goal", bead: "sp-k6m1m" },

@@ -46,10 +46,10 @@
 //! function. Config WRITES (`spira_config_set`/`unset`, bead sp-ksrss) are a separate
 //! family for the same reason.
 //!
-//! THE PATH TAIL AND `SPIRA_BD`/schema-preflight bootstrap this doc used to list here moved instead, in
+//! THE PATH TAIL AND schema-preflight bootstrap this doc used to list here moved instead, in
 //! sp-kfimz ("wave 4.6"), to [`crate::env_bootstrap`] — a separate module rather than part of
 //! `resolve()` itself, because both are side-effecting (PATH depends on the process's own
-//! ambient PATH, not only `spira.toml`; the schema preflight shells out to `bd` and writes a
+//! ambient PATH, not only `spira.toml`; the schema preflight writes a
 //! cache stamp) where `resolve()` is a pure function of its [`ResolveInput`].
 
 use std::collections::BTreeMap;
@@ -431,7 +431,6 @@ pub const EXPORT_KEYS: &[&str] = &[
     "COCKPIT_RIGHT_PCT",
     "SPIRA_ALERT_GLOB",
     "SPIRA_ASK_LABEL",
-    "SPIRA_BD",
     "SPIRA_CI_LABEL",
     "SPIRA_CI_PARK_MAX",
     "SPIRA_CTRL",

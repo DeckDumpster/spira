@@ -137,7 +137,7 @@ echo "database"
 # =============================================================================
 if ! [ -d "$SPIRA_DB/.beads" ]; then
     FAIL "database absent — no .beads at $SPIRA_DB" \
-         "Create it: bd -C $SPIRA_DB init"
+         "Create it: run spira-install, which makes the store"
 # batch-job: full store listing, the health probe of the ready poller
 elif ! _db_out="$(timeout 30 spira-lc content list --limit 0 --json 2>&1)"; then
     _rdy_dp=""

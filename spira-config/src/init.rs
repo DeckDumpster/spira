@@ -123,22 +123,6 @@ pub fn render(answers: &BTreeMap<String, String>, out: &Path, reg: &Registry<'_>
     if a.get("lc_store_path").is_none_or(|v| v.is_empty()) {
         a.insert("lc_store_path".into(), PathBuf::from(&a["run"]).join("lc-control.db").display().to_string());
     }
-    // The bd every process runs: found once, here, on this box's PATH (what conf.sh's
-    // env-bootstrap derived on every source); nothing derives it after the cutover. Not found
-    // is an input the operator must answer.
-    if a.get("bd").is_none_or(|v| v.is_empty()) {
-        let path = crate::env_bootstrap::path_tail(
-            reg.env.get("PATH").map(String::as_str).unwrap_or(""),
-            a.get("path").map(String::as_str).unwrap_or(""),
-            reg.env.get("HOME").map(String::as_str).unwrap_or(""),
-        );
-        match crate::env_bootstrap::resolve_bd(&path) {
-            bd if bd.starts_with('/') => {
-                a.insert("bd".into(), bd);
-            }
-            _ => return Err("no bd on PATH — install beads, or answer bd with its absolute path".into()),
-        }
-    }
     let row_keys: Vec<&str> = HOME_REPO_ROW.iter().map(|(k, _, _)| *k).collect();
     let mut doc = crate::SpiraToml::default();
     for (k, v) in &a {
@@ -367,7 +351,7 @@ mod tests {
         parse_answers(
             concat!(
                 "# a box\ninstance = acc\nid_prefix = sp\nhome_repo = scratch\ndb = b/db\nrun = b/run\nreleases = \"b/rel\"\nspira.dolt_data = b/dolt\noperated = 0\n",
-                "bd = b/bin/bd\nspira.metrics_flush_minutes = 60\nspira.gate_target_cap_mib = 81920\n",
+                "spira.metrics_flush_minutes = 60\nspira.gate_target_cap_mib = 81920\n",
             ),
         )
         .unwrap()

@@ -2426,6 +2426,22 @@ fn verify_names_a_runtime_program_missing_from_the_release_path_as_a_deps_proble
     assert!(!p.iter().any(|p| p.starts_with("deps:")), "--no-pre-activate skips the check: {p:?}");
 }
 
+#[test_id(t5aaqcy)]
+#[test]
+fn the_shipped_manifest_verifies_on_a_path_with_no_bd() {
+    let text = fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join("spira/deps.toml")).unwrap();
+    let d = TempDir::new("deps-no-bd");
+    let bin = d.path().join("bin");
+    let runtime: Vec<_> = spira_config::deps::parse(&text).unwrap().deps.into_iter().filter(|d| d.tier == "runtime").collect();
+    assert!(runtime.iter().any(|d| d.name == "dolt"), "positive control: the shipped manifest loaded");
+    for dep in runtime.iter().filter(|d| !d.name.starts_with("bd")) {
+        stub(&bin.join(&dep.name), "#!/bin/sh\n");
+    }
+    let rel = d.path().join("rel");
+    file(&rel.join("spira/deps.toml"), &text);
+    assert_eq!(deps_problems(&rel, &bin.display().to_string()), Vec::<String>::new());
+}
+
 const ENV_PROG: &str = "spira-no-such-env-program";
 
 /// Verifies release A, a flake release whose `spira-env` row names [`ENV_PROG`], plus any

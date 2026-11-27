@@ -101,7 +101,6 @@ impl Default for Real {
 const RESOLVED_KEYS: &[&str] = &[
     "COCKPIT_MAIL",
     "COCKPIT_SESSIONS",
-    "SPIRA_BD",
     "SPIRA_RUNES_OVERLAY",
     "SPIRA_DB",
     "SPIRA_DOLT_DATA",
@@ -407,15 +406,6 @@ impl World for Real {
         now.duration_since(modified).ok().map(|d| d.as_secs())
     }
 
-    fn arch(&self) -> String {
-        // `std::env::consts::ARCH` at compile time (x86_64/aarch64/...) — the same values
-        // `uname -m` reports for the two architectures this check cares about, with no
-        // subprocess and no new `deps.toml` entry for a program declared only for this.
-        std::env::consts::ARCH.to_string()
-    }
-    fn spira_bin_purpose(&self, name: &str) -> String {
-        self.seam("spira_bin_purpose \"$1\"", &[name])
-    }
 
     fn concierge_stray_holders(&self, concierge_sh: &Path) -> Vec<String> {
         spira_config::bounded::bounded("bash")

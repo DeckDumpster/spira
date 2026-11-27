@@ -192,7 +192,6 @@ mod tests {
     /// Every variable that locates bd, its database, or dolt — none may reach the model.
     const DB_LOCATORS: &[&str] = &[
         "SPIRA_DB",
-        "SPIRA_BD",
         "BEADS_DIR",
         "BEADS_DB",
         "BD_DB",

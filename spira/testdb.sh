@@ -119,8 +119,7 @@ testdb_require() {       # testdb_require <suite-name>
 }
 
 # testdb_up <tag> — a fixture workspace with a throwaway database. Exports SPIRA_DB
-# and SPIRA_BD: lib.sh's `bdq` reads both, and SPIRA_BD must point at the right
-# binary so every bdq call inside a test reaches the engine the fixture was created with.
+# and TESTDB_ACTIVE_BD, the bd of the engine the fixture was created with.
 #
 # `--prefix sp` with no --server: the issue prefix is production's, so ids read `sp-a3f`
 # exactly as they do live, while the database is private with no server traffic.
@@ -139,17 +138,17 @@ testdb_up() {            # testdb_up <tag>
     # leaves it unusable rather than pointing at whatever the caller had — which is
     # production. A suite that ignores our return then dies on its first bd call with
     # a named error (unbound variable under set -u, or "no such database") instead of
-    # writing to the real store. SPIRA_BD is paired because it names the binary for that
+    # writing to the real store. TESTDB_ACTIVE_BD is paired because it names the binary for that
     # database; leaving one set and the other unset would let a call slip through to the
     # wrong engine.
-    unset SPIRA_DB SPIRA_BD
+    unset SPIRA_DB TESTDB_ACTIVE_BD
     TESTDB_OWNS_SERVER_FIXTURE=0; export TESTDB_OWNS_SERVER_FIXTURE
 
     # ---- SHARED FIXTURE: EMBEDDED (has TESTDB_BASELINE) ----
     # Server mode sets TESTDB_BASELINE too (for .beads restoration), but must NOT take this
-    # branch: the embedded path exports SPIRA_BD="$TESTDB_BD" (bd-embedded), which is the
+    # branch: the embedded path exports TESTDB_ACTIVE_BD="$TESTDB_BD" (bd-embedded), which is the
     # wrong binary for a server-mode fixture. Server mode falls through to the SERVER branch
-    # below, which exports SPIRA_BD="$TESTDB_SERVER_BD" (bd) (sp-f342).
+    # below, which exports TESTDB_ACTIVE_BD="$TESTDB_SERVER_BD" (bd) (sp-f342).
     # A suite requesting server mode also bypasses this branch: bd-embedded refuses bd sql,
     # so the suite must build its own fresh server fixture or skip.
     if [ "${TESTDB_SHARED:-0}" = 1 ] && [ -n "${TESTDB_NAME:-}" ] && \
@@ -175,13 +174,13 @@ testdb_up() {            # testdb_up <tag>
             exit "${TESTDB_FAULT_EXIT:-75}"
         }
         printf 'testdb: baseline copy from %s\n' "$TESTDB_BASELINE" >&2
-        export SPIRA_DB="$TESTDB_PRIVATE_DIR" SPIRA_BD="$TESTDB_BD"
-        # SPIRA_DB/SPIRA_BD/SPIRA_PATH are registered keys: a compiled Spira binary the
+        export SPIRA_DB="$TESTDB_PRIVATE_DIR" TESTDB_ACTIVE_BD="$TESTDB_BD"
+        # SPIRA_DB/SPIRA_PATH are registered keys: a compiled Spira binary the
         # suite runs afterward resolves them fresh from SPIRA_TOML, never from this shell's
         # exported environment (per Ryan 2026-10-05, the one-source-of-config law) — so
         # tl_config declares them too, alongside the plain export every bash-level caller
         # here (bdq, B(), etc.) still reads directly.
-        tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD"
+        tl_config SPIRA_DB="$SPIRA_DB"
         # conf.sh resets PATH from SPIRA_PATH; add TESTDB_BIN to both so child processes
         # that re-source conf.sh still find the embedded binary.
         if [ -n "${TESTDB_BIN:-}" ]; then
@@ -258,10 +257,10 @@ testdb_up() {            # testdb_up <tag>
 
         # Full path: conf.sh rebuilds PATH from SPIRA_PATH + $HOME/.local/bin; a bare name
         # unreachable after that rebuild (e.g. private HOME in a parallel gate suite) fails.
-        export SPIRA_DB="$TESTDB_DIR" SPIRA_BD="${_bd_abs:-$TESTDB_BD}"
+        export SPIRA_DB="$TESTDB_DIR" TESTDB_ACTIVE_BD="${_bd_abs:-$TESTDB_BD}"
         # Registered keys: declared via tl_config too — see the embedded-borrow branch's
         # comment above for why the plain export alone no longer reaches a compiled binary.
-        tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD"
+        tl_config SPIRA_DB="$SPIRA_DB"
         return 0
     fi
 
@@ -286,11 +285,11 @@ testdb_up() {            # testdb_up <tag>
     TESTDB_BIN=""
     TESTDB_OWNS_SERVER_FIXTURE=1; export TESTDB_OWNS_SERVER_FIXTURE
     # TESTDB_BD: the absolute bd path testenv resolved (DESIGN-testdb.md §2.4).
-    export SPIRA_DB="$TESTDB_DIR" SPIRA_BD="$(_testdb_kv TESTDB_BD "$_out")"
-    [ -n "$SPIRA_BD" ] || SPIRA_BD="$TESTDB_SERVER_BD"
+    export SPIRA_DB="$TESTDB_DIR" TESTDB_ACTIVE_BD="$(_testdb_kv TESTDB_BD "$_out")"
+    [ -n "$TESTDB_ACTIVE_BD" ] || TESTDB_ACTIVE_BD="$TESTDB_SERVER_BD"
     # Registered keys: declared via tl_config too, same reason as the embedded-mode
     # branches above — a compiled binary never sees this shell's own exports for them.
-    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD"
+    tl_config SPIRA_DB="$SPIRA_DB"
     _testdb_sql_reader || { printf 'testdb: could not create the read-only SQL user for %s\n' "$TESTDB_NAME" >&2; return 1; }
     return 0
 }
@@ -344,9 +343,9 @@ testdb_reset() {
 testdb_seed() {          # testdb_seed  < JSONL on stdin
     local f; f="$(mktemp)"
     cat > "$f"
-    # Use SPIRA_BD (set by testdb_up to the right binary for the current mode).
+    # Use TESTDB_ACTIVE_BD (set by testdb_up to the right binary for the current mode).
     # batch-job: fixture import
-    "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" import "$f" >/dev/null 2>&1
+    "${TESTDB_ACTIVE_BD:-$TESTDB_BD}" -C "$SPIRA_DB" import "$f" >/dev/null 2>&1
     local rc=$?
     [ "$rc" -eq 0 ] || { rm -f "$f"; echo "testdb_seed: bd import failed (rc=$rc)" >&2; return "$rc"; }
     _testdb_seed_visible "$f"; rc=$?
@@ -363,7 +362,7 @@ import json, sys
 print(",".join(json.loads(l)["id"] for l in open(sys.argv[1]) if l.strip()))' "$1")" || return 1
     [ -n "$_ids" ] || return 0
     for _try in $(seq 1 "${TESTDB_SEED_TRIES:-5}"); do
-        if timeout 5 "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" list --id "$_ids" --status all --limit 0 --json 2>/dev/null \
+        if timeout 5 "${TESTDB_ACTIVE_BD:-$TESTDB_BD}" -C "$SPIRA_DB" list --id "$_ids" --status all --limit 0 --json 2>/dev/null \
             | python3 -c '
 import json, sys
 t = sys.stdin.read()
@@ -385,7 +384,7 @@ sys.exit(0 if set(sys.argv[1].split(",")) <= got else 1)' "$_ids" 2>/dev/null; t
 # a fixture up (sp-voip5, lifecycle-guard); this is the data it would otherwise have written.
 testdb_restate() {
     local _row
-    _row="$(timeout 5 "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" show "$1" --json 2>/dev/null)" \
+    _row="$(timeout 5 "${TESTDB_ACTIVE_BD:-$TESTDB_BD}" -C "$SPIRA_DB" show "$1" --json 2>/dev/null)" \
         || { echo "testdb_restate: bd show $1 failed" >&2; return 1; }
     _row="$(printf '%s' "$_row" | python3 -c '
 import json, sys, datetime

@@ -162,7 +162,6 @@ impl Lc {
                 ("SPIRA_LC_SOCKET", &sock),
                 ("SPIRA_VICTORIALOGS_URL", "http://127.0.0.1:9"),
                 ("SPIRA_DB", &db),
-                ("SPIRA_BD", &bd_program),
                 ("SPIRA_BEADS_SQL_HOST", "127.0.0.1"),
                 ("SPIRA_BEADS_SQL_PORT", &store.port),
                 ("SPIRA_BEADS_SQL_USER", "spira_lc_ro"),
@@ -179,7 +178,7 @@ impl Lc {
 
     fn command(&self) -> Command {
         let mut c = Command::new(testkit::bin_exe("spira-lc"));
-        c.env_clear().env("PATH", std::env::var("PATH").unwrap_or_default()).env("SPIRA_TOML", &self.toml).env("SPIRA_HOME", &self.home).env("SPIRA_RELEASE", self.dir.join("release")).env("HOME", self.dir.join("home"));
+        c.env_clear().env("PATH", format!("{}:{}", self.dir.join("bdpath").display(), std::env::var("PATH").unwrap_or_default())).env("SPIRA_TOML", &self.toml).env("SPIRA_HOME", &self.home).env("SPIRA_RELEASE", self.dir.join("release")).env("HOME", self.dir.join("home"));
         c
     }
 
@@ -897,9 +896,11 @@ fn a_gate_check_over_a_github_gate_is_refused_rather_than_forked() {
     assert_eq!(children, 0, "{out}");
 }
 
-/// A `bd` that records every argv it is run with and refuses: nothing under test may start it.
+/// A `bd`, first on the PATH under test, that records every argv it is run with and refuses:
+/// nothing under test may start it.
 fn recording_bd(dir: &Path, log: &Path) -> String {
-    let path = dir.join("recording-bd");
+    let path = dir.join("bdpath/bd");
+    std::fs::create_dir_all(dir.join("bdpath")).unwrap();
     recording_program(&path, log);
     path.display().to_string()
 }

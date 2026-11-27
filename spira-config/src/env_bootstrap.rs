@@ -1,9 +1,4 @@
-//! Environment bootstrap: the PATH tail and `SPIRA_BD` resolution `conf.sh` evals each time it
-//! is sourced. It calls `env-bootstrap --sh` in `main.rs` and carries none of this logic itself.
-
-use std::fs;
-use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+//! Environment bootstrap: the PATH tail `conf.sh` evals each time it is sourced. It calls `env-bootstrap --sh` in `main.rs` and carries none of this logic itself.
 
 /// THE LAUNCHER'S PATH COMES FIRST AND IS NEVER REWRITTEN (sp-gypjk, law). `current` is the
 /// PATH already in force — the launcher put the release's `bin/` and `spira/` at the front —
@@ -38,56 +33,11 @@ pub fn path_tail(current: &str, spira_path: &str, home: &str) -> String {
     path
 }
 
-/// `SPIRA_BD` — resolved once, deterministically, from `path` (the PATH [`path_tail`] just
-/// assembled, never whatever PATH the calling context happened to carry in). sp-s2zvn's
-/// scar: a bare `${SPIRA_BD:-bd}` fallback in lib.sh picked a different binary depending on
-/// whether the caller was a login shell, a systemd unit or a dwarf's confined environment —
-/// all three disagree about PATH order. Mirrors `command -v bd`'s own search: the first `bd`
-/// on `path` that is a regular file with any execute bit set; an empty PATH segment means
-/// the current directory, exactly as the shell resolves one. Falls back to the bare name
-/// `"bd"` when nothing is found, so invoking it later fails loudly (`bd: command not found`)
-/// instead of silently running the wrong binary.
-pub fn resolve_bd(path: &str) -> String {
-    for dir in path.split(':') {
-        let dir = if dir.is_empty() { "." } else { dir };
-        let candidate = Path::new(dir).join("bd");
-        if is_executable_file(&candidate) {
-            return candidate.to_string_lossy().into_owned();
-        }
-    }
-    "bd".to_string()
-}
-
-fn is_executable_file(p: &Path) -> bool {
-    match fs::metadata(p) {
-        Ok(m) => m.is_file() && (m.permissions().mode() & 0o111 != 0),
-        Err(_) => false,
-    }
-}
-
-/// `env-bootstrap --sh`'s whole output (`main.rs`) — `conf.sh`'s own `eval` target for this
-/// bead, the same `KEY='value'` shape `resolve --sh`/`--sh-all` already use. Both names are
-/// `export`ed inline here (unlike `Resolved::to_sh_all`'s bare assignments) because `PATH`
-/// and `SPIRA_BD` must reach THIS shell's own already-sourced code (and any further child it
-/// spawns before reaching `conf.sh`'s own later, explicit export list) immediately, not only
-/// once that later block runs.
-///
-/// `existing_bd`: the caller's/config's own prior value, if any (`conf.sh` passes
-/// `${SPIRA_BD:-}` — the environment and the config file both outrank derivation, exactly as
-/// bash's own `[ -z "${SPIRA_BD:-}" ]` guard did). A non-empty value survives untouched;
-/// [`resolve_bd`] runs only when it is empty.
-pub fn bootstrap_sh(current_path: &str, spira_path: &str, home: &str, existing_bd: &str) -> String {
+/// `env-bootstrap --sh`'s whole output (`main.rs`), `conf.sh`'s own `eval` target. PATH is
+/// `export`ed inline because it must reach this shell's already-sourced code at once.
+pub fn bootstrap_sh(current_path: &str, spira_path: &str, home: &str) -> String {
     let new_path = path_tail(current_path, spira_path, home);
-    let bd = if existing_bd.trim().is_empty() {
-        resolve_bd(&new_path)
-    } else {
-        existing_bd.to_string()
-    };
-    format!(
-        "PATH={}\nexport PATH\nSPIRA_BD={}\nexport SPIRA_BD\n",
-        crate::shell_quote(&new_path),
-        crate::shell_quote(&bd),
-    )
+    format!("PATH={}\nexport PATH\n", crate::shell_quote(&new_path))
 }
 
 #[cfg(test)]
@@ -136,26 +86,10 @@ mod tests {
         assert_eq!(got, "a:b:h/.local/bin:h/.cargo/bin:/usr/local/bin:/usr/bin:/bin");
     }
 
-    #[test_id(tr0zoz6)]
     #[test]
-    fn resolve_bd_skips_a_non_executable_candidate() {
-        let dir = testkit::TempDir::new("spira-config-env-bootstrap-resolve-bd-noexec");
-        fs::write(dir.path().join("bd"), "not executable").unwrap();
-        let path = format!("{}:/usr/bin", dir.path().display());
-        // /usr/bin/bd does not exist in this test environment either, so the fallback fires.
-        assert_eq!(resolve_bd(&path), "bd");
-    }
-
-    #[test_id(tb5vq43)]
-    #[test]
-    fn resolve_bd_falls_back_to_bare_name_when_nothing_found() {
-        assert_eq!(resolve_bd("nonexistent/one:nonexistent/two"), "bd");
-    }
-
-    #[test_id(tg7wjpo)]
-    #[test]
-    fn bootstrap_sh_leaves_an_existing_spira_bd_untouched() {
-        let out = bootstrap_sh("release/bin", "", "fixture-home", "pinned/bd");
-        assert!(out.contains("SPIRA_BD='pinned/bd'"), "{out}");
+    fn bootstrap_sh_exports_only_the_path() {
+        let out = bootstrap_sh("release/bin", "", "fixture-home");
+        assert!(out.starts_with("PATH='release/bin:fixture-home/.local/bin:"), "{out}");
+        assert!(out.ends_with("export PATH\n") && out.lines().count() == 2, "{out}");
     }
 }

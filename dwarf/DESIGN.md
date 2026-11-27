@@ -180,7 +180,7 @@ through lib.sh functions (§5), never hand-written SQL.
 
 ### 2.7 Programs called
 
-`bd` (`$SPIRA_BD`), `git`, `spira-claim`, the model (`$SPIRA_AGENT`, default `claude`),
+`git`, `spira-claim`, the model (`$SPIRA_AGENT`, default `claude`),
 `world.sh stop|start`, `gate-run.sh --status`,
 `worktree-hooks.sh install`, `holds.sh`, `wiki-commit.sh`, `sop ledger-init|digest|log`,
 `strand close-reason`, the repository's own testdb library, and

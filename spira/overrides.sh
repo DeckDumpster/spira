@@ -27,12 +27,9 @@
 # — the failure that motivated this file was exactly a failure nobody saw
 # (sp-qdh0x notes: the timer's own PATH lacked `bd`, so a restore silently did nothing).
 #
-# THE PATH A HOOK CAN TRUST. A systemd timer's minimal PATH is the reason the earlier version
-# of this broke: `bd` was not on it, because the timer ran apply.sh without ever sourcing
-# conf.sh. Sourcing lib.sh here — which sources conf.sh, the one place PATH is assembled and
-# SPIRA_BD resolved deterministically, and defines `bdq` for the doctor check below — is what
-# fixes that: every spec runs with the same PATH and the same bd every other harness script
-# uses.
+# THE PATH A HOOK CAN TRUST. A systemd timer's PATH is minimal, and a spec run without
+# conf.sh's assembled PATH fails to find its tools silently. Sourcing lib.sh sources conf.sh,
+# the one place PATH is assembled, so every spec runs with the PATH other harness scripts use.
 set -uo pipefail
 _OV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$_OV_DIR/lib.sh"

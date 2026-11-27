@@ -25,9 +25,8 @@
 
 [[dep]]
 name = "bd"
-tier = "runtime"
-provider = "spira-env"
-purpose = "the beads issue tracker — the substrate; nothing runs without it. Provided by spira-env (flake.nix), built by install into ~/.local/lib/spira-env"
+tier = "dev"
+purpose = "test fixtures: the throwaway beads stores they build. Pinned by flake.nix's spira-dev-env; production runs no bd"
 version_min = ""
 version_probe = "bd --version"
 
@@ -220,7 +219,7 @@ tier = "dev"
 purpose = "the CGO build of bd that opens an embedded Dolt store — the test fixture engine"
 version_min = ""
 version_probe = "bd-embedded version"
-absent = "test fixtures fall back to a shared Dolt server instead of a private embedded store per fixture. Not a feature off: concurrent fixture builds contend on one schema lock, measured at 610s with 5 of 6 failing, against 25s with 0 failing on embedded. Suites fail in ways that read as defects in the code under test. Restore with build-bd.sh --install (needs a Go toolchain)."
+absent = "test fixtures fall back to a shared Dolt server instead of a private embedded store per fixture. Not a feature off: concurrent fixture builds contend on one schema lock, measured at 610s with 5 of 6 failing, against 25s with 0 failing on embedded. Suites fail in ways that read as defects in the code under test. Restore by putting a CGO build of bd on PATH under the name bd-embedded (`nix build .#spira-dev-env` supplies bd)."
 
 [[dep]]
 name = "podman"
@@ -271,7 +270,7 @@ version_probe = "hunk --version"
 [[dep]]
 name = "go"
 tier = "operator"
-purpose = "building the pinned bd from source when no prebuilt exists for this platform; without it a bd mismatch cannot be recovered locally — still manual, still `go version` via build-bd.sh's $GO. Between sp-x6v17 and sp-41so3, install's own phase -1 also reused whatever go it found here to build aerc at install time; sp-41so3 moved that build to spira/build-tarball.sh, at release-build time, which is the one place a usable go (or a pinned go.dev/dl toolchain, fetched the same way install used to) now matters for aerc. install's phase -1 touches go for nothing at all any more."
+purpose = "building aerc once at release-build time (spira/build-tarball.sh); a running box needs no Go toolchain"
 version_min = ""
 version_probe = "go version"
 
@@ -287,7 +286,7 @@ absent = "a repo whose format or gate command runs terraform fails, and the repo
 [[dep]]
 name = "nix"
 tier = "dev"
-purpose = "builds the pinned spira-env (flake.nix) that build-bd.sh --from-flake and build-aerc.sh take bd and go from at release-build time"
+purpose = "builds the pinned spira-env and spira-dev-env (flake.nix); build-aerc.sh takes go from spira-env at release-build time"
 version_min = ""
 version_probe = "nix --version"
 

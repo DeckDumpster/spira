@@ -70,9 +70,6 @@ impl Lc {
         std::fs::write(&guards, "law-fixture-forbids-the-phrase | refuse | forbidden phrase\n").unwrap();
         let (runes, guards) = (harness.join("runes").display().to_string(), guards.display().to_string());
         let (d, r, ctl, sock) = (dir.display().to_string(), run.display().to_string(), dir.join("control.db").display().to_string(), dir.join("s").display().to_string());
-        let bd = dir.join("recording-bd");
-        testkit::write_exe(&bd, "#!/bin/sh\nexit 1\n");
-        let bd = bd.display().to_string();
         let (reader, writer) = (dir.join("reader.credential").display().to_string(), dir.join("writer.credential").display().to_string());
         let toml = spira_config::process::fixture_toml(
             &dir,
@@ -83,7 +80,6 @@ impl Lc {
                 ("SPIRA_LC_SOCKET", &sock),
                 ("SPIRA_VICTORIALOGS_URL", "http://127.0.0.1:9"),
                 ("SPIRA_DB", &store.db),
-                ("SPIRA_BD", &bd),
                 ("SPIRA_BEADS_SQL_HOST", "127.0.0.1"),
                 ("SPIRA_BEADS_SQL_PORT", &store.port),
                 ("SPIRA_BEADS_SQL_USER", "spira_lc_ro"),
