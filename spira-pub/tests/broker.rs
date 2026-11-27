@@ -103,16 +103,7 @@ fn assert_delivered_once(broker: &Broker, topic: &str) {
 
     // Received first: the broker has then handled the chatter, so a later subscriber cannot get it live.
     assert_eq!(value(watching.recv()), (topic.to_string(), json!({"a": 1}), false));
-    assert_not_retained(broker, &p, topic);
-}
-
-fn assert_not_retained(broker: &Broker, p: &Publisher, topic: &str) {
-    p.publish(Class::State, "marker/state", &json!({})).unwrap();
-    p.flush(FAILSAFE).unwrap();
-    retained(broker.socket(), "marker/state");
-    // Retained messages arrive in subscription order, so a retained `topic` would be first.
-    let (first, ..) = value(Subscriber::to(broker.socket(), &[topic, "marker/state"]).recv());
-    assert_eq!(first, "marker/state", "chatter was retained");
+    assert!(broker.retained(topic).is_empty(), "chatter was retained");
 }
 
 #[test_id(tjetwgp)]
@@ -342,7 +333,7 @@ fn the_cli_publishes_chatter_to_a_topic_no_table_lists() {
 
     assert_eq!(code, Some(0), "{err}");
     assert_eq!(value(watching.recv()), ("nosuch/topic".to_string(), json!({"a": 1}), false));
-    assert_not_retained(&broker, &publisher("after", broker.socket()), "nosuch/topic");
+    assert!(broker.retained("nosuch/topic").is_empty(), "chatter was retained");
 }
 
 #[test_id(tvdsteq)]
