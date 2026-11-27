@@ -1086,13 +1086,13 @@ fn cmd_blocked(bead_id: &str, args: &[String]) -> (i32, String) {
         return quiet;
     }
     let Some(question) = args.first() else {
-        return (CANNOT_TELL, "work blocked: missing \"<question>\"".into());
+        return (CANNOT_TELL, format!("work blocked: missing \"<question>\"; {BLOCKED_USAGE}"));
     };
     if let Some(e) = not_a_question(question) {
         return (CANNOT_TELL, format!("work blocked: {e}; {BLOCKED_USAGE}"));
     }
     let Some(default) = flag(args, "--default") else {
-        return (CANNOT_TELL, "work blocked: --default <default> is required".into());
+        return (CANNOT_TELL, format!("work blocked: --default <default> is required; {BLOCKED_USAGE}"));
     };
     let required = |name: &str| {
         flag(args, name).filter(|v| !v.trim().is_empty() && !v.starts_with("--")).ok_or_else(|| (CANNOT_TELL, format!("work blocked: {name} is required; {BLOCKED_USAGE}")))
@@ -2923,6 +2923,23 @@ mod tests {
         let kinds = spira_config::resolve::locate_home_for_process().unwrap().join("mail/kinds");
         let input = mail::lint::LintInput { kind: "question", subject: question, default, from: "builder <builder@spira>", urgent: false, body: &body, digest: false };
         assert_eq!(mail::lint::lint_check(&input, &kinds, "sp"), Ok(()), "{body}");
+        let led = mail::lint::LintInput { subject: "sp-abcd1 has the Control run passed?", ..input };
+        let refused = mail::lint::lint_check(&led, &kinds, "sp").unwrap_err();
+        assert!(refused.contains("Subject leads with a bead id"), "POSITIVE CONTROL: {refused}");
+    }
+
+    #[test_id(txxgymk)]
+    #[test]
+    fn a_blocked_call_without_its_question_or_default_is_refused_with_the_usage() {
+        let dir = testkit::TempDir::new("blocked-no-question");
+        let _env = testkit::env(&[("SPIRA_MAIL_SH", Some(&dir.path().join("mail").to_string_lossy()))]);
+        let calls: [&[&str]; 4] = [&[], &[""], &["--default", "wait for it"], &["Has the Control run passed?"]];
+        for call in calls {
+            let args: Vec<String> = call.iter().chain(&["--actor", "builder"]).map(|a| a.to_string()).collect();
+            let (code, out) = super::cmd_blocked("sp-x", &args);
+            assert_eq!(code, super::CANNOT_TELL, "{call:?}: {out}");
+            assert!(out.ends_with(super::BLOCKED_USAGE), "{call:?}: {out}");
+        }
     }
 
     #[test_id(tvpek5o)]
