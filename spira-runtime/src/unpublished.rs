@@ -98,7 +98,7 @@ fn tip_age(git: &Path, repo: &Path, tracking: &str, now: u64) -> Option<u64> {
     Some(now.saturating_sub(at))
 }
 
-fn rev(git: &Path, repo: &Path, name: &str) -> Result<String, String> {
+pub(crate) fn rev(git: &Path, repo: &Path, name: &str) -> Result<String, String> {
     if let Some(sha) = spira_config::git_refs::sha_of(repo, name) {
         return Ok(sha);
     }
