@@ -4894,6 +4894,24 @@ fn a_suites_trial_cut_at_its_setup_share_is_a_budget_no_verdict_naming_the_phase
     assert!(f.verdict_line().contains("reason=harness-fault"));
 }
 
+#[test_id(towmqo7)]
+#[test]
+fn a_foreign_trial_that_waited_out_the_warm_cache_is_a_cache_wait_no_verdict() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(
+        MERGE_SHA.into(),
+        (75, "  the warm cache stayed held for the 300s cap by round-vm x\nVERDICT FAULT rc=2 ran=0 reason=cache-wait".into()),
+    );
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=cache-wait"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("waited for the repository's warm cache"), "{}", f.stderr());
+    assert!(!f.stderr().contains("container or install failed"), "{}", f.stderr());
+    assert_eq!(f.ran.borrow().len(), 1, "no base trial for a cache wait");
+    let y = f.yields.borrow().iter().find(|y| y.get(1).map(String::as_str) == Some("record")).cloned().expect("a record");
+    assert!(y.last().unwrap().contains("by round-vm x"), "the record names the holder: {y:?}");
+    assert!(!crate::publish::is_cap_reason("cache-wait"));
+}
+
 #[test_id(t7omhqx)]
 #[test]
 fn a_red_before_the_suites_step_is_judged_on_the_bases_fences_only() {
