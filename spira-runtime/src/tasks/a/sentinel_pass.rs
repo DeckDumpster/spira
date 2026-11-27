@@ -57,7 +57,7 @@
 //! | `sentinel-pass.lc_hold` / `.lc_unhold` (`waiters.rs:88-118`) | store | 5 s | `(id, kind)` | — (fire-and-forget today) |
 //! | `sentinel-pass.lc_fact` (`spira-lc fact add … reclaimed`, `lifecycle.rs:368-383`) | store | 5 s | `(id, kind, cause, pass)` | — |
 //! | `sentinel-pass.lc_close` (`lifecycle_row::close_with`, `red_trackers.rs:46`) | store | 5 s | id | non-terminal fixes |
-//! | `sentinel-pass.content_label` / `.content_note` / `.content_close` (bd `label add/remove`, `note`, `close`: `holds.rs:137`, `open_children.rs:161-172`, `waiters.rs:153-215`, `lifecycle.rs:355`) | store | 5 s | `(id, label, op)` / `(id, note-hash)` | — |
+//! | `sentinel-pass.content_label` / `.content_note` (bd `label add/remove`, `note`: `holds.rs:137`, `open_children.rs:161-172`, `waiters.rs:153-215`, `lifecycle.rs:355`) | store | 5 s | `(id, label, op)` / `(id, note-hash)` | — |
 //! | `sentinel-pass.recompute_blocked` (`bd recompute-blocked`, `pass.rs:600`) | store | 30 s (unverified) | pass id | not starved |
 //! | `sentinel-pass.stop_holder` (`hel stop-holder`, `lifecycle.rs:364-366`) | unit (`unit.stop`) | 30 s | bead id | holder still alive after stop → no reclaim |
 //! | `sentinel-pass.stop_doomed` (`dwarf::stop::request`) | store | 5 s | `(bead, prereq, tip)` | row no longer WORKING on that stack; stop already pending |
@@ -165,7 +165,6 @@ pub const LC_FACT: &str = "sentinel-pass.lc_fact";
 pub const LC_CLOSE: &str = "sentinel-pass.lc_close";
 pub const CONTENT_LABEL: &str = "sentinel-pass.content_label";
 pub const CONTENT_NOTE: &str = "sentinel-pass.content_note";
-pub const CONTENT_CLOSE: &str = "sentinel-pass.content_close";
 pub const RECOMPUTE_BLOCKED: &str = "sentinel-pass.recompute_blocked";
 pub const STOP_HOLDER: &str = "sentinel-pass.stop_holder";
 pub const STOP_DOOMED: &str = "sentinel-pass.stop_doomed";
@@ -193,7 +192,6 @@ pub const ACTS: &[(&str, u64)] = &[
     (LC_CLOSE, 5_000),
     (CONTENT_LABEL, 5_000),
     (CONTENT_NOTE, 5_000),
-    (CONTENT_CLOSE, 5_000),
     (RECOMPUTE_BLOCKED, 30_000),
     (STOP_HOLDER, 30_000),
     (STOP_DOOMED, 5_000),
@@ -208,7 +206,7 @@ pub const ACTS: &[(&str, u64)] = &[
 ];
 /// Hand-offs decide returns as acts that are emitted, not run: CHECK 7 wants a call.
 pub const EMITS: &[EventKindTag] = &[CALL_WANTED];
-pub const EFFECTS: &[&str] = &[OBSERVE, LC_EVENT, LC_HOLD, LC_UNHOLD, LC_FACT, LC_CLOSE, CONTENT_LABEL, CONTENT_NOTE, CONTENT_CLOSE, RECOMPUTE_BLOCKED, STOP_HOLDER, STOP_DOOMED, LANDING_START, WATCHTOWER, STRAND, PILGRIMAGE_CLOSE, ASK, INCIDENT_EVENT, REFLECT, PHASE_METRIC];
+pub const EFFECTS: &[&str] = &[OBSERVE, LC_EVENT, LC_HOLD, LC_UNHOLD, LC_FACT, LC_CLOSE, CONTENT_LABEL, CONTENT_NOTE, RECOMPUTE_BLOCKED, STOP_HOLDER, STOP_DOOMED, LANDING_START, WATCHTOWER, STRAND, PILGRIMAGE_CLOSE, ASK, INCIDENT_EVENT, REFLECT, PHASE_METRIC];
 pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
     "SPIRA_DB",
@@ -495,7 +493,7 @@ fn act(effect: &str, key: impl Into<String>, w: Write) -> Act {
 /// The acts that are progress for CHECK 8: a reclaim, a withdrawn hold, a close, strand's fix. A
 /// recompute is not: the old pass counted it only once it freed a bead, which decide cannot know.
 fn progress(acts: &[Act]) -> u32 {
-    acts.iter().filter(|a| matches!(a.effect.as_str(), LC_EVENT | PILGRIMAGE_CLOSE | STRAND | LC_CLOSE | CONTENT_CLOSE)).count() as u32
+    acts.iter().filter(|a| matches!(a.effect.as_str(), LC_EVENT | PILGRIMAGE_CLOSE | STRAND | LC_CLOSE)).count() as u32
 }
 
 /// CHECK 1 (`pilgrimage.sh check`): each complete epic of the partition announced and closed
@@ -604,7 +602,6 @@ fn check3b(beads: &[Bead], rows: &[Row], lc: &[sentinel::model::LcRow], snap: &S
     for b in labeled.iter().filter(|b| rows.iter().any(|r| r.id == b.id && r.state == "LANDED")) {
         acts.push(act(CONTENT_LABEL, format!("{}:{label}:remove", b.id), Write { id: b.id.clone(), label: label.clone(), op: "remove".into(), ..Write::default() }));
         acts.push(act(LC_UNHOLD, format!("{}:wait", b.id), Write { id: b.id.clone(), kind: "wait".into(), ..Write::default() }));
-        acts.push(act(CONTENT_CLOSE, &b.id, Write { id: b.id.clone(), text: "Content already on main (LANDED); no branch remained to land.".into(), ..Write::default() }));
     }
 }
 
@@ -1062,12 +1059,6 @@ pub fn content_label(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     let w = write_of(&spec.input, CONTENT_LABEL)?;
     let op = if w.op == "add" { "add" } else { "remove" };
     answer(&client(e, spec.deadline_ms), &["content", "label", op, &w.id, &w.label])
-}
-
-/// `sentinel-pass.content_close`: a bead's content closed, with its reason, through the content door.
-pub fn content_close(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
-    let w = write_of(&spec.input, CONTENT_CLOSE)?;
-    answer(&client(e, spec.deadline_ms), &["content", "close", &w.id, "--reason", &w.text])
 }
 
 /// `sentinel-pass.recompute_blocked` (bd `recompute-blocked`): the store's content door does

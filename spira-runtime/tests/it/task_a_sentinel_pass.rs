@@ -81,8 +81,8 @@ fn t5_check2_stops_a_live_holder_before_reclaiming() {
 }
 
 /// `tests.rs` `close_landed_queue_waiters_reads_the_label_not_bd_status`: a labeled waiter whose
-/// own row is LANDED is closed and released by its label and row, whatever bd says (sp-w is
-/// LANDED with bd status open); a labeled WORKING one (sp-x) is not closed.
+/// own row is LANDED is released by its label and row, whatever bd says (sp-w is LANDED with bd
+/// status open); the pass plans no content close, for it or for a WORKING one (sp-x).
 #[test_id(tihr1wi)]
 #[test]
 fn t5_check3b_releases_a_landed_queue_waiter_by_its_label() {
@@ -96,10 +96,10 @@ fn t5_check3b_releases_a_landed_queue_waiter_by_its_label() {
         ..idle()
     };
     let (_, acts) = decide(&Carry::default(), &snap);
-    for e in [CONTENT_LABEL, CONTENT_CLOSE, LC_UNHOLD] {
+    for e in [CONTENT_LABEL, LC_UNHOLD] {
         assert!(acts.iter().any(|a| a.effect == e && a.key.starts_with("sp-w")), "{e} for sp-w: {acts:?}");
     }
-    assert!(acts.iter().all(|a| a.effect != CONTENT_CLOSE || !a.key.starts_with("sp-x")), "{acts:?}");
+    assert!(acts.iter().all(|a| a.effect != "sentinel-pass.content_close"), "bd status is reconcile-content's to write: {acts:?}");
 }
 
 /// `waiters.rs` `labeled_set_is_claimable_by_the_lifecycle_row`: the waiter set is the labeled
