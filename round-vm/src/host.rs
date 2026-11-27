@@ -582,7 +582,8 @@ mod tests {
         let mut next = remote.shell("exit 0");
         next.stdin(Stdio::null());
         let mut second = remote.start_pass(next).unwrap();
-        let gone = !alive(straggler);
+        // A missed kill leaves the job alive for its 300s; a killed one that /proc still shows exiting is gone within the cap.
+        let gone = (0..500).any(|_| !alive(straggler) || { std::thread::sleep(Duration::from_millis(10)); false }); // clock-safe: a cap on the wait for a killed job to leave /proc
         remote.stop_pass();
         let _ = child.kill();
         let _ = child.wait();
