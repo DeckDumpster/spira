@@ -1,5 +1,6 @@
-//! What a trial publishes: its result on `gate/<repo>/<bead>`, and `test/<id>/red` for each
-//! test it saw red. A publish that fails is logged and changes nothing about the trial.
+//! What a trial publishes: its result on `gate/<repo>/<bead>` as state, and `test/<id>/red` as
+//! chatter for each test it saw red. A publish that fails is logged and changes nothing about
+//! the trial.
 
 use crate::compose::{self, Changed, Class, Member};
 use crate::stopped::Stopped;
@@ -61,7 +62,8 @@ pub fn send(publisher: Result<Publisher, PubError>, messages: &[(String, Value)]
         Err(e) => return eprintln!("gate: nothing published: {e}"),
     };
     for (topic, payload) in messages {
-        if matches!(publisher.publish(spira_pub::Class::State, topic, payload), Err(PubError::Unreachable { .. } | PubError::Timeout)) {
+        let class = if topic.starts_with("test/") { spira_pub::Class::Chatter } else { spira_pub::Class::State };
+        if matches!(publisher.publish(class, topic, payload), Err(PubError::Unreachable { .. } | PubError::Timeout)) {
             break;
         }
     }

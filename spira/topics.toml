@@ -47,7 +47,7 @@ fields = ["at", "sessions"]
 
 [[topic]]
 family = "test/<id>/red"
-class = "state"
+class = "chatter"
 publisher = "gate"
 fields = ["at", "tree", "touches_crate"]
 
