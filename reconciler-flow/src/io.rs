@@ -472,6 +472,8 @@ mod dwell_regression_tests {
         let ready = got.iter().find(|s| s.state == "READY").expect("a READY reading");
         assert_eq!(ready.n, 12);
         assert_eq!(ready.baseline_n, 13);
+        assert!((ready.p90_seconds - 199.0).abs() < 1e-9, "{ready:?}");
+        assert!((ready.baseline_p90_seconds - 208.0).abs() < 1e-9, "{ready:?}");
         assert_eq!(ready.slowest, [("sp-7".to_string(), 210.0), ("sp-2".to_string(), 200.0), ("sp-9".to_string(), 190.0)]);
     }
 }

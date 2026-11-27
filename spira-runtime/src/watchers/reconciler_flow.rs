@@ -505,6 +505,20 @@ mod tests {
         assert!(p.mails.is_empty(), "report-only while 2h of 24h exist");
     }
 
+    #[test_id(tbo5ktw)]
+    #[test]
+    fn a_dwell_regression_mail_names_the_slowest_items() {
+        let cfg = ReconcilerFlow { grace_secs: 0, ..cfg() };
+        let mut snap = quiet();
+        let ready = StateDwell { state: "READY".into(), p90_seconds: 901.0, n: 10, baseline_p90_seconds: 300.0, baseline_n: 20, slowest: vec![("sp-slow".into(), 4000.0), ("sp-next".into(), 950.0)] };
+        snap.stage = Ok(Stage { regression: vec![ready], ..match quiet().stage { Ok(s) => s, Err(_) => unreachable!() } });
+        let first = judge(&cfg, 1_000, &Carry::default(), &snap, None);
+        let second = judge(&cfg, 2_000, &first.carry, &snap, None);
+        let mails: Vec<_> = first.mails.iter().chain(&second.mails).filter(|m| m.subject.contains("flow:dwell-regression:ready")).collect();
+        assert_eq!(mails.len(), 1, "{mails:?}");
+        assert!(mails[0].body.contains("slowest: sp-slow 4000s, sp-next 950s"), "{}", mails[0].body);
+    }
+
     fn waiting_on_the_pool() -> FlowSnapshot {
         let slots = Slots { live: 6, ceiling: 40, ready: 2, capacity_paused: false };
         FlowSnapshot { slots: Ok((slots, slots)), ..quiet() }
