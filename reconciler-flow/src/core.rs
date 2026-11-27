@@ -39,6 +39,13 @@ const ROUND_HEALTH_ABSOLUTE_FLOOR: f64 = 0.2;
 /// timer period").
 const SENTINEL_OVERRUN_RATIO: f64 = 2.0;
 
+/// The percentile the dwell-regression invariant compares.
+pub const DWELL_REGRESSION_PERCENTILE: u64 = 90;
+
+/// Below this many transitions a window has no sample beyond the percentile, so its "p90" is
+/// just the maximum.
+pub const DWELL_REGRESSION_MIN_TRANSITIONS: u64 = 100 / (100 - DWELL_REGRESSION_PERCENTILE);
+
 /// A stage's p90 dwell compared to this multiple of its own trailing baseline p90 — a
 /// coarser, longer-horizon regression signal than `dwell_raw`'s (which compares a p95 to a
 /// configured limit, falling back to a 2x baseline ratio only when no limit is set). This one
@@ -274,14 +281,16 @@ pub struct DwellRegressionObserved {
     pub n: u64,
     pub baseline_p90_seconds: f64,
     pub baseline_n: u64,
+    /// The current window's slowest items as (bead id, dwell seconds), slowest first.
+    pub slowest: Vec<(String, f64)>,
 }
 
 /// "Stage dwell regression: p90 more than 3x its trailing baseline" (design §3) — unlike
 /// `dwell_raw`'s configured-limit case, this has no floor to fall back on: no baseline yet
-/// (or no transitions this pass) is satisfied, since there is nothing yet to have regressed
-/// against.
+/// (or too few transitions in either window) is satisfied, since there is nothing yet to have
+/// regressed against.
 pub fn dwell_regression_raw(o: &DwellRegressionObserved) -> RawStatus {
-    if o.n == 0 || o.baseline_n == 0 || o.baseline_p90_seconds <= 0.0 {
+    if o.n < DWELL_REGRESSION_MIN_TRANSITIONS || o.baseline_n < DWELL_REGRESSION_MIN_TRANSITIONS || o.baseline_p90_seconds <= 0.0 {
         return RawStatus::Satisfied;
     }
     let ceiling = o.baseline_p90_seconds * DWELL_REGRESSION_RATIO;
@@ -291,7 +300,12 @@ pub fn dwell_regression_raw(o: &DwellRegressionObserved) -> RawStatus {
                 "p90 <= {ceiling:.0}s ({DWELL_REGRESSION_RATIO:.0}x the trailing baseline p90 {:.0}s)",
                 o.baseline_p90_seconds
             ),
-            observed: format!("p90 {:.0}s over {} transitions", o.p90_seconds, o.n),
+            observed: format!(
+                "p90 {:.0}s over {} transitions; slowest: {}",
+                o.p90_seconds,
+                o.n,
+                o.slowest.iter().map(|(id, secs)| format!("{id} {secs:.0}s")).collect::<Vec<_>>().join(", ")
+            ),
             since_hint: None,
         }
     } else {
@@ -582,6 +596,7 @@ mod tests {
             n: 10,
             baseline_p90_seconds: 0.0,
             baseline_n: 0,
+            slowest: vec![],
         });
         assert_eq!(s, RawStatus::Satisfied);
     }
@@ -594,6 +609,7 @@ mod tests {
             n: 0,
             baseline_p90_seconds: 300.0,
             baseline_n: 20,
+            slowest: vec![],
         });
         assert_eq!(s, RawStatus::Satisfied);
     }
@@ -606,6 +622,7 @@ mod tests {
             n: 10,
             baseline_p90_seconds: 300.0,
             baseline_n: 20,
+            slowest: vec![],
         });
         assert_eq!(s, RawStatus::Satisfied);
     }
@@ -619,7 +636,48 @@ mod tests {
             n: 10,
             baseline_p90_seconds: 300.0,
             baseline_n: 20,
+            slowest: vec![],
         });
         assert!(matches!(s, RawStatus::Gap { .. }), "expected a gap, got {s:?}");
+    }
+
+    #[test_id(tbkd4ol)]
+    #[test]
+    fn dwell_regression_satisfied_when_one_transition_makes_the_p90() {
+        let s = dwell_regression_raw(&DwellRegressionObserved {
+            p90_seconds: 62243.0,
+            n: 1,
+            baseline_p90_seconds: 9294.0,
+            baseline_n: 20,
+            slowest: vec![],
+        });
+        assert_eq!(s, RawStatus::Satisfied);
+    }
+
+    #[test_id(t6llgjd)]
+    #[test]
+    fn dwell_regression_satisfied_when_the_baseline_has_too_few_transitions() {
+        let s = dwell_regression_raw(&DwellRegressionObserved {
+            p90_seconds: 62243.0,
+            n: 10,
+            baseline_p90_seconds: 9294.0,
+            baseline_n: 3,
+            slowest: vec![],
+        });
+        assert_eq!(s, RawStatus::Satisfied);
+    }
+
+    #[test_id(tz8rs1u)]
+    #[test]
+    fn dwell_regression_gap_names_the_slowest_items_slowest_first() {
+        let s = dwell_regression_raw(&DwellRegressionObserved {
+            p90_seconds: 901.0,
+            n: 10,
+            baseline_p90_seconds: 300.0,
+            baseline_n: 20,
+            slowest: vec![("sp-slow".into(), 4000.0), ("sp-next".into(), 950.0)],
+        });
+        let RawStatus::Gap { observed, .. } = s else { panic!("expected a gap, got {s:?}") };
+        assert_eq!(observed, "p90 901s over 10 transitions; slowest: sp-slow 4000s, sp-next 950s");
     }
 }

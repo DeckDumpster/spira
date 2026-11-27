@@ -14,6 +14,7 @@ use reconciler_flow::core::{
     backlog_trend_raw, dwell_raw, dwell_regression_raw, idle_capacity_raw, BindingLimit, round_health_raw, rework_raw, sentinel_overrun_raw, velocity_raw, BacklogObserved, DwellObserved, DwellRegressionObserved,
     ReworkObserved, RoundHealthObserved, SlotsSample, VelocityObserved, DWELL_REGRESSION_STATES,
 };
+use reconciler_flow::io::StateDwell;
 use runtime::event::*;
 use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
@@ -85,7 +86,7 @@ pub struct Stage {
     pub dwell: (f64, u64, f64, u64),
     pub round_health: (u64, u64, u64, u64),
     pub rework: (u64, u64, f64),
-    pub regression: Vec<(String, f64, u64, f64, u64)>,
+    pub regression: Vec<StateDwell>,
 }
 
 /// Every reading is its own `Result`: one that could not be taken is that invariant's
@@ -276,9 +277,9 @@ pub fn judge(cfg: &ReconcilerFlow, now: u64, carry: &Carry, snap: &FlowSnapshot,
         let key = format!("flow:dwell-regression:{}", state_name.to_ascii_lowercase());
         let raw = match &snap.stage {
             Ok(s) => {
-                let observed = match s.regression.iter().find(|(name, ..)| name == state_name) {
-                    Some((_, p90, n, base_p90, base_n)) => DwellRegressionObserved { p90_seconds: *p90, n: *n, baseline_p90_seconds: *base_p90, baseline_n: *base_n },
-                    None => DwellRegressionObserved { p90_seconds: 0.0, n: 0, baseline_p90_seconds: 0.0, baseline_n: 0 },
+                let observed = match s.regression.iter().find(|d| d.state == state_name) {
+                    Some(d) => DwellRegressionObserved { p90_seconds: d.p90_seconds, n: d.n, baseline_p90_seconds: d.baseline_p90_seconds, baseline_n: d.baseline_n, slowest: d.slowest.clone() },
+                    None => DwellRegressionObserved { p90_seconds: 0.0, n: 0, baseline_p90_seconds: 0.0, baseline_n: 0, slowest: Vec::new() },
                 };
                 fresh(&snap.export, dwell_regression_raw(&observed))
             }
@@ -502,6 +503,20 @@ mod tests {
         let p = judge(&cfg, 1_000, &Carry::default(), &snap, None);
         assert_eq!(p.carry.words["flow:rework"], "gap");
         assert!(p.mails.is_empty(), "report-only while 2h of 24h exist");
+    }
+
+    #[test_id(tbo5ktw)]
+    #[test]
+    fn a_dwell_regression_mail_names_the_slowest_items() {
+        let cfg = ReconcilerFlow { grace_secs: 0, ..cfg() };
+        let mut snap = quiet();
+        let ready = StateDwell { state: "READY".into(), p90_seconds: 901.0, n: 10, baseline_p90_seconds: 300.0, baseline_n: 20, slowest: vec![("sp-slow".into(), 4000.0), ("sp-next".into(), 950.0)] };
+        snap.stage = Ok(Stage { regression: vec![ready], ..match quiet().stage { Ok(s) => s, Err(_) => unreachable!() } });
+        let first = judge(&cfg, 1_000, &Carry::default(), &snap, None);
+        let second = judge(&cfg, 2_000, &first.carry, &snap, None);
+        let mails: Vec<_> = first.mails.iter().chain(&second.mails).filter(|m| m.subject.contains("flow:dwell-regression:ready")).collect();
+        assert_eq!(mails.len(), 1, "{mails:?}");
+        assert!(mails[0].body.contains("slowest: sp-slow 4000s, sp-next 950s"), "{}", mails[0].body);
     }
 
     fn waiting_on_the_pool() -> FlowSnapshot {
