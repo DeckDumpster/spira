@@ -704,7 +704,7 @@
     {
       "id": 17,
       "type": "timeseries",
-      "title": "build folders: median first-build seconds by repository",
+      "title": "build folders: median first unit-test or release build seconds by repository",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"

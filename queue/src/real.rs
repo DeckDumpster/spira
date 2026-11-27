@@ -1321,6 +1321,7 @@ impl Scripts for RealScripts {
         if let Err(e) = cleaned {
             return Err(format!("selective clean of {} failed ({e}) — emptied, nothing was built", dir.display()));
         }
+        let build_from = std::time::Instant::now();
         // FORK-EDGE: machine leg cargo (release build)
         let (rc, out) = run_combined(
             Command::new("cargo")
@@ -1330,10 +1331,12 @@ impl Scripts for RealScripts {
                 .current_dir(wt)
                 .env("CARGO_TARGET_DIR", &dir),
         );
+        let took = build_from.elapsed();
         if rc != 0 {
             let tail: Vec<&str> = out.lines().rev().take(40).collect();
             return Err(format!("cargo build --profile release failed (rc={rc}): {}", tail.into_iter().rev().collect::<Vec<_>>().join("\n")));
         }
+        bd::note_first_build(&dir.join("release"), took);
         let target = wt.join("target");
         fs::create_dir_all(&target).map_err(|e| e.to_string())?;
         std::os::unix::fs::symlink(dir.join("release"), target.join("release")).map_err(|e| e.to_string())?;
@@ -2991,6 +2994,34 @@ mod tests {
             std::thread::yield_now();
         }
         assert_eq!(waiting(), 0);
+    }
+
+    #[test_id(t7r78p6)]
+    // Spawns the real clean script and a stub cargo: build_release is their order, and has no seam.
+    #[test]
+    fn a_successful_release_build_records_its_seconds_and_a_failed_one_records_none() {
+        let (d, env, base, _log, home) = release_world("rbuild-timed", "d=\"$(dirname \"$0\")\"; [ ! -e \"$d/fail\" ] || [ \"$1\" != build ] || exit 3\n");
+        let _env = with_env(&env);
+        let wt = d.path().join("wt");
+        fs::create_dir_all(&wt).unwrap();
+        crate_tree(&wt, "pub fn f() {}\n");
+        // All read fresh, the lease's release included, so this test pins no config for the others.
+        spira_config::process::with_fresh(|| {
+            let held = RealScripts { home: home.clone() }.build_release(&wt, "hand-1", "spira").expect("builds");
+            let slot = base.join("spira/1");
+            assert!(slot.join("release/.lease-first-build-secs").is_file(), "the build's seconds are recorded");
+            let of_held = held.downcast_ref::<HeldBuild>().and_then(|h| h.0.as_ref()).map(|(l, _)| l.report("hand-1").first_build_secs);
+            assert!(matches!(of_held, Some(Some(_))), "{of_held:?}");
+            drop(held);
+            fs::write(d.path().join("bin/fail"), "").unwrap();
+            fs::remove_file(wt.join("target/release")).unwrap();
+            RealScripts { home: home.clone() }.build_release(&wt, "hand-2", "spira").expect_err("a failing build fails");
+            // The failed lease is gone; these two files are all its report could have read.
+            for profile in ["debug", "release"] {
+                assert!(!slot.join(profile).join(".lease-first-build-secs").exists(), "a failed build records nothing in {profile}/");
+            }
+        })
+        .unwrap();
     }
 
     #[test_id(ten83xd)]

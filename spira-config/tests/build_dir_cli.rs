@@ -291,13 +291,10 @@ fn each_released_hand_lease_logs_one_report_with_its_state_and_first_build_secon
 
     let mut p2 = sleeper();
     b.lease("hand-2", &p2);
-    let home = spira_config::resolve::locate_home_for_process().unwrap();
-    let stamped = Command::new("bash").arg(home.join(spira_config::build_dir::CLEAN_SCRIPT)).arg("--stamp").arg(&b.tree).env("CARGO_TARGET_DIR", &dir).status().unwrap();
-    assert!(stamped.success());
+    spira_config::build_dir::note_first_build(&dir.join("debug"), std::time::Duration::from_secs(12));
     release(&b, &mut p2);
     let second = wait_reports(&log, 2).remove(1);
-    let secs = second.split_once("item:hand-2 state:warm first_build_secs:").unwrap_or_else(|| panic!("{second}")).1;
-    assert!(secs.parse::<u64>().is_ok(), "{second}");
+    assert!(second.ends_with("item:hand-2 state:warm first_build_secs:12"), "{second}");
 
     std::fs::write(b.tree.join("b/src/lib.rs"), "pub fn f() { let _ = 1; }\n").unwrap();
     let mut p3 = sleeper();

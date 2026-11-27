@@ -8,8 +8,7 @@
 #                                     modified since it was written, keep each unit built after
 #                                     the edit, clean the rest, then record <root>
 #   target-clean.sh --stamp <root>    mark the target's units as built from the recorded tree:
-#                                     hashes nothing, cleans nothing; the first of a lease also
-#                                     creates .lease-first-built
+#                                     hashes nothing, cleans nothing
 #
 # A target is shared by every tree built in it and cargo trusts mtimes across them, so a
 # workspace crate whose bytes differ from the tree it was last built from is cleaned;
@@ -64,8 +63,6 @@ BUILT="$TARGET/.unit-tests-built-manifest"
 STAMP="$TARGET/.unit-tests-built-stamp"
 if [ -n "$stamp_only" ]; then
   mkdir -p "$TARGET" && touch "$STAMP" || exit 2
-  # The first stamp of a lease times its first build; the lease removes the file when it starts.
-  [ -e "$TARGET/.lease-first-built" ] || touch "$TARGET/.lease-first-built" || exit 2
   exit 0
 fi
 unit_bytes=0

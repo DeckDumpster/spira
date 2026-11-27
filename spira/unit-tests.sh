@@ -36,6 +36,8 @@ BINS="$ROOT/target/unit-tests.bins"
 [ -f "$BINS" ] || { echo "unit-tests: $BINS missing — run through testenv --suites unit-tests" >&2; exit 2; }
 bins=()
 while IFS= read -r c; do [ -n "$c" ] && bins+=(-p "$c"); done < "$BINS"
+# The lease reports what this took (spira-config build_dir): builds only, never the tests.
+build_from=$SECONDS
 if [ "${#bins[@]}" -gt 0 ]; then
   cargo build "${bins[@]}" --bins -j "$jobs" || exit 1
 fi
@@ -70,6 +72,11 @@ build=()
 while IFS= read -r w; do [ -n "$w" ] && build+=("$w"); done < "$BUILD"
 env -u SPIRA_RELEASE -u SPIRA_TOML -u SPIRA_HOME PATH="$unit_path" CARGO_BUILD_JOBS="$jobs" \
     "${build[@]}" || exit 1
+# Into debug/, following it when it links into a leased folder. The first build wins.
+profile="${CARGO_TARGET_DIR:-$ROOT/target}/debug"
+noted="$profile/.lease-first-build-secs"
+[ -e "$noted" ] || { mkdir -p "$profile" && echo "$((SECONDS - build_from))" > "$noted"; } ||
+  echo "unit-tests: could not record the build's seconds in $noted" >&2
 env -u SPIRA_RELEASE -u SPIRA_TOML -u SPIRA_HOME PATH="$unit_path" \
     "$ROOT/tools/test-sandbox/runner" --around cargo test "${words[@]}" --no-fail-fast --features integration -j "$jobs" -- --test-threads="$threads" "${filters[@]}" "${skips[@]}"
 rc=$?
