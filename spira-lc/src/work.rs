@@ -2929,10 +2929,10 @@ mod tests {
     #[test]
     fn an_untriggered_groom_ask_passes_mails_lint() {
         let (subject, default, body) = super::untriggered_groom_ask("sp-abc123");
-        let kinds = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/mail/kinds"));
+        let kinds = spira_config::resolve::locate_home_for_process().unwrap().join("mail/kinds");
         let lint = |subject: &str| {
             let input = mail::lint::LintInput { from: "groomer <groomer@spira>", subject, kind: "question", default: &default, urgent: false, body: &body, digest: false };
-            mail::lint::lint_check(&input, kinds, "sp")
+            mail::lint::lint_check(&input, &kinds, "sp")
         };
         let refused = lint("sp-abc123 was claimed by the groomer").unwrap_err();
         assert!(refused.contains("Subject leads with a bead id"), "POSITIVE CONTROL: {refused}");
