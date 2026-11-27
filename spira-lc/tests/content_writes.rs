@@ -946,13 +946,18 @@ fn admin_store_sql_ping_and_config_answer_from_the_server_and_start_no_bd() {
     let reset_status = admin_store(&lc, &["config", "set", "status.custom", "retired, review:active,it's"], "");
     let respelled = admin_store(&lc, &["config", "get", "status.custom"], "");
     let second_statuses = status_table();
+    let repeated = admin_store(&lc, &["config", "set", "status.custom", "review : active,,review : active,"], "");
+    let repeated_statuses = status_table();
+    let emptied = admin_store(&lc, &["config", "set", "status.custom", ""], "");
+    let emptied_value = admin_store(&lc, &["config", "get", "status.custom"], "");
+    let emptied_statuses = status_table();
     let set_first = admin_store(&lc, &["config", "set", "types.custom", "event,gate"], "");
     let set_types = admin_store(&lc, &["config", "set", "types.custom", "gate, proposal,it's"], "");
     let types = admin_store(&lc, &["config", "get", "types.custom"], "");
     let argv = std::fs::read_to_string(&lc.bd_log).unwrap_or_default();
     assert!(argv.is_empty(), "admin-store started bd: {argv}");
 
-    for (name, (rc, _, err)) in [("ping", &ping), ("one", &one), ("table", &table), ("json", &json), ("none", &none), ("none_json", &none_json), ("ddl", &ddl), ("unset", &unset), ("set_status", &set_status), ("status", &status), ("reset_status", &reset_status), ("respelled", &respelled), ("set_first", &set_first), ("set_types", &set_types), ("types", &types)] {
+    for (name, (rc, _, err)) in [("ping", &ping), ("one", &one), ("table", &table), ("json", &json), ("none", &none), ("none_json", &none_json), ("ddl", &ddl), ("unset", &unset), ("set_status", &set_status), ("status", &status), ("reset_status", &reset_status), ("respelled", &respelled), ("repeated", &repeated), ("emptied", &emptied), ("emptied_value", &emptied_value), ("set_first", &set_first), ("set_types", &set_types), ("types", &types)] {
         assert_eq!(*rc, 0, "{name}: {err}");
     }
     assert_eq!(ping.1.lines().nth(2), Some("1"), "{}", ping.1);
@@ -971,6 +976,9 @@ fn admin_store_sql_ping_and_config_answer_from_the_server_and_start_no_bd() {
     assert_eq!(first_statuses, ["approved,unspecified", "retired,unspecified"]);
     assert_eq!(second_statuses, ["it's,unspecified", "retired,unspecified", "review,active"]);
     assert_eq!(respelled.1, "retired, review:active,it's\n");
+    assert_eq!(repeated_statuses, ["review,active"]);
+    assert_eq!(emptied_statuses, Vec::<String>::new());
+    assert_eq!(emptied_value.1, "\n");
     assert_eq!(types.1, "gate, proposal,it's\n");
     let listed = store.dolt_sql("SELECT name FROM custom_types ORDER BY name", &["-r", "csv"]);
     assert_eq!(listed.lines().skip(1).collect::<Vec<_>>(), ["gate", "it's", "proposal"], "{listed}");
