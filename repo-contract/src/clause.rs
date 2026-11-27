@@ -149,6 +149,11 @@ fn landing(p: &dyn Ports, repo: &str) -> Judged {
         }
         return Ok(Outcome::Met(format!("{} registration pieces ok; forge workflow {name:?} is under {WORKFLOWS}/", pieces.len())));
     }
+    if mode == "pr" {
+        if let Some(gate) = pieces.iter().find(|x| x.name == "gate" && x.detail.starts_with("certifies nothing")) {
+            return Ok(Outcome::Met(format!("gate: {}", gate.detail)));
+        }
+    }
     Ok(Outcome::Met(format!("{} registration pieces ok; land mode {mode}", pieces.len())))
 }
 
@@ -203,6 +208,7 @@ mod tests {
         shell: Option<Vec<&'static str>>,
         shell_fault: Option<Result<String, String>>,
         bad_piece: Option<(&'static str, &'static str)>,
+        gate_piece: Option<&'static str>,
         mode: &'static str,
         workflow: &'static str,
         workflow_files: Vec<String>,
@@ -234,6 +240,9 @@ mod tests {
         }
         fn landing_pieces(&self, _: &str) -> Vec<Piece> {
             let mut v = vec![Piece { name: "registered".into(), detail: "in the repo registry".into(), ok: true }];
+            if let Some(d) = self.gate_piece {
+                v.push(Piece { name: "gate".into(), detail: d.into(), ok: true });
+            }
             if let Some((n, d)) = self.bad_piece {
                 v.push(Piece { name: n.into(), detail: d.into(), ok: false });
             }
@@ -384,6 +393,17 @@ mod tests {
         assert!(line(&f, Clause::Landing).starts_with("not met landing: the forge workflow \"Gate\" is not a file"));
         f.mode = "queue.local";
         assert!(line(&f, Clause::Landing).starts_with("met landing"));
+    }
+
+    #[test_id(tk860rx)]
+    #[test]
+    fn landing_for_a_pr_repository_reports_what_judges_it() {
+        let mut f = green();
+        f.mode = "pr";
+        f.gate_piece = Some("certifies nothing; the pull request's CI judges");
+        assert_eq!(line(&f, Clause::Landing), "met landing: gate: certifies nothing; the pull request's CI judges");
+        f.gate_piece = Some("gate.steps on origin/main");
+        assert_eq!(line(&f, Clause::Landing), "met landing: 2 registration pieces ok; land mode pr");
     }
 
     #[test_id(tk9j71x)]

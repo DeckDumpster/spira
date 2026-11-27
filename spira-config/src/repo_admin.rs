@@ -665,6 +665,9 @@ fn gate_detail(reg: &Registry, name: &str, path: &Path, land: &str) -> Result<St
         GateSource::Nothing { .. } if matches!(mode.as_str(), "queue" | "queue.forge") => {
             Ok("certifies nothing; the round's pull request CI judges".to_string())
         }
+        GateSource::Nothing { .. } if mode == "pr" => {
+            Ok("certifies nothing; the pull request's CI judges".to_string())
+        }
         GateSource::Nothing { .. } => Err(format!(
             "certifies nothing: {land} has no gate.steps and no ci_entry in {TESTENV_DECL}"
         )),
@@ -767,15 +770,14 @@ fn check_cutting_in(reg: &Registry, name: &str, tree_root: &dyn Fn() -> Result<P
             );
             piece!("publish", publish_piece(reg, name, &path, &land));
         }
-        "queue" | "queue.forge" => {
+        "queue" | "queue.forge" | "pr" => {
+            let needs = if mode == "pr" { "pr" } else { "queue.forge" };
             piece!(
                 "queue-mode",
                 if remote.is_some() {
                     Ok(format!("{land} tracks a remote"))
                 } else {
-                    Err(format!(
-                        "queue.forge needs a remote landing ref, {land} is local"
-                    ))
+                    Err(format!("{needs} needs a remote landing ref, {land} is local"))
                 }
             );
         }
@@ -1048,6 +1050,31 @@ mod tests {
         let (f, _) = gated_fx("queue.forge", "", &[(".spira/testenv.toml", DECL_OK)]);
         let g = piece(&f, "gate");
         assert!(g.ok && g.detail.contains("certifies nothing"), "{g:?}");
+    }
+
+    #[test_id(t1azeev)]
+    #[test]
+    fn a_pr_repository_certifies_nothing_and_says_the_pull_request_judges_but_push_still_fails() {
+        let (f, _) = gated_fx("pr", "", &[(".spira/testenv.toml", DECL_NO_ENTRY)]);
+        let g = piece(&f, "gate");
+        assert!(g.ok, "{g:?}");
+        assert!(g.detail.contains("certifies nothing"), "{g:?}");
+        assert!(g.detail.contains("pull request"), "{g:?}");
+        let (f, _) = gated_fx("push", "", &[("README", "x")]);
+        assert_eq!(first_failure(&f), Some("gate"));
+    }
+
+    #[test_id(tgvwkab)]
+    #[test]
+    fn a_pr_repository_passes_every_piece_only_with_a_remote_landing_ref() {
+        let (f, repo) = gated_fx("pr", "", &[(".spira/testenv.toml", DECL_NO_ENTRY)]);
+        assert_eq!(first_failure(&f), Some("queue-mode"));
+        git(&repo, &["remote", "add", "origin", "unused"]).unwrap();
+        git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]).unwrap();
+        let map = std::fs::read_to_string(&f.map).unwrap().replace("| local/main |", "| origin/main |");
+        std::fs::write(&f.map, map).unwrap();
+        assert_eq!(piece(&f, "landref").detail, "origin/main");
+        assert_eq!(first_failure(&f), None);
     }
 
     #[test_id(tpg1a04)]
