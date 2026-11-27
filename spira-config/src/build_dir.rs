@@ -40,7 +40,9 @@
 //!   leased at once in the day ending at its newest lease (`<repo>/peaks.json`), never below one.
 //!   A lease is never refused or delayed for want of space.
 //! - **Deleting is a rename.** The folder moves into `<base>/.reap` under the repository's
-//!   allocation lock and its own; [`reap`] removes it later. Its bytes count until then.
+//!   allocation lock and its own; [`reap`] removes it later. Bytes still waiting count only once
+//!   a finished reap has left them: one that began after they arrived (`<base>/.reap.done`), or
+//!   at once when the entry's name carries no arrival. The rest are about to go.
 //!
 //! - **Trim on release.** [`trim`] drops what no later build can use: idle profiles, and
 //!   incremental, `deps`, `.fingerprint` and `build` entries untouched in the lease and a day old.
@@ -365,8 +367,7 @@ fn discard(dir: &Path, held: SlotLock) -> bool {
     };
     let Some((base, repo, n)) = parts() else { return false };
     let reap = base.join(REAP_DIR);
-    let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos();
-    let to = reap.join(format!("{repo}.{n}.{nanos}"));
+    let to = reap.join(format!("{repo}.{n}.{}", epoch_nanos()));
     if std::fs::create_dir_all(&reap).is_err() {
         return false;
     }
@@ -391,18 +392,60 @@ fn awaiting_reap(bases: &[PathBuf]) -> Vec<PathBuf> {
     bases.iter().flat_map(|b| children(&b.join(REAP_DIR))).collect()
 }
 
-/// Remove everything waiting to be reaped.
-pub fn reap(bases: &[PathBuf]) {
-    awaiting_reap(bases).iter().for_each(|c| remove_any(c));
+/// What waits under `base` and counts against the budget: what a finished reap that began after
+/// it arrived has left, and anything whose name carries no arrival.
+fn stuck(base: &Path) -> Vec<PathBuf> {
+    // Before the listing, so nothing listed is judged by a reap that was still removing it.
+    let through = reaped_through(base);
+    let arrival = |e: &Path| e.file_name()?.to_str()?.rsplit('.').next()?.parse::<u128>().ok();
+    children(&base.join(REAP_DIR)).into_iter().filter(|e| arrival(e).is_none_or(|at| through.is_some_and(|began| at < began))).collect()
 }
 
-/// Remove what is waiting now, on a thread nobody joins: what the process does not finish, a
-/// later lease's does. Every lease starts one.
-pub fn reap_in_background(bases: &[PathBuf]) {
-    let waiting = awaiting_reap(bases);
-    if !waiting.is_empty() {
-        std::thread::spawn(move || waiting.iter().for_each(|c| remove_any(c)));
+/// How a waiting entry's arrival and a reap's start are written.
+fn epoch_nanos() -> u128 {
+    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos()
+}
+
+/// Beside [`REAP_DIR`], not in it, so no reap removes it.
+const REAP_DONE: &str = ".reap.done";
+
+/// When the latest-begun reap that has finished under `base` began.
+fn reaped_through(base: &Path) -> Option<u128> {
+    std::fs::read_to_string(base.join(REAP_DONE)).ok()?.trim().parse().ok()
+}
+
+/// Record that a reap begun at `started` has finished under `base`. The record only moves forward.
+fn record_reap(base: &Path, started: u128) {
+    if !base.is_dir() {
+        return;
     }
+    let written = crate::admission::Mutex::lock(base, ".reap.done.lock").and_then(|_held| match reaped_through(base) {
+        Some(later) if later >= started => Ok(()),
+        _ => crate::write_atomic(&base.join(REAP_DONE), &started.to_string()),
+    });
+    if let Err(e) = written {
+        eprintln!("cannot record the finished reap under {}: {e}", base.display());
+    }
+}
+
+fn reap_base(base: &Path, waiting: &[PathBuf], started: u128) {
+    waiting.iter().for_each(|c| remove_any(c));
+    record_reap(base, started);
+}
+
+/// Remove everything waiting to be reaped.
+pub fn reap(bases: &[PathBuf]) {
+    let started = epoch_nanos();
+    bases.iter().for_each(|b| reap_base(b, &children(&b.join(REAP_DIR)), started));
+}
+
+/// Remove what is waiting now, on a thread the callers do not join: what the process does not
+/// finish, a later lease's does. Every lease starts one.
+pub fn reap_in_background(bases: &[PathBuf]) -> Option<std::thread::JoinHandle<()>> {
+    // Before the listing: an entry that arrives after it is never tried, so must not read as left.
+    let started = epoch_nanos();
+    let waiting: Vec<(PathBuf, Vec<PathBuf>)> = bases.iter().map(|b| (b.clone(), children(&b.join(REAP_DIR)))).filter(|(_, w)| !w.is_empty()).collect();
+    (!waiting.is_empty()).then(|| std::thread::spawn(move || waiting.iter().for_each(|(b, w)| reap_base(b, w, started))))
 }
 
 /// What a lease's folder held for it when it started.
@@ -1026,7 +1069,7 @@ fn evict_budget(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path) -> u6
         for path in dirs(b).into_iter().filter(|p| !repos.contains(p) && *p != reap).chain(in_repos) {
             sized.push((Kind::Stray, size(&path), path));
         }
-        waiting += children(&reap).iter().map(|c| size(c)).sum::<u64>();
+        waiting += stuck(b).iter().map(|c| size(c)).sum::<u64>();
     }
     if sized.iter().map(|(_, bytes, _)| bytes).sum::<u64>() + waiting <= budget_bytes {
         return Vec::new();
@@ -1085,17 +1128,16 @@ fn evict_budget(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path) -> u6
     })
 }
 
-/// What a lease deletes: over the budget, then for repositories no longer registered. The second
-/// value is [`evict_unregistered`]'s refusal, for the caller's log.
+/// What a lease deletes: for repositories no longer registered, then over the budget, so the
+/// budget never deletes for space the first is already freeing. The second value is
+/// [`evict_unregistered`]'s refusal, for the caller's log.
 pub fn evict_at_lease(bases: &[PathBuf], budget_bytes: u64, registry: &crate::repos::Registry) -> (Vec<Deleted>, Option<String>) {
-    let mut gone = evict_over_budget(bases, budget_bytes);
-    match evict_unregistered(bases, registry.home_repo(), &registered_repos(registry)) {
-        Ok(more) => {
-            gone.extend(more);
-            (gone, None)
-        }
-        Err(refused) => (gone, Some(refused)),
-    }
+    let (mut gone, refused) = match evict_unregistered(bases, registry.home_repo(), &registered_repos(registry)) {
+        Ok(gone) => (gone, None),
+        Err(refused) => (Vec::new(), Some(refused)),
+    };
+    gone.extend(evict_over_budget(bases, budget_bytes));
+    (gone, refused)
 }
 
 /// The registry as [`evict_unregistered`] reads it: the rows of its map, none without a map.
@@ -1225,14 +1267,17 @@ fn sample(name: &'static str, value: u64, dir: Option<String>) -> Sample {
 }
 
 /// What a lease or a release of `dir` reports: its own bytes, the pool the budget counts (every
-/// repository's folders and what waits to be reaped), the base total (everything under each base, including what no budget counts) and
-/// the budget itself. `size` answers the bytes one path holds.
+/// repository's folders and what a finished reap has left), everything waiting to be reaped,
+/// counted or not, the base total (everything under each base, including what no budget counts)
+/// and the budget itself. `size` answers the bytes one path holds.
 pub fn lease_samples(bases: &[PathBuf], dir: &Path, budget_bytes: u64, size: &dyn Fn(&Path) -> u64) -> Vec<Sample> {
-    let pool: u64 = bases.iter().flat_map(|b| base_slots(b)).chain(awaiting_reap(bases)).map(|d| size(&d)).sum();
+    let pool: u64 = bases.iter().flat_map(|b| base_slots(b).into_iter().chain(stuck(b))).map(|d| size(&d)).sum();
+    let waiting: u64 = awaiting_reap(bases).iter().map(|d| size(d)).sum();
     let base: u64 = bases.iter().map(|b| size(b)).sum();
     vec![
         sample("build_dir_bytes", size(dir), Some(dir.display().to_string())),
         sample("build_dir_pool_bytes", pool, None),
+        sample("build_dir_reap_bytes", waiting, None),
         sample("build_dir_base_bytes", base, None),
         sample("build_dir_budget_bytes", budget_bytes, None),
     ]
@@ -2727,17 +2772,103 @@ mod tests {
 
     #[test_id(tfgdqij)]
     #[test]
-    fn bytes_waiting_to_be_reaped_count_against_the_budget_and_are_no_candidate() {
+    fn bytes_a_finished_reap_left_count_against_the_budget_and_are_no_candidate() {
         let d = testkit::TempDir::new("bdir-reap-counts");
         let base = d.path().join("base");
         let bases = vec![base.clone()];
         let a = idle_folders(&bases, "A", 1);
         let waiting = base.join(".reap/B.1.7");
         fill(&waiting.join("x"), 1);
+        record_reap(&base, 8);
         let proc = empty_proc(d.path());
         assert!(evict_idle_in(&bases, 20, &ten, &proc).is_empty(), "positive control: within budget");
         assert_eq!(evict_idle_in(&bases, 19, &ten, &proc), [a[0].clone()]);
         assert!(waiting.join("x").exists(), "eviction leaves it to the reaper");
+    }
+
+    #[test_id(t42hkq1)]
+    #[test]
+    fn bytes_still_on_their_way_out_delete_nothing_until_a_reap_that_began_after_them_has_left_them() {
+        let d = testkit::TempDir::new("bdir-reap-pending");
+        let base = d.path().join("base");
+        let bases = vec![base.clone()];
+        let a = idle_folders(&bases, "A", 1);
+        let waiting = base.join(".reap/B.v2.1.7");
+        fill(&waiting.join("x"), 1);
+        let proc = empty_proc(d.path());
+        assert!(evict_idle_in(&bases, 19, &ten, &proc).is_empty(), "no reap has finished");
+        for started in [6, 7] {
+            record_reap(&base, started);
+            assert!(evict_idle_in(&bases, 19, &ten, &proc).is_empty(), "the reap that began at {started} did not begin after the arrival");
+        }
+        record_reap(&base, 8);
+        assert_eq!(evict_idle_in(&bases, 19, &ten, &proc), [a[0].clone()]);
+    }
+
+    #[test_id(t7m30a6)]
+    #[test]
+    fn what_waits_with_no_arrival_in_its_name_counts_at_once() {
+        for name in ["B.1.7.json", "B.1.7.gate", "hand-made"] {
+            let d = testkit::TempDir::new("bdir-reap-no-arrival");
+            let base = d.path().join("base");
+            let bases = vec![base.clone()];
+            let a = idle_folders(&bases, "A", 1);
+            fill(&base.join(".reap").join(name).join("x"), 1);
+            assert_eq!(evict_idle_in(&bases, 19, &ten, &empty_proc(d.path())), [a[0].clone()], "{name}");
+        }
+    }
+
+    #[test_id(tt0g6sc)]
+    #[test]
+    fn a_finished_reap_records_when_it_began_and_an_earlier_one_never_moves_the_record_back() {
+        let d = testkit::TempDir::new("bdir-reap-record");
+        let base = d.path().join("base");
+        std::fs::create_dir_all(&base).unwrap();
+        assert_eq!(reaped_through(&base), None);
+        let called = epoch_nanos();
+        reap(std::slice::from_ref(&base));
+        let recorded = reaped_through(&base).expect("a finished reap is recorded");
+        assert!(recorded >= called, "{recorded} is before {called}");
+        record_reap(&base, recorded - 1);
+        assert_eq!(reaped_through(&base), Some(recorded));
+        record_reap(&base, recorded + 1);
+        assert_eq!(reaped_through(&base), Some(recorded + 1), "positive control: a later one does");
+    }
+
+    #[test_id(td8e7ia)]
+    #[test]
+    fn a_background_reap_records_when_it_began_once_it_has_removed_what_waited() {
+        let d = testkit::TempDir::new("bdir-reap-record-background");
+        let base = d.path().join("base");
+        let left = base.join(".reap/A.1.7");
+        fill(&left.join("x"), 1);
+        let called = epoch_nanos();
+        reap_in_background(std::slice::from_ref(&base)).expect("something waits").join().unwrap();
+        assert!(!left.exists());
+        assert!(reaped_through(&base).is_some_and(|started| started >= called));
+    }
+
+    #[test_id(t3zmqv7)]
+    #[test]
+    fn an_unregistered_repositorys_folder_goes_before_the_budget_is_measured() {
+        let d = testkit::TempDir::new("bdir-lease-order");
+        let base = d.path().join("base");
+        let bases = vec![base.clone()];
+        let home = idle_folders(&bases, "home", 1);
+        let u = idle_folders(&bases, "U", 1);
+        let a = idle_folders(&bases, "A", 2);
+        for dir in home.iter().chain(&u).chain(&a) {
+            fill(&dir.join("x"), 256);
+        }
+        set_last_used(&a[0], 1);
+        // Room for the three that stay and half a folder of side files, not for U's.
+        let budget = home.iter().chain(&a).map(|d| crate::build::size_of(d)).sum::<u64>() + (128 << 10);
+        let env = BTreeMap::from([("SPIRA_HOME_REPO".to_string(), "home".to_string())]);
+        let registry = crate::repos::Registry::new(Some("home|x\nA|y\n"), &env, Path::new("x"));
+        let (gone, refused) = evict_at_lease(&bases, budget, &registry);
+        assert_eq!(gone, [Deleted { dir: u[0].clone(), repo: Some("U".into()), why: Why::Unregistered }]);
+        assert_eq!(refused, None);
+        assert!(a.iter().all(|d| d.join("x").exists()));
     }
 
     #[test_id(tojme4t)]
@@ -2908,9 +3039,16 @@ mod tests {
         let bases = vec![base.clone()];
         let l = lease_in(&bases, "a", "A");
         fill(&l.dir().join("x"), 1);
-        fill(&base.join(".reap/B.1.7/x"), 1);
+        for entry in [".reap/B.1.7", ".reap/B.2.9"] {
+            fill(&base.join(entry).join("x"), 1);
+        }
+        record_reap(&base, 8);
         let s = lease_samples(&bases, l.dir(), 777, &|p| if p.join("x").exists() { 10 } else { 0 });
-        assert_eq!(value(&s, "build_dir_pool_bytes", None), Some(20.0));
+        assert_eq!(value(&s, "build_dir_reap_bytes", None), Some(20.0), "everything waiting");
+        assert_eq!(value(&s, "build_dir_pool_bytes", None), Some(20.0), "the folder and the entry a reap left");
+        record_reap(&base, 10);
+        let s = lease_samples(&bases, l.dir(), 777, &|p| if p.join("x").exists() { 10 } else { 0 });
+        assert_eq!(value(&s, "build_dir_pool_bytes", None), Some(30.0));
     }
 
     #[test_id(tu291h4)]

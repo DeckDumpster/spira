@@ -483,6 +483,15 @@
           "expr": "sum(sum_over_time(build_dir_evicted[1d]))",
           "legendFormat": "evictions per day",
           "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "last_over_time(build_dir_reap_bytes[1d])",
+          "legendFormat": "waiting to be reaped",
+          "refId": "E"
         }
       ]
     },
