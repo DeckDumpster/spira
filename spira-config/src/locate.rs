@@ -48,12 +48,17 @@ pub fn locate(explicit: Option<PathBuf>) -> LocateOutcome {
         return LocateOutcome::Found(p);
     }
 
+    locate_spec(env::var("SPIRA_TOML").ok().as_deref())
+}
+
+/// What a `SPIRA_TOML` value names: a file, or `:`-separated base:override layers.
+pub fn locate_spec(spec: Option<&str>) -> LocateOutcome {
     // THE ONE SOURCE (per Ryan 2026-10-05): `$SPIRA_TOML` names the file. No XDG/HOME/etc
     // tier, no legacy spira.conf, no shipped example — an unset or missing pin is NotFound,
     // and every caller refuses on it.
-    match env::var("SPIRA_TOML") {
-        Ok(spec) if !spec.is_empty() => {
-            // A file, or base:override layers — every one must exist.
+    match spec {
+        Some(spec) if !spec.is_empty() => {
+            // Every layer must exist.
             let layers: Vec<PathBuf> = spec.split(':').filter(|p| !p.is_empty()).map(PathBuf::from).collect();
             match layers.iter().find(|p| !p.is_file()) {
                 Some(missing) => LocateOutcome::NotFound { tried: vec![missing.clone()] },

@@ -295,7 +295,7 @@ impl Registry {
     pub fn from_env(env: BTreeMap<String, String>, home: &Path) -> Registry {
         let env = registry_env(env, home);
         let map_text = env.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| std::fs::read_to_string(p).ok());
-        let doc = crate::locate::locate(None).found().and_then(|p| crate::load(&p).ok());
+        let doc = handed_doc(&env);
         let publish = doc.as_ref().map(|d| d.publish.clone()).unwrap_or_default();
         if map_text.is_none() {
             if let Some(rows) = doc.as_ref().map(rows_from_toml) {
@@ -746,6 +746,17 @@ pub fn same_repo(a: &str, b: &str) -> bool {
         (Some(x), Some(y)) => x == y,
         _ => false,
     }
+}
+
+/// The document `env`'s `SPIRA_TOML` names, never the process's. It is judged by the release's
+/// key registry whatever home the caller hands: that home may be any repository's checkout.
+fn handed_doc(env: &BTreeMap<String, String>) -> Option<crate::SpiraToml> {
+    let spec = env.get(crate::process::TOML_ENV).filter(|s| !s.is_empty())?;
+    let loaded = match crate::locate::locate_spec(Some(spec)) {
+        crate::locate::LocateOutcome::Found(p) => crate::load(&p),
+        crate::locate::LocateOutcome::NotFound { tried } => Err(format!("not a file: {tried:?}")),
+    };
+    loaded.map_err(|e| eprintln!("spira-config repos: cannot read the repo registry's config {spec}: {e}")).ok()
 }
 
 /// The registry's inputs — `SPIRA_REPO_MAP`, `SPIRA_HOME_REPO`, `SPIRA_REPO`,
