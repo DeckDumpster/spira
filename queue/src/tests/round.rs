@@ -7705,6 +7705,7 @@ fn a_ci_entry_that_wrote_no_verdict_is_a_faulted_pass_naming_the_round_fault_not
         out: String::new(),
         err: String::new(),
     };
+    t.scripts.repo_no_ci_result.set(true);
     *t.scripts.repo_round_fault.borrow_mut() = Some("ROUND-FAULT: FAULT with no phase marker (the VM script never reached its EXIT trap, or round-phase did not come back) (read from the launcher's stderr: the script left no log): round-vm: podman pull /work failed\n".into());
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-a:ta"]),
@@ -7718,6 +7719,35 @@ fn a_ci_entry_that_wrote_no_verdict_is_a_faulted_pass_naming_the_round_fault_not
     assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
     assert_eq!(round_phase(&t), "ATTRIBUTING");
     assert!(t.err().contains("podman pull /work failed"), "{}", t.err());
+    assert!(!t.out().contains("red=testenv"), "{}", t.out());
+}
+
+#[test_id(tnljucv)]
+#[test]
+fn a_ci_entry_exit_1_with_no_verdict_and_no_round_fault_is_a_faulted_pass_naming_the_exit() {
+    let t = round_world();
+    *t.scripts.repo_testenv.borrow_mut() = RunOut {
+        rc: 1,
+        out: String::new(),
+        err: "ssh: connection closed".into(),
+    };
+    t.scripts.repo_no_ci_result.set(true);
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    declare_own_testenv(&t);
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
+    assert_eq!(round_phase(&t), "ATTRIBUTING");
+    assert!(
+        t.err().contains("CI entry exited 1") && t.err().contains("ssh: connection closed"),
+        "{}",
+        t.err()
+    );
     assert!(!t.out().contains("red=testenv"), "{}", t.out());
 }
 
