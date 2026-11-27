@@ -1,7 +1,7 @@
 //! `FOREIGN_SCRIPT` in a real shell against a real git mirror; only `podman` is faked.
 #[macro_use]
 extern crate spira_test_id;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use testkit::git;
 
