@@ -1138,7 +1138,8 @@ impl World for Real {
             }
         }
         crate::target::release_tree(tree, keep_release);
-        if let Some((lease, path, bead)) = self.leases.borrow_mut().remove(tree) {
+        if let Some((mut lease, path, bead)) = self.leases.borrow_mut().remove(tree) {
+            lease.note_root(tree);
             if let Err(e) = spira_config::build_dir::clean(&self.home.join(spira_config::build_dir::CLEAN_SCRIPT), tree, lease.dir(), &path, true, &bead, Some(repo)) {
                 self.eprint(&format!("gate: could not record the tree {} holds ({e}) — the next lease cleans its workspace crates", lease.dir().display()));
             }
@@ -1417,7 +1418,7 @@ mod tests {
         git(&["commit", "-qm", "tip"]);
         let tip = git(&["rev-parse", "HEAD"]);
         let bases = vec![t.path().join("pool")];
-        let first = spira_config::build_dir::lease(&bases, "builder").unwrap();
+        let first = spira_config::build_dir::lease_for(&bases, "builder", "r", 1).unwrap();
         let slot = first.dir().to_path_buf();
         first.release();
         Pool { real: super::Real::new(home), t, bases, tree, own, tip, slot }
@@ -1471,7 +1472,7 @@ mod tests {
         assert_eq!(miss, BuilderMiss::Held, "{why}");
 
         let gone = pool("exit 0\n");
-        let b = crate::ports::Builder { dir: gone.t.path().join("pool/dir.99"), ..builder(&gone) };
+        let b = crate::ports::Builder { dir: gone.t.path().join("pool/r/99"), ..builder(&gone) };
         assert_eq!(gone.real.build_in_bases(&gone.tree, &b, &gone.bases).unwrap_err().0, BuilderMiss::Gone);
     }
 
@@ -1508,7 +1509,7 @@ mod tests {
         assert!(lockable(&bad_tip));
 
         let gone = pool("exit 0\n");
-        let b = crate::ports::Builder { dir: gone.t.path().join("pool/dir.99"), ..builder(&gone) };
+        let b = crate::ports::Builder { dir: gone.t.path().join("pool/r/99"), ..builder(&gone) };
         assert!(gone.real.build_in_bases(&gone.tree, &b, &gone.bases).is_err());
         assert_eq!(std::fs::read_link(gone.tree.join("target/debug")).unwrap(), gone.own);
     }

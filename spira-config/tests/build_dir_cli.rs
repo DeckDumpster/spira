@@ -29,6 +29,7 @@ fn setup(name: &str) -> Box_ {
         &[
             ("SPIRA_DWARF_BUILD_BASE", base.to_str().unwrap()),
             ("SPIRA_DWARF_BUILD_BUDGET_GIB", "60"),
+            ("SPIRA_DWARF_BUILD_FOLDERS_PER_REPO", "5"),
         ],
     );
     let bindir = d.path().join("bin");
@@ -70,9 +71,9 @@ fn setup(name: &str) -> Box_ {
 }
 
 impl Box_ {
-    fn lease(&self, who: &str, holder: &Child) -> (PathBuf, String) {
+    fn run(&self, who: &str, holder: &Child, extra: &[&str]) -> std::process::Output {
         let home = spira_config::resolve::locate_home_for_process().unwrap();
-        let out = Command::new(testkit::bin_exe("spira-build-dir"))
+        Command::new(testkit::bin_exe("spira-build-dir"))
             .args([
                 "lease",
                 "--who",
@@ -82,12 +83,17 @@ impl Box_ {
                 "--root",
             ])
             .arg(&self.tree)
+            .args(extra)
             .env_clear()
             .env("SPIRA_TOML", &self.toml)
             .env("SPIRA_HOME", &home)
             .env("PATH", &self.bin)
             .output()
-            .expect("spira-build-dir runs");
+            .expect("spira-build-dir runs")
+    }
+
+    fn lease(&self, who: &str, holder: &Child) -> (PathBuf, String) {
+        let out = self.run(who, holder, &["--repo", "spira"]);
         let err = String::from_utf8_lossy(&out.stderr).to_string();
         assert!(out.status.success(), "lease failed: {err}");
         (
@@ -107,7 +113,7 @@ fn sleeper() -> Child {
 
 fn wait_released(b: &Box_) {
     // The holder notices the exit, records the tree and empties the lock file.
-    let lock = b.base.join("dir.1.lock");
+    let lock = b.base.join("spira/1.lock");
     let deadline = Instant::now() + Duration::from_secs(20); // clock-safe: a cap on waiting for the holder to empty the lock file
     while std::fs::metadata(&lock).map_or(0, |m| m.len()) > 0 && Instant::now() < deadline {
         // clock-safe: cap on the wait for the marker file
@@ -118,6 +124,86 @@ fn wait_released(b: &Box_) {
         0,
         "the holder released"
     );
+}
+
+#[test_id(tqkebmx)]
+#[test]
+fn a_hand_lease_without_a_repository_is_refused_with_the_usage() {
+    let b = setup("bdcli-no-repo");
+    let mut p = sleeper();
+    let out = b.run("hand-1", &p, &[]);
+    let _ = (p.kill(), p.wait());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert!(err.contains("usage: spira-build-dir lease") && err.contains(" --repo <name>") && !err.contains("[--repo"), "{err}");
+    assert!(out.stdout.is_empty() && !b.base.exists(), "nothing is leased");
+}
+
+#[test_id(tf1jg2k)]
+#[test]
+fn a_hand_lease_prints_the_first_folder_of_the_repository_it_names() {
+    let b = setup("bdcli-repo-path");
+    let mut p = sleeper();
+    let (dir, err) = b.lease("hand-1", &p);
+    assert_eq!(dir, b.base.join("spira/1"), "{err}");
+    release(&b, &mut p);
+}
+
+#[test_id(taybyg1)]
+#[test]
+fn a_hand_lease_at_the_configured_ceiling_is_refused_naming_the_repository_and_the_key() {
+    let b = setup("bdcli-ceiling");
+    let toml = spira_config::process::fixture_toml(
+        b._d.path(),
+        &[("SPIRA_DWARF_BUILD_BASE", b.base.to_str().unwrap()), ("SPIRA_DWARF_BUILD_BUDGET_GIB", "60"), ("SPIRA_DWARF_BUILD_FOLDERS_PER_REPO", "1")],
+    );
+    let b = Box_ { toml, ..b };
+    let (mut p1, mut p2) = (sleeper(), sleeper());
+    b.lease("hand-1", &p1);
+    let out = b.run("hand-2", &p2, &["--repo", "spira"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success() && out.stdout.is_empty(), "{err}");
+    assert!(err.contains("repo:spira already has 1 build folders leased") && err.contains("(SPIRA_DWARF_BUILD_FOLDERS_PER_REPO)"), "{err}");
+    let _ = (p2.kill(), p2.wait());
+    release(&b, &mut p1);
+}
+
+#[test_id(tgnime4)]
+#[test]
+fn a_hand_lease_says_which_flat_folders_it_moved_and_deleted() {
+    let b = setup("bdcli-migrate");
+    for (n, repo) in [(1, Some("spira")), (2, None)] {
+        std::fs::create_dir_all(b.base.join(format!("dir.{n}/debug"))).unwrap();
+        std::fs::write(b.base.join(format!("dir.{n}.lock")), "").unwrap();
+        if let Some(repo) = repo {
+            std::fs::write(b.base.join(format!("dir.{n}.repo")), repo).unwrap();
+        }
+    }
+    let mut p = sleeper();
+    let (_, err) = b.lease("hand-1", &p);
+    assert!(err.contains("moved flat build directory") && err.contains("deleted flat build directory"), "{err}");
+    release(&b, &mut p);
+}
+
+#[test_id(tb8p4y6)]
+#[test]
+fn a_released_folders_record_holds_the_tree_id_and_toolchain_hash_of_the_tree_it_built() {
+    let b = setup("bdcli-record-tree");
+    std::fs::write(b.tree.join("rust-toolchain"), "abc").unwrap();
+    let git = |args: &[&str]| {
+        let o = Command::new("git").arg("-C").arg(&b.tree).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+        assert!(o.status.success(), "{args:?}");
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    git(&["init", "-q"]);
+    git(&["add", "."]);
+    git(&["commit", "-qm", "tree"]);
+    let mut p = sleeper();
+    let (d, _) = b.lease("hand-1", &p);
+    release(&b, &mut p);
+    let record = spira_config::build_dir::read_record(&d).unwrap();
+    assert_eq!(record.tree, Some(git(&["rev-parse", "HEAD^{tree}"])));
+    assert_eq!(record.toolchain.as_deref(), Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
 }
 
 #[test_id(tqvbzcp)]
@@ -709,6 +795,7 @@ fn a_lease_pushes_what_its_clean_removed_under_its_holder_and_mode() {
         &[
             ("SPIRA_DWARF_BUILD_BASE", b.base.to_str().unwrap()),
             ("SPIRA_DWARF_BUILD_BUDGET_GIB", "60"),
+            ("SPIRA_DWARF_BUILD_FOLDERS_PER_REPO", "5"),
             ("SPIRA_METRICS_ENDPOINT", &addr),
         ],
     );

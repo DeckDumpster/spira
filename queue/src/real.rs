@@ -615,6 +615,7 @@ pub const CONFIG_KEYS: &[&str] = &[
     "SPIRA_PUBLISH_RED_ESCALATE_AFTER",
     "SPIRA_PUBLISH_SETTLE_DEFER_MAX",
     "SPIRA_DWARF_BUILD_BASE",
+    "SPIRA_DWARF_BUILD_FOLDERS_PER_REPO",
 ];
 
 /// The settings lib.sh's CONTEXT seam answered, from the config's declared values (`value`):
@@ -1240,7 +1241,11 @@ impl Scripts for RealScripts {
         if bases.is_empty() {
             return Err(format!("{} is not set — set dwarf_build_base in the config document", bd::BASE_ENV));
         }
-        let lease = bd::lease_for(&bases, who, Some(repo)).map_err(|e| format!("cannot lease a build directory under {base}: {e}"))?;
+        let ceiling = spira_config::process::cfg_parse(bd::CEILING_ENV)?;
+        let mut lease = bd::lease_for(&bases, who, repo, ceiling).map_err(|e| format!("cannot lease a build directory under {base}: {e}"))?;
+        lease.notes.iter().for_each(|n| eprintln!("{n}"));
+        eprintln!("build directory {} — {}", lease.dir().display(), lease.start());
+        lease.note_root(wt);
         let held = HeldBuild(Some(lease));
         let dir = held.0.as_ref().map(|l| l.dir().to_path_buf()).unwrap_or_default();
         let script = spira_config::resolve::locate_home_for_process()?.join(bd::CLEAN_SCRIPT);
@@ -2882,9 +2887,9 @@ mod tests {
         let (old, tip) = (d.path().join("old"), d.path().join("tip"));
         crate_tree(&old, "pub fn f() {}\n");
         crate_tree(&tip, "pub fn f() { let _ = 1; }\n");
-        let slot = base.join("dir.1");
-        fs::create_dir_all(&slot).unwrap();
-        fs::write(base.join("dir.1.lock"), "").unwrap();
+        let first = spira_config::build_dir::lease_for(std::slice::from_ref(&base), "hand-0", "spira", 1).unwrap();
+        let slot = first.dir().to_path_buf();
+        first.release();
         let path = std::env::var("PATH").unwrap();
         spira_config::build_dir::clean(&home.join("target-clean.sh"), &old, &slot, &path, true, "hand-0", None).unwrap();
         let wt = d.path().join("wt");
@@ -2908,6 +2913,22 @@ mod tests {
         assert!(err.contains("selective clean") && err.contains("emptied"), "{err}");
         assert!(!slot.join(".unit-tests-built-manifest").exists(), "the untrusted directory is emptied");
         assert_eq!(fs::read_to_string(&log).unwrap().matches("build -q").count(), builds, "nothing is built after a failed clean");
+    }
+
+    #[test_id(ten83xd)]
+    #[test]
+    fn the_release_build_is_refused_at_the_configured_ceiling_before_anything_is_built() {
+        let (d, mut env, base, log, home) = release_world("kcuvbg-ceiling", "exit 0\n");
+        let own = d.path().join("ceiling");
+        fs::create_dir_all(&own).unwrap();
+        let toml = spira_config::process::fixture_toml(&own, &[("SPIRA_DWARF_BUILD_BASE", base.to_str().unwrap()), ("SPIRA_DWARF_BUILD_FOLDERS_PER_REPO", "1")]);
+        env[0] = ("SPIRA_TOML", Some(toml.display().to_string()));
+        let _env = with_env(&env);
+        let _held = spira_config::build_dir::lease_for(std::slice::from_ref(&base), "hand-0", "spira", 1).unwrap();
+        // Read fresh: the process pins its first config, which is another test's.
+        let err = spira_config::process::with_fresh(|| RealScripts { home }.build_release(d.path(), "hand-1", "spira").map(drop)).unwrap().expect_err("at the ceiling");
+        assert!(err.contains("repo:spira already has 1 build folders leased") && err.contains("SPIRA_DWARF_BUILD_FOLDERS_PER_REPO"), "{err}");
+        assert!(!log.exists(), "cargo never ran");
     }
 
     #[test_id(tq0vdkg)]

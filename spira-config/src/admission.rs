@@ -320,13 +320,13 @@ pub struct Ended {
     pub end: &'static str,
 }
 
-/// The pool directory's mutex: an exclusive flock on `<dir>/lock`, held for one scan.
-struct Mutex(File);
+/// A directory's mutex: an exclusive flock on a lock file in it, held for one scan.
+pub(crate) struct Mutex(File);
 
 impl Mutex {
-    fn lock(dir: &Path) -> std::io::Result<Mutex> {
+    pub(crate) fn lock(dir: &Path, name: &str) -> std::io::Result<Mutex> {
         fs::create_dir_all(dir)?;
-        let f = OpenOptions::new().create(true).truncate(false).write(true).open(dir.join("lock"))?;
+        let f = OpenOptions::new().create(true).truncate(false).write(true).open(dir.join(name))?;
         loop {
             // SAFETY: flock on an fd we own for the life of `f`.
             let rc = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
@@ -482,7 +482,7 @@ pub fn try_take_staggered(
     stagger: u64,
 ) -> std::io::Result<(Take, Vec<Ended>)> {
     let dir = pool.dir(run);
-    let _m = Mutex::lock(&dir)?;
+    let _m = Mutex::lock(&dir, "lock")?;
     let (live, ended, waiters) = reap(&dir, pool, size, procs);
     if let Some(l) = live.iter().find(|l| l.is(me)) {
         if l.last < now {
@@ -522,7 +522,7 @@ pub fn try_take_staggered(
 /// Release `slot` if it still names `me`; the ended lease for telemetry.
 pub fn release(run: &Path, pool: Pool, size: u64, slot: u64, me: &Holder, now: u64) -> Option<Ended> {
     let dir = pool.dir(run);
-    let _m = Mutex::lock(&dir).ok()?;
+    let _m = Mutex::lock(&dir, "lock").ok()?;
     let path = dir.join(format!("slot.{slot}"));
     let l = Lease::parse(slot, &fs::read_to_string(&path).ok()?)?;
     if !l.is(me) {
@@ -841,7 +841,7 @@ impl Occupancy {
 /// Read a lease pool (reaping the dead as any scan does); `None` when its mutex cannot be taken.
 pub fn read_occupancy(run: &Path, pool: Pool, size: u64, procs: &dyn Procs) -> Option<Occupancy> {
     let dir = pool.dir(run);
-    let _m = Mutex::lock(&dir).ok()?;
+    let _m = Mutex::lock(&dir, "lock").ok()?;
     let (holders, ended, waiters) = reap(&dir, pool, size, procs);
     record(run, &ended);
     Some(Occupancy { pool, size, holders, waiting: waiters.len(), waiters })

@@ -843,3 +843,4 @@ session_linger_secs
 sub_control_dir
 pressure_cpu_avg300
 pressure_io_avg300
+dwarf_build_folders_per_repo

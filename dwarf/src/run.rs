@@ -1616,9 +1616,13 @@ impl<'a> Run<'a> {
             if bases.is_empty() {
                 return Err(Abort::Harness(format!("{} is not set — a building dwarf has no build directory; set dwarf_build_base in the config document", bd::BASE_ENV)));
             }
-            let lease = bd::lease_for(&bases, &self.s.bead, Some(&self.s.repo_name)).map_err(|e| Abort::Harness(format!("cannot lease a build directory under {}: {e}", self.conf.s(bd::BASE_ENV))))?;
+            let ceiling = spira_config::process::cfg_parse(bd::CEILING_ENV).map_err(Abort::Harness)?;
+            let lease = bd::lease_for(&bases, &self.s.bead, &self.s.repo_name, ceiling).map_err(|e| Abort::Harness(format!("cannot lease a build directory under {}: {e}", self.conf.s(bd::BASE_ENV))))?;
+            for note in &lease.notes {
+                self.log(&format!("{f}: {note}"));
+            }
             let dir = lease.dir().to_path_buf();
-            self.log(&format!("{f}: build directory {} — {}", dir.display(), lease.start(Some(&self.s.repo_name))));
+            self.log(&format!("{f}: build directory {} — {}", dir.display(), lease.start()));
             // The shared selective clean: only the workspace crates whose bytes differ from the
             // tree this directory last built. A clean that cannot run leaves the directory
             // untrusted, so it is emptied — cold, never wrong.
@@ -1652,8 +1656,9 @@ impl<'a> Run<'a> {
     /// Release the build directory to idle at the end of the run, recording the worktree's tree
     /// as the one it holds, so the next lease cleans exactly what differs from it.
     pub fn release_build_dir(&mut self) {
-        let Some(lease) = self.s.build_dir.take() else { return };
+        let Some(mut lease) = self.s.build_dir.take() else { return };
         if let Some(work) = self.s.work.clone().filter(|w| w.is_dir()) {
+            lease.note_root(&work);
             let path = self.d.env.child().get("PATH").cloned().unwrap_or_default();
             if let Err(e) = spira_config::build_dir::clean(&self.home().join(spira_config::build_dir::CLEAN_SCRIPT), &work, lease.dir(), &path, true, &self.s.bead, Some(&self.s.repo_name)) {
                 self.log(&format!("{}: could not record the tree {} holds ({e}) — the next lease cleans its workspace crates", self.f(), lease.dir().display()));
