@@ -16,6 +16,10 @@
 # disk. It differs in hiding both $HOME and the passwd entry's home, and in binding back a round's
 # env.
 #
+# No test runs as uid 0: a root caller's tests run as uid and gid 1001, the test image's
+# spirauser. A daemon started as root tries to drop privileges, which a one-uid namespace
+# refuses. Any other caller keeps its own identity.
+#
 # Called as cargo's target runner (the overlay missing) it refuses every test binary: one is never
 # sandboxed alone. Only a `cargo run` artifact, which is no test, runs as it is. No fallback: without an executable bwrap it refuses and runs nothing.
 set -uo pipefail
@@ -207,7 +211,9 @@ done
 under() { [ "${1#"$2"/}" != "$1" ]; }
 under_tree() { local t; for t in "${trees[@]}"; do under "$1" "$t" && return 0; done; return 1; }
 
-a=(--die-with-parent --new-session --unshare-user --unshare-pid --unshare-ipc --unshare-uts
+user=(--unshare-user)
+[ "$UID" -ne 0 ] || user+=(--uid 1001 --gid 1001)
+a=(--die-with-parent --new-session "${user[@]}" --unshare-pid --unshare-ipc --unshare-uts
    --unshare-net --unshare-cgroup-try
    --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --tmpfs /run)
 # Each shadow goes on before what is bound back beneath it.

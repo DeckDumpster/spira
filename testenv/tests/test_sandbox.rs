@@ -100,6 +100,18 @@ fn around_applies_the_environment_allow_list_once_keeping_rust_build_flags() {
     assert!(!env.contains("SPIRA_RELEASE"), "{env}");
 }
 
+#[test_id(tqpbgk8)]
+#[test]
+fn a_test_in_the_sandbox_never_runs_as_uid_0() {
+    let status = fs::read_to_string(Path::new(system_paths::PROC_SELF).join("status")).expect("the process's own status");
+    for key in ["Uid:", "Gid:"] {
+        let line = status.lines().find_map(|l| l.strip_prefix(key)).unwrap_or_else(|| panic!("no {key} line in {status}"));
+        // The kernel's order: real, effective, saved, filesystem.
+        let ids: Vec<u32> = line.split_whitespace().map(|v| v.parse().unwrap()).collect();
+        assert!(ids[0] != 0 && ids[1] != 0, "{key} a test runs with real {} and effective {}", ids[0], ids[1]);
+    }
+}
+
 /// The repository's own git directory, which both sandboxes bind back read-only so a test can
 /// run git against its checkout: a worktree's `.git` names `<common>/worktrees/<name>`.
 fn git_common_dir() -> Option<PathBuf> {
