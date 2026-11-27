@@ -2463,10 +2463,15 @@ fn emit_phase_ops(run_dir: &Path, results: &Path, args: &RunArgs, handle: Option
 
 /// Carries the files the VM leaves outside testenv's leaf from `pulled` to `results_dir`, by name.
 pub fn keep_top_files(pulled: &Path, results_dir: &Path) {
-    for top in [FIXTURE_FAULT_FILE, FENCE_TIMES, UNIT_TIMINGS, CI_STARTED_FILE].into_iter().chain(PROGRESS_FILES).chain(TEST_PHASE_FILES).chain(SCRIPT_FILES) {
-        if pulled.join(top).is_file() {
-            let _ = fs::create_dir_all(results_dir);
-            let _ = fs::copy(pulled.join(top), results_dir.join(top));
+    let tops = [FIXTURE_FAULT_FILE, FENCE_TIMES, UNIT_TIMINGS, CI_STARTED_FILE].into_iter().chain(PROGRESS_FILES).chain(TEST_PHASE_FILES).chain(SCRIPT_FILES);
+    copy_present(pulled, results_dir, tops);
+}
+
+fn copy_present<'a>(from: &Path, to: &Path, names: impl IntoIterator<Item = &'a str>) {
+    for name in names {
+        if from.join(name).is_file() {
+            let _ = fs::create_dir_all(to);
+            let _ = fs::copy(from.join(name), to.join(name));
         }
     }
 }
@@ -3410,23 +3415,10 @@ fn stream_pull(remote: &dyn Remote, addr: &str, scratch: &Path, results_dir: &Pa
         if let Err(e) = stream_into(scratch, results_dir) {
             eprintln!("round-vm run: streaming results: {e}");
         }
-        for f in PROGRESS_FILES {
-            if scratch.join(f).is_file() {
-                let _ = fs::create_dir_all(results_dir);
-                let _ = fs::copy(scratch.join(f), results_dir.join(f));
-            }
-        }
-        carry_ci_started(scratch, results_dir);
+        // A foreign pass has no result leaf until its verdict, so `stream_into` carries none of these.
+        copy_present(scratch, results_dir, PROGRESS_FILES.into_iter().chain([CI_STARTED_FILE]));
     }
     tally.elapsed += t0.elapsed();
-}
-
-/// A foreign pass has no result leaf until its verdict, so [`stream_into`] never carries [`CI_STARTED_FILE`].
-fn carry_ci_started(pulled: &Path, results_dir: &Path) {
-    if pulled.join(CI_STARTED_FILE).is_file() {
-        let _ = fs::create_dir_all(results_dir);
-        let _ = fs::copy(pulled.join(CI_STARTED_FILE), results_dir.join(CI_STARTED_FILE));
-    }
 }
 
 /// What the streaming pulls of one pass cost, said once when the stream ends.
@@ -3564,7 +3556,7 @@ fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, expected: usiz
     let _ = fs::remove_dir_all(&scratch);
     if pull_retry(env.remote, env.cfg, &vm.addr, REMOTE_RESULTS, &scratch) {
         let n = stream_into(&scratch, results_dir).unwrap_or(0);
-        carry_ci_started(&scratch, results_dir);
+        copy_present(&scratch, results_dir, [CI_STARTED_FILE]);
         eprintln!("{}", incomplete_count_line(results_present(results_dir), expected, n));
         env.pool.mark_pulled(&vm.handle);
     } else {
