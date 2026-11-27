@@ -479,8 +479,8 @@ mod tests {
     #[test]
     fn a_back_off_holds_only_for_the_release_that_wrote_it() {
         let d = crate::testutil::tmpdir("backoff-release");
-        let a = Files::with_release(&d, "/r/a");
-        let b = Files::with_release(&d, "/r/b");
+        let a = Files::with_release(&d, "r/a");
+        let b = Files::with_release(&d, "r/b");
         a.back_off("spira/sp-a", "t1", 400);
         assert!(a.backing_off("spira/sp-a", "t1", 100));
         assert!(!b.backing_off("spira/sp-a", "t1", 100));
@@ -492,7 +492,7 @@ mod tests {
     #[test]
     fn the_readers_of_a_back_off_tolerate_the_release_line() {
         let d = crate::testutil::tmpdir("backoff-readers");
-        let f = Files::with_release(&d, "/r/a");
+        let f = Files::with_release(&d, "r/a");
         assert_eq!(f.backoff("spira/sp-a"), None);
         f.back_off("spira/sp-a", "t1", 400);
         assert_eq!(gate_backoffs(&d), vec![("t1".to_string(), 400)]);
