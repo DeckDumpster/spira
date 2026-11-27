@@ -1,8 +1,7 @@
 //! The drop and dedup rules for the Concierge inbox, shared by `inbox-triage`.
 //!
 //! And the one write leg, [`record`], for every writer of the inbox (`inbox-triage append`,
-//! spira-runtime's `World::inbox_append`, the scheduler watchdog's page): a line that matches the
-//! push pattern is spooled and handed to `inbox-triage flush`. It needs no store and no
+//! spira-runtime's `World::inbox_append`, the scheduler watchdog's page). It needs no store and no
 //! scheduler, so a writer that runs while the scheduler is down can call it (sp-nasmjd).
 //! It also publishes what is unread as `concierge/inbox`, which a broker that is down only logs.
 
@@ -11,9 +10,7 @@
 extern crate spira_test_id;
 use std::collections::HashMap;
 use std::io::Write;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::{Arc, OnceLock};
 
 use ports::{SeededRng, WallClock};
@@ -74,22 +71,6 @@ pub fn line(now_utc: &str, text: &str) -> String {
     format!("{now_utc} {text}")
 }
 
-/// Whether an event also wakes the session, not only lands in the inbox.
-pub fn is_urgent(text: &str, pattern: &regex::Regex) -> bool {
-    pattern.is_match(text)
-}
-
-/// The push decision every writer of the inbox applies (sp-nasmjd): a line wakes the session
-/// when a wake command is configured (`SPIRA_CONCIERGE_PUSH_WAKE`) and the line matches
-/// `SPIRA_CONCIERGE_PUSH_PATTERN`. A pattern that will not compile is an error naming the key.
-pub fn pushes(line: &str, wake: &str, pattern: &str) -> Result<bool, String> {
-    if wake.is_empty() {
-        return Ok(false);
-    }
-    let re = regex::Regex::new(pattern).map_err(|e| format!("bad SPIRA_CONCIERGE_PUSH_PATTERN: {e}"))?;
-    Ok(is_urgent(line, &re))
-}
-
 /// Appends one line to `path`, creating the file and its directory.
 pub fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
@@ -97,11 +78,6 @@ pub fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
     }
     let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
     writeln!(f, "{line}")
-}
-
-/// The push spool beside an inbox: `<inbox>.push`, drained by `inbox-triage flush`.
-pub fn spool_path(inbox: &Path) -> PathBuf {
-    PathBuf::from(format!("{}.push", inbox.display()))
 }
 
 /// The most of the oldest unread line `concierge/inbox` carries.
@@ -185,73 +161,31 @@ fn announce(inbox: &Path, cursor: &Path, publisher: impl FnOnce() -> Result<Publ
     }
 }
 
-/// Records `line` in `inbox`; when it [`pushes`] under `wake` and `pattern`, also spools it and
-/// starts `<flusher> flush` (the `inbox-triage` program, resolved only for a line that pushes),
-/// detached, which wakes the session once per burst. Then publishes `concierge/inbox`, counted
-/// from the position in `cursor`, through `publisher` (named for the caller). Returns whether
-/// it pushed. A bad pattern disables the push and says so on stderr; a spool that cannot be
-/// written or a flusher that cannot be named is an error, after the line is recorded.
-pub fn record(
-    inbox: &Path,
-    line: &str,
-    wake: &str,
-    pattern: &str,
-    flusher: impl Fn() -> Result<PathBuf, String>,
-    cursor: &Path,
-    publisher: impl FnOnce() -> Result<Publisher, PubError>,
-) -> Result<bool, String> {
-    record_lines(inbox, &[line], wake, pattern, flusher, cursor, publisher)
+/// Records `line` in `inbox`, then publishes `concierge/inbox`, counted from the position in
+/// `cursor`, through `publisher` (named for the caller). An error means the line is not in the
+/// inbox.
+pub fn record(inbox: &Path, line: &str, cursor: &Path, publisher: impl FnOnce() -> Result<Publisher, PubError>) -> Result<(), String> {
+    record_lines(inbox, &[line], cursor, publisher)
 }
 
 /// [`record`] for a batch: every line is recorded, then `concierge/inbox` is published once, so
 /// a slow broker costs the caller one wait however many lines it holds.
-pub fn record_lines(
-    inbox: &Path,
-    lines: &[&str],
-    wake: &str,
-    pattern: &str,
-    flusher: impl Fn() -> Result<PathBuf, String>,
-    cursor: &Path,
-    publisher: impl FnOnce() -> Result<Publisher, PubError>,
-) -> Result<bool, String> {
+pub fn record_lines(inbox: &Path, lines: &[&str], cursor: &Path, publisher: impl FnOnce() -> Result<Publisher, PubError>) -> Result<(), String> {
     if lines.is_empty() {
-        return Ok(false);
+        return Ok(());
     }
-    let pushed = lines.iter().try_fold(false, |pushed, line| append_and_push(inbox, line, wake, pattern, &flusher).map(|p| p || pushed));
+    let written = lines.iter().try_for_each(|line| append_line(inbox, line).map_err(|e| format!("cannot append to {}: {e}", inbox.display())));
     // Even after a failure: what did reach the inbox is unread.
     announce(inbox, cursor, publisher);
-    pushed
+    written
 }
 
-/// How [`record`] begins the error for a line that never reached the inbox.
-const APPEND_REFUSED: &str = "cannot append to";
-
-fn append_and_push(inbox: &Path, line: &str, wake: &str, pattern: &str, flusher: &impl Fn() -> Result<PathBuf, String>) -> Result<bool, String> {
-    append_line(inbox, line).map_err(|e| format!("{APPEND_REFUSED} {}: {e}", inbox.display()))?;
-    match pushes(line, wake, pattern) {
-        Ok(true) => {}
-        Ok(false) => return Ok(false),
-        Err(e) => {
-            eprintln!("inbox push disabled: {e}");
-            return Ok(false);
-        }
-    }
-    let spool = spool_path(inbox);
-    append_line(&spool, line).map_err(|e| format!("cannot spool to {}: {e}", spool.display()))?;
-    let flusher = flusher().map_err(|e| format!("pushed line spooled, but no flusher to deliver it: {e}"))?;
-    // batch-job: spawned detached and never waited on; the flusher outlives the writer
-    let _ = Command::new(flusher).arg("flush").process_group(0).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
-    Ok(true)
-}
-
-/// One writer of the inbox: where it writes, how it pushes, and the name it publishes as.
+/// One writer of the inbox: where it writes and the name it publishes as.
 #[derive(Debug, Clone)]
 pub struct Sink {
     pub inbox: PathBuf,
     pub cursor: PathBuf,
     pub bus: Bus,
-    pub wake: String,
-    pub pattern: String,
     pub name: String,
 }
 
@@ -263,63 +197,19 @@ impl Sink {
             inbox: PathBuf::from(cfg("SPIRA_CONCIERGE_INBOX")?),
             cursor: concierge_cursor(&cfg("SPIRA_RUN")?),
             bus: Bus::Configured,
-            wake: cfg("SPIRA_CONCIERGE_PUSH_WAKE")?,
-            pattern: cfg("SPIRA_CONCIERGE_PUSH_PATTERN")?,
             name: name.to_string(),
         })
     }
 
-    /// [`record`] of one finished line, an `Err` only when the line is not in the inbox: a
-    /// writer remembers what it has said, so a failed push must not make it say it again.
-    pub fn record(&self, line: &str) -> Result<bool, String> {
-        self.record_lines(&[line]).or_else(|e| {
-            if e.starts_with(APPEND_REFUSED) {
-                return Err(e);
-            }
-            eprintln!("{}: the line is in the inbox but was not pushed: {e}", self.name);
-            Ok(false)
-        })
+    /// [`record`] of one finished line.
+    pub fn record(&self, line: &str) -> Result<(), String> {
+        self.record_lines(&[line])
     }
 
     /// [`record_lines`] of finished lines.
-    pub fn record_lines(&self, lines: &[&str]) -> Result<bool, String> {
-        let flusher = || spira_config::release_env::tool("inbox-triage").map(PathBuf::from);
-        record_lines(&self.inbox, lines, &self.wake, &self.pattern, flusher, &self.cursor, || self.bus.publisher(&self.name))
+    pub fn record_lines(&self, lines: &[&str]) -> Result<(), String> {
+        record_lines(&self.inbox, lines, &self.cursor, || self.bus.publisher(&self.name))
     }
-}
-
-/// When a spooled burst is due: the spool has stopped growing for `idle_ticks`, or
-/// `window_ticks` have passed. Time is the number of `tick` calls; the caller sleeps.
-pub struct Flush {
-    window_ticks: u32,
-    idle_ticks: u32,
-    waited: u32,
-    quiet: u32,
-    last: Option<u64>,
-}
-
-impl Flush {
-    pub fn new(window_ticks: u32, idle_ticks: u32) -> Flush {
-        Flush { window_ticks, idle_ticks, waited: 0, quiet: 0, last: None }
-    }
-
-    /// Observe the spool's size once per tick; true when the batch is due.
-    pub fn tick(&mut self, spool_size: u64) -> bool {
-        self.waited += 1;
-        if self.last == Some(spool_size) {
-            self.quiet += 1;
-        } else {
-            self.quiet = 0;
-        }
-        self.last = Some(spool_size);
-        self.waited >= self.window_ticks || self.quiet >= self.idle_ticks
-    }
-}
-
-/// The one wake a batch of spooled lines becomes.
-pub fn wake_text(lines: &[String]) -> String {
-    let joined: String = lines.iter().map(|l| format!("{l};")).collect();
-    format!("[inbox-push] {} urgent event(s): {joined}", lines.len())
 }
 
 #[cfg(test)]
@@ -342,19 +232,6 @@ mod tests {
         assert!(!should_drop("[watch:round-duty] asks: NEW ASK sp-f63uj: something"));
     }
 
-    fn due_after(f: &mut Flush, sizes: impl IntoIterator<Item = u64>) -> Vec<bool> {
-        sizes.into_iter().map(|s| f.tick(s)).collect()
-    }
-
-    #[test_id(tbmw1xt)]
-    #[test]
-    fn a_line_pushes_only_with_a_wake_and_a_matching_pattern() {
-        assert_eq!(pushes("x P0 down", "wake", r"\bP0\b"), Ok(true), "positive control");
-        assert_eq!(pushes("x P01 down", "wake", r"\bP0\b"), Ok(false));
-        assert_eq!(pushes("x P0 down", "", r"\bP0\b"), Ok(false), "no wake, no push");
-        assert!(pushes("x P0 down", "wake", "(").is_err(), "a bad pattern is named, not a silent no");
-    }
-
     #[test_id(tuv8yw4)]
     #[test]
     fn append_creates_the_inbox_and_a_second_call_does_not_truncate() {
@@ -365,66 +242,6 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&inbox).unwrap(), "2026-11-06T00:00:00Z hello world\n");
         append_line(&inbox, "2026-11-06T00:00:01Z second event").unwrap();
         assert_eq!(std::fs::read_to_string(&inbox).unwrap().lines().count(), 2);
-    }
-
-    #[test_id(tciwwma)]
-    #[test]
-    fn record_spools_only_a_line_that_pushes() {
-        let d = testkit::TempDir::new("inbox-record");
-        let inbox = d.join("inbox.log");
-        let none = || Ok(PathBuf::from("nonexistent/inbox-triage"));
-        let quiet = || Err(PubError::Config("no broker in a unit test".into()));
-        assert_eq!(record(&inbox, "t plain line", "wake", r"\bP0\b", none, &d.join("no.cursor"), quiet), Ok(false));
-        assert!(!d.join("inbox.log.push").exists());
-        assert_eq!(record(&inbox, "t P0 down", "wake", "(", none, &d.join("no.cursor"), quiet), Ok(false), "a bad pattern records and does not push");
-        assert_eq!(record(&inbox, "t P0 down", "wake", r"\bP0\b", none, &d.join("no.cursor"), quiet), Ok(true));
-        assert_eq!(std::fs::read_to_string(d.join("inbox.log.push")).unwrap(), "t P0 down\n");
-        assert!(record(&inbox, "t P0 again", "wake", r"\bP0\b", || Err("no release".into()), &d.join("no.cursor"), quiet).unwrap_err().contains("no release"), "an unnamed flusher is said");
-        assert_eq!(std::fs::read_to_string(&inbox).unwrap().lines().count(), 4, "every line is recorded first");
-    }
-
-    #[test_id(t55qpc9)]
-    #[test]
-    fn a_non_urgent_line_is_not_urgent() {
-        let pat = regex::Regex::new("URGENT-[0-9]+").unwrap();
-        assert!(is_urgent("URGENT-3 burst", &pat), "positive control");
-        assert!(!is_urgent("plain event, not urgent", &pat));
-    }
-
-    #[test_id(txsp0lu)]
-    #[test]
-    fn one_urgent_line_then_quiet_ticks_is_due_once() {
-        let mut f = Flush::new(30, 2);
-        assert_eq!(due_after(&mut f, [10, 10, 10]), [false, false, true]);
-        let mut again = Flush::new(30, 2);
-        assert_eq!(due_after(&mut again, [10, 10, 10]).iter().filter(|d| **d).count(), 1);
-    }
-
-    #[test_id(tzs2av5)]
-    #[test]
-    fn ten_appends_one_tick_apart_inside_the_window_are_one_batch() {
-        let mut f = Flush::new(30, 2);
-        let mut lines = Vec::new();
-        let mut size = 0;
-        for k in 1..=10 {
-            lines.push(format!("T URGENT-{k} burst"));
-            size += 20;
-            assert!(!f.tick(size), "still growing at append {k}");
-            assert!(!f.tick(size), "one quiet tick after append {k} is inside the idle gap");
-        }
-        assert!(f.tick(size), "due once the spool is quiet");
-        let text = wake_text(&lines);
-        assert!(text.starts_with("[inbox-push] 10 urgent event(s): "), "{text}");
-        for k in [1, 5, 10] {
-            assert!(text.contains(&format!("URGENT-{k} burst")), "{text}");
-        }
-    }
-
-    #[test_id(tirj47p)]
-    #[test]
-    fn a_spool_that_keeps_growing_is_due_at_the_window() {
-        let mut f = Flush::new(5, 2);
-        assert_eq!(due_after(&mut f, [1, 2, 3, 4, 5]), [false, false, false, false, true]);
     }
 
     #[test_id(topczwl)]

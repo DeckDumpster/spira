@@ -3,7 +3,7 @@
 #[macro_use]
 extern crate spira_test_id;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use inbox_rules::{concierge_cursor, record, record_lines};
@@ -23,10 +23,6 @@ fn retained(broker: &Broker) -> Value {
     serde_json::from_str(payload).unwrap()
 }
 
-fn no_flusher() -> Result<PathBuf, String> {
-    Err("this line pushes nothing".to_string())
-}
-
 #[test_id(tiuswvo)]
 #[test]
 fn record_publishes_how_many_lines_are_unread_and_the_oldest_of_them() {
@@ -35,7 +31,7 @@ fn record_publishes_how_many_lines_are_unread_and_the_oldest_of_them() {
     let inbox = dir.join("concierge-inbox.log");
     let cursor = concierge_cursor(dir.path().to_str().unwrap());
     std::fs::create_dir_all(cursor.parent().unwrap()).unwrap();
-    let write = |line: &str| record(&inbox, line, "", "", no_flusher, &cursor, publisher(broker.socket())).unwrap();
+    let write = |line: &str| record(&inbox, line, &cursor, publisher(broker.socket())).unwrap();
 
     write("t1 one");
     write("t2 two");
@@ -55,9 +51,9 @@ fn with_the_broker_stopped_record_still_appends_and_returns_ok() {
     let dir = testkit::TempDir::new("inbox-nobroker");
     let inbox = dir.join("concierge-inbox.log");
 
-    let sent = record(&inbox, "t1 one", "", "", no_flusher, &dir.join("no.cursor"), publisher(broker.socket()));
+    let sent = record(&inbox, "t1 one", &dir.join("no.cursor"), publisher(broker.socket()));
 
-    assert_eq!(sent, Ok(false));
+    assert_eq!(sent, Ok(()));
     assert_eq!(std::fs::read_to_string(&inbox).unwrap(), "t1 one\n");
 }
 
@@ -73,7 +69,7 @@ fn a_batch_is_published_once_after_every_line_is_on_disk() {
         publisher(broker.socket())()
     };
 
-    record_lines(&inbox, &["t1 one", "t2 two", "t3 three"], "", "", no_flusher, &dir.join("no.cursor"), counted).unwrap();
+    record_lines(&inbox, &["t1 one", "t2 two", "t3 three"], &dir.join("no.cursor"), counted).unwrap();
 
     assert_eq!(made.get(), 1);
     assert_eq!(retained(&broker), json!({"unread": 3, "oldest": "t1 one"}));

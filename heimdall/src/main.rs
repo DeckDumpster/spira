@@ -167,8 +167,6 @@ fn pass() -> i32 {
     let red_streak_n: i64 = cfg_num_or_die!("SPIRA_HEIMDALL_RED_STREAK");
     let noverdict_streak_n: i64 = cfg_num_or_die!("SPIRA_HEIMDALL_NOVERDICT_STREAK");
     let inbox = PathBuf::from(cfg_or_die!("SPIRA_CONCIERGE_INBOX"));
-    let push_wake = cfg_or_die!("SPIRA_CONCIERGE_PUSH_WAKE");
-    let push_pattern = cfg_or_die!("SPIRA_CONCIERGE_PUSH_PATTERN");
     let thresholds = Thresholds {
         pass_stale: env_n(&original, "SPIRA_HEIMDALL_PASS_STALE", 600),
         starve_passes: env_n(&original, "SPIRA_HEIMDALL_STARVE_PASSES", 5),
@@ -246,7 +244,7 @@ fn pass() -> i32 {
     };
     let inp = PassInput { obs, confirm, clear_n, refresh, tz, render_time: util::iso_display, report_only: report };
     let inbox_cursor = inbox_rules::concierge_cursor(&run_dir.to_string_lossy());
-    let paths = PassPaths { fallback: fallback_path, heartbeat: status_path, inbox, inbox_cursor, inbox_bus: inbox_rules::Bus::Configured, push_wake, push_pattern };
+    let paths = PassPaths { fallback: fallback_path, heartbeat: status_path, inbox, inbox_cursor, inbox_bus: inbox_rules::Bus::Configured };
     let rep = pass::run(&inp, &ops, &mut state, &paths, now);
     for l in &rep.out {
         sink.out(l);

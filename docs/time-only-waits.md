@@ -16,7 +16,6 @@ that converts it.
 | `release/src/acceptance/phases.rs` — `sleep(30)`, `sleep(120)` | spira-* units to be active or failed | yes: `systemctl list-units` | sp-4gcxuz.3 |
 | `release/src/activate.rs`, `release/src/install.rs` — `settle` | restarted units to be active or failed | yes: `systemctl` | sp-4gcxuz.4 |
 | `round-vm/src/pool.rs` — fixed `retry_interval` between acquires | a slot to free | yes: `list_vms` | sp-4gcxuz.5 |
-| `spira/inbox-append.sh` — `PUSH_WINDOW` | no further append to the spool | yes: spool size / mtime | sp-4gcxuz.6 |
 | `store-persist/probe/probe.sh` — `while kill -0` | the pid to exit | yes, but uncapped | sp-4gcxuz.7 |
 
 ## Known, not detected

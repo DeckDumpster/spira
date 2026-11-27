@@ -41,17 +41,19 @@ fn now_secs() -> u64 {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let verb = match args.first().map(String::as_str) {
-        Some("append") => Some(append::run(&args[1..].join(" "))),
-        Some("flush") => Some(append::flush()),
-        _ => None,
-    };
-    if let Some(r) = verb {
-        if let Err(e) = r {
-            eprintln!("inbox-triage: {e}");
-            std::process::exit(1);
+    match args.first().map(String::as_str) {
+        None => {}
+        Some("append") => {
+            if let Err(e) = append::run(&args[1..].join(" ")) {
+                eprintln!("inbox-triage: {e}");
+                std::process::exit(1);
+            }
+            return;
         }
-        return;
+        Some(other) => {
+            eprintln!("inbox-triage: unknown verb {other:?} (want append, or no argument to follow the inbox)");
+            std::process::exit(2);
+        }
     }
     let cfg = match load_config() {
         Ok(c) => c,

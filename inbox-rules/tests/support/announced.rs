@@ -7,8 +7,6 @@ pub fn sink(d: &testkit::TempDir, broker: &Broker, name: &str) -> Sink {
         inbox: d.join("inbox.log"),
         cursor: d.join("inbox.cursor"),
         bus: Bus::At(broker.socket().to_path_buf()),
-        wake: String::new(),
-        pattern: String::new(),
         name: name.into(),
     }
 }

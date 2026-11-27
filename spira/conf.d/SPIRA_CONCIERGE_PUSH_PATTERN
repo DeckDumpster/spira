@@ -1,7 +1,0 @@
-TYPE=string
-GROUP=concierge
-DOC=URGENT LINES: an inbox line matching this ERE is also pushed to the concierge session (coalesced).
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # URGENT LINES: an inbox line matching this ERE is also pushed to the concierge session (coalesced).
-    : "${SPIRA_CONCIERGE_PUSH_PATTERN:=\\bP0\\b|RED on|PAUSED|UNDRIVEN|unread (operator )?verdict}"
-SPIRA_CONF_DEFAULT_EOF

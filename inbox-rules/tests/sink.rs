@@ -6,7 +6,6 @@ extern crate spira_test_id;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
 
 use inbox_rules::{concierge_cursor, Bus, Sink};
 use testkit::broker::Broker;
@@ -22,8 +21,6 @@ fn fixture(dir: &Path, socket: &Path) -> Vec<(&'static str, String)> {
             ("SPIRA_BROKER_SOCKET", socket.to_str().unwrap()),
             ("SPIRA_RUN", run.to_str().unwrap()),
             ("SPIRA_CONCIERGE_INBOX", inbox.to_str().unwrap()),
-            ("SPIRA_CONCIERGE_PUSH_WAKE", "a-wake-command"),
-            ("SPIRA_CONCIERGE_PUSH_PATTERN", "ZZ9"),
         ],
     )
 }
@@ -39,20 +36,13 @@ fn child_dir() -> Option<PathBuf> {
     std::env::var_os(CHILD).map(PathBuf::from)
 }
 
-#[test_id(tarb0s2)]
+#[test_id(te21x9v)]
 #[test]
-fn a_configured_sink_reads_every_key_and_its_push_starts_the_releases_flusher() {
+fn a_configured_sink_reads_its_keys_and_announces_on_the_configured_broker() {
     let Some(dir) = child_dir() else {
         let (broker, dir) = (Broker::up(), testkit::TempDir::new("sink-configured"));
-        let release = dir.join("release");
-        std::fs::create_dir_all(release.join("bin")).unwrap();
-        let fifo = std::ffi::CString::new(dir.join("flushed").to_str().unwrap()).unwrap();
-        // SAFETY: a NUL-terminated path that outlives the call.
-        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0, "make the fifo");
-        testkit::write_exe(release.join("bin/inbox-triage"), &format!("#!/bin/sh\necho \"$1\" > '{}'\n", dir.join("flushed").display()));
-        let mut env = fixture(&dir, broker.socket());
-        env.push(("SPIRA_RELEASE", release.display().to_string()));
-        rerun("a_configured_sink_reads_every_key", &dir, env);
+        rerun("a_configured_sink_reads_its_keys", &dir, fixture(&dir, broker.socket()));
+        assert_eq!(broker.retained("concierge/inbox").len(), 1, "the inbox is announced");
         assert_eq!(broker.retained("publisher/a-writer").len(), 1, "published on the configured broker");
         return;
     };
@@ -60,33 +50,24 @@ fn a_configured_sink_reads_every_key_and_its_push_starts_the_releases_flusher() 
     assert_eq!(sink.inbox, dir.join("elsewhere/inbox.log"));
     assert_eq!(sink.cursor, concierge_cursor(dir.join("run").to_str().unwrap()));
     assert_eq!((sink.bus.clone(), sink.name.as_str()), (Bus::Configured, "a-writer"));
-    assert_eq!((sink.wake.as_str(), sink.pattern.as_str()), ("a-wake-command", "ZZ9"));
 
-    assert_eq!(sink.record("t1 ZZ9 down"), Ok(true));
+    assert_eq!(sink.record("t1 P0 down"), Ok(()));
 
-    let (said, flushed) = std::sync::mpsc::channel();
-    let fifo = dir.join("flushed");
-    std::thread::spawn(move || said.send(std::fs::read_to_string(fifo).unwrap()));
-    assert_eq!(flushed.recv_timeout(Duration::from_secs(30)).expect("the flusher ran"), "flush\n");
+    assert_eq!(std::fs::read_to_string(&sink.inbox).unwrap(), "t1 P0 down\n");
 }
 
-#[test_id(t3lg3gz)]
+#[test_id(t9o4ynv)]
 #[test]
-fn a_push_that_cannot_start_after_the_append_is_not_a_failed_write() {
+fn a_line_that_is_not_in_the_inbox_is_an_error() {
     let Some(_) = child_dir() else {
-        let (broker, dir) = (Broker::up(), testkit::TempDir::new("sink-noflusher"));
-        let mut env = fixture(&dir, broker.socket());
-        env.push(("SPIRA_RELEASE", dir.join("no-release").display().to_string()));
-        rerun("a_push_that_cannot_start_after_the_append", &dir, env);
+        let (broker, dir) = (Broker::up(), testkit::TempDir::new("sink-refused"));
+        rerun("a_line_that_is_not_in_the_inbox", &dir, fixture(&dir, broker.socket()));
         return;
     };
     let mut sink = Sink::configured("a-writer").unwrap();
+    sink.inbox = std::env::current_dir().unwrap();
 
-    assert_eq!(sink.record("t1 ZZ9 down"), Ok(false));
-    assert_eq!(std::fs::read_to_string(&sink.inbox).unwrap(), "t1 ZZ9 down\n");
-
-    sink.inbox = sink.inbox.parent().unwrap().to_path_buf();
-    assert!(sink.record("t2 ZZ9 down").is_err(), "a line that is not in the inbox is an error");
+    assert!(sink.record("t2 down").unwrap_err().starts_with("cannot append to"));
 }
 
 #[test_id(t189b3u)]
@@ -96,10 +77,10 @@ fn a_missing_key_is_refused_by_name() {
         let dir = testkit::TempDir::new("sink-missing");
         let env = fixture(&dir, &dir.join("no.sock"));
         let declared = Path::new(&env.iter().find(|(k, _)| *k == "SPIRA_TOML").unwrap().1);
-        spira_config::unset_paths_in_file(declared, &["spira.concierge_push_pattern"]).unwrap();
+        spira_config::unset_paths_in_file(declared, &["spira.concierge_inbox"]).unwrap();
         rerun("a_missing_key_is_refused_by_name", &dir, env);
         return;
     };
     let refused = Sink::configured("a-writer").unwrap_err().to_lowercase();
-    assert!(refused.contains("concierge_push_pattern"), "{refused}");
+    assert!(refused.contains("concierge_inbox"), "{refused}");
 }

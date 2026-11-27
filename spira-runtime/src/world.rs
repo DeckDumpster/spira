@@ -46,12 +46,6 @@ pub struct World {
     pub repo_map: PathBuf,
     pub home_repo: String,
     pub inbox: PathBuf,
-    /// `SPIRA_CONCIERGE_PUSH_WAKE`: empty, no inbox line wakes the session.
-    pub push_wake: String,
-    /// `SPIRA_CONCIERGE_PUSH_PATTERN`: an inbox line that matches it also wakes the session.
-    pub push_pattern: String,
-    /// The `inbox-triage` program whose `flush` verb delivers a pushed line; empty, the release's.
-    pub inbox_flusher: PathBuf,
     /// Where an inbox append is announced as `concierge/inbox`.
     pub inbox_bus: inbox_rules::Bus,
     pub lc_socket: PathBuf,
@@ -1507,18 +1501,13 @@ impl World {
         Ok(format!("cleared {cleared} of {}; {} refused", asked.len(), parts.held.len()))
     }
 
-    /// Records each non-empty line of `input` in the Concierge inbox through the inbox's one append-and-push leg (`inbox_rules::record`),
-    /// so a line matching the push pattern wakes the session as an `inbox-triage append` does.
+    /// Records each non-empty line of `input` in the Concierge inbox through the inbox's one write leg (`inbox_rules::record`).
     pub fn inbox_append(&self, input: &str) -> Result<String, String> {
-        let flusher = || match self.inbox_flusher.as_os_str().is_empty() {
-            true => spira_config::release_env::tool("inbox-triage").map(PathBuf::from),
-            false => Ok(self.inbox_flusher.clone()),
-        };
         let lines: Vec<&str> = input.lines().filter(|l| !l.is_empty()).collect();
         let cursor = watchd::paths::cursorfile(&self.run_dir.to_string_lossy(), INBOX_WATCHER);
         let publisher = || self.inbox_bus.publisher("spira-runtime");
-        let pushed = inbox_rules::record_lines(&self.inbox, &lines, &self.push_wake, &self.push_pattern, flusher, &cursor, publisher)?;
-        Ok(if pushed { "appended, pushed" } else { "appended" }.into())
+        inbox_rules::record_lines(&self.inbox, &lines, &cursor, publisher)?;
+        Ok("appended".into())
     }
 }
 

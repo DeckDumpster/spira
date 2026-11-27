@@ -92,8 +92,7 @@ impl Rule for ConciergeSendKeysFence {
     fn hint(&self) -> &'static str {
         "Signal the Concierge by writing a row to its inbox (spira/inbox-append.sh). Never type \
 into its pane: keystrokes land inside a person's half-written message. Only \
-the push flusher and the mail deliverer may call `concierge.sh wake`, which holds until the \
-input line is empty."
+the mail deliverer may call `concierge.sh wake`, which holds until the input line is empty."
     }
 }
 
