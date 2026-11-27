@@ -268,3 +268,13 @@ fn two_touchers_of_a_source_file_with_no_provider_stay_unattributed() {
     ];
     assert!(attribute(&compile_errors(err), &members).is_empty());
 }
+
+#[test_id(tz2gza6)]
+#[test]
+fn a_hand_written_resolve_steps_refusal_is_a_config_fault() {
+    let none = testkit::TempDir::new("batcher-hand-step");
+    let env = Default::default();
+    let input = spira_config::resolve::ResolveInput { env: &env, home: none.path(), repo: none.path(), toml: None, conf_d: none.path() };
+    let refusal = spira_config::resolve::resolve(input).unwrap_err().to_string();
+    assert!(is_config_fault(&refusal), "{refusal}");
+}

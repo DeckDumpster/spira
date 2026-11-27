@@ -43,11 +43,22 @@ pub fn check(tree: &Path, base: Option<&str>) -> Result<usize, String> {
             return Err(format!("tar did not unpack the landing ref {base}'s config keys: {e}"));
         }
         let landed = unpacked.then(|| landing_doc(&fixture, &scratch.join("spira")).and_then(|landing| resolve_against(&landing, &scratch.join("spira/conf.d"), &format!("the landing ref {base}'s config keys (a round runs that code against this fixture)"))));
+        let landed = landed.map(|r| r.map_err(|e| match key_new_on_branch(&e, &home.join("conf.d"), &scratch.join("spira/conf.d")) {
+            Some(k) => format!("{e}; {k} is new on this branch (spira/conf.d/{k} is not on {base}): let it resolve from its conf.d file in the generic pass, with no hand-written step in spira-config/src/resolve.rs and no COMPUTED_KEYS entry in spira-config/src/process.rs"),
+            None => e,
+        }));
         let _ = std::fs::remove_dir_all(&scratch);
         landed.unwrap_or_else(|| Err(format!("could not unpack the landing ref {base}'s config keys")))?;
         merged_delta(tree, base)?;
     }
     Ok(resolved.values.len())
+}
+
+/// The key a resolve refusal is about, when only the tree registers it.
+fn key_new_on_branch<'a>(refusal: &'a str, tree_conf_d: &Path, base_conf_d: &Path) -> Option<&'a str> {
+    let (before, _) = refusal.split_once(spira_config::resolve::NOT_IN_REGISTRY)?;
+    let key = before.trim_end().rsplit(' ').next()?;
+    (tree_conf_d.join(key).is_file() && !base_conf_d.join(key).exists()).then_some(key)
 }
 
 pub const DELTA: &str = "spira/config-delta.toml";
@@ -314,5 +325,22 @@ mod tests {
         std::fs::write(t.path().join(DELTA), "[spira]\nkey_only_in_delta = \"3\"\n").unwrap();
         std::fs::write(t.path().join("spira/conf.d/SPIRA_KEY_ONLY_IN_DELTA"), "TYPE=string\nGROUP=archivist\nDOC=planted\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_KEY_ONLY_IN_DELTA:=3}\"\nSPIRA_CONF_DEFAULT_EOF\n").unwrap();
         check(t.path(), Some("main")).expect("the tree declares the key in conf.d, the fixture and the delta; the landing ref lacks it");
+    }
+
+    #[test_id(tdtemym)]
+    #[test]
+    fn a_key_new_on_this_branch_that_a_hand_written_step_asks_for_is_refused_naming_the_step_and_the_way_through() {
+        let t = copy_tree();
+        let key = t.path().join("spira/conf.d/SPIRA_CZAR_OUTCOME_MINS");
+        let registered = std::fs::read(&key).unwrap();
+        std::fs::remove_file(&key).unwrap();
+        testkit::git(t.path(), &["init", "-q", "-b", "main"]);
+        testkit::git(t.path(), &["add", "-A"]);
+        testkit::git(t.path(), &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "landing ref"]);
+        std::fs::write(&key, registered).unwrap();
+        let e = check(t.path(), Some("main")).unwrap_err();
+        for want in ["SPIRA_CZAR_OUTCOME_MINS", "new on this branch", "hand-written step", "resolve.rs"] {
+            assert!(e.contains(want), "{want}: {e}");
+        }
     }
 }

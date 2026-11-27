@@ -313,7 +313,7 @@ pub fn delta_removed_keys(delta_text: &str) -> Vec<String> {
 /// lists it as removed: a process still on the previous release resolving a key activation
 /// dropped, not a defect to build against.
 pub fn activation_skew(title: &str, payload: &str, removed: &[String]) -> Option<String> {
-    let name = regex::Regex::new(r"\b(?:SPIRA_)?([A-Z][A-Z0-9_]*) is not declared").expect("static pattern");
+    let name = regex::Regex::new(&format!(r"\b(?:SPIRA_)?([A-Z][A-Z0-9_]*) (?:is not declared|{})", spira_config::resolve::NOT_IN_REGISTRY)).expect("static pattern");
     for text in [title, payload] {
         for c in name.captures_iter(text) {
             let path = format!("spira.{}", c[1].to_ascii_lowercase());
@@ -626,5 +626,19 @@ mod tests {
         assert_eq!(activation_skew("gate red", msg, &removed).as_deref(), Some("spira.cert_prices"));
         assert!(activation_skew("gate red", "SPIRA_OTHER is not declared: no spira.other declared", &removed).is_none());
         assert!(activation_skew("gate red", msg, &[]).is_none());
+    }
+
+    #[test_id(tvbov84)]
+    #[test]
+    fn a_removed_key_a_hand_written_resolve_step_still_asks_for_is_skew() {
+        let removed = vec!["spira.home_repo".to_string()];
+        assert_eq!(activation_skew("gate red", &hand_step_refusal(), &removed).as_deref(), Some("spira.home_repo"));
+    }
+
+    fn hand_step_refusal() -> String {
+        let none = testkit::TempDir::new("incident-hand-step");
+        let env = Default::default();
+        let input = spira_config::resolve::ResolveInput { env: &env, home: none.path(), repo: none.path(), toml: None, conf_d: none.path() };
+        spira_config::resolve::resolve(input).unwrap_err().to_string()
     }
 }

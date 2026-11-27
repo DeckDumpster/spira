@@ -604,6 +604,20 @@ fn resolve_eq(
     }
 }
 
+/// What a refusal says of a hand-written step's key that the registry lacks; matched by consumers.
+pub const NOT_IN_REGISTRY: &str = "is not in the registry being resolved against";
+
+/// Rewords a hand-written step's refusal when the registry lacks its key: the config file is not at fault.
+fn hand_step(key: &str, registry: &BTreeMap<String, registry::RegistryKey>, result: Result<String, String>) -> Result<String, ResolveError> {
+    result.map_err(|e| {
+        ResolveError::Registry(if GENERATING.get() || registry.contains_key(key) {
+            e
+        } else {
+            format!("{key} {NOT_IN_REGISTRY}, yet resolve's hand-written step for {key} (spira-config/src/resolve.rs) asks for it unconditionally")
+        })
+    })
+}
+
 fn xdg_config_home(env: &BTreeMap<String, String>) -> String {
     match env.get("XDG_CONFIG_HOME") {
         Some(v) if !v.is_empty() => v.clone(),
@@ -823,61 +837,54 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
     set!("SPIRA_GATE_BASEFAIL", "76".to_string());
 
     // 1. SPIRA_HOME_REPO
-    let home_repo = resolve_colon("SPIRA_HOME_REPO", env, &toml_map, || {
+    let home_repo = hand_step("SPIRA_HOME_REPO", registry, resolve_colon("SPIRA_HOME_REPO", env, &toml_map, || {
         Ok(compute_home_repo_default(input.repo))
-    })
-    .map_err(ResolveError::Registry)?;
+    }))?;
     set!("SPIRA_HOME_REPO", home_repo.clone());
 
     // 2. SPIRA_INSTANCE
     let instance =
-        resolve_colon("SPIRA_INSTANCE", env, &toml_map, ok_str!("prod")).map_err(ResolveError::Registry)?;
+        hand_step("SPIRA_INSTANCE", registry, resolve_colon("SPIRA_INSTANCE", env, &toml_map, ok_str!("prod")))?;
     set!("SPIRA_INSTANCE", instance.clone());
     let inst_sfx = if instance == "prod" { String::new() } else { format!("-{instance}") };
 
     // 3. SPIRA_DB (preserve-empty)
-    let db = resolve_eq("SPIRA_DB", env, &toml_map, || {
+    let db = hand_step("SPIRA_DB", registry, resolve_eq("SPIRA_DB", env, &toml_map, || {
         Ok(format!("{}/spira{inst_sfx}/db", xdg_data_home(env)))
-    })
-    .map_err(ResolveError::Registry)?;
+    }))?;
     set!("SPIRA_DB", db);
 
     // 4. SPIRA_RUN
-    let run = resolve_colon("SPIRA_RUN", env, &toml_map, || {
+    let run = hand_step("SPIRA_RUN", registry, resolve_colon("SPIRA_RUN", env, &toml_map, || {
         Ok(format!("{}/spira{inst_sfx}/run", xdg_data_home(env)))
-    })
-    .map_err(ResolveError::Registry)?;
+    }))?;
     set!("SPIRA_RUN", run.clone());
 
     // 5. SPIRA_MEMORIES_CACHE (preserve-empty; not exported — see EXPORT_KEYS)
-    let mc = resolve_eq("SPIRA_MEMORIES_CACHE", env, &toml_map, || {
+    let mc = hand_step("SPIRA_MEMORIES_CACHE", registry, resolve_eq("SPIRA_MEMORIES_CACHE", env, &toml_map, || {
         Ok(format!("{run}/memories-cache.json"))
-    })
-    .map_err(ResolveError::Registry)?;
+    }))?;
     set!("SPIRA_MEMORIES_CACHE", mc);
 
     // 6. SPIRA_MEMORIES_CACHE_AGE
-    let mca = resolve_colon("SPIRA_MEMORIES_CACHE_AGE", env, &toml_map, ok_str!("300"))
-        .map_err(ResolveError::Registry)?;
+    let mca = hand_step("SPIRA_MEMORIES_CACHE_AGE", registry, resolve_colon("SPIRA_MEMORIES_CACHE_AGE", env, &toml_map, ok_str!("300")))?;
     set!("SPIRA_MEMORIES_CACHE_AGE", mca);
 
     // 7. SPIRA_WORKSPACES
     let is_git_checkout = input.repo.join(".git").exists();
-    let workspaces = resolve_colon("SPIRA_WORKSPACES", env, &toml_map, || {
+    let workspaces = hand_step("SPIRA_WORKSPACES", registry, resolve_colon("SPIRA_WORKSPACES", env, &toml_map, || {
         Ok(if is_git_checkout {
             crate::eval::sh_dirname(&repo_str)
         } else {
             crate::eval::sh_dirname(&crate::eval::sh_dirname(&repo_str))
         })
-    })
-    .map_err(ResolveError::Registry)?;
+    }))?;
     set!("SPIRA_WORKSPACES", workspaces.clone());
 
     // 8. SPIRA_ACTIONABLE (preserve-empty)
-    let actionable = resolve_eq("SPIRA_ACTIONABLE", env, &toml_map, ok_str!(
+    let actionable = hand_step("SPIRA_ACTIONABLE", registry, resolve_eq("SPIRA_ACTIONABLE", env, &toml_map, ok_str!(
         "ANSWERED|COMMENTED|ESCALAT|STRANDED|POISON|DEGRADED|BLOCKED|UNREACHABLE|FAIL|ERROR|LANDED|\u{26a0} BRANCH"
-    ))
-    .map_err(ResolveError::Registry)?;
+    )))?;
     set!("SPIRA_ACTIONABLE", actionable);
 
     // 9. SPIRA_WAKE (preserve-empty; conditional default)
@@ -897,36 +904,31 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
     // 10-14. The spira-lc family (fixed literals; no cross-reference but SPIRA_WORKSPACES).
     set!(
         "SPIRA_LC_UNIX_USER",
-        resolve_colon("SPIRA_LC_UNIX_USER", env, &toml_map, ok_str!("spira-lc"))
-            .map_err(ResolveError::Registry)?
+        hand_step("SPIRA_LC_UNIX_USER", registry, resolve_colon("SPIRA_LC_UNIX_USER", env, &toml_map, ok_str!("spira-lc")))?
     );
     set!(
         "SPIRA_LC_UNIX_GROUP",
-        resolve_colon("SPIRA_LC_UNIX_GROUP", env, &toml_map, ok_str!("spira"))
-            .map_err(ResolveError::Registry)?
+        hand_step("SPIRA_LC_UNIX_GROUP", registry, resolve_colon("SPIRA_LC_UNIX_GROUP", env, &toml_map, ok_str!("spira")))?
     );
     set!(
         "SPIRA_LC_PASSWORD_FILE",
-        resolve_colon("SPIRA_LC_PASSWORD_FILE", env, &toml_map, || {
+        hand_step("SPIRA_LC_PASSWORD_FILE", registry, resolve_colon("SPIRA_LC_PASSWORD_FILE", env, &toml_map, || {
             let path = lc_credential_default(env);
             Ok(if Path::new(&path).is_file() { path } else { String::new() })
-        })
-        .map_err(ResolveError::Registry)?
+        }))?
     );
     set!(
         "SPIRA_LC_SOCKET",
-        resolve_colon("SPIRA_LC_SOCKET", env, &toml_map, || Ok(lc_socket_default(lc_system_mode(), current_uid())))
-            .map_err(ResolveError::Registry)?
+        hand_step("SPIRA_LC_SOCKET", registry, resolve_colon("SPIRA_LC_SOCKET", env, &toml_map, || Ok(lc_socket_default(lc_system_mode(), current_uid()))))?
     );
 
     // 15. SPIRA_GH_INTAKE_REPO
     let gh_intake_repo =
-        resolve_colon("SPIRA_GH_INTAKE_REPO", env, &toml_map, ok_str!("")).map_err(ResolveError::Registry)?;
+        hand_step("SPIRA_GH_INTAKE_REPO", registry, resolve_colon("SPIRA_GH_INTAKE_REPO", env, &toml_map, ok_str!("")))?;
     set!("SPIRA_GH_INTAKE_REPO", gh_intake_repo.clone());
 
     // 16. SPIRA_RELEASE_REPO (+ MANIFEST fallback)
-    let mut release_repo = resolve_colon("SPIRA_RELEASE_REPO", env, &toml_map, || Ok(gh_intake_repo.clone()))
-        .map_err(ResolveError::Registry)?;
+    let mut release_repo = hand_step("SPIRA_RELEASE_REPO", registry, resolve_colon("SPIRA_RELEASE_REPO", env, &toml_map, || Ok(gh_intake_repo.clone())))?;
     if release_repo.is_empty() {
         if let Some(v) = read_manifest_field(input.repo, "release-repo") {
             release_repo = v;
@@ -936,80 +938,70 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
 
     set!(
         "SPIRA_SCCACHE_DAV_ADDR",
-        resolve_colon("SPIRA_SCCACHE_DAV_ADDR", env, &toml_map, ok_str!("")).map_err(ResolveError::Registry)?
+        hand_step("SPIRA_SCCACHE_DAV_ADDR", registry, resolve_colon("SPIRA_SCCACHE_DAV_ADDR", env, &toml_map, ok_str!("")))?
     );
 
     // 17-19. Rebase literals.
     set!(
         "SPIRA_REBASE_DECOMPOSE_FILES",
-        resolve_colon("SPIRA_REBASE_DECOMPOSE_FILES", env, &toml_map, ok_str!("4"))
-            .map_err(ResolveError::Registry)?
+        hand_step("SPIRA_REBASE_DECOMPOSE_FILES", registry, resolve_colon("SPIRA_REBASE_DECOMPOSE_FILES", env, &toml_map, ok_str!("4")))?
     );
     set!(
         "SPIRA_REBASE_GENERATED_FILES",
-        resolve_colon(
+        hand_step("SPIRA_REBASE_GENERATED_FILES", registry, resolve_colon(
             "SPIRA_REBASE_GENERATED_FILES",
             env,
             &toml_map,
             ok_str!("coverage.json COVERAGE.md standard-operating-procedures.md spira-config/schema")
-        )
-        .map_err(ResolveError::Registry)?
+        ))?
     );
 
     // 20. SPIRA_SCOPE_LABEL (preserve-empty)
-    let scope_label = resolve_eq("SPIRA_SCOPE_LABEL", env, &toml_map, || Ok(home_repo.clone()))
-        .map_err(ResolveError::Registry)?;
+    let scope_label = hand_step("SPIRA_SCOPE_LABEL", registry, resolve_eq("SPIRA_SCOPE_LABEL", env, &toml_map, || Ok(home_repo.clone())))?;
     set!("SPIRA_SCOPE_LABEL", scope_label);
 
     // 21-22. Czar outcome windows.
     set!(
         "SPIRA_CZAR_OUTCOME_MINS",
-        resolve_colon("SPIRA_CZAR_OUTCOME_MINS", env, &toml_map, ok_str!("30"))
-            .map_err(ResolveError::Registry)?
+        hand_step("SPIRA_CZAR_OUTCOME_MINS", registry, resolve_colon("SPIRA_CZAR_OUTCOME_MINS", env, &toml_map, ok_str!("30")))?
     );
     set!(
         "SPIRA_CZAR_UNCLAIMED_MINS",
-        resolve_colon("SPIRA_CZAR_UNCLAIMED_MINS", env, &toml_map, ok_str!("10"))
-            .map_err(ResolveError::Registry)?
+        hand_step("SPIRA_CZAR_UNCLAIMED_MINS", registry, resolve_colon("SPIRA_CZAR_UNCLAIMED_MINS", env, &toml_map, ok_str!("10")))?
     );
 
     // 23-24. Cockpit mail pane.
     set!(
         "COCKPIT_MAIL",
-        resolve_eq("COCKPIT_MAIL", env, &toml_map, ok_str!("aerc")).map_err(ResolveError::Registry)?
+        hand_step("COCKPIT_MAIL", registry, resolve_eq("COCKPIT_MAIL", env, &toml_map, ok_str!("aerc")))?
     );
     set!(
         "COCKPIT_CLIENT_IDLE_SECS",
-        resolve_colon("COCKPIT_CLIENT_IDLE_SECS", env, &toml_map, ok_str!("21600"))
-            .map_err(ResolveError::Registry)?
+        hand_step("COCKPIT_CLIENT_IDLE_SECS", registry, resolve_colon("COCKPIT_CLIENT_IDLE_SECS", env, &toml_map, ok_str!("21600")))?
     );
 
     // 25. SPIRA_DOLT_DATA (preserve-empty; NOT instance-suffixed, unlike SPIRA_DB/SPIRA_RUN)
-    let dolt_data = resolve_eq("SPIRA_DOLT_DATA", env, &toml_map, || {
+    let dolt_data = hand_step("SPIRA_DOLT_DATA", registry, resolve_eq("SPIRA_DOLT_DATA", env, &toml_map, || {
         Ok(format!("{}/spira/dolt", xdg_data_home(env)))
-    })
-    .map_err(ResolveError::Registry)?;
+    }))?;
     set!("SPIRA_DOLT_DATA", dolt_data);
 
     // 26. SPIRA_TESTDB_LIB
-    let testdb_lib = resolve_colon("SPIRA_TESTDB_LIB", env, &toml_map, || {
+    let testdb_lib = hand_step("SPIRA_TESTDB_LIB", registry, resolve_colon("SPIRA_TESTDB_LIB", env, &toml_map, || {
         Ok(format!("{}/testdb.sh", basename(&home_str)))
-    })
-    .map_err(ResolveError::Registry)?;
+    }))?;
     set!("SPIRA_TESTDB_LIB", testdb_lib);
 
     // 27. SPIRA_RELEASES
-    let releases = resolve_colon("SPIRA_RELEASES", env, &toml_map, || {
+    let releases = hand_step("SPIRA_RELEASES", registry, resolve_colon("SPIRA_RELEASES", env, &toml_map, || {
         Ok(crate::eval::spira_join(&workspaces, "spira-releases"))
-    })
-    .map_err(ResolveError::Registry)?;
+    }))?;
     set!("SPIRA_RELEASES", releases.clone());
 
     // 28. SPIRA_PROD (preserve-empty)
-    let prod = resolve_eq("SPIRA_PROD", env, &toml_map, || {
+    let prod = hand_step("SPIRA_PROD", registry, resolve_eq("SPIRA_PROD", env, &toml_map, || {
         Ok(crate::eval::spira_join(&releases, "current/spira"))
-    })
-    .map_err(ResolveError::Registry)?;
+    }))?;
     set!("SPIRA_PROD", prod);
 
     // 29. SPIRA_AGENT (+ SPIRA_CLAUDE deprecation)
@@ -1028,10 +1020,9 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
     // 30. SPIRA_REPO_MAP
     // DECLARED, NEVER DISCOVERED (per Ryan 2026-10-05): no search of SPIRA_HOME, the conf
     // file's directory or a shipped example — a missing declaration is refused by name.
-    let repo_map = resolve_colon("SPIRA_REPO_MAP", env, &toml_map, || {
+    let repo_map = hand_step("SPIRA_REPO_MAP", registry, resolve_colon("SPIRA_REPO_MAP", env, &toml_map, || {
         Err("SPIRA_REPO_MAP is not declared: set spira.repo_map in spira.toml (or SPIRA_REPO_MAP) to the repo map's path".to_string())
-    })
-    .map_err(ResolveError::Registry)?;
+    }))?;
     set!("SPIRA_REPO_MAP", repo_map.clone());
 
     // 31. SPIRA_RUNES_DIR: empty or undeclared is the release's own runes, so every reader agrees.
