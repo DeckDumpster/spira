@@ -1,5 +1,5 @@
 //! A stateful stand-in `bd` for suites exercising incident's decision layer without a Dolt
-//! fixture. Nothing but a test's `SPIRA_BD` points here. It is a small stateful bd rather than a
+//! fixture. Only a test points here. It is a small stateful bd rather than a
 //! canned response because dedup and recurrence are a sequence of calls that must see each
 //! other's writes.
 //!

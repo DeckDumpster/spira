@@ -171,7 +171,7 @@ on the meter's mtime).
 
 **The bd path is absolute.** `up` prints `TESTDB_BD`, the absolute path of B as found on the
 caller's PATH **without** resolving links (inside a metered suite it is the meter's link, so
-calls stay metered), and `testdb.sh` exports it as `SPIRA_BD` (call-site: it reads the value,
+calls stay metered), and `testdb.sh` exports it as `TESTDB_ACTIVE_BD` (call-site: it reads the value,
 as it reads `TESTDB_DIR`).
 
 **The server path finds testenv however a suite repoints.** `testdb.sh` resolves the binary
@@ -291,7 +291,7 @@ keeps what one batch built and the next batch with the same key copies it.
   already resolved in every place a suite runs (`FLOOR` of `--artifacts`, `make install`).
 * **D7 — `testdb.sh` keeps its function names and shell-variable contract (sp-k2oyn).**
   ~148 suites source it and call `testdb_up`/`testdb_reset`/`testdb_seed`/`testdb_drop`
-  inline, because only sourcing can export `SPIRA_DB`/`SPIRA_BD`/`PATH` into the calling
+  inline, because only sourcing can export `SPIRA_DB`/`TESTDB_ACTIVE_BD`/`PATH` into the calling
   shell — a subprocess cannot. So the file is not deleted; every caller of the public API
   needed zero changes for this bead, the same shape §2.3 already established for server
   mode. What moved is what happens *behind* `testdb_up`, not how a suite asks for it.
@@ -354,7 +354,7 @@ branch calls `embedded-reset`; `testdb_drop`'s generic cleanup loop (`TESTDB_DIR
 empty, so in practice this was always the embedded path) calls `embedded-down`. Every
 failure mode a suite could observe is unchanged: a gone or empty baseline still exits
 `TESTDB_FAULT_EXIT` (default 75); a failed init still clears `TESTDB_NAME`/`TESTDB_DIR`
-and returns 1; `testdb_up` still unsets `SPIRA_DB`/`SPIRA_BD` before any of this runs
+and returns 1; `testdb_up` still unsets `SPIRA_DB`/`TESTDB_ACTIVE_BD` before any of this runs
 (testdb.sh's own fail-safe, unchanged — DESIGN-testdb.md never owned that half).
 
 **The detach moves from a bash `&` to testenv (D9).** `testdb_drop`'s cleanup used to
