@@ -50,9 +50,9 @@ impl RealBd {
         }
     }
 
-    /// One `content list --all --limit 0 --json` request, its rows as JSON.
+    /// One `content list --all --limit 0 --json --brief` request, its rows as JSON.
     pub fn list_json(&self, extra: &[&str]) -> Result<Vec<serde_json::Value>, String> {
-        let mut args = vec!["content", "list", "--all", "--limit", "0", "--json"];
+        let mut args = vec!["content", "list", "--all", "--limit", "0", "--json", "--brief"];
         args.extend_from_slice(extra);
         let (rc, out, err) = self.run_lc(&args)?;
         if rc != 0 {
@@ -266,7 +266,7 @@ impl Bd for RealBd {
         obj.get("created_at").or_else(|| obj.get("created")).and_then(|c| c.as_str()).map(str::to_string)
     }
     fn reachable(&self, _db: &str) -> bool {
-        self.run_lc(&["content", "list", "--limit", "1", "--json"]).map(|(rc, ..)| rc == 0).unwrap_or(false)
+        self.run_lc(&["content", "list", "--limit", "1", "--json", "--brief"]).map(|(rc, ..)| rc == 0).unwrap_or(false)
     }
     fn fact(&self, id: &str, kind: &str, cause: &str) -> bool {
         let args = ["fact", "add", id, "--kind", kind, "--actor", "incident", "--cause", cause];
@@ -458,11 +458,34 @@ mod tests {
             let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
             let found = bd.list("", scope, label, since, Some("incident:x")).unwrap(); // BDQ_READ_CONSIDERED="a test of the store door against its fake, not a bd read"
             assert_eq!(found.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["sp-1"], "{scope:?}");
-            let mut want = vec!["content", "list", "--all", "--limit", "0", "--json", "--external-ref", "incident:x"]; // BDQ_READ_CONSIDERED="the argv a test expects, not a read"
+            let mut want = vec!["content", "list", "--all", "--limit", "0", "--json", "--brief", "--external-ref", "incident:x"]; // BDQ_READ_CONSIDERED="the argv a test expects, not a read"
             want.extend(since.iter().flat_map(|d| ["--closed-after", d]));
             want.extend(label.iter().flat_map(|l| ["--label", l]));
             assert_eq!(fake.requests(), [want, vec!["list", "--ids", "sp-1"]], "{scope:?}"); // BDQ_READ_CONSIDERED="the argv a test expects, not a read"
         }
+    }
+
+    #[test_id(tm1j95g)]
+    #[test]
+    fn every_content_list_a_filing_sends_asks_for_brief_rows() {
+        use crate::fake::{cfg, FakeMailer, FixedClock};
+        let reference = "incident:x";
+        let ref_label = format!("ref:{}", crate::decide::ref_hash(reference));
+        let live: Vec<_> = (0..250).map(|i| serde_json::json!({"bead_id": format!("sp-{i:03}"), "state": "READY"})).collect();
+        let mut rows: Vec<_> = (0..250).map(|i| serde_json::json!({"id": format!("sp-{i:03}"), "status": "open", "labels": ["incident"]})).collect();
+        rows[7] = serde_json::json!({"id": "sp-007", "status": "open", "external_ref": reference, "labels": ["incident", ref_label]});
+        let fake = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows).with_live(live));
+        let bd = RealBd { lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
+        let known = vec!["spira".to_string()];
+        let out = crate::run::file_one(&bd, &FakeMailer::default(), &FixedClock(1_000_000), &cfg(&known), reference, "x failed", b"payload", "spira,incident", &mut vec![]);
+        assert!(matches!(&out, crate::run::FileOutcome::Filed(id) if id == "sp-007"), "{out:?}");
+        assert!(bd.reachable(""));
+        let seen = fake.requests();
+        assert!(!seen.iter().any(|r| r.get(1).is_some_and(|v| v == "create")), "{seen:?}");
+        let lists: Vec<_> = seen.iter().filter(|r| r.starts_with(&["content".to_string(), "list".to_string()])).collect();
+        assert_eq!(lists.len(), 3 + 1, "{seen:?}");
+        let full: Vec<_> = lists.iter().filter(|r| !r.iter().any(|a| a == "--brief")).collect();
+        assert!(full.is_empty(), "{} of {} content lists lack --brief: {:?}", full.len(), lists.len(), full.first().map(|r| &r[..6]));
     }
 
     #[test_id(t6823r3)]
