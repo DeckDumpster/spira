@@ -49,6 +49,6 @@ pub fn oneline_log_matches(repo: Option<&str>, rev: &str, needles: &[&str]) -> u
 /// [`crate::seams::registry`] (sp-k6lku, "wave 4.13") and `spira_config::repos::landref`;
 /// was `. "$SPIRA_HOME/lib.sh"; spira_landref "$repo"`.
 pub fn spira_landref(repo: &str) -> Option<String> {
-    let reg = crate::seams::registry().ok()?;
+    let reg = crate::seams::registry().map_err(|e| crate::log::log(&format!("watchtower: no landing ref for {repo} — {e}"))).ok()?;
     spira_config::repos::landref(&reg, repo)
 }

@@ -85,6 +85,16 @@ mod tests {
         assert_eq!(reg.base("spira").as_deref(), Some("local/main"));
     }
 
+    #[test_id(tk2iqt1)]
+    #[test]
+    fn a_home_that_cannot_be_located_is_refused_not_built_from_nothing() {
+        let _env = testkit::env(&[("SPIRA_HOME", None), ("SPIRA_RELEASE", None)]);
+
+        let refusal = registry().err().expect("no home is named");
+
+        assert!(refusal.contains("SPIRA_HOME"), "{refusal}");
+    }
+
     #[test_id(tp3pfac)]
     #[test]
     fn the_roster_is_counted_in_order_and_ready_lines_are_parsed() {
