@@ -91,7 +91,7 @@ impl Refused {
                     &["dolt", "bd", "bd-embedded", "bdq", "bdjson"],
                 )
             }),
-            Refused::BdOnly => BD.get_or_init(|| Matchers::build("SPIRA_BD", "bd-embedded|bdq|bd", "SPIRA_BD|SPIRA_BDQ|BD|BDQ|BD_BIN", &["bd", "bd-embedded", "bdq", "bdjson"])),
+            Refused::BdOnly => BD.get_or_init(|| Matchers::build("SPIRA_BD|SPIRA_BDQ", "bd-embedded|bdq|bd", "SPIRA_BD|SPIRA_BDQ|BD|BDQ|BD_BIN", &["bd", "bd-embedded", "bdq", "bdjson"])),
         }
     }
 }

@@ -86,6 +86,7 @@ mod tests {
         assert_eq!(got, "a:b:h/.local/bin:h/.cargo/bin:/usr/local/bin:/usr/bin:/bin");
     }
 
+    #[test_id(t3frjny)]
     #[test]
     fn bootstrap_sh_exports_only_the_path() {
         let out = bootstrap_sh("release/bin", "", "fixture-home");
