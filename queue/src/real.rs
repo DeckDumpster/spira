@@ -1092,16 +1092,20 @@ pub fn active_state_of(facts: Option<runtime::units::UnitFacts>) -> String {
     .to_string()
 }
 
-/// A release build's lease and the item it reports.
-struct HeldBuild(Option<(spira_config::build_dir::Lease, String)>);
+/// A release build's lease and the item it reports, and the bases it was leased under.
+struct HeldBuild(Option<(spira_config::build_dir::Lease, String)>, Vec<PathBuf>);
 
 impl Drop for HeldBuild {
     fn drop(&mut self) {
+        use spira_config::build_dir as bd;
         if let Some((l, item)) = self.0.take() {
             let report = l.report(&item);
-            l.release();
+            let released = l.release();
             eprintln!("{report}");
-            spira_config::build_dir::meter_report(&report);
+            bd::meter_report(&report);
+            released.deleted.iter().for_each(|d| eprintln!("{d}"));
+            bd::meter_evictions(&released.deleted);
+            bd::reap_in_background(&self.1);
         }
     }
 }
@@ -1251,7 +1255,7 @@ impl Scripts for RealScripts {
         eprintln!("build directory {} — {}", lease.dir().display(), lease.start());
         lease.note_root(wt);
         let dir = lease.dir().to_path_buf();
-        let mut held = HeldBuild(Some((lease, who.to_string())));
+        let mut held = HeldBuild(Some((lease, who.to_string())), bases);
         let script = spira_config::resolve::locate_home_for_process()?.join(bd::CLEAN_SCRIPT);
         let path = std::env::var("PATH").unwrap_or_default();
         let cleaned = bd::clean(&script, wt, &dir, &path, false, who, Some(repo));
@@ -2924,6 +2928,25 @@ mod tests {
         assert!(err.contains("selective clean") && err.contains("emptied"), "{err}");
         assert!(!slot.join(".unit-tests-built-manifest").exists(), "the untrusted directory is emptied");
         assert_eq!(fs::read_to_string(&log).unwrap().matches("build -q").count(), builds, "nothing is built after a failed clean");
+    }
+
+    #[test_id(txojjt7)]
+    #[test]
+    fn dropping_a_held_release_build_deletes_the_repositorys_surplus_folder_and_reaps_it() {
+        let d = testkit::TempDir::new("queue-held-surplus");
+        let bases = vec![d.path().join("base")];
+        let [held, other] = ["a", "b"].map(|w| spira_config::build_dir::lease_for(&bases, w, "spira", 2).unwrap());
+        other.release();
+        // A day whose newest lease is in the far future and held one folder.
+        fs::write(bases[0].join("spira/peaks.json"), r#"{"version":1,"peaks":[{"at":"2999-01-01T00:00:00.000000000Z","live":1}]}"#).unwrap();
+        drop(super::HeldBuild(Some((held, "a".to_string())), bases.clone()));
+        assert_eq!(["spira/1", "spira/2"].iter().filter(|n| bases[0].join(n).exists()).count(), 1);
+        let waiting = || fs::read_dir(bases[0].join(".reap")).map_or(0, Iterator::count);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20); // clock-safe: a cap on waiting for the reaper
+        while waiting() > 0 && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert_eq!(waiting(), 0);
     }
 
     #[test_id(ten83xd)]

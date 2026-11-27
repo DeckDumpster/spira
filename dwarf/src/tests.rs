@@ -522,6 +522,75 @@ pub(crate) mod verdict_run {
         assert!(reports.len() == 1 && reports[0].ends_with(&want), "{lines:?}");
     }
 
+    /// A day whose newest lease is in the far future and held one folder: the next release cuts to one.
+    const ONE_FOLDER_IS_NORMAL: &str = r#"{"version":1,"peaks":[{"at":"2999-01-01T00:00:00.000000000Z","live":1}]}"#;
+
+    #[test_id(t5i8uy8)]
+    #[test]
+    fn a_runs_release_deletes_its_repositorys_surplus_folder_and_logs_why() {
+        let work = testkit::TempDir::new("dwarf-surplus");
+        let base = work.path().join("builds");
+        let bases = std::slice::from_ref(&base);
+        let two = ["a", "b"].map(|w| spira_config::build_dir::lease_for(bases, w, "spira", 2).unwrap());
+        two.into_iter().for_each(|l| {
+            l.release();
+        });
+        let sink = Mute::default();
+        with_run_sink(crate::tests::complete_vars(), &NoBd, Dirty(vec![]), &Lc, &|| 0, &Seams(Default::default()), &sink, "", |r| {
+            r.s.build_dir = Some(spira_config::build_dir::lease_for(bases, "sp-s", "spira", 2).unwrap());
+            std::fs::write(base.join("spira/peaks.json"), ONE_FOLDER_IS_NORMAL).unwrap();
+            r.release_build_dir();
+        });
+        let lines = sink.0.lock().unwrap();
+        assert!(lines.iter().any(|l| l.contains("evicted idle build directory") && l.contains("(back to repo:spira's 1 folders)")), "{lines:?}");
+        assert_eq!(["spira/1", "spira/2"].iter().filter(|d| base.join(d).exists()).count(), 1);
+    }
+
+    /// The log of a run's lease beside `removed`'s idle folder, under a registry mapping `mapped`.
+    // `lease_build_dir` starts the clean script, here absent: bash fails at once and the folder is emptied.
+    fn lease_log_beside_a_removed_repository(mapped: &str) -> (testkit::TempDir, Vec<String>) {
+        let work = testkit::TempDir::new("dwarf-unregistered");
+        let base = work.path().join("builds");
+        std::fs::create_dir_all(base.join("removed/1")).unwrap();
+        std::fs::write(base.join("removed/1.lock"), "").unwrap();
+        let map = spira_config::process::fixture_repo_map(work.path(), &[mapped]);
+        let toml = spira_config::process::fixture_toml(work.path(), &[("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_HOME_REPO", "spira")]);
+        let mut vars = crate::tests::complete_vars();
+        vars.insert("SPIRA_TOML".into(), toml.display().to_string());
+        vars.insert("SPIRA_DWARF_BUILD_BASE".into(), base.display().to_string());
+        vars.insert("SPIRA_DWARF_BUILD_BUDGET_GIB".into(), "60".into());
+        let sink = Mute::default();
+        let _env = testkit::env(&[(spira_config::process::TOML_ENV, Some(toml.to_str().unwrap()))]);
+        // Read fresh: the process pins its first config, which is another test's.
+        spira_config::process::with_fresh(|| {
+            with_run_sink(vars, &NoBd, Dirty(vec![]), &Lc, &|| 0, &Seams(Default::default()), &sink, "", |r| {
+                r.s.bead = "sp-u".into();
+                r.s.repo_name = "spira".into();
+                r.lease_build_dir(work.path()).map_err(|a| format!("{a:?}")).unwrap();
+            })
+        })
+        .unwrap();
+        let lines = sink.0.lock().unwrap().clone();
+        (work, lines)
+    }
+
+    #[test_id(tv3k2ut)]
+    #[test]
+    fn a_runs_lease_deletes_an_unregistered_repositorys_idle_folder_and_logs_why() {
+        let (work, lines) = lease_log_beside_a_removed_repository("spira");
+        let base = work.path().join("builds");
+        assert!(lines.iter().any(|l| l.contains("(repo:removed is no longer registered)")), "{lines:?}");
+        assert!(!base.join("removed").exists() && base.join("spira/1").is_dir(), "{lines:?}");
+    }
+
+    #[test_id(tmz08a2)]
+    #[test]
+    fn a_runs_lease_logs_why_it_cannot_check_the_registry_and_deletes_nothing() {
+        let (work, lines) = lease_log_beside_a_removed_repository("another");
+        assert!(lines.iter().any(|l| l.contains("does not name the home repository \"spira\"")), "{lines:?}");
+        assert!(work.path().join("builds/removed/1").is_dir(), "{lines:?}");
+    }
+
     fn session_env_of(builds: bool) -> BTreeMap<String, String> {
         let _otel = OTEL.lock().unwrap_or_else(|e| e.into_inner());
         let work = testkit::TempDir::new("dwarf-cargo-env");

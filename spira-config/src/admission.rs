@@ -325,17 +325,27 @@ pub(crate) struct Mutex(File);
 
 impl Mutex {
     pub(crate) fn lock(dir: &Path, name: &str) -> std::io::Result<Mutex> {
-        fs::create_dir_all(dir)?;
-        let f = OpenOptions::new().create(true).truncate(false).write(true).open(dir.join(name))?;
+        Mutex::lock_opened(dir, name, &mut || {})
+    }
+
+    /// [`Mutex::lock`] calling `opened` between each open and its flock.
+    fn lock_opened(dir: &Path, name: &str, opened: &mut dyn FnMut()) -> std::io::Result<Mutex> {
+        use std::os::unix::fs::MetadataExt;
+        let path = dir.join(name);
         loop {
+            fs::create_dir_all(dir)?;
+            let f = OpenOptions::new().create(true).truncate(false).write(true).open(&path)?;
+            opened();
             // SAFETY: flock on an fd we own for the life of `f`.
-            let rc = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
-            if rc == 0 {
-                return Ok(Mutex(f));
+            while unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } != 0 {
+                let e = std::io::Error::last_os_error();
+                if e.kind() != std::io::ErrorKind::Interrupted {
+                    return Err(e);
+                }
             }
-            let e = std::io::Error::last_os_error();
-            if e.kind() != std::io::ErrorKind::Interrupted {
-                return Err(e);
+            // A holder may delete the file: a lock on an unlinked one excludes nobody.
+            if fs::metadata(&path).is_ok_and(|at| f.metadata().is_ok_and(|held| (held.dev(), held.ino()) == (at.dev(), at.ino()))) {
+                return Ok(Mutex(f));
             }
         }
     }

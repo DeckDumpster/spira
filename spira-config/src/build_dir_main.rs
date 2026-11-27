@@ -121,11 +121,14 @@ fn hold(args: &[String]) -> Result<(), String> {
     }
     let dir = lease.dir().to_path_buf();
     let report = lease.report(who);
-    let trimmed = lease.release();
-    eprintln!("released build directory {}: {trimmed}", dir.display());
+    let released = lease.release();
+    eprintln!("released build directory {}: {}", dir.display(), released.trimmed);
     log_report(&report);
     bd::meter_report(&report);
+    released.deleted.iter().for_each(|d| eprintln!("{d}"));
+    bd::meter_evictions(&released.deleted);
     if let Some(bases) = spira_config::process::cfg(bd::BASE_ENV).ok().map(|v| bd::parse_bases(&v)) {
+        bd::reap_in_background(&bases);
         let budget = spira_config::process::cfg_parse::<i64>(bd::BUDGET_ENV).unwrap_or(0).max(0) as u64;
         bd::meter(&bases, &dir, budget.saturating_mul(1 << 30));
     }
@@ -186,11 +189,13 @@ fn take(who: &str, root: &Path, repo: &str, out: &mut impl Write) -> Result<bd::
     }
     let budget = spira_config::process::cfg_parse::<i64>(bd::BUDGET_ENV)?.max(0) as u64;
     let budget = budget.saturating_mul(1 << 30);
-    let evicted = bd::evict_idle(&bases, budget);
-    for gone in &evicted {
-        let _ = writeln!(out, "# evicted idle build directory {}", gone.display());
+    let registry = spira_config::repos::Registry::from_env(std::env::vars().collect(), &spira_config::resolve::locate_home_for_process()?);
+    let (deleted, refused) = bd::evict_at_lease(&bases, budget, &registry);
+    for line in refused.into_iter().chain(deleted.iter().map(ToString::to_string)) {
+        let _ = writeln!(out, "# {line}");
     }
-    bd::meter_evictions(&evicted);
+    bd::meter_evictions(&deleted);
+    bd::reap_in_background(&bases);
     bd::meter(&bases, lease.dir(), budget);
     let _ = writeln!(out, "{}\t{}", lease.start(), lease.dir().display());
     let _ = out.flush();

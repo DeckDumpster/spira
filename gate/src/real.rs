@@ -349,12 +349,16 @@ impl Real {
         Ok(line)
     }
 
-    /// Release a pool lease and send its one report.
+    /// Release a pool lease, send its one report and say which surplus folders went.
     fn release_lease(&self, lease: spira_config::build_dir::Lease, bead: &str) {
         let report = lease.report(bead);
-        lease.release();
+        let released = lease.release();
         eprintln!("{report}");
         spira_config::build_dir::meter_report(&report);
+        for gone in &released.deleted {
+            self.eprint(&format!("gate: {gone}"));
+        }
+        spira_config::build_dir::meter_evictions(&released.deleted);
     }
 
     fn git(&self, repo: &Path) -> Command {
@@ -1460,6 +1464,21 @@ mod tests {
         assert!(std::fs::symlink_metadata(p.tree.join("target/debug")).is_err());
         assert!(lockable(&p), "the lease is released");
         let _ = &p.t;
+    }
+
+    #[test_id(tltngq9)]
+    #[test]
+    fn a_gates_release_of_a_builder_directory_deletes_the_repositorys_surplus_folder() {
+        let p = pool("exit 0\n");
+        let two = ["a", "b"].map(|w| spira_config::build_dir::lease_for(&p.bases, w, "r", 2).unwrap());
+        two.into_iter().for_each(|l| {
+            l.release();
+        });
+        p.real.build_in_bases(&p.tree, &builder(&p), &p.bases).unwrap();
+        // A day whose newest lease is in the far future and held one folder.
+        std::fs::write(p.bases[0].join("r/peaks.json"), r#"{"version":1,"peaks":[{"at":"2999-01-01T00:00:00.000000000Z","live":1}]}"#).unwrap();
+        p.real.release_target(&p.tree, false, false, 1 << 10, "r");
+        assert_eq!(["r/1", "r/2"].iter().filter(|d| p.bases[0].join(d).exists()).count(), 1);
     }
 
     #[test_id(tplaceh)]
