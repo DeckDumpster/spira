@@ -2876,6 +2876,39 @@ fn batch_over_cap(results: &Path, rc: i32) -> bool {
         || (matches!(rc, 124 | 137) && over_cap_detail(results).is_some())
 }
 
+/// Why a `ci_entry` pass was cut: the kind its VM recorded, else the outer guard, named with the
+/// last phase the VM stamped. A foreign round has no `run.events` to name its own cut.
+fn ci_entry_cut(results: &Path, rc: i32, elapsed: u64, cap: u64) -> Option<String> {
+    if rc == 0 {
+        return None;
+    }
+    if let Some(detail) = over_cap_detail(results) {
+        return Some(format!("FAULT over-cap {detail}"));
+    }
+    if !matches!(rc, 124 | 137) && !batch_over_cap(results, rc) {
+        return None;
+    }
+    let stamps = fs::read_to_string(results.join("round-phases")).unwrap_or_default();
+    let phase = stamps
+        .lines()
+        .rev()
+        .find_map(|l| l.split_whitespace().next())
+        .unwrap_or("lease");
+    let guard = cap.saturating_mul(crate::real::ROUND_HANG_GUARD_FACTOR);
+    Some(format!(
+        "FAULT over-cap guard=hang-guard phase={phase} elapsed={elapsed}s guard={guard}s cap={cap}s"
+    ))
+}
+
+/// The one stdout line by which a caller learns why a `ci_entry` pass was not green.
+fn say_fault(w: &World, why: &str) {
+    let why = one_line(why);
+    match why.starts_with("FAULT") {
+        true => w.out(format!("fault={why}")),
+        false => w.out(format!("fault=FAULT {why}")),
+    }
+}
+
 fn suite_cap_s(results: &Path) -> Option<String> {
     result_dirs(results).iter().find_map(|d| {
         let t = fs::read_to_string(d.join("runner.meta")).ok()?;
@@ -3941,7 +3974,7 @@ pub(super) fn certify(
                 &c.r.name,
                 &format!("Round {batch} over-cap twice on {head}"),
                 &format!(
-                    "Round {batch} of {} hit testenv's suite cap on both passes of {head}: unreached {first} then {unreached}, suite_cap_s={}, passes {} and {pass}. No member is implicated and nobody was ejected; the round stays open. Capacity or the cap is the Concierge's to tune. Results: {}",
+                    "Round {batch} of {} was cut by a cap on both passes of {head}: unreached {first} then {unreached}, suite_cap_s={}, passes {} and {pass}. No member is implicated and nobody was ejected; the round stays open. Capacity or the cap is the Concierge's to tune. Results: {}",
                     c.r.name,
                     suite_cap_s(&results).unwrap_or_else(|| "?".into()),
                     pass.saturating_sub(1),
@@ -4181,6 +4214,7 @@ fn certify_pass(
                 pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false),
             );
             w.err(format!("queue.sh {label}: {why}; the round is not judged"));
+            say_fault(w, &why);
             return faulted_pass(w, by, label, c, batch, &why);
         };
         let began = w.clock.now();
@@ -4203,26 +4237,36 @@ fn certify_pass(
         if ci_result_ok(&results) && out.rc == 2 {
             out.rc = 0;
         }
-        if out.rc == 1 && ci_result_red(&results) {
+        if let Some(why) = ci_entry_cut(&results, out.rc, wall, c.s.round_wall_secs) {
+            warn_unrecorded(
+                w,
+                label,
+                batch,
+                "the incomplete pass",
+                pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false),
+            );
+            say_fault(w, &why);
+            w.err(format!(
+                "queue.sh {label}: {why}; the round is not judged\n{}",
+                tail(&format!("{}{}", out.out, out.err), 40)
+            ));
+            // A foreign round has no suites to leave unreached.
+            *over = Some(0);
+            return FAULT;
+        } else if out.rc == 1 && ci_result_red(&results) {
             let _ = fs::write(
                 results.join(format!("{REPO_TESTENV_RED}.out")),
                 format!("{}{}", out.out, out.err),
             );
             reds.push(REPO_TESTENV_RED.into());
         } else if out.rc == VM_LOST {
+            say_fault(w, "vm-lost: the round VM died under the pass");
             return lost_vm_pass(w, label, batch, &out.err);
         } else if out.rc != 0 {
-            let why = if matches!(out.rc, 124 | 137) {
-                format!(
-                    "testenv hung past its guard (elapsed={wall}s cap {}s)",
-                    c.s.round_wall_secs
-                )
-            } else {
-                round_fault(&results).map_or_else(
-                    || format!("the repository's CI entry exited {}", out.rc),
-                    |f| f.cause,
-                )
-            };
+            let why = round_fault(&results).map_or_else(
+                || format!("the repository's CI entry exited {}", out.rc),
+                |f| f.cause,
+            );
             warn_unrecorded(
                 w,
                 label,
@@ -4234,8 +4278,9 @@ fn certify_pass(
             w.err(format!(
                 "queue.sh {label}: {why}; the round is not judged\n{shown}"
             ));
+            say_fault(w, &why);
             let why_shown = format!("{why}\n{shown}");
-            if !results.join("ci.result").exists() && !matches!(out.rc, 124 | 137) {
+            if !results.join("ci.result").exists() {
                 if declaration_unchanged(w, c, path, &wt) {
                     return infra_pass(w, label, c, batch, &why_shown);
                 }

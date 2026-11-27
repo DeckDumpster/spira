@@ -184,6 +184,8 @@ fn tail(text: &str, n: usize) -> String {
     lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
+const UNNAMED: &str = "incomplete, no red named";
+
 /// What certify said about a pass that did not come out green: the red steps it named, the fault it named, or incomplete.
 fn verdict(text: &str) -> String {
     let named = text.lines().find_map(|l| l.trim().strip_prefix("red=")).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).or_else(|| {
@@ -193,17 +195,25 @@ fn verdict(text: &str) -> String {
             Some(steps.to_string()).filter(|s| !s.is_empty())
         })
     });
-    let fault = text.lines().find_map(|l| l.trim().strip_prefix("fault=")).map(str::trim).filter(|s| s.starts_with("FAULT"));
+    let faults = || text.lines().filter_map(|l| l.trim().strip_prefix("fault=")).map(str::trim);
+    // A line that says what cut the pass outranks the over-cap handler's counts; the last of either is how certify ended.
+    let fault = faults().filter(|s| s.starts_with("FAULT")).last().or_else(|| faults().filter(|s| s.starts_with("over-cap") || s.starts_with("capacity")).last());
     match (named, fault) {
         (Some(steps), _) => format!("RED: {steps}"),
         (None, _) if text.contains("red-output=") => "RED".to_string(),
         (None, Some(fault)) => fault.to_string(),
-        (None, None) => "incomplete, no red named".to_string(),
+        (None, None) => UNNAMED.to_string(),
     }
 }
 
 fn not_green_line(batch: &str, cert: &Out) -> String {
-    format!("round-recert: {batch} is not green: {} (certify rc={}) — round left open", verdict(&cert.text), cert.code.map_or("signal".into(), |c| c.to_string()))
+    let named = verdict(&cert.text);
+    let said = (named == UNNAMED).then(|| cert.text.lines().rev().find(|l| l.starts_with("queue.sh "))).flatten();
+    format!(
+        "round-recert: {batch} is not green: {named} (certify rc={}) — round left open{}",
+        cert.code.map_or("signal".into(), |c| c.to_string()),
+        said.map(|l| format!("; certify last said: {l}")).unwrap_or_default()
+    )
 }
 
 /// The pass itself: certify, and land only on green. 0 landed, 1 anything else.
@@ -447,12 +457,35 @@ mod tests {
             verdict("queue.sh round certify: FAULT settings-refused phase=suites rc=2: batch: K is not set\nfault=FAULT settings-refused phase=suites rc=2: batch: K is not set\n"),
             "FAULT settings-refused phase=suites rc=2: batch: K is not set"
         );
-        assert_eq!(verdict("fault=over-cap unreached=3\n"), "incomplete, no red named", "only a named FAULT line");
+        assert_eq!(verdict("fault=infra-fault\n"), "incomplete, no red named", "only a named fault line");
         assert_eq!(verdict("red=\nround r is RED at abc: lint\n"), "RED: lint");
         assert_eq!(verdict("red=\nround r is RED at abc: lint runner=ec2 (host io pressure full avg300 55.0 above 50.0) runner_changed=host->ec2\n"), "RED: lint");
         assert_eq!(verdict("red-output=/tmp/x\n"), "RED");
         let line = not_green_line("r-1", &Out { code: Some(1), text: "red=unit-tests\n".into() });
         assert!(line.contains("RED: unit-tests") && !line.contains("incomplete"), "{line}");
+    }
+
+    #[test_id(t8upayh)]
+    #[test]
+    fn a_cut_pass_is_named_by_its_over_cap_or_capacity_line() {
+        let hung = "FAULT over-cap guard=hang-guard phase=entry elapsed=1806s guard=1800s cap=900s";
+        assert_eq!(verdict(&format!("fault={hung}\n")), hung);
+        assert_eq!(verdict("fault=over-cap unreached=3\n"), "over-cap unreached=3");
+        assert_eq!(verdict("fault=capacity unreached=0,0\n"), "capacity unreached=0,0");
+        assert_eq!(verdict("fault=over-cap unreached=3\nfault=capacity unreached=3,3\n"), "capacity unreached=3,3", "the last cut line is how the certify ended");
+        let twice = format!("fault={hung}\nfault=over-cap unreached=0\nfault={hung}\nfault=capacity unreached=0,0\n");
+        assert_eq!(verdict(&twice), hung, "a line that names the phase outranks the handler's counts");
+    }
+
+    #[test_id(tqf470o)]
+    #[test]
+    fn a_pass_with_nothing_named_carries_certifys_own_last_explanation() {
+        let text = "queue.sh round certify: first\nqueue.sh round certify: the CI entry never ran; the round is not judged\nround-vm: stop VM\nround-vm: destroy VM\n";
+        let line = not_green_line("r-1", &Out { code: Some(4), text: text.into() });
+        assert!(line.contains("incomplete, no red named") && line.contains("queue.sh round certify: the CI entry never ran") && !line.contains("first"), "{line}");
+        assert_eq!(line.lines().count(), 1, "{line}");
+        let named = not_green_line("r-1", &Out { code: Some(4), text: format!("fault=capacity unreached=0,0\n{text}") });
+        assert!(!named.contains("queue.sh"), "{named}");
     }
 
     #[test_id(tl047q9)]

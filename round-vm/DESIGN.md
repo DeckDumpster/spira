@@ -43,7 +43,7 @@ Every option also accepts the `--opt=value` spelling. An unknown verb or no verb
 `warm` means a ready VM was handed out without waiting. `cold` means `acquire` had to
 wait for a VM, whether it provisioned one itself or waited on the provision in flight.
 
-`--ci-entry CMD` is the round of a registered repository that is not the harness: the VM clones the tree and runs `CMD` (the repository's own CI entry point, declared as `ci_entry` in its `.spira/testenv.toml`) instead of the corpus, so the round covers what CI covers. Its exit status is the one verdict, recorded as `ci.result` (`ok`/`red`) beside `ci.out` (its output and exit status, the file the mender bead quotes); the entry runs in a `podman run --rm` of the declared image (`--ci-image`, required with `--ci-entry`) with the tree mounted at the declared workdir (`--ci-workdir`, default `/work`); a failed `podman pull` is a fault (exit 3, no `ci.result`), never a red; no suite ordering, image build, lint or binaries apply.
+`--ci-entry CMD` is the round of a registered repository that is not the harness: the VM clones the tree and runs `CMD` (the repository's own CI entry point, declared as `ci_entry` in its `.spira/testenv.toml`) instead of the corpus, so the round covers what CI covers. Its exit status is the one verdict, recorded as `ci.result` (`ok`/`red`) beside `ci.out` (its output and exit status, the file the mender bead quotes); the entry runs in a `podman run --rm` of the declared image (`--ci-image`, required with `--ci-entry`) with the tree mounted at the declared workdir (`--ci-workdir`, default `/work`); a failed `podman pull` is a fault (exit 3, no `ci.result`), never a red; no suite ordering, image build, lint or binaries apply. The script stamps `clone`, `pull` and `entry` into `round-phases` and `round-phase`. The cap covers the entry alone: one still running at the cap is cut (exit 124), records `over-cap guard=ci-entry-cap phase=entry elapsed=<N>s cap=<C>s` in `round-fault-kind` and writes no `ci.result`; clone and pull stay under the caller's hang guard. `queue round certify` treats either cut as an over-cap pass (certified once more, a capacity fault on the second, no member implicated) and, when no kind was recorded, names it `guard=hang-guard` with the last phase stamped (`lease` when none). Every not-green exit of its `ci_entry` pass that has no red step prints `fault=FAULT <why>` on stdout.
 
 ### 2.2 `run`
 
@@ -323,7 +323,8 @@ The home is bounded: after a host round it holds the last round's unit-test buil
   place in the pool state: the provision in flight, `ready`, a lease, or `doomed`. Every
   failure path after the clone destroys it. A VM whose owning process died (a killed `run`,
   a killed background provision) is destroyed by the next `acquire`. A `run` interrupted by
-  SIGTERM, SIGINT or SIGHUP destroys its leased VM before exiting.
+  SIGTERM, SIGINT or SIGHUP destroys its leased VM before exiting, after pulling, within a
+  bounded wait, the VM's results, phase stamps and launcher log (`vm-batch.out`/`.err`).
 - **G3 Destroy is verified.** Destroy = stop, delete (purge), then poll until the VMID is
   absent from the node's VM list. A VM that is still listed is an error and stays in
   `doomed`, retried on every `acquire`.

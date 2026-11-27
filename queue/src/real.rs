@@ -3,7 +3,7 @@
 
 /// round-vm enforces the cap on the tests itself; the outer `timeout` only catches a hang in the
 /// unbounded rest (pulls, post-processing).
-const ROUND_HANG_GUARD_FACTOR: u64 = 2;
+pub(crate) const ROUND_HANG_GUARD_FACTOR: u64 = 2;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
