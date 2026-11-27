@@ -49,3 +49,12 @@ systemctl daemon-reload
 systemctl enable --now tailscaled
 printf 'CARGO_HOME=%s\n' "$cache_home" > /etc/spira-round-ami.env
 [ -z "${SPIRA_RECIPE_SHA:-}" ] || printf '%s\n' "$SPIRA_RECIPE_SHA" > /etc/spira-round-recipe-sha
+# The snapshot copies every block written, deleted or not, until it is discarded.
+printf 'image-bytes used / %s\n' "$(df -B1 --output=used / | tail -n 1 | tr -d ' ')"
+for d in /nix /var/lib/containers "$cache_home" /root/.rustup /tmp; do
+    [ ! -e "$d" ] || du -sxB1 "$d" | sed 's/^/image-bytes /'
+done
+sync
+# A Proxmox disk without discard refuses the trim; that costs time, never a broken image.
+trimmed="$(fstrim -v / 2>&1)" || trimmed="fstrim failed: $trimmed"
+echo "image-bytes $trimmed"

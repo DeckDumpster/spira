@@ -7,10 +7,21 @@ max="${ROUND_AMI_WAIT_MAX:-3600}"
 every="${ROUND_AMI_WAIT_INTERVAL:-30}"
 waited=0
 while :; do
-    st="$(aws ec2 describe-images --image-ids "$ami" --query 'Images[0].State' --output text)" \
+    seen="$(aws ec2 describe-images --image-ids "$ami" \
+        --query 'Images[0].[State,BlockDeviceMappings[0].Ebs.SnapshotId]' --output text)" \
         || { echo "describe-images failed for $ami" >&2; exit 1; }
+    read -r st snap <<<"$seen"
+    # The snapshot readings are report only: failing to read one never ends the wait.
+    progress="" size=""
+    if [[ "$snap" == snap-* ]]; then
+        read -r progress size <<<"$(aws ec2 describe-snapshots --snapshot-ids "$snap" \
+            --query 'Snapshots[0].[Progress,FullSnapshotSizeInBytes]' --output text)"
+    fi
     case "$st" in
-        available) exit 0 ;;
+        available)
+            [[ "$size" =~ ^[0-9]+$ ]] && size="$size bytes" || size="size not reported"
+            echo "image $ami available after ${SECONDS}s; snapshot ${snap:-unknown}: $size"
+            exit 0 ;;
         pending) ;;
         *) echo "image $ami is $st" >&2; exit 1 ;;
     esac
@@ -18,7 +29,7 @@ while :; do
         echo "image $ami still $st after ${waited}s" >&2
         exit 1
     fi
-    echo "image $ami $st (${waited}s)"
+    echo "image $ami $st (${waited}s) snapshot ${snap:-unknown} ${progress:-progress unknown}"
     sleep "$every"
     waited=$((waited + every))
 done
