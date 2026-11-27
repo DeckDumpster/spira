@@ -1340,7 +1340,7 @@ impl SqliteBackend {
             wake: Condvar::new(),
             done: Condvar::new(),
             every: opts.checkpoint_every.max(1),
-            early: opts.wal_line_bytes / 2,
+            early: (opts.wal_line_bytes / 2).max(1),
             line: opts.wal_line_bytes,
             wal: wal_of(path),
             clock: opts.clock.clone(),

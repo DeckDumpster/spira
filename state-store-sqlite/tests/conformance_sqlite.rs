@@ -1890,7 +1890,7 @@ const CHECKPOINT_CAP: std::time::Duration = std::time::Duration::from_secs(60);
 /// background thread never takes a pass: the workload runs each interval's checkpoint itself
 /// when `checkpoint`, so host load cannot decide when it happens.
 fn bounded_wal_workload(path: &Path, checkpoint: bool) -> SqliteBackend {
-    let opts = Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, checkpoint_every: u64::MAX, readers: 4, ..Options::default() };
+    let opts = Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, checkpoint_every: u64::MAX, wal_line_bytes: u64::MAX, readers: 4, ..Options::default() };
     let b = SqliteBackend::open(path, opts).unwrap();
     let stop = Arc::new(AtomicBool::new(false));
     let reader = {
@@ -2293,8 +2293,10 @@ fn a_wal_past_half_its_line_is_reset_before_it_reaches_the_line() {
         put_next(&b);
         largest = largest.max(wal_len());
     }
+    // Under the checkpointer's 60 s idle timer, which would start the pass without any commit's wake.
+    let woken_cap = CHECKPOINT_CAP / 2;
     assert!(
-        state_store_sqlite::bench::await_checkpoint(&b, before, CHECKPOINT_CAP).is_some(),
+        state_store_sqlite::bench::await_checkpoint(&b, before, woken_cap).is_some(),
         "the WAL reached {largest} B, past half the line {LINE} B, and no pass ran"
     );
     largest = largest.max(wal_len());
