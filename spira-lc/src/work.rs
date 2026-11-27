@@ -1092,7 +1092,7 @@ fn cmd_blocked(bead_id: &str, args: &[String]) -> (i32, String) {
         return (CANNOT_TELL, format!("work blocked: {e}; {BLOCKED_USAGE}"));
     }
     let Some(default) = flag(args, "--default") else {
-        return (CANNOT_TELL, "work blocked: --default <default> is required".into());
+        return (CANNOT_TELL, format!("work blocked: --default <default> is required; {BLOCKED_USAGE}"));
     };
     let required = |name: &str| {
         flag(args, name).filter(|v| !v.trim().is_empty() && !v.starts_with("--")).ok_or_else(|| (CANNOT_TELL, format!("work blocked: {name} is required; {BLOCKED_USAGE}")))
@@ -2923,6 +2923,23 @@ mod tests {
         let kinds = spira_config::resolve::locate_home_for_process().unwrap().join("mail/kinds");
         let input = mail::lint::LintInput { kind: "question", subject: question, default, from: "builder <builder@spira>", urgent: false, body: &body, digest: false };
         assert_eq!(mail::lint::lint_check(&input, &kinds, "sp"), Ok(()), "{body}");
+        let led = mail::lint::LintInput { subject: "sp-abcd1 has the Control run passed?", ..input };
+        let refused = mail::lint::lint_check(&led, &kinds, "sp").unwrap_err();
+        assert!(refused.contains("Subject leads with a bead id"), "POSITIVE CONTROL: {refused}");
+    }
+
+    #[test_id(txxgymk)]
+    #[test]
+    fn a_blocked_call_without_its_question_or_default_is_refused_with_the_usage() {
+        let dir = testkit::TempDir::new("blocked-no-question");
+        let _env = testkit::env(&[("SPIRA_MAIL_SH", Some(&dir.path().join("mail").to_string_lossy()))]);
+        let calls: [&[&str]; 3] = [&[""], &["--default", "wait for it"], &["Has the Control run passed?"]];
+        for call in calls {
+            let args: Vec<String> = call.iter().chain(&["--actor", "builder"]).map(|a| a.to_string()).collect();
+            let (code, out) = super::cmd_blocked("sp-x", &args);
+            assert_eq!(code, super::CANNOT_TELL, "{call:?}: {out}");
+            assert!(out.ends_with(super::BLOCKED_USAGE), "{call:?}: {out}");
+        }
     }
 
     #[test_id(tvpek5o)]
@@ -2947,21 +2964,21 @@ mod tests {
         let dir = testkit::TempDir::new("blocked-no-mail");
         let _env = testkit::env(&[("SPIRA_MAIL_SH", Some(&dir.path().join("mail").to_string_lossy()))]);
         let base = ["Has the Control run passed?", "--default", "wait for it"];
-        let calls: [&[&str]; 7] = [
-            &[],
-            &["--class", "policy"],
-            &["--class-basis", "it is policy"],
-            &["--class", "", "--class-basis", "it is policy"],
-            &["--class", "policy", "--class-basis", " "],
-            &["--class", "policy", "--class-basis"],
-            &["--class", "--class-basis", "it is policy"],
+        let calls: [(&[&str], &str); 7] = [
+            (&[], "--class"),
+            (&["--class", "policy"], "--class-basis"),
+            (&["--class-basis", "it is policy"], "--class"),
+            (&["--class", "", "--class-basis", "it is policy"], "--class"),
+            (&["--class", "policy", "--class-basis", " "], "--class-basis"),
+            (&["--class", "policy", "--class-basis"], "--class-basis"),
+            (&["--class", "--class-basis", "it is policy"], "--class"),
         ];
-        for extra in calls {
+        for (extra, missing) in calls {
             // The client appends --actor after the caller's own arguments.
             let args: Vec<String> = base.iter().chain(extra).chain(&["--actor", "builder"]).map(|a| a.to_string()).collect();
             let (code, out) = super::cmd_blocked("sp-x", &args);
             assert_eq!(code, super::CANNOT_TELL, "{extra:?}: {out}");
-            assert!(out.contains("--class <permissions|policy|destructive|design>") && out.contains("--class-basis \""), "{extra:?}: {out}");
+            assert!(out.contains(&format!("{missing} is required;")) && out.ends_with(super::BLOCKED_USAGE), "{extra:?}: {out}");
         }
     }
 

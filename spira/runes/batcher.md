@@ -110,6 +110,9 @@ too):
 
     work blocked "<what is blocked>" --default "<what you would do>" --class <permissions|policy|destructive|design> --class-basis "<why it is that class>"
 
+The question is the human topic and must not start with a bead id: the bound bead is attached
+automatically.
+
 or, when no operator question fits, note precisely what is blocked and what you would do by
 default, and exit non-zero:
 
