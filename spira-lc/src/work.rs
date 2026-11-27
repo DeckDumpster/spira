@@ -2182,10 +2182,11 @@ pub fn forge_op(bound: &str, args: &[String]) -> Result<ForgeOp, (i32, String)> 
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         ["ami-result", b] => Ok(ForgeOp::Verb { verb: "ami-result", args: vec![candidate(b)?] }),
         ["ami-dispatch", b] => Ok(ForgeOp::Verb { verb: "ami-dispatch", args: vec![candidate(b)?] }),
+        ["ami-dispatch", b, "force"] => Ok(ForgeOp::Verb { verb: "ami-dispatch", args: vec![candidate(b)?, "force".to_string()] }),
         ["ami-delete", b] => Ok(ForgeOp::Delete { branch: candidate(b)? }),
         ["ami-push", b, tip] if (7..=64).contains(&tip.len()) && tip.chars().all(|c| c.is_ascii_hexdigit()) => Ok(ForgeOp::Push { branch: candidate(b)?, tip: tip.to_string() }),
         ["ami-log", run, n] if run.chars().all(|c| c.is_ascii_digit()) && n.chars().all(|c| c.is_ascii_digit()) => Ok(ForgeOp::Verb { verb: "ami-log", args: vec![run.to_string(), n.to_string()] }),
-        _ => Err(usage("forge", "want ami-result|ami-dispatch|ami-delete <candidate-branch>, ami-push <candidate-branch> <tip>, or ami-log <run-id> <lines>")),
+        _ => Err(usage("forge", "want ami-result|ami-delete <candidate-branch>, ami-dispatch <candidate-branch> [force], ami-push <candidate-branch> <tip>, or ami-log <run-id> <lines>")),
     }
 }
 
@@ -2821,6 +2822,17 @@ mod tests {
         let op = super::op_key("forge", &v(&["ami-result", own]));
         assert!(super::permitted(&op, Some("builder"), false).is_ok());
         assert!(super::permitted(&op, Some("groomer"), false).is_err());
+    }
+
+    #[test_id(tc4elbj)]
+    #[test]
+    fn a_builder_may_force_its_candidates_image_build_and_pass_no_other_dispatch_word() {
+        let v = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let own = "spira-round-candidate/sp-95s21z.2-0123456789ab-7";
+        assert_eq!(super::forge_op("sp-95s21z.2", &v(&["ami-dispatch", own, "force"])).unwrap(), super::ForgeOp::Verb { verb: "ami-dispatch", args: v(&[own, "force"]) });
+        let (_, said) = super::forge_op("sp-95s21z.2", &v(&["ami-dispatch", own, "other"])).unwrap_err();
+        assert!(said.contains("ami-dispatch <candidate-branch> [force]"), "{said}");
+        assert!(super::forge_op("sp-95s21z.2", &v(&["ami-dispatch", "main", "force"])).is_err());
     }
 
     #[test_id(trazvhp)]

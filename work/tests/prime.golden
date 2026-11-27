@@ -441,7 +441,7 @@ Checks:
 Reads and starts the round image build on the forge for your bead's candidate branch. `work submit` calls it for you.
 Use when: Never by hand: submit runs it when the branch changes the round image recipe.
 Arguments:
-  ami-result|ami-dispatch|ami-delete <candidate-branch> | ami-push <candidate-branch> <tip> | ami-log <run-id> <lines>
+  ami-result|ami-delete <candidate-branch> | ami-dispatch <candidate-branch> [force] | ami-push <candidate-branch> <tip> | ami-log <run-id> <lines>
 Checks:
   - the broker's allow row for your persona names this verb
 

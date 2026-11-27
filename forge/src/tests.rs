@@ -2042,10 +2042,21 @@ fn ami_log_is_the_tail_of_the_failed_steps_log() {
 #[test]
 fn what_a_verb_says_on_stderr_reaches_the_in_process_caller() {
     let _ = crate::diag::take();
-    let out = ami_dispatch(&FakeGh::default(), repo(), "");
+    let out = ami_dispatch(&FakeGh::default(), repo(), "", "");
     assert_eq!(out.code, 1);
     assert_eq!(crate::diag::take(), vec!["forge: ami-dispatch: ref required".to_string()]);
     assert!(crate::diag::take().is_empty(), "a take empties the buffer");
+}
+
+#[test_id(tl1v72g)]
+#[test]
+fn ami_dispatch_asks_for_a_forced_rebuild_only_when_told_to() {
+    for (force, want) in [("force", "workflow run round-ami-build.yml --ref cand -f force=true"), ("", "workflow run round-ami-build.yml --ref cand")] {
+        let gh = FakeGh::default();
+        gh.on(&want.split(' ').collect::<Vec<_>>(), 0, "");
+        assert_eq!(ami_dispatch(&gh, repo(), "cand", force).code, 0, "{force:?}");
+        assert_eq!(gh.calls.borrow().iter().map(|c| c.join(" ")).collect::<Vec<_>>(), vec![want.to_string()]);
+    }
 }
 
 #[test_id(trkhv8u)]

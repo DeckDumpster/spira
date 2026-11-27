@@ -214,10 +214,13 @@ fn one(e: &CompileError, members: &[MemberDiff]) -> Option<Action> {
 }
 
 /// The paths whose change makes the round image build, as `round-ami-build.yml` triggers on them.
-pub const RECIPE_PATHS: [&str; 8] = [
+pub const RECIPE_PATHS: [&str; 11] = [
     "round-vm/ami-setup.sh",
     "round-vm/src/template.sh",
     "round-vm/src/recipe.rs",
+    "round-vm/wait-setup.sh",
+    "round-vm/wait-image.sh",
+    "round-vm/ssm-commands.jq",
     "rust-toolchain.toml",
     "flake.nix",
     "flake.lock",

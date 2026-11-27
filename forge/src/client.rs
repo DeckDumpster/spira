@@ -191,7 +191,7 @@ pub fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[St
         "ami-runs" => ami_runs(gh, repo),
         "ami-result" => ami_result(gh, repo, arg(args, 0)),
         "ami-log" => ami_log(gh, repo, arg(args, 0), arg(args, 1).parse().unwrap_or(40)),
-        "ami-dispatch" => ami_dispatch(gh, repo, arg(args, 0)),
+        "ami-dispatch" => ami_dispatch(gh, repo, arg(args, 0), arg(args, 1)),
         "fail-lines" => fail_lines(gh, proc, repo, arg(args, 0), arg(args, 1)),
         "branch-protect" => {
             // SPIRA_QUEUE_ACTIONS_APP_ID is a registered config key — the one source of
