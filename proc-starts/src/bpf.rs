@@ -13,7 +13,7 @@ use aya::{Btf, Ebpf};
 use spira_otel::metrics::Series;
 
 use crate::run::Host;
-use crate::totals::{cpu_seconds, Drain, StartCount};
+use crate::totals::{cpu_seconds, host_forks, Drain, StartCount};
 
 #[repr(C, align(8))]
 struct Aligned<T: ?Sized>(T);
@@ -66,6 +66,11 @@ fn lookup(fd: RawFd, key: &[u8], value_size: usize, delete: bool) -> Option<Vec<
     elem(cmd, fd, key.as_ptr(), v.as_mut_ptr()).ok().map(|_| v)
 }
 
+/// Empties a map of `u64` counts keyed by cgroup id.
+fn take_counts(fd: RawFd) -> Vec<(u64, u64)> {
+    keys(fd, 8).into_iter().filter_map(|k| lookup(fd, &k, 8, true).map(|v| (u64_at(&k, 0), u64_at(&v, 0)))).collect()
+}
+
 fn u64_at(b: &[u8], at: usize) -> u64 {
     u64::from_ne_bytes(b[at..at + 8].try_into().expect("8 bytes"))
 }
@@ -85,7 +90,7 @@ fn fd_of(map: &Map) -> RawFd {
 
 pub struct Kernel {
     _ebpf: Ebpf,
-    maps: [Map; 6],
+    maps: [Map; 7],
     cpus: usize,
     release_root: String,
     clk_tck: f64,
@@ -104,7 +109,7 @@ impl Kernel {
             p.attach().map_err(|e| format!("cannot attach {prog} to {tracepoint}: {e}"))?;
         }
         let mut take = |name: &str| ebpf.take_map(name).ok_or(format!("object has no map {name}"));
-        let maps = [take("starts")?, take("threads")?, take("names")?, take("dropped")?, take("cost")?, take("pending")?];
+        let maps = [take("starts")?, take("threads")?, take("names")?, take("dropped")?, take("cost")?, take("pending")?, take("execs")?];
         let cpus = aya::util::nr_cpus().map_err(|(what, e)| format!("{what}: {e}"))? as usize;
         // SAFETY: sysconf reads nothing from memory.
         let clk_tck = unsafe { libc::sysconf(libc::_SC_CLK_TCK) }.max(1) as f64;
@@ -147,11 +152,9 @@ impl Host for Kernel {
                 d.starts.push(StartCount { cgroup: u64_at(&k, 0), program: comm(&k[8..8 + COMM]), starter: comm(&k[8 + COMM..8 + 2 * COMM]), n: u64_at(&v, 0) });
             }
         }
-        for k in keys(threads, 8) {
-            if let Some(v) = lookup(threads, &k, 8, true) {
-                d.threads.push((u64_at(&k, 0), u64_at(&v, 0)));
-            }
-        }
+        d.threads = take_counts(threads);
+        d.execs = take_counts(fd_of(&self.maps[6]));
+        d.host_forks = std::fs::read_to_string(format!("{}/stat", system_paths::PROC)).ok().and_then(|t| host_forks(&t));
         for (i, slot) in d.dropped.iter_mut().enumerate() {
             *slot = lookup(fd_of(&self.maps[3]), &(i as u32).to_ne_bytes(), 8, false).map_or(0, |v| u64_at(&v, 0));
         }
