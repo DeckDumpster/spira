@@ -527,6 +527,7 @@ fn a_publish_red_that_names_a_suite_or_a_test_is_never_rerun() {
     for red in [
         "red\nred-suite: test-a.sh\n",
         "red\nrun-id: 77\nstep-log: FAILED tests/test_x.py::t - boom\n",
+        "red\nrun-id: 77\nstep-log:         FAIL [   0.412s] (1/1) demo::it a_test\n",
     ] {
         let t = T::new(LandMode::QueueLocal);
         publish_record(&t);
@@ -1662,7 +1663,9 @@ fn a_pytest_failure_with_no_annotations_is_a_test_red_not_a_setup_red() {
 fn a_nextest_failure_with_no_annotations_is_a_test_red_not_a_setup_red() {
     for status in ["FAIL", "TIMEOUT"] {
         let mut t = T::new(LandMode::Queue);
-        batch(&t);
+        t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta\nopened=500\nbranch=spira/queue/x\nowner=batcher\nbatch_id=spira-1\nversion=3\n");
+        t.git.set("origin/main", "b0");
+        *t.forge.rerun_decided.borrow_mut() = Some("no input changed".into());
         t.lib.s.batcher_bin = Some(PathBuf::from("batcher"));
         *t.scripts.judgement.borrow_mut() = RunOut {
             rc: 0,
