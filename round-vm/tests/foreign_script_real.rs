@@ -49,8 +49,7 @@ fn pass(name: &str, entry: &str, cap: u64) -> Pass {
         .replace(path_line, &format!("export PATH=\"{}:{}\"", stub.display(), system_paths::SYSTEM_PATH_MIN));
     std::fs::write(root.join("round.sh"), script).unwrap();
     let cap = cap.to_string();
-    let workdir = "/work"; // not a path: the mount point inside the container, which the fake podman never opens
-    let args = ["host", "1", "", "1", "", "", "", "1", &cap, "1", "", "refs/rounds/1", &sha, "the-entry", "", "", "", "", "", "", "image", workdir];
+    let args = ["host", "1", "", "1", "", "", "", "1", &cap, "1", "", "refs/rounds/1", &sha, "the-entry", "", "", "", "", "", "", "image", ""];
     let o = Command::new("bash").arg(root.join("round.sh")).args(args).env_clear().env("HOME", &home).env("PATH", system_paths::SYSTEM_PATH_MIN).stdin(Stdio::null()).output().unwrap();
     Pass { work: home.join("round-work"), code: o.status.code(), said: String::from_utf8_lossy(&o.stderr).into_owned(), _tmp: tmp }
 }
