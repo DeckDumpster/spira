@@ -294,7 +294,7 @@ version_probe = ""
     #[test_id(tjzz1hq)]
     #[test]
     fn every_program_the_shipped_manifest_declares_has_a_tier_a_purpose_and_a_version_probe() {
-        let text = std::fs::read_to_string(crate::resolve::locate_home_for_process().unwrap().join("deps.toml")).unwrap();
+        let text = std::fs::read_to_string(crate::process::fixture_home().join("deps.toml")).unwrap();
         let manifest = parse(&text).unwrap();
         assert!(manifest.deps.len() >= 8, "the manifest loaded: {} programs", manifest.deps.len());
         let raw: toml::Value = text.parse().unwrap();

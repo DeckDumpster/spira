@@ -356,10 +356,12 @@ mod tests {
     /// The real registry this tree ships, defaults written against a fake home.
     fn reg() -> Registry<'static> {
         let env: &'static BTreeMap<String, String> = Box::leak(Box::new([("HOME".to_string(), "b/home".to_string())].into_iter().collect()));
-        let home = {
+        // render() also reads the process registry, which loads from SPIRA_HOME on first use.
+        {
             let _env = testkit::env_read();
-            crate::resolve::locate_home_for_process().unwrap()
-        };
+            crate::registry::for_process().expect("the process registry loads");
+        }
+        let home = crate::process::fixture_home();
         Registry { conf_d: Box::leak(Box::new(home.join("conf.d"))), env }
     }
 
@@ -441,6 +443,39 @@ mod tests {
         a.insert("lc_store_path".into(), "b/run/elsewhere.db".into());
         let text = render(&a, Path::new("x/spira.toml"), &reg()).unwrap();
         assert!(text.contains("lc_store_path = \"b/run/elsewhere.db\""), "{text}");
+    }
+
+    #[test_id(t3gvzw2)]
+    #[test]
+    fn reg_reads_the_home_under_the_environment_lock_not_a_neighbours_swap() {
+        let dir = testkit::TempDir::new("init-env-lock");
+        let missing = dir.path().join("no-such-home").display().to_string();
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let (b_done_tx, b_done_rx) = std::sync::mpsc::channel::<()>();
+        let a = std::thread::spawn(move || {
+            let _g = testkit::env(&[("SPIRA_HOME", Some(missing.as_str()))]);
+            held_tx.send(()).unwrap();
+            // An unlocked B ends while A holds; a locked B waits, so this times out.
+            let _ = b_done_rx.recv_timeout(std::time::Duration::from_millis(300));
+        });
+        held_rx.recv().unwrap();
+        let b = std::thread::spawn(move || {
+            let _done = b_done_tx;
+            render(&full(), Path::new("x/spira.toml"), &reg())
+        });
+        a.join().unwrap();
+        let text = b.join().unwrap().expect("reg() waited for the swap to end and read the real home");
+        assert!(text.contains("lc_store_path = \"b/run/lc-control.db\""), "{text}");
+    }
+
+    #[test_id(t16nqxu)]
+    #[test]
+    fn a_swap_after_reg_returns_cannot_move_the_registry_render_reads() {
+        let dir = testkit::TempDir::new("init-env-lock-later");
+        let missing = dir.path().join("no-such-home").display().to_string();
+        let reg = reg();
+        let _g = testkit::env(&[("SPIRA_HOME", Some(missing.as_str()))]);
+        render(&full(), Path::new("x/spira.toml"), &reg).expect("the process registry was loaded from the real home");
     }
 
     #[test_id(tjw3vwt)]
