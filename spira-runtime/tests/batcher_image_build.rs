@@ -41,7 +41,7 @@ fn sp_4pne6q_the_build_unit_runs_testenv_on_a_checkout_of_the_tip_which_goes_whe
     let started = units.scopes();
     assert_eq!(started.len(), 1);
     assert_eq!((started[0].unit.task.as_str(), started[0].unit.key.as_str()), (NAME, "spira.image-tagz"));
-    assert_eq!(started[0].unit.argv, ["bin/testenv", "container", "image", "--tree", &tree.display().to_string()]);
+    assert_eq!(started[0].unit.argv, ["bin/testenv", "container", "image", "--tree", tree.to_str().unwrap()]);
 
     std::fs::write(tree.join("in-progress"), "").unwrap();
     edge::start_image_build(&e, &repo, &run, "bin/testenv".into(), vec![], &leg).unwrap();
@@ -60,7 +60,7 @@ fn sp_4pne6q_the_build_unit_runs_testenv_on_a_checkout_of_the_tip_which_goes_whe
 fn sp_4pne6q_the_store_is_asked_for_the_tag_by_image_exists() {
     use spira_runtime::tasks::a::batcher_local::edge::host_holds_image;
     let dir = testkit::TempDir::new("image-exists");
-    testkit::write_exe(&dir.path().join("podman"), "#!/bin/sh\n[ \"$*\" = 'image exists localhost/spira-testenv:tagz' ]\n");
+    testkit::write_exe(dir.path().join("podman"), "#!/bin/sh\n[ \"$*\" = 'image exists localhost/spira-testenv:tagz' ]\n");
     let path = format!("{}:{}", dir.path().display(), std::env::var("PATH").unwrap());
     let _env = testkit::env(&[("PATH", Some(path.as_str()))]);
     assert!(host_holds_image("tagz"));
