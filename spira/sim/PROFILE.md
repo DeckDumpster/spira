@@ -73,8 +73,6 @@ except where noted.
 - **The sim's `cargo` stand-in copied a 60 MB binary** (4.8 s on a busy box); it links it.
 - **Two worlds' cut jobs raced on the workflow's fixed `/tmp/batch-assert`** once the worlds got
   fast enough to overlap; a step that names the host's `/tmp` now takes a turn.
-- **Go tools**: each `bd` call spends ~80 ms of CPU starting; `GOGC=off GOMAXPROCS=2` takes a
-  third of it. A pool with nothing certified no longer asks `bd` about base-red fixes.
 
 ## What is left
 

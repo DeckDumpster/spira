@@ -3,7 +3,7 @@
 //! its `run/landstate/` ledger, and the world repository's git.
 //!
 //! The bead store's columns (`bd_status`, title, priority, labels, deps, close reason, body) are
-//! left null here; a scenario that seeds beads has them merged in from `bd list` by `merge_bd`,
+//! left null here; a scenario that seeds beads has them merged in from `content list` by `merge_store`,
 //! so `inv_closed_is_terminal` can fire only on such a scenario.
 
 use crate::world::{ask_body, is_world, lc_command, lc_socket, run, LANDING_BASE, PRODUCTION_LOCATORS};
@@ -175,13 +175,13 @@ pub fn rows(lc_list: &str, landstate: &dyn Fn(&str) -> Option<String>, git: &Git
     Ok(out)
 }
 
-/// Folds `bd list --json` into `bead_state` rows: the bead store's columns for a bead the rows
+/// Folds `content list --json` into `bead_state` rows: the bead store's columns for a bead the rows
 /// already carry, and a row of its own for a bead only the store knows.
-pub fn merge_bd(beads: &mut Vec<Value>, bd_list: &str) -> Result<(), String> {
-    let list: Value = serde_json::from_str(bd_list.trim()).map_err(|e| format!("bd list: not JSON: {e}"))?;
-    let list = list.as_array().ok_or("bd list: not a JSON array")?;
+pub fn merge_store(beads: &mut Vec<Value>, content_list: &str) -> Result<(), String> {
+    let list: Value = serde_json::from_str(content_list.trim()).map_err(|e| format!("content list: not JSON: {e}"))?;
+    let list = list.as_array().ok_or("content list: not a JSON array")?;
     for r in list {
-        let id = scalar(r.get("id")).ok_or_else(|| format!("bd list: a row has no id: {r}"))?;
+        let id = scalar(r.get("id")).ok_or_else(|| format!("content list: a row has no id: {r}"))?;
         let strings = |k: &str| -> Vec<String> { r.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default() };
         let joined = |mut v: Vec<String>| {
             v.sort();

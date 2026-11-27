@@ -198,24 +198,6 @@ pub fn refuse_production(env: &dyn Fn(&str) -> Option<String>) -> Result<(), Str
     }
 }
 
-pub const BD_ENV: &str = "TESTDB_BD";
-
-/// The absolute path of a store tool: the declared one, else `name` on `path`. A pilgrim's PATH
-/// carries neither `bd` nor `dolt`, so a bare name there is a refusal that names the key.
-pub fn store_tool(name: &str, declared: Option<String>, path: &str, key: &str) -> Result<PathBuf, String> {
-    match declared.filter(|v| !v.is_empty()) {
-        Some(p) => Ok(PathBuf::from(p)),
-        None => on_path(name, path).ok_or_else(|| format!("{name} is not on PATH and {key} is not set: a world's store is built and read through it")),
-    }
-}
-
-/// `dolt`: on `path`, else beside `bd`.
-pub fn dolt_for(bd: &Path, path: &str) -> Result<PathBuf, String> {
-    on_path("dolt", path)
-        .or_else(|| bd.parent().map(|d| d.join("dolt")).filter(|p| p.is_file()))
-        .ok_or_else(|| format!("dolt is not on PATH nor beside {}", bd.display()))
-}
-
 /// What `sim world up --pilgrim` does to its own environment before building: name the release
 /// and set aside the production locators a pilgrim session always carries.
 pub fn pilgrim_session_env(env: &dyn Fn(&str) -> Option<String>) -> (Vec<(&'static str, String)>, Vec<&'static str>) {
@@ -228,32 +210,14 @@ pub fn pilgrim_session_env(env: &dyn Fn(&str) -> Option<String>) -> (Vec<(&'stat
 /// The beads store's schema, which `testdb up --schema` loads with dolt alone.
 const BEADS_SCHEMA: &str = include_str!("../../../spira-lc/beads-schema.sql");
 
-/// How a world's beads store is made. A pilgrim walks on the production box, which has no bd;
-/// a `sim run` scenario's own steps drive bd, so its store is bd's.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BeadStore {
-    Schema,
-    Bd,
-}
-
-/// The `testenv` argv that brings up `world`'s Dolt fixture.
-pub fn db_up_argv(store: BeadStore, world: &Path, env: &dyn Fn(&str) -> Option<String>) -> Result<Vec<String>, String> {
+/// The `testenv` argv that brings up `world`'s Dolt fixture, its beads store built from the schema.
+pub fn db_up_argv(world: &Path, env: &dyn Fn(&str) -> Option<String>) -> Result<Vec<String>, String> {
     let path = env("PATH").unwrap_or_default();
-    let mut argv: Vec<String> = ["testdb", "up", "--tag", "simworld"].map(String::from).to_vec();
-    let dolt = match store {
-        BeadStore::Schema => {
-            let schema = world.join("beads-schema.sql");
-            std::fs::write(&schema, BEADS_SCHEMA).map_err(|e| format!("{}: {e}", schema.display()))?;
-            argv.extend(["--schema".to_string(), schema.display().to_string()]);
-            on_path("dolt", &path).ok_or("dolt is not on PATH: a world's store is built on it")?
-        }
-        BeadStore::Bd => {
-            let bd = store_tool("bd", env(BD_ENV), &path, BD_ENV)?;
-            argv.extend(["--bd".to_string(), bd.display().to_string()]);
-            dolt_for(&bd, &path)?
-        }
-    };
-    argv.extend(["--dolt".to_string(), dolt.display().to_string(), "--root".to_string(), db_root(world, env).display().to_string()]);
+    let schema = world.join("beads-schema.sql");
+    std::fs::write(&schema, BEADS_SCHEMA).map_err(|e| format!("{}: {e}", schema.display()))?;
+    let dolt = on_path("dolt", &path).ok_or("dolt is not on PATH: a world's store is built on it")?;
+    let mut argv: Vec<String> = ["testdb", "up", "--tag", "simworld", "--schema"].map(String::from).to_vec();
+    argv.extend([schema.display().to_string(), "--dolt".to_string(), dolt.display().to_string(), "--root".to_string(), db_root(world, env).display().to_string()]);
     Ok(argv)
 }
 
@@ -286,7 +250,7 @@ pub fn sim_env_text(dir: &Path, sim_exe: &Path, port: &str, fixture: &str) -> St
     let gh_state = dir.join("gh");
     let bin = dir.join("bin");
     format!(
-        "SPIRA_RUN={}\nSPIRA_HOME={}\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n{}={}\nSPIRA_RELEASE={}\nSPIRA_LC_SOCKET={}\nSPIRA_LC_HOST=127.0.0.1\nSPIRA_LC_PORT={}\nSPIRA_LC_USER=root\nSIM_BEADS_DB={}\n{}={}\n{}={}\nSPIRA_BATCHER_POLL_SECS={}\nSPIRA_CALL={}\nSPIRA_LAUNCH={}\nSPIRA_LAUNCH_CTL={}\n{}={}\n{}",
+        "SPIRA_RUN={}\nSPIRA_HOME={}\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n{}={}\nSPIRA_RELEASE={}\nSPIRA_LC_SOCKET={}\nSPIRA_LC_HOST=127.0.0.1\nSPIRA_LC_PORT={}\nSPIRA_LC_USER=root\nSIM_BEADS_DB={}\n{}={}\n{}={}\nSPIRA_BATCHER_POLL_SECS={}\nSPIRA_CALL={}\nSPIRA_LAUNCH={}\nSPIRA_LAUNCH_CTL={}\n{}={}\n",
         run_dir.display(),
         dir.join("release/spira").display(),
         runner.display(),
@@ -308,8 +272,7 @@ pub fn sim_env_text(dir: &Path, sim_exe: &Path, port: &str, fixture: &str) -> St
         bin.join(LAUNCH_TOOL).display(),
         bin.join(LAUNCH_TOOL).display(),
         spira_config::process::TOML_ENV,
-        dir.join("config/sim.toml").display(),
-        GO_RUNTIME_ENV
+        dir.join("config/sim.toml").display()
     )
 }
 
@@ -433,18 +396,8 @@ pub fn ask_body(socket: &Path, argv: &[&str]) -> Option<(i32, String)> {
     Some((code, String::from_utf8(body).ok()?))
 }
 
-pub struct ProcessSteps {
-    pub store: BeadStore,
-}
-
-/// The real steps of a `sim run` world, and of a pilgrim's.
-pub const RUN_STEPS: ProcessSteps = ProcessSteps { store: BeadStore::Bd };
-pub const PILGRIM_STEPS: ProcessSteps = ProcessSteps { store: BeadStore::Schema };
-
-/// The steps `sim world up` brings a world up with, by whether `--pilgrim` was given.
-pub fn up_steps(pilgrim: bool) -> &'static ProcessSteps {
-    if pilgrim { &PILGRIM_STEPS } else { &RUN_STEPS }
-}
+/// The real steps of a world.
+pub struct ProcessSteps;
 
 pub fn run(cmd: &mut Command, deadline: Duration) -> Result<String, String> {
     let name = format!("{:?}", cmd.get_program());
@@ -545,7 +498,7 @@ impl Steps for ProcessSteps {
         Ok(out)
     }
     fn db_up(&self, world: &Path) -> Result<String, String> {
-        let argv = db_up_argv(self.store, world, &|k| std::env::var(k).ok())?;
+        let argv = db_up_argv(world, &|k| std::env::var(k).ok())?;
         let out = run(Command::new(spira_config::release_env::tool("testenv")?).args(argv), CALL_DEADLINE)?;
         out.lines()
             .find_map(|l| l.strip_prefix("TESTDB_FIXTURE="))
@@ -713,10 +666,6 @@ pub fn lc_command(release: &Path, config: &Path, port: &str) -> Command {
 
 /// How often the batcher polls a round's jobs inside a world: they finish in milliseconds.
 const BATCHER_POLL_SECS: &str = "0.1";
-
-/// A world's `bd` is a Go binary started dozens of times for one short call each: its collector
-/// and extra threads are most of the CPU a call spends beyond the work.
-const GO_RUNTIME_ENV: &str = "GOGC=off\nGOMAXPROCS=2\n";
 
 pub const PROFILE: &str = "profile.tsv";
 
@@ -1216,7 +1165,7 @@ pub fn base_config(harness: &Path, home: &Path) -> Result<String, String> {
     Ok(out)
 }
 
-/// The workspace of a testdb fixture: where `bd` finds the bead store.
+/// The workspace of a testdb fixture: where the beads store is.
 pub fn bead_db(fixture: &str) -> PathBuf {
     Path::new(fixture.trim()).join("ws")
 }
@@ -1295,7 +1244,7 @@ pub fn mail_root(world: &Path) -> PathBuf {
 /// Where the world's Dolt fixture lives. Nested inside testenv, `TESTDB_ROOT` is the
 /// container's tmpfs root holding the template setup already built, and `testenv testdb`
 /// there refuses (TESTDB_REQUIRE_TMPFS=1) any root not on a tmpfs; so a world uses that root
-/// and a fixture costs a copy, not a fresh `bd init`. Elsewhere the world keeps its own.
+/// and a fixture costs a copy, not a fresh store. Elsewhere the world keeps its own.
 pub fn db_root(world: &Path, env: &dyn Fn(&str) -> Option<String>) -> PathBuf {
     match env("TESTDB_ROOT").filter(|v| !v.is_empty()) {
         Some(root) => PathBuf::from(root),
@@ -1431,25 +1380,18 @@ mod locator_tests {
         assert_eq!(removes, vec!["SPIRA_LC_SOCKET", "SPIRA_TOML"]);
     }
 
-    #[test_id(tso5vgz)]
+    #[test_id(trsuwh5)]
     #[test]
-    fn a_pilgrim_worlds_store_is_built_from_the_schema_with_no_bd_on_path() {
-        let t = testkit::TempDir::new("pilgrim-store");
+    fn a_worlds_store_is_built_from_the_schema_with_only_dolt_on_path() {
+        let t = testkit::TempDir::new("world-store");
         let d = t.path().to_path_buf();
         std::fs::write(d.join("dolt"), "").unwrap();
         let env = |k: &str| (k == "PATH").then(|| d.display().to_string());
-        let argv = db_up_argv(BeadStore::Schema, &d, &env).unwrap();
+        let argv = db_up_argv(&d, &env).unwrap();
         assert!(argv.iter().any(|a| a == "--schema") && !argv.iter().any(|a| a == "--bd"), "{argv:?}");
         assert!(std::fs::read_to_string(d.join("beads-schema.sql")).unwrap().contains("'issue_prefix'"));
-        let refused = db_up_argv(BeadStore::Bd, &d, &env).unwrap_err();
-        assert!(refused.contains("bd is not on PATH"), "positive control: this PATH holds no bd: {refused}");
-    }
-
-    #[test_id(t93fcjy)]
-    #[test]
-    fn only_world_up_with_the_pilgrim_flag_builds_its_store_without_bd() {
-        assert_eq!(up_steps(true).store, BeadStore::Schema);
-        assert_eq!(up_steps(false).store, BeadStore::Bd);
+        let refused = db_up_argv(&d, &|_| None).unwrap_err();
+        assert!(refused.contains("dolt is not on PATH"), "{refused}");
     }
 
     #[test_id(tdjuyn8)]
@@ -1480,13 +1422,6 @@ mod locator_tests {
         assert_eq!(files, vec!["lifecycle/a.sql", "lifecycle/keep", "spira/testlib/complete.toml"]);
         let linked = git(&dst, &["ls-tree", "HEAD", "lifecycle/keep"]).unwrap();
         assert!(linked.starts_with("100644 blob"), "a link to a file is the file, which a world can write: {linked}");
-    }
-
-    #[test_id(tmu6le3)]
-    #[test]
-    fn a_store_tool_missing_from_path_and_undeclared_is_refused_naming_its_key() {
-        let e = store_tool("bd", None, system_paths::NONEXISTENT, BD_ENV).unwrap_err();
-        assert!(e.contains("TESTDB_BD is not set"), "{e}");
     }
 }
 

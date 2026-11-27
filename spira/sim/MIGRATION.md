@@ -80,7 +80,7 @@ Not built; each needs a world capability (the gap roadmap's D2, world parameters
 A scenario files beads with `[[seed]]` (persona or kind, priority, labels, body, deps on earlier
 seeds; `{bead:<handle>}` in a `command` step is the id `bead.sh` allocated), and `bead_state` carries
 `title`, `priority`, `labels` and `deps` (comma-joined, sorted), `close_reason` and `body`, read from
-`bd list` on every snapshot of a scenario that seeds or sets `bead_rows = true`. `lc_reason` is the lifecycle row's `reason` (a drop's is the word `unwanted`, not the free text); `bd_status` and `close_reason` lag a close by the
+`spira-lc content list` on every snapshot of a scenario that seeds or sets `bead_rows = true`. `lc_reason` is the lifecycle row's `reason` (a drop's is the word `unwanted`, not the free text); `bd_status` and `close_reason` lag a close by the
 after-reply settle, so a scenario does not assert them at the closing step. A named step
 (`name = ...`) is its own `actor` in `events`; a check step exits 0 when it held.
 
