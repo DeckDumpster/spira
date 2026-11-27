@@ -467,6 +467,17 @@ fn on_an_installation_with_another_prefix_a_create_gets_a_row_and_a_dep_edge_is_
     assert!(id.starts_with("zz-"), "{out}");
     let (rc, row) = lc.run(&["show", &id], None);
     assert!(rc == 0 && row.to_lowercase().contains("ready"), "({rc}): {row}");
+
+    let epic = store.create_bead_under("zz");
+    store.sql(&format!("UPDATE issues SET issue_type = 'epic' WHERE id = '{epic}'"));
+    let (rc, out) = lc.settled(&["create-bead", &epic, "--ready"], None);
+    assert!(rc == 3 && out.contains("no lifecycle record"), "({rc}) {out}");
+    for args in [&["bd-note", &a, "a note"][..], &["create-ask", "zz-ask1", "--work-bead", &id]] {
+        let (rc, out) = lc.settled(args, None);
+        assert_eq!(rc, 0, "{args:?}: {out}");
+    }
+    let (_, out) = lc.settled(&["bd-supersede", &a, &b], None);
+    assert!(!out.contains("must be bead ids"), "{out}");
 }
 
 #[test_id(tl3v9t3)]
@@ -476,7 +487,7 @@ fn an_installation_naming_no_prefix_is_refused_by_the_key_and_no_prefix_is_assum
     let (a, b) = (store.create_bead(), store.create_bead());
     let lc = writer_lc_with(&store, "n", &[("SPIRA_ID_PREFIX", "")]);
     let (rc, out) = lc.settled(&["content", "dep", "add", &a, &b, "--type", "blocks"], None);
-    assert!(out.contains("SPIRA_ID_PREFIX") && out.contains("was not mirrored"), "({rc}) {out}");
+    assert!(out.contains("was not mirrored") && out.contains("exit 2: cannot tell: dep-add: SPIRA_ID_PREFIX"), "({rc}) {out}");
 }
 
 #[test_id(t2itwbv)]

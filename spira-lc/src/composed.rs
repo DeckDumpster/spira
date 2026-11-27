@@ -57,6 +57,10 @@ pub trait Content {
         Err("this content store cannot apply a mutation".into())
     }
     fn delete(&self, ids: &[String]) -> Result<(), String>;
+    /// The prefix `bd-note`/`bd-supersede` judge their ids by; a double that names none is refused.
+    fn row_prefix(&self) -> Result<String, String> {
+        Err("this content store names no bead id prefix".into())
+    }
     /// The ask label (`SPIRA_ASK_LABEL`) a content write is judged against.
     fn ask_label(&self) -> Result<String, String>;
     /// The repo map a create's `repo:` label is judged against.
@@ -110,6 +114,9 @@ impl Content for LiveContent {
     }
     fn delete(&self, ids: &[String]) -> Result<(), String> {
         crate::content_write::delete(ids).unwrap_or_else(|| Err(crate::bd::no_writer("delete")))
+    }
+    fn row_prefix(&self) -> Result<String, String> {
+        crate::cutover::row_prefix()
     }
     fn ask_label(&self) -> Result<String, String> {
         spira_config::process::cfg("SPIRA_ASK_LABEL")
@@ -204,7 +211,7 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
         "drop-bead" => callers::drop_bead(rest, m, bd),
         "drop-row" => callers::drop_row(rest, m, bd),
         "reopen" => callers::reopen_cmd(rest, m, bd),
-        "bd-supersede" | "bd-note" => match crate::cutover::row_prefix() {
+        "bd-supersede" | "bd-note" => match content.row_prefix() {
             Ok(prefix) if verb == "bd-note" => crate::store_write::note(&prefix, rest, &|a| content.write(a)),
             Ok(prefix) => crate::store_write::supersede(&prefix, rest, &|a| content.write(a)),
             Err(e) => Answer { code: callers::CANNOT_TELL, stderr: format!("spira-lc {verb}: cannot tell: {e}\n"), ..Default::default() },
