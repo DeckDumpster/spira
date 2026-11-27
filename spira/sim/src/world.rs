@@ -441,6 +441,11 @@ pub struct ProcessSteps {
 pub const RUN_STEPS: ProcessSteps = ProcessSteps { store: BeadStore::Bd };
 pub const PILGRIM_STEPS: ProcessSteps = ProcessSteps { store: BeadStore::Schema };
 
+/// The steps `sim world up` brings a world up with, by whether `--pilgrim` was given.
+pub fn up_steps(pilgrim: bool) -> &'static ProcessSteps {
+    if pilgrim { &PILGRIM_STEPS } else { &RUN_STEPS }
+}
+
 pub fn run(cmd: &mut Command, deadline: Duration) -> Result<String, String> {
     let name = format!("{:?}", cmd.get_program());
     let (status, stdout, stderr) = run_capture(cmd, deadline)?;
@@ -1438,6 +1443,13 @@ mod locator_tests {
         assert!(std::fs::read_to_string(d.join("beads-schema.sql")).unwrap().contains("'issue_prefix'"));
         let refused = db_up_argv(BeadStore::Bd, &d, &env).unwrap_err();
         assert!(refused.contains("bd is not on PATH"), "positive control: this PATH holds no bd: {refused}");
+    }
+
+    #[test_id(t93fcjy)]
+    #[test]
+    fn only_world_up_with_the_pilgrim_flag_builds_its_store_without_bd() {
+        assert_eq!(up_steps(true).store, BeadStore::Schema);
+        assert_eq!(up_steps(false).store, BeadStore::Bd);
     }
 
     #[test_id(tdjuyn8)]

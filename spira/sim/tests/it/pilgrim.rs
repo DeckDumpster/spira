@@ -159,7 +159,7 @@ fn a_pilgrim_files_links_and_closes_in_a_world_of_its_own_and_both_views_follow(
 
 #[test_id(t3o6si4)]
 #[test]
-#[ignore = "needs SPIRA_SIM_RELEASE, SPIRA_TOML naming spira.bd, and a Dolt fixture: run with --ignored"]
+#[ignore = "needs SPIRA_SIM_RELEASE, SPIRA_TOML and dolt on PATH: run with --ignored"]
 fn a_pilgrim_session_with_no_bd_on_path_builds_a_pilgrim_world() {
     let release = std::env::var(world::RELEASE_ENV).or_else(|_| std::env::var("SPIRA_RELEASE")).expect("SPIRA_SIM_RELEASE or SPIRA_RELEASE names a release");
     let toml = std::env::var("SPIRA_TOML").unwrap_or_else(|_| panic!("SPIRA_TOML is unset"));
@@ -236,14 +236,14 @@ fn pilgrim_up_from_non_spira_worktree(sim_release: bool, in_testenv: bool) {
 
 #[test_id(t3ugjt9)]
 #[test]
-#[ignore = "needs a release, SPIRA_TOML naming spira.bd, and a Dolt fixture: run with --ignored"]
+#[ignore = "needs a release, SPIRA_TOML and dolt on PATH: run with --ignored"]
 fn a_pilgrim_world_for_a_non_spira_worktree_is_built_from_the_release_not_the_worktree() {
     pilgrim_up_from_non_spira_worktree(true, false);
 }
 
 #[test_id(tomp7s6)]
 #[test]
-#[ignore = "needs a release, SPIRA_TOML naming spira.bd, and a Dolt fixture: run with --ignored"]
+#[ignore = "needs a release, SPIRA_TOML and dolt on PATH: run with --ignored"]
 fn a_pilgrim_world_in_testenv_needs_no_sim_release_of_its_own() {
     pilgrim_up_from_non_spira_worktree(false, true);
 }
