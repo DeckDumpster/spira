@@ -262,7 +262,11 @@ fn the_session_start_hook_records_the_concierge_session_and_only_for_the_prod_ha
             cmd.env("SPIRA_CONCIERGE", c);
         }
         let mut child = cmd.spawn().unwrap();
-        std::io::Write::write_all(&mut child.stdin.take().unwrap(), payload.as_bytes()).unwrap();
+        // A hook that declines exits before reading its payload, so the write may race its exit.
+        match std::io::Write::write_all(&mut child.stdin.take().unwrap(), payload.as_bytes()) {
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+            r => r.unwrap(),
+        }
         let o = child.wait_with_output().unwrap();
         assert_eq!(o.status.code(), Some(0));
     };
