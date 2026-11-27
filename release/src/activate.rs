@@ -1378,7 +1378,7 @@ const ANNOUNCE_FLUSH: Duration = Duration::from_secs(1);
 fn announce(ctx: &Ctx, sha: &str, restarted: &[String]) {
     let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let payload = serde_json::json!({ "sha": sha, "at": at, "restarted": restarted });
-    let sent = (ctx.publisher)().and_then(|p| p.publish("release/active", &payload).and_then(|()| p.flush(ANNOUNCE_FLUSH)));
+    let sent = (ctx.publisher)().and_then(|p| p.publish(spira_pub::Class::State, "release/active", &payload).and_then(|()| p.flush(ANNOUNCE_FLUSH)));
     if let Err(e) = sent {
         eprintln!("release: WARN: {sha} is active; release/active was not published: {e}");
     }

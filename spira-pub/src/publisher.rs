@@ -17,7 +17,7 @@ use spira_otel::metrics::MetricsSink;
 use crate::link::{gone, sleep_until_readable, Dial};
 use crate::socket_watch::SocketWatch;
 use crate::telemetry::{Sample, Telemetry};
-use crate::topics::{self, Class};
+use crate::topics::Class;
 use crate::PubError;
 
 /// The most a publish waits for a connection.
@@ -56,22 +56,29 @@ struct Message {
     payload: Vec<u8>,
 }
 
-fn message(topic: &str, class: Option<Class>, payload: &Value) -> Result<Message, PubError> {
-    let family = topics::check(topic, class)?;
-    sized(topic, family.class, payload.to_string().into_bytes())
+/// Whether `topic` names one topic a broker will take: a filter, or nothing at all, does not.
+pub fn check_topic(topic: &str) -> Result<(), PubError> {
+    if topic.is_empty() || topic.contains(['+', '#', '\0']) {
+        return Err(PubError::BadTopic(topic.to_string()));
+    }
+    Ok(())
 }
 
-fn sized(topic: &str, class: Class, payload: Vec<u8>) -> Result<Message, PubError> {
+fn message(topic: &str, class: Class, payload: &Value) -> Result<Message, PubError> {
+    built(topic, class, payload.to_string().into_bytes())
+}
+
+/// The zero-byte message that makes the broker forget a topic's retained value.
+fn clearing(topic: &str) -> Result<Message, PubError> {
+    built(topic, Class::State, Vec::new())
+}
+
+fn built(topic: &str, class: Class, payload: Vec<u8>) -> Result<Message, PubError> {
+    check_topic(topic)?;
     if payload.len() > MAX_PAYLOAD {
         return Err(PubError::TooLarge { topic: topic.to_string(), bytes: payload.len() });
     }
     Ok(Message { topic: topic.to_string(), class, payload })
-}
-
-/// The zero-byte message that makes the broker forget a state topic's retained value.
-fn clearing(topic: &str) -> Result<Message, PubError> {
-    let family = topics::check(topic, Some(Class::State))?;
-    sized(topic, family.class, Vec::new())
 }
 
 /// What an `on_connect` hook publishes: sent right after `publisher/<name>` = up, ahead of
@@ -80,8 +87,8 @@ fn clearing(topic: &str) -> Result<Message, PubError> {
 pub struct Republish(Vec<Message>);
 
 impl Republish {
-    pub fn publish(&mut self, topic: &str, payload: &Value) -> Result<(), PubError> {
-        self.0.push(message(topic, None, payload)?);
+    pub fn publish(&mut self, class: Class, topic: &str, payload: &Value) -> Result<(), PubError> {
+        self.0.push(message(topic, class, payload)?);
         Ok(())
     }
 }
@@ -228,23 +235,16 @@ impl Publisher {
         connected.inspect_err(|e| self.inner.failed(e, "connect"))
     }
 
-    /// Queues `payload` for `topic`, retained when its family is state. `Err` means it will
-    /// not arrive; it is already logged.
-    pub fn publish(&self, topic: &str, payload: &Value) -> Result<(), PubError> {
-        self.send(topic, message(topic, None, payload))
+    /// Queues `payload` for `topic`, retained when `class` is state. `Err` means it will not
+    /// arrive; it is already logged.
+    pub fn publish(&self, class: Class, topic: &str, payload: &Value) -> Result<(), PubError> {
+        self.send(topic, message(topic, class, payload))
     }
 
-    /// Queues the removal of state `topic`'s retained value: a later subscriber is handed
-    /// nothing for it. Refused for chatter, which retains nothing. Fails and is logged as
-    /// [`publish`](Publisher::publish) does.
+    /// Queues the removal of `topic`'s retained value: a later subscriber is handed nothing
+    /// for it. Fails and is logged as [`publish`](Publisher::publish) does.
     pub fn clear(&self, topic: &str) -> Result<(), PubError> {
         self.send(topic, clearing(topic))
-    }
-
-    /// [`publish`](Publisher::publish) for a caller that states the class it means: refused
-    /// unless the topic's family declares it.
-    pub fn publish_as_class(&self, class: Class, topic: &str, payload: &Value) -> Result<(), PubError> {
-        self.send(topic, message(topic, Some(class), payload))
     }
 
     fn send(&self, topic: &str, built: Result<Message, PubError>) -> Result<(), PubError> {
@@ -320,7 +320,7 @@ impl Drop for Publisher {
         let goodbye = {
             let mut shared = lock(&self.inner.shared);
             // A clean DISCONNECT discards the will, so this says what it would have.
-            shared.up().then(|| message(&topic, None, &gone()).and_then(|m| enqueue(&mut shared, m)))
+            shared.up().then(|| message(&topic, Class::State, &gone()).and_then(|m| enqueue(&mut shared, m)))
         };
         if goodbye.is_some() {
             if let Err(e) = self.flush(FLUSH_DEADLINE) {
@@ -470,7 +470,7 @@ impl Inner {
     fn greeting(&self) -> Vec<Message> {
         let mut out = Republish::default();
         let up = json!({"state": "up", "since_ms": self.clock.now_ms()});
-        if let Err(e) = out.publish(&format!("publisher/{}", self.name), &up) {
+        if let Err(e) = out.publish(Class::State, &format!("publisher/{}", self.name), &up) {
             self.failed(&e, "on connect");
         }
         let hook = lock(&self.hook).clone();

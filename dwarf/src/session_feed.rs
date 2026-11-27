@@ -24,7 +24,7 @@ pub trait Outlet: Send + Sync {
 
 impl Outlet for spira_pub::Publisher {
     fn publish(&self, topic: &str, payload: &Value) {
-        let _ = spira_pub::Publisher::publish(self, topic, payload);
+        let _ = spira_pub::Publisher::publish(self, spira_pub::Class::State, topic, payload);
     }
 }
 
@@ -92,7 +92,7 @@ impl SessionFeed {
             publisher.on_connect(move |again| {
                 for (topic, payload) in retained.messages() {
                     // Each was accepted when first published; a refusal here is the library's to log.
-                    let _ = again.publish(&topic, &payload);
+                    let _ = again.publish(spira_pub::Class::State, &topic, &payload);
                 }
             });
             // Connected before there is anything to say, so the first publish is not also

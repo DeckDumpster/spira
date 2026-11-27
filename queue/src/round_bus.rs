@@ -3,7 +3,7 @@
 //! is published and then cleared from the broker, so only open rounds stay retained there.
 
 use serde_json::{json, Value};
-use spira_pub::{PubError, Publisher};
+use spira_pub::{Class, PubError, Publisher};
 use std::cell::OnceCell;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -106,7 +106,7 @@ impl RoundBus {
                 let run = run.to_path_buf();
                 publisher.on_connect(move |again| {
                     for k in kept(&run) {
-                        if let Err(e) = again.publish(&k.topic(), &k.event) {
+                        if let Err(e) = again.publish(Class::State, &k.topic(), &k.event) {
                             eprintln!("queue.sh: round {} was not republished: {e}", k.batch);
                         }
                     }
@@ -139,7 +139,7 @@ impl RoundBus {
         let now = Kept { repo: repo.into(), batch: batch.into(), event };
         let ended = ENDING.contains(&kind);
         if let Some(p) = self.publisher(run) {
-            let _ = p.publish(&now.topic(), &now.event);
+            let _ = p.publish(Class::State, &now.topic(), &now.event);
             if ended {
                 let _ = p.clear(&now.topic());
             }

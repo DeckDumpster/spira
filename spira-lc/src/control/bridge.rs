@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use lifecycle::bead::{BeadState, LifecycleRow};
 use serde_json::{json, Value};
 use spira_otel::metrics::{MetricsSink, Point};
-use spira_pub::{Publisher, Republish};
+use spira_pub::{Class, Publisher, Republish};
 use state_store::Backend;
 
 use super::records::{Audit, LifecycleRecord};
@@ -178,7 +178,7 @@ fn start<B: Backend + Send + Sync + 'static>(store: &Arc<Store<B>>, publisher: P
                 // A republish can fill the publisher's queue. What a flush finds lost, and what
                 // a publish fails on, the publisher has already logged; neither is retried.
                 let _ = publisher.flush(DRAIN);
-                let _ = publisher.publish(&m.topic, &m.payload);
+                let _ = publisher.publish(Class::State, &m.topic, &m.payload);
             }
         })
         .map_err(|e| format!("cannot start the publishing thread: {e}"))?;
@@ -193,7 +193,7 @@ fn republish<B: Backend>(store: &Weak<Store<B>>, shared: &Shared, again: &mut Re
     shared.set_republishing(true);
     let read = open_messages(&store, |rev, row| {
         let m = shared.ledger().republished(rev, row);
-        if let Err(e) = again.publish(&m.topic, &m.payload) {
+        if let Err(e) = again.publish(Class::State, &m.topic, &m.payload) {
             eprintln!("spira-lc serve: publish failed ({}): {e}", m.topic);
         }
     });
