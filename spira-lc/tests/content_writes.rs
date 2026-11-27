@@ -153,6 +153,7 @@ impl Lc {
         let (runes, guards) = (harness.join("runes").display().to_string(), guards.display().to_string());
         let (d, r, ctl, sock) = (dir.display().to_string(), run.display().to_string(), dir.join("control.db").display().to_string(), dir.join("s").display().to_string());
         let (rf, db) = (reader.display().to_string(), store.db.clone());
+        let (mail, index, kinds) = (dir.join("mail").display().to_string(), dir.join("mail/index").display().to_string(), harness.join("mail/kinds").display().to_string());
         let toml = spira_config::process::fixture_toml(
             &dir,
             &[
@@ -170,6 +171,9 @@ impl Lc {
                 ("SPIRA_BEADS_SQL_WRITER_PASSWORD_FILE", writer_file),
                 ("SPIRA_RUNES_DIR", &runes),
                 ("SPIRA_STATUTE_GUARDS", &guards),
+                ("SPIRA_MAIL", &mail),
+                ("SPIRA_MAIL_INDEX", &index),
+                ("SPIRA_MAIL_KINDS", &kinds),
             ],
         );
         let home = spira_config::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
@@ -179,7 +183,7 @@ impl Lc {
 
     fn command(&self) -> Command {
         let mut c = Command::new(testkit::bin_exe("spira-lc"));
-        c.env_clear().env("PATH", std::env::var("PATH").unwrap_or_default()).env("SPIRA_TOML", &self.toml).env("SPIRA_HOME", &self.home).env("SPIRA_RELEASE", self.dir.join("release")).env("HOME", self.dir.join("home"));
+        c.env_clear().env("PATH", std::env::var("PATH").unwrap_or_default()).env("SPIRA_TOML", &self.toml).env("SPIRA_HOME", &self.home).env("SPIRA_RELEASE", self.dir.join("release")).env("HOME", self.dir.join("home")).env("SPIRA_MAIL_SH", testkit::bin_exe("mail"));
         c
     }
 
@@ -1441,4 +1445,58 @@ fn admin_create_beads_makes_a_store_the_content_verbs_work_on_and_a_second_run_c
     lc.children_of("content", &["content", "remember", "--key", "a-key"], Some("what is remembered"));
     let kept = lc.children_of("content", &["content", "memories", "--json"], None).0;
     assert!(kept.contains("what is remembered"), "{kept}");
+}
+
+#[test_id(tvrt4wg)]
+#[test]
+fn work_blocked_delivers_a_classed_sectioned_ask_and_holds_the_bead_ask() {
+    let Some(store) = Store::up() else { return };
+    let lc = writer_lc(&store, "wb");
+    // mail resolves `spira-lc` in its release before it takes the declared socket.
+    std::os::unix::fs::symlink(testkit::bin_exe("spira-lc"), lc.dir.join("release/bin/spira-lc")).unwrap();
+    let (rc, out) = lc.run(&["content", "create", "the bead that gets blocked", "--silent"], None);
+    assert_eq!(rc, 0, "{out}");
+    let id = first_line(&out);
+    let (rc, out) = lc.run(&["create-bead", &id, "--ready"], None);
+    assert_eq!(rc, 0, "{out}");
+    let claim = r#"{"Claim":{"holder":"dwarf-1","lease_until":4102444800,"persona":"builder"}}"#;
+    let (rc, out) = lc.run(&["event", "bead", &id, "--expect", "READY", "--version", "0", "--actor", "test", "--kind", claim], None);
+    assert_eq!(rc, 0, "claiming: {out}");
+    let holds = || -> Vec<String> {
+        let (rc, out) = lc.run(&["show", &id], None);
+        assert_eq!(rc, 0, "{out}");
+        let shown: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
+        serde_json::from_str(shown["bead"]["holds"].as_str().unwrap_or_else(|| panic!("no holds: {out}"))).unwrap()
+    };
+    assert!(holds().is_empty(), "held before it asked: {:?}", holds());
+
+    let (question, default, why) = ("Should retired branches be kept for a week?", "keep them for a week", "it sets how long work is retained");
+    let (rc, out) = lc.settled(&["work", &id, "blocked", question, "--default", default, "--class", "policy", "--class-basis", why, "--actor", "builder"], None);
+    let (rc, out) = lc.finished(rc, out);
+    assert_eq!((rc, out.trim()), (0, format!("ask filed; hold applied for {id}").as_str()), "{out}");
+
+    let delivered: Vec<PathBuf> = std::fs::read_dir(lc.dir.join("mail/operator/new")).expect("an operator mailbox").map(|e| e.unwrap().path()).collect();
+    assert_eq!(delivered.len(), 1, "{delivered:?}");
+    let message = std::fs::read_to_string(&delivered[0]).unwrap();
+    let (headers, body) = message.split_once("\n\n").expect("headers, then a body");
+    let header = |name: &str| headers.lines().find_map(|l| l.strip_prefix(&format!("{name}: "))).unwrap_or_else(|| panic!("no {name}: {headers}"));
+    assert_eq!(header("X-Spira-Kind"), "question");
+    assert_eq!(header("X-Spira-Default"), default);
+    assert_eq!(header("X-Spira-Work-Bead"), id);
+    let sections = format!("## Question\n{question}\n\n## Default\n{default}\n\n## Class basis\n{why}\n");
+    assert!(body.contains(&sections), "{body}");
+
+    let decision = header("X-Spira-Bead");
+    assert_ne!(decision, id, "the thread bead is the ask's own");
+    let shown: serde_json::Value = serde_json::from_str(&lc.shows(decision)).unwrap();
+    let shown = shown.as_array().map_or(&shown, |a| &a[0]);
+    let description = shown["description"].as_str().unwrap_or_default();
+    assert!(description.lines().any(|l| l == "Class: policy"), "{description}");
+    let configured = std::fs::read_to_string(&lc.toml).unwrap();
+    let ask_label = configured.lines().find_map(|l| l.strip_prefix("ask_label = ")).expect("the fixture declares ask_label").trim_matches('"').to_string();
+    let labels: Vec<&str> = shown["labels"].as_array().expect("labels").iter().filter_map(|l| l.as_str()).collect();
+    for want in [ask_label, format!("work-bead:{id}")] {
+        assert!(labels.contains(&want.as_str()), "no {want} in {labels:?}");
+    }
+    assert_eq!(holds(), ["ask"]);
 }
