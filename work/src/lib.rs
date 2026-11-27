@@ -197,12 +197,28 @@ pub fn row_dirs(shell: Option<&repo_contract::shell::ShellEnv>, dirs: Vec<std::p
 
 /// A row's program among `dirs`, or why it is not run.
 pub fn resolve_row_program(prog: &str, dirs: &[std::path::PathBuf]) -> Result<std::path::PathBuf, String> {
-    trusted::resolve(prog, dirs).ok_or_else(|| {
-        if prog.starts_with('{') && prog.ends_with('}') {
-            format!("{prog} is not a check token this release knows; the row was written for another release, so rebase onto local/main")
-        } else {
-            format!("{prog} resolves in none of the row's directories: {}", trusted::join_path(dirs))
-        }
+    trusted::resolve(prog, dirs).ok_or_else(|| unresolved_reason(prog, dirs))
+}
+
+fn unresolved_reason(prog: &str, dirs: &[std::path::PathBuf]) -> String {
+    if prog.starts_with('{') && prog.ends_with('}') {
+        format!("{prog} is not a check token this release knows; the row was written for another release, so rebase onto local/main")
+    } else {
+        format!("{prog} resolves in none of the row's directories: {}", trusted::join_path(dirs))
+    }
+}
+
+/// [`resolve_row_program`] for a row of the repository at `root`: a relative path is read from
+/// there, where the row runs, and in a flake shell the reason names the shell.
+pub fn row_program(root: &Path, prog: &str, shell: Option<&repo_contract::shell::ShellEnv>, dirs: &[std::path::PathBuf]) -> Result<std::path::PathBuf, String> {
+    let found = if prog.contains('/') {
+        trusted::resolve(&root.join(prog).to_string_lossy(), dirs).ok_or_else(|| unresolved_reason(prog, dirs))
+    } else {
+        resolve_row_program(prog, dirs)
+    };
+    found.map_err(|why| match shell {
+        Some(s) => format!("{prog} is not supplied by the flake dev shell of {} ({})", root.join("flake.nix").display(), s.key),
+        None => why,
     })
 }
 
@@ -1193,5 +1209,28 @@ mod row_dirs_tests {
     fn an_unresolved_row_program_names_itself_and_every_dir_searched() {
         let why = resolve_row_program("no-such-row-tool", &[PathBuf::from("r/bin"), PathBuf::from("usr/bin")]).unwrap_err();
         assert_eq!(why, "no-such-row-tool resolves in none of the row's directories: r/bin:usr/bin");
+    }
+
+    #[test_id(ti1v36g)]
+    #[test]
+    fn a_relative_row_program_is_read_from_the_root_not_the_cwd() {
+        let root = testkit::TempDir::new("work-row-root");
+        testkit::write_exe(root.join("row-script"), "");
+        assert_eq!(row_program(&root, "./row-script", None, &[]), Ok(root.join("./row-script")));
+    }
+
+    #[test_id(tqudloe)]
+    #[test]
+    fn an_unresolved_relative_row_program_is_named_as_the_row_wrote_it() {
+        let why = row_program(Path::new("r"), "./absent", None, &[PathBuf::from("usr/bin")]).unwrap_err();
+        assert_eq!(why, "./absent resolves in none of the row's directories: usr/bin");
+    }
+
+    #[test_id(tgfryfh)]
+    #[test]
+    fn in_a_flake_shell_an_unresolved_row_program_names_the_shell() {
+        let s = shell();
+        let why = row_program(Path::new("r"), "no-such-row-tool", Some(&s), &s.path_dirs()).unwrap_err();
+        assert_eq!(why, format!("no-such-row-tool is not supplied by the flake dev shell of r/flake.nix ({})", s.key));
     }
 }

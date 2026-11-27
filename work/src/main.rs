@@ -805,13 +805,7 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
                 }
             },
             None => {
-                // A relative program path is the row's, so it is read from the root the row runs in.
-                let target = if prog.contains('/') { root.join(prog).to_string_lossy().into_owned() } else { prog.clone() };
-                let found = work::resolve_row_program(&target, &dirs).map_err(|why| match shell {
-                    Some(s) => format!("{prog} is not supplied by the flake dev shell of {} ({})", root.join("flake.nix").display(), s.key),
-                    None => why,
-                });
-                match found {
+                match work::row_program(root, prog, shell, &dirs) {
                     Ok(p) => {
                         println!("resolved: {}", p.display());
                         p
@@ -1088,10 +1082,10 @@ fn unresolved_programs() -> Vec<String> {
         };
         for row in work::declared_rows(root).unwrap_or_default().into_iter().filter(|r| r.build.is_none()) {
             let argv = work::done_argv(&row.run);
-            if shell.is_err() {
+            let Ok(entered) = &shell else {
                 break;
-            }
-            if let Some(prog) = argv.first().filter(|p| work::trusted::resolve(p, &row_dirs).is_none()) {
+            };
+            if let Some(prog) = argv.first().filter(|p| work::row_program(root, p, entered.as_ref(), &row_dirs).is_err()) {
                 let within = if matches!(shell, Ok(Some(_))) { " in the repository's flake dev shell" } else { "" };
                 out.push(format!("check {:?} runs {prog:?}, which resolves nowhere{within}; `work checks` will fail it", row.name));
             }
