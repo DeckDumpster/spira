@@ -2984,7 +2984,7 @@ fn place_on_host(env: &RunEnv, args: &RunArgs, commit: &str) -> HostPlacement {
     use crate::spill::{decide_host, HostPlace};
     let absent = host_lacks_image(env, args, commit);
     if args.pin_host {
-        return pin_to_host(env, args, absent);
+        return pin_to_host(env, absent);
     }
     let Some(plan) = env.host_plan else { return HostPlacement::NotOffered };
     if absent.is_some() {
@@ -3027,7 +3027,7 @@ fn host_lacks_image(env: &RunEnv, args: &RunArgs, commit: &str) -> Option<String
 const PINNED_WHY: &str = "pinned: --place host";
 
 /// `--place host`: the host slot is waited for within the run's wall, and load never spills the run.
-fn pin_to_host(env: &RunEnv, args: &RunArgs, absent: Option<String>) -> HostPlacement {
+fn pin_to_host(env: &RunEnv, absent: Option<String>) -> HostPlacement {
     let refuse = |why: String| HostPlacement::Refused(format!("{why}; the run was pinned by --place host and does not spill"));
     if let Some(tag) = absent {
         return refuse(format!("the host's container store does not hold localhost/spira-testenv:{tag}, and a round never builds an image"));
