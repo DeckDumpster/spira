@@ -429,28 +429,25 @@ fn around_without_the_command_on_path_is_no_verdict_and_names_the_path() {
 #[test]
 fn a_held_run_keeps_the_identity_an_enclosing_sandbox_handed_in_when_run_is_unwritable() {
     let tmp = testkit::TempDir::new("held-identity");
-    let base = fs::canonicalize(tmp.path()).unwrap();
-    let home = base.join("home");
-    fs::create_dir_all(&home).unwrap();
-    let identity = base.join("handed.gitconfig");
+    let identity = fs::canonicalize(tmp.path()).unwrap().join("handed.gitconfig");
     fs::write(&identity, "[user]\n\tname = handed\n\temail = handed@localhost\n").unwrap();
-    let mut cmd = std::process::Command::new("bwrap");
-    cmd.args(["--ro-bind", system_paths::ROOT, system_paths::ROOT, "--dev", system_paths::DEV, "--proc", system_paths::PROC, "--tmpfs"])
-        .arg(&home)
-        .args(["--tmpfs", system_paths::RUN, "--remount-ro", system_paths::RUN, "--unshare-net"])
-        .arg(workspace().join("tools/test-sandbox/runner"))
-        .args(["--around", system_paths::USR_BIN_ENV])
-        .env("HOME", &home)
-        .env("GIT_CONFIG_SYSTEM", &identity);
-    let out = cmd.output().expect("bwrap spawns");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    if stderr.contains("bwrap:") {
-        eprintln!("skipped: no nested sandbox to hold the runner in: {stderr}");
-        return;
-    }
-    assert!(out.status.success(), "{stderr}");
-    let seen = format!("GIT_CONFIG_SYSTEM={}", identity.display());
-    assert!(String::from_utf8_lossy(&out.stdout).lines().any(|l| l == seen), "{}", String::from_utf8_lossy(&out.stdout));
+    let held_env = |handed: Option<&Path>| {
+        let mut cmd = std::process::Command::new(workspace().join("tools/test-sandbox/runner"));
+        cmd.args(["--around", system_paths::USR_BIN_ENV]);
+        match handed {
+            Some(path) => cmd.env("GIT_CONFIG_SYSTEM", path),
+            None => cmd.env_remove("GIT_CONFIG_SYSTEM"),
+        };
+        let out = cmd.output().expect("the runner spawns");
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let kept = held_env(Some(&identity));
+    let want = format!("GIT_CONFIG_SYSTEM={}", identity.display());
+    assert!(kept.lines().any(|l| l == want), "{kept}");
+    // The control: with nothing handed in, the same held spawn names the sandbox's own file.
+    let own = held_env(None);
+    assert!(own.lines().any(|l| l == "GIT_CONFIG_SYSTEM=/run/test-sandbox/gitconfig"), "{own}");
 }
 
 /// A test already runs inside the sandbox, so the runner it spawns finds itself held; the shared
