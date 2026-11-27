@@ -248,13 +248,20 @@ pub fn fixture_registry_home(dir: &std::path::Path) -> std::path::PathBuf {
 /// A complete `spira.toml` for TESTS in any crate: every key declared (`spira/testlib/complete.toml`), with `declare`'s `SPIRA_<KEY>` pairs written as
 /// `spira.<key>`. Written to `<dir>/spira.toml`; point `SPIRA_TOML` at the returned path.
 pub fn fixture_toml(dir: &std::path::Path, declare: &[(&str, &str)]) -> std::path::PathBuf {
-    let mut d = {
+    let reg = {
         let _env = testkit::env_read();
-        crate::validate(&complete_fixture_text_locked()).expect("the complete fixture validates")
+        crate::registry::for_process().expect("the process registry loads")
     };
+    fixture_toml_with(reg, dir, declare)
+}
+
+/// [`fixture_toml`] typed against `reg`, leaving the process registry unpinned: for a test whose
+/// subject is which registry the process pins.
+pub fn fixture_toml_with(reg: &crate::registry::Registry, dir: &std::path::Path, declare: &[(&str, &str)]) -> std::path::PathBuf {
+    let (mut d, _) = crate::validate_with(&complete_fixture_text(), reg).expect("the complete fixture validates");
     for (k, v) in declare {
         let rest = k.strip_prefix("SPIRA_").unwrap_or(k);
-        d = crate::set_path(&d, &format!("spira.{}", rest.to_ascii_lowercase()), v)
+        d = crate::set_path_with(reg, &d, &format!("spira.{}", rest.to_ascii_lowercase()), v)
             .unwrap_or_else(|e| panic!("fixture_toml: cannot declare {k}: {e}"));
     }
     let p = dir.join(crate::FILE_NAME);

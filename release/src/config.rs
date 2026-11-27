@@ -11,7 +11,7 @@
 
 use spira_config::SpiraToml;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The environment a `Config` is resolved from — a map, so tests pass their own. Only ever
 /// consulted for keys that are NOT registered config (`SPIRA_UNIT_DIR`, `HOME`,
@@ -28,6 +28,18 @@ pub struct Flags {
     pub releases: Option<PathBuf>,
     pub run: Option<PathBuf>,
     pub keep: Option<usize>,
+}
+
+/// [`Config::resolve`] against the registry of the release at `rel`, for a verb acting on it.
+pub fn resolve_as_release(flags: &Flags, env: &Env, rel: &Path) -> Result<Config, String> {
+    let home = rel.join("spira");
+    let registry = home.join("conf.d");
+    if !registry.is_dir() {
+        return Err(format!("{} is not a directory — refusing to judge this release against another release's registry", registry.display()));
+    }
+    // Left set: `cfg` re-reads the home on every call, so later reads must judge the same registry.
+    spira_config::resolve::set_home_for_process(&home);
+    Config::resolve(flags, env)
 }
 
 /// Every registered config key [`Config::resolve`] reads through `cfg`/`cfg_parse`, already
@@ -78,7 +90,7 @@ pub struct Config {
     lc_password_file: String,
     repo_map: String,
     broker_socket: String,
-    pub(crate) broker_socket_refusal: String,
+    pub broker_socket_refusal: String,
     /// `spira.hotfix_alert_hours` from the host config document — `SPIRA_HOTFIX_ALERT_HOURS`
     /// is not a registered key, so this one field is still read from the typed document
     /// rather than `cfg_parse` (see [`Config::hotfix_alert_hours`]).
@@ -133,8 +145,8 @@ impl Config {
             snap_stale_s: cfg("SPIRA_SNAP_STALE_S")?,
             watchtower_start_timeout_s: cfg("SPIRA_WATCHTOWER_START_TIMEOUT_S")?,
             sccache_dav_addr: cfg("SPIRA_SCCACHE_DAV_ADDR")?,
-            // `release build` and `activate` resolve against the ACTIVE release's registry, which
-            // does not register this key until the release that adds it is the active one:
+            // `release build` resolves against the ACTIVE release's registry, which does not
+            // register this key until the release that adds it is the active one:
             // unregistered there is unset, and unset means the run directory's store.
             sccache_dav_root: cfg("SPIRA_SCCACHE_DAV_ROOT").unwrap_or_default(),
             lc_password_file: cfg("SPIRA_LC_PASSWORD_FILE")?,
