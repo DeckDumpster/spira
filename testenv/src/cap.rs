@@ -27,8 +27,13 @@ pub const SUBCOMMANDS: &[&str] = &[
 
 static TRIPPED: AtomicBool = AtomicBool::new(false);
 static PHASE: Mutex<String> = Mutex::new(String::new());
-static RUNNING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static RUNNING: Mutex<Vec<Unit>> = Mutex::new(Vec::new());
 static CONTAINERS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+#[cfg(test)]
+thread_local! {
+    pub static ONLY_MY_UNITS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 #[cfg(test)]
 thread_local! {
@@ -92,21 +97,94 @@ pub fn phase(name: &str) {
     *PHASE.lock().unwrap() = name.to_string();
 }
 
+#[derive(Clone)]
+struct Unit {
+    id: u64,
+    name: String,
+    step: Option<String>,
+    log: Option<PathBuf>,
+    #[cfg(test)]
+    owner: std::thread::ThreadId,
+}
+
+fn units() -> Vec<Unit> {
+    let all = RUNNING.lock().unwrap().clone();
+    // Tests run tiers in parallel in one process; an exact-text assertion must see only its own.
+    #[cfg(test)]
+    if ONLY_MY_UNITS.with(|o| o.get()) {
+        return all.into_iter().filter(|u| u.owner == std::thread::current().id()).collect();
+    }
+    all
+}
+
 /// Marks a tier or suite as running until the guard drops.
-pub struct Running(String);
+pub struct Running(u64);
 
 pub fn running(unit: &str) -> Running {
-    RUNNING.lock().unwrap().push(unit.to_string());
-    Running(unit.to_string())
+    static IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let id = IDS.fetch_add(1, Ordering::Relaxed);
+    RUNNING.lock().unwrap().push(Unit {
+        id,
+        name: unit.to_string(),
+        step: None,
+        log: None,
+        #[cfg(test)]
+        owner: std::thread::current().id(),
+    });
+    Running(id)
+}
+
+impl Running {
+    pub fn step(&self, step: &str) {
+        self.update(|u| u.step = Some(step.to_string()));
+    }
+
+    pub fn log(&self, path: &Path) {
+        self.update(|u| u.log = Some(path.to_path_buf()));
+    }
+
+    fn update(&self, f: impl FnOnce(&mut Unit)) {
+        if let Some(u) = RUNNING.lock().unwrap().iter_mut().find(|u| u.id == self.0) {
+            f(u);
+        }
+    }
 }
 
 impl Drop for Running {
     fn drop(&mut self) {
-        let mut r = RUNNING.lock().unwrap();
-        if let Some(i) = r.iter().position(|u| *u == self.0) {
-            r.remove(i);
+        RUNNING.lock().unwrap().retain(|u| u.id != self.0);
+    }
+}
+
+pub(crate) fn log_line(unit: &str, path: &Path) -> String {
+    format!("  log ({unit}): {}", path.display())
+}
+
+/// A cut run's whole explanation: nothing the run buffers or prints later survives `_exit`.
+pub fn trip_report(what: &str, secs: u64, source: &str) -> Vec<String> {
+    with_verdict(explain(&units(), what, secs, source))
+}
+
+fn with_verdict(mut lines: Vec<String>) -> Vec<String> {
+    lines.push("VERDICT FAULT rc=2 ran=0 reason=over-cap".to_string());
+    lines
+}
+
+fn explain(cut: &[Unit], what: &str, secs: u64, source: &str) -> Vec<String> {
+    let mut out = vec![over_cap_line(what, secs, source)];
+    for u in cut {
+        let Some(path) = &u.log else { continue };
+        out.push(log_line(&u.name, path));
+        match std::fs::read(path) {
+            Ok(bytes) => {
+                out.push(format!("  last 60 lines ({}):", u.name));
+                let tail = crate::foreign::tail(&String::from_utf8_lossy(&bytes), 60);
+                out.extend(tail.lines().map(|l| format!("    {l}")));
+            }
+            Err(e) => out.push(format!("  log ({}) unreadable: {e}", u.name)),
         }
     }
+    out
 }
 
 /// Marks a container as this run's until the guard drops: the watchdog removes it before it
@@ -134,8 +212,19 @@ fn remove_held(remove: &dyn Fn(&str)) {
     }
 }
 
-fn describe() -> String {
-    let units: Vec<String> = RUNNING.lock().unwrap().clone();
+#[cfg(test)]
+pub(crate) fn describe() -> String {
+    describe_units(&units())
+}
+
+fn describe_units(cut: &[Unit]) -> String {
+    let units: Vec<String> = cut
+        .iter()
+        .map(|u| match &u.step {
+            Some(step) => format!("{} (in {step})", u.name),
+            None => u.name.clone(),
+        })
+        .collect();
     if !units.is_empty() {
         return format!("tier/suite {}", units.join(","));
     }
@@ -149,7 +238,12 @@ pub fn over_cap_line(what: &str, secs: u64, source: &str) -> String {
     format!("over-cap: {what} was still running at the {secs}s cap ({source})")
 }
 
-type Trip = Arc<Mutex<Option<(String, u64)>>>;
+/// Read as the cap fired: an unwound run has dropped its guards by the time it reports.
+pub struct Tripped {
+    pub report: Vec<String>,
+}
+
+type Trip = Arc<Mutex<Option<Tripped>>>;
 
 /// Wall time since arming, less every slot wait: the cap meters work, not queueing.
 struct Clock {
@@ -306,7 +400,7 @@ impl Armed {
     }
 
     /// Stops the watchdog; what was running when the cap fired, if it did.
-    pub fn finish(self) -> Option<(String, u64)> {
+    pub fn finish(self) -> Option<Tripped> {
         self.0.store(true, Ordering::SeqCst);
         CURRENT.with(|c| c.borrow_mut().take());
         if let Some(path) = &self.2.lock().unwrap().ledger {
@@ -355,20 +449,24 @@ pub fn arm(cap: Cap, ledger: Option<PathBuf>) -> Armed {
         if !wait(&|| clock.lock().unwrap().counted() < limit) {
             return;
         }
-        let what = describe();
-        *slot.lock().unwrap() = Some((what.clone(), limit.as_secs()));
+        let cut = units();
+        let what = describe_units(&cut);
+        *slot.lock().unwrap() = Some(Tripped { report: explain(&cut, &what, limit.as_secs(), source) });
         TRIPPED.store(true, Ordering::SeqCst);
         // The unwind is timed on the wall clock: a hold taken after the trip must not delay it.
         let tripped = Instant::now();
         if wait(&|| tripped.elapsed() < UNWIND) {
+            // The units as cut, with their logs as they are now: a tier may since have dropped its guard.
+            let report = with_verdict(explain(&cut, &what, limit.as_secs(), source));
             kill_descendants(std::process::id());
             remove_held(&|n| {
                 use crate::runtime::ContainerRuntime;
                 crate::runtime::Podman { exe: Default::default(), harness: Default::default() }.purge(n)
             });
             crate::telemetry::push_over_cap(&crate::telemetry::sink(), "self");
-            println!("{}", over_cap_line(&what, limit.as_secs(), source));
-            println!("VERDICT FAULT rc=2 ran=0 reason=over-cap");
+            for line in report {
+                println!("{line}");
+            }
             // SAFETY: a watchdog thread has no caller to return to; _exit skips atexit handlers, stdout is line-buffered and already flushed.
             unsafe { libc::_exit(2) };
         }
@@ -530,6 +628,45 @@ mod tests {
         drop(a);
         remove_held(&|n| removed.lock().unwrap().push(n.to_string()));
         assert!(mine(&removed).is_empty(), "a released container is not the cut-off's to remove");
+    }
+
+    #[test_id(tgh822g)]
+    #[test]
+    fn a_trip_report_names_each_running_units_step_and_log() {
+        ONLY_MY_UNITS.with(|o| o.set(true));
+        let dir = testkit::TempDir::new("testenv-cap-trip");
+        let log = dir.path().join("rust.log");
+        let body: String = (1..100).map(|n| format!("line {n}\n")).chain(["==> CI passed in 450s.\n".to_string()]).collect();
+        std::fs::write(&log, body).unwrap();
+        let unit = running("rust");
+        unit.step("warm-cache merge, container rc=0 after 530s");
+        unit.log(&log);
+        let got = trip_report(&describe(), 600, "suite cap");
+        let mut want = vec![
+            "over-cap: tier/suite rust (in warm-cache merge, container rc=0 after 530s) was still running at the 600s cap (suite cap)".to_string(),
+            format!("  log (rust): {}", log.display()),
+            "  last 60 lines (rust):".to_string(),
+        ];
+        want.extend((41..100).map(|n| format!("    line {n}")));
+        want.push("    ==> CI passed in 450s.".into());
+        want.push("VERDICT FAULT rc=2 ran=0 reason=over-cap".into());
+        assert_eq!(got, want);
+    }
+
+    #[test_id(thjs95r)]
+    #[test]
+    fn a_run_that_unwinds_still_has_the_log_of_a_unit_cut_by_the_cap() {
+        let log = Path::new("cap-unwound.log");
+        let unit = running("cap-unwound");
+        unit.log(log);
+        let armed = arm(Cap { secs: 0, source: "test" }, None);
+        // clock-safe: a zero cap trips on the watchdog's first look; this waits for that signal
+        while !tripped_anywhere() {
+            std::thread::yield_now();
+        }
+        drop(unit);
+        let trip = armed.finish().expect("tripped");
+        assert!(trip.report.contains(&log_line("cap-unwound", log)), "{:?}", trip.report);
     }
 
     #[test_id(tyzcyxi)]

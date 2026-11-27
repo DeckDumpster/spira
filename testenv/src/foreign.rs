@@ -525,6 +525,10 @@ impl Cache {
     }
 }
 
+fn merge_step(rc: i32, secs: u64) -> String {
+    format!("warm-cache merge, container rc={rc} after {secs}s")
+}
+
 /// Moves everything under `from` onto the same relative path under `to`, replacing what is
 /// there; the two must share a filesystem. An overlay whiteout (a character device) stays
 /// behind. Err names the path that stopped the merge.
@@ -624,27 +628,42 @@ impl TierRun<'_> {
     pub fn run(&self, name: &str) -> (Outcome, u64) {
         let mut excused = Duration::ZERO;
         let r = self.run_tier(name, &mut excused);
-        self.settle_share(r.0 == Outcome::Pass);
+        self.settle_share(r.0 == Outcome::Pass, &[(name, r.1)]);
         r
     }
 
     /// A share that passed and is not kept is published and removed; one that did not pass,
     /// or that is kept past a pass, is removed or left alone respectively.
-    fn settle_share(&self, passed: bool) {
+    fn settle_share(&self, passed: bool, ran: &[(&str, u64)]) {
         let Some(sh) = &self.cache.share else { return };
         let dir = self.cache.share_dir(&sh.key);
         match (passed, sh.keep) {
             (true, true) => {}
-            (true, false) => self.cache.publish(&sh.key, self.log),
+            (true, false) => {
+                let _merging: Vec<_> = ran
+                    .iter()
+                    .map(|(name, secs)| {
+                        let running = crate::cap::running(name);
+                        running.log(&self.log_path(name));
+                        running.step(&merge_step(0, *secs));
+                        running
+                    })
+                    .collect();
+                self.cache.publish(&sh.key, self.log);
+            }
             (false, _) => {
                 remove_run_dir(&dir);
             }
         }
     }
 
+    fn log_path(&self, tier: &str) -> PathBuf {
+        self.results.join(format!("{tier}.log"))
+    }
+
     /// `excused` is the cache wait already given back to the deadline; this tier's is added.
     fn run_tier(&self, name: &str, excused: &mut Duration) -> (Outcome, u64) {
-        let _running = crate::cap::running(name);
+        let running = crate::cap::running(name);
         let tier = &self.decl.tier[name];
         let t0 = Instant::now();
         if self.cache.prepare().is_err() {
@@ -689,11 +708,14 @@ impl TierRun<'_> {
             argv: tier.argv.clone(),
             timeout: tier.timeout.or(self.decl.timeout).map(Duration::from_secs),
             deadline: self.deadline.map(|d| d + *excused),
-            output: self.results.join(format!("{name}.log")),
+            output: self.log_path(name),
             cpus: Some(share.to_string()),
             pids_limit: Some(self.pids_limit),
         };
+        running.log(&req.output);
+        running.step("container");
         let rc = self.rt.run_once(&req).rc;
+        running.step(&merge_step(rc, t0.elapsed().as_secs()));
         self.rt.purge(&cname);
         drop(attached);
         if self.cache.share.is_none() {
@@ -719,7 +741,8 @@ impl TierRun<'_> {
         if self.cache.share.is_some() {
             let mut excused = Duration::ZERO;
             let out: Vec<_> = tiers.iter().map(|t| self.run_tier(t, &mut excused)).collect();
-            self.settle_share(out.iter().all(|(o, _)| *o == Outcome::Pass));
+            let ran: Vec<_> = tiers.iter().zip(&out).map(|(t, (_, secs))| (t.as_str(), *secs)).collect();
+            self.settle_share(out.iter().all(|(o, _)| *o == Outcome::Pass), &ran);
             return out;
         }
         let clock = crate::cap::handle();
@@ -1294,6 +1317,35 @@ mod tests {
         let got = share_tree(root, "r p", share("g", true).as_ref()).unwrap();
         assert_eq!(got, root.join("r_p/runs/share-g/tree"));
         assert_eq!(share_tree(root, "r", None), None);
+    }
+
+    #[test_id(t4bmawk)]
+    #[test]
+    fn a_tier_cut_at_any_point_names_its_step_and_log() {
+        for shared in [false, true] {
+            crate::cap::ONLY_MY_UNITS.with(|o| o.set(true));
+            let root = testkit::TempDir::new("foreign-steps");
+            let tree = testkit::TempDir::new("foreign-steps-tree");
+            let results = testkit::TempDir::new("foreign-steps-results");
+            let decl = Decl::parse("image = \"i\"\n[tier.a]\nargv=[\"x\"]\n").unwrap();
+            let rt = crate::fixture::fake::FakeRuntime::new();
+            let merging = std::sync::Mutex::new(Vec::new());
+            // The merge logs on the calling thread, while the merge is still the tier's step.
+            let log = |m: &str| {
+                if m.contains("warm cache merge held the lock") {
+                    merging.lock().unwrap().push(crate::cap::describe());
+                }
+            };
+            let cache = Cache::new(root.path(), "r").shared(shared.then(|| Share { key: "g".into(), keep: false }));
+            shared_run(&cache, &rt, &decl, tree.path(), results.path(), &log).run("a");
+            let log_line = crate::cap::log_line("a", &results.path().join("a.log"));
+            let seen = rt.cut_here.lock().unwrap();
+            assert!(seen[0].0 == "tier/suite a (in container)", "shared={shared}: {seen:?}");
+            assert!(seen[0].1.contains(&log_line), "shared={shared}: {seen:?}");
+            assert!(seen[1].0.starts_with("tier/suite a (in warm-cache merge, container rc=0 after "), "shared={shared}: {seen:?}");
+            let merging = merging.lock().unwrap();
+            assert!(merging.len() == 1 && merging[0].starts_with("tier/suite a (in warm-cache merge, container rc=0 after "), "shared={shared}: {merging:?}");
+        }
     }
 
     #[test_id(tz6atbw)]
