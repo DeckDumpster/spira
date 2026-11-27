@@ -1,9 +1,11 @@
 //! A foreign repository's warm cargo cache on the host, `$SPIRA_RUN/foreign-cache/<repo>`:
 //! one cache, built in by testenv's gate and by a host round, under one lock. testenv holds it
 //! shared while it reads the target as an overlay's lower layer; whoever writes the target
-//! holds it exclusive.
+//! holds it exclusive. A writer that has to wait holds a second lock, its intent, which
+//! readers arriving later wait behind.
 
 use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -44,9 +46,44 @@ pub fn touch(path: &Path) {
 /// One non-blocking try at the cache's lock; `op` is `LOCK_SH` or `LOCK_EX`. Dropping the
 /// file, or the holder dying, frees it.
 pub fn try_flock(dir: &Path, op: i32) -> Option<File> {
-    let f = OpenOptions::new().create(true).truncate(false).write(true).open(dir.join("lock")).ok()?;
+    flock_file(&dir.join("lock"), op)
+}
+
+fn flock_file(path: &Path, op: i32) -> Option<File> {
+    let f = OpenOptions::new().create(true).truncate(false).write(true).open(path).ok()?;
     // SAFETY: flock on a descriptor we own; released when the File is dropped.
     (unsafe { libc::flock(f.as_raw_fd(), op | libc::LOCK_NB) } == 0).then_some(f)
+}
+
+/// A writer's claim to the exclusive lock next, held while it waits for the readers to finish.
+pub struct Intent(File);
+
+impl Intent {
+    pub fn take(dir: &Path, who: &str) -> Option<Intent> {
+        let intent = Intent(flock_file(&dir.join("intent"), libc::LOCK_EX)?);
+        let _ = intent.0.set_len(0).and_then(|()| (&intent.0).write_all(who.as_bytes()));
+        Some(intent)
+    }
+}
+
+impl Drop for Intent {
+    fn drop(&mut self) {
+        let _ = self.0.set_len(0);
+        // SAFETY: flock on a descriptor we own. Explicit, because a child forked meanwhile
+        // holds the descriptor, and so the lock, until its exec.
+        unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
+
+/// The writer waiting for the exclusive lock, as it recorded itself. A probe holds the intent
+/// shared for an instant, so an [`Intent::take`] can fail with no writer there: retry it.
+pub fn waiting_writer(dir: &Path) -> Option<String> {
+    let f = File::open(dir.join("intent")).ok()?;
+    // SAFETY: flock on a descriptor we own; released when the File is dropped.
+    if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) } == 0 {
+        return None;
+    }
+    Some(std::fs::read_to_string(dir.join("intent")).unwrap_or_default().trim().to_string())
 }
 
 /// Who holds the exclusive lock, as it recorded itself; empty when nobody did.
@@ -72,5 +109,24 @@ impl Exclusive {
 impl Drop for Exclusive {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.holder);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spira_test_id::test_id;
+
+    #[test_id(tfumfns)]
+    #[test]
+    fn a_waiting_writer_is_named_only_while_its_intent_is_held() {
+        let dir = testkit::TempDir::new("foreign-cache-intent");
+        assert_eq!(waiting_writer(dir.path()), None);
+        let held = Intent::take(dir.path(), "round-vm x").expect("free");
+        assert_eq!(waiting_writer(dir.path()).as_deref(), Some("round-vm x"));
+        assert!(Intent::take(dir.path(), "another").is_none(), "one writer waits at a time");
+        assert_eq!(waiting_writer(dir.path()).as_deref(), Some("round-vm x"), "a refused take leaves the name");
+        drop(held);
+        assert_eq!(waiting_writer(dir.path()), None);
     }
 }

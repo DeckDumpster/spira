@@ -200,6 +200,8 @@ pub enum Outcome {
 }
 
 const LOCK_POLL: Duration = Duration::from_secs(2);
+/// What a waiting tier's log line says ahead of the holder's name.
+pub const WAITING_FOR: &str = "waiting for the warm cache held by ";
 /// A publish tries the lock once; a test process also retries briefly, because another test
 /// thread's fork holds every open descriptor, and so every lock, until its exec.
 #[cfg(not(test))]
@@ -222,6 +224,7 @@ pub struct Cache {
     dir: PathBuf,
     bound: Bound,
     share: Option<Share>,
+    poll: Duration,
 }
 
 /// A named run directory that two testenv calls take turns in: one checkout and one overlay
@@ -328,11 +331,16 @@ pub fn reap_stale_runs(
 pub struct Attached {
     _shared: std::fs::File,
     pub overlay: Overlay,
+    pub waited: Duration,
 }
 
 impl Cache {
     pub fn new(root: &Path, repo: &str) -> Cache {
-        Cache { dir: foreign_cache::dir(root, repo), bound: Bound::default(), share: None }
+        Cache { dir: foreign_cache::dir(root, repo), bound: Bound::default(), share: None, poll: LOCK_POLL }
+    }
+
+    pub fn polled(self, poll: Duration) -> Cache {
+        Cache { poll, ..self }
     }
 
     pub fn shared(self, share: Option<Share>) -> Cache {
@@ -366,7 +374,7 @@ impl Cache {
             if age.is_none_or(|a| a < idle) {
                 continue;
             }
-            let other = Cache { dir: dir.clone(), bound: self.bound, share: None };
+            let other = Cache { dir: dir.clone(), bound: self.bound, share: None, poll: self.poll };
             let Some(_ex) = other.flock(libc::LOCK_EX) else { continue };
             if std::fs::remove_dir_all(&target).is_ok() {
                 gone.push(target);
@@ -414,29 +422,38 @@ impl Cache {
         foreign_cache::try_flock(&self.dir, op)
     }
 
-    /// Take the shared lock and make the run's upper layer, naming the holder of the exclusive
-    /// merge while it waits. Err names the fault when the deadline passes or the run is cancelled.
+    /// Take the shared lock, behind any waiting writer, and make the run's upper layer, naming
+    /// who it waits for. The run's cap clock stands still while it waits. Err names the fault
+    /// when the wait reaches `deadline` or the run is cancelled.
     fn attach(&self, cname: &str, deadline: Option<Instant>, log: &dyn Fn(&str)) -> Result<Attached, &'static str> {
         let since = Instant::now();
         let mut told = false;
+        let mut held = None;
         let shared = loop {
-            if let Some(f) = self.flock(libc::LOCK_SH) {
-                break f;
+            let writer = foreign_cache::waiting_writer(&self.dir);
+            if writer.is_none() {
+                if let Some(f) = self.flock(libc::LOCK_SH) {
+                    break f;
+                }
             }
             if !told {
-                log(&format!("{cname}: waiting for the warm cache held by {}", foreign_cache::holder(&self.dir)));
+                held = Some(crate::cap::hold());
+                let who = writer.unwrap_or_else(|| foreign_cache::holder(&self.dir));
+                log(&format!("{cname}: {WAITING_FOR}{who}"));
                 told = true;
             }
             if crate::runtime::cancelled() {
                 return Err("cancelled");
             }
             if deadline.is_some_and(|d| Instant::now() >= d) {
-                return Err("deadline-suites");
+                return Err("cache-wait");
             }
-            std::thread::sleep(LOCK_POLL);
+            std::thread::sleep(self.poll);
         };
+        drop(held);
+        let waited = if told { since.elapsed() } else { Duration::ZERO };
         if told {
-            log(&format!("{cname}: warm cache free after {}s", since.elapsed().as_secs()));
+            log(&format!("{cname}: warm cache free after {}s", waited.as_secs()));
         }
         let run = self.layer_dir(cname);
         let (upper, work) = (run.join("upper"), run.join("work"));
@@ -455,7 +472,7 @@ impl Cache {
             remove_run_dir(&run);
             return Err("cache-dir");
         }
-        Ok(Attached { _shared: shared, overlay: Overlay { lower: self.dir.join("target"), upper, work, ctr: CACHE_TARGET.into() } })
+        Ok(Attached { _shared: shared, overlay: Overlay { lower: self.dir.join("target"), upper, work, ctr: CACHE_TARGET.into() }, waited })
     }
 
     /// Finish a share an earlier `--share-keep` call left: merge it if the lock is free.
@@ -542,7 +559,8 @@ pub struct TierRun<'a> {
 impl TierRun<'_> {
     /// One tier, and then the end of the run's layers: for a share, the end of the share.
     pub fn run(&self, name: &str) -> (Outcome, u64) {
-        let r = self.run_tier(name);
+        let mut excused = Duration::ZERO;
+        let r = self.run_tier(name, &mut excused);
         self.settle_share(r.0 == Outcome::Pass);
         r
     }
@@ -561,7 +579,8 @@ impl TierRun<'_> {
         }
     }
 
-    fn run_tier(&self, name: &str) -> (Outcome, u64) {
+    /// `excused` is the cache wait already given back to the deadline; this tier's is added.
+    fn run_tier(&self, name: &str, excused: &mut Duration) -> (Outcome, u64) {
         let _running = crate::cap::running(name);
         let tier = &self.decl.tier[name];
         let t0 = Instant::now();
@@ -578,10 +597,11 @@ impl TierRun<'_> {
             std::process::id(),
             RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
-        let attached = match self.cache.attach(&cname, self.deadline, self.log) {
+        let attached = match self.cache.attach(&cname, self.deadline.map(|d| d + *excused), self.log) {
             Ok(a) => a,
             Err(reason) => return (Outcome::Fault(reason), t0.elapsed().as_secs()),
         };
+        *excused += attached.waited;
         let _run_dir = self.cache.share.is_none().then(|| RunDirGuard(self.cache.run_dir(&cname)));
         let mut env: Vec<(String, String)> = tier.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         for (k, v) in self.cache.env() {
@@ -605,7 +625,7 @@ impl TierRun<'_> {
             overlays: vec![attached.overlay.clone()],
             argv: tier.argv.clone(),
             timeout: tier.timeout.or(self.decl.timeout).map(Duration::from_secs),
-            deadline: self.deadline,
+            deadline: self.deadline.map(|d| d + *excused),
             output: self.results.join(format!("{name}.log")),
             cpus: Some(share.to_string()),
             pids_limit: Some(self.pids_limit),
@@ -634,12 +654,23 @@ impl TierRun<'_> {
     /// has one upper to write; results come back in `tiers` order.
     pub fn run_all(&self, tiers: &[String]) -> Vec<(Outcome, u64)> {
         if self.cache.share.is_some() {
-            let out: Vec<_> = tiers.iter().map(|t| self.run_tier(t)).collect();
+            let mut excused = Duration::ZERO;
+            let out: Vec<_> = tiers.iter().map(|t| self.run_tier(t, &mut excused)).collect();
             self.settle_share(out.iter().all(|(o, _)| *o == Outcome::Pass));
             return out;
         }
+        let clock = crate::cap::handle();
         std::thread::scope(|sc| {
-            let hs: Vec<_> = tiers.iter().map(|t| sc.spawn(move || self.run(t))).collect();
+            let hs: Vec<_> = tiers
+                .iter()
+                .map(|t| {
+                    let clock = clock.clone();
+                    sc.spawn(move || {
+                        clock.adopt();
+                        self.run(t)
+                    })
+                })
+                .collect();
             hs.into_iter().map(|h| h.join().unwrap_or((Outcome::Fault("container-run"), 0))).collect()
         })
     }
@@ -921,6 +952,144 @@ mod tests {
         assert!(text.contains("warm cache publish skipped") && text.contains("not a verdict") && !text.contains("waiting"), "{text}");
         assert!(!cache.dir.join("target/built.o").exists());
         assert!(!cache.share_dir("g").exists());
+    }
+
+    fn flock_intent(dir: &Path, who: &str) -> std::fs::File {
+        use std::os::fd::AsRawFd;
+        let mut f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(dir.join("intent")).unwrap();
+        // SAFETY: flock on a descriptor we own.
+        assert_eq!(unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+        std::io::Write::write_all(&mut f, who.as_bytes()).unwrap();
+        f
+    }
+
+    struct Waiting {
+        _root: testkit::TempDir,
+        tree: testkit::TempDir,
+        results: testkit::TempDir,
+        cache: Cache,
+        decl: Decl,
+        rt: crate::fixture::fake::FakeRuntime,
+    }
+
+    impl Waiting {
+        fn new(tag: &str) -> Waiting {
+            let root = testkit::TempDir::new(tag);
+            let cache = Cache::new(root.path(), "r").polled(Duration::from_millis(1));
+            cache.prepare().unwrap();
+            Waiting {
+                cache,
+                _root: root,
+                tree: testkit::TempDir::new("foreign-wait-tree"),
+                results: testkit::TempDir::new("foreign-wait-results"),
+                decl: Decl::parse("image = \"i\"\n[tier.a]\nargv=[\"x\"]\n[tier.b]\nargv=[\"x\"]\n").unwrap(),
+                rt: crate::fixture::fake::FakeRuntime::new(),
+            }
+        }
+
+        fn run<'a>(&'a self, deadline: Instant, log: &'a (dyn Fn(&str) + Sync)) -> TierRun<'a> {
+            let mut r = shared_run(&self.cache, &self.rt, &self.decl, self.tree.path(), self.results.path(), log);
+            r.deadline = Some(deadline);
+            r
+        }
+
+        fn started(&self) -> usize {
+            self.rt.once_calls.lock().unwrap().len()
+        }
+
+        fn deadlines(&self) -> Vec<Instant> {
+            self.rt.once_calls.lock().unwrap().iter().map(|c| c.deadline.unwrap()).collect()
+        }
+    }
+
+    const HELD: Duration = Duration::from_millis(15);
+
+    /// A log that frees `lock` once a tier has waited on it for [`HELD`], recording each line.
+    fn frees_after_a_wait<'a, T: Send>(lock: &'a std::sync::Mutex<Option<T>>, lines: &'a std::sync::Mutex<Vec<String>>) -> impl Fn(&str) + Sync + 'a {
+        move |m: &str| {
+            lines.lock().unwrap().push(m.to_string());
+            if m.contains("waiting for the warm cache") {
+                std::thread::sleep(HELD); // clock-safe: the length of the wait under test; nothing races it
+                lock.lock().unwrap().take();
+            }
+        }
+    }
+
+    #[test_id(ti3hpq6)]
+    #[test]
+    fn a_wait_for_the_cache_is_not_charged_to_the_tiers_cap() {
+        let w = Waiting::new("foreign-wait-uncharged");
+        let lock = std::sync::Mutex::new(foreign_cache::Exclusive::try_take(&w.cache.dir, "round-vm x"));
+        let lines = std::sync::Mutex::new(Vec::new());
+        let log = frees_after_a_wait(&lock, &lines);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let (o, _) = w.run(deadline, &log).run("a");
+        assert_eq!(o, Outcome::Pass);
+        assert_eq!(w.started(), 1, "the tier ran once");
+        assert!(w.deadlines()[0] >= deadline + HELD, "short by {:?}", (deadline + HELD).duration_since(w.deadlines()[0]));
+    }
+
+    #[test_id(tv0zike)]
+    #[test]
+    fn a_wait_that_outlasts_the_cap_is_a_cache_wait_fault_naming_the_holder() {
+        let w = Waiting::new("foreign-wait-bounded");
+        let _held = foreign_cache::Exclusive::try_take(&w.cache.dir, "round-vm x").unwrap();
+        let lines = std::sync::Mutex::new(Vec::<String>::new());
+        let log = |m: &str| lines.lock().unwrap().push(m.to_string());
+        let (o, _) = w.run(Instant::now() + Duration::from_millis(10), &log).run("a");
+        assert_eq!(o, Outcome::Fault("cache-wait"));
+        assert_eq!(w.started(), 0);
+        let said = lines.lock().unwrap();
+        assert_eq!(said.iter().filter(|l| l.ends_with("waiting for the warm cache held by round-vm x")).count(), 1, "{said:?}");
+    }
+
+    #[test_id(t9vspwi)]
+    #[test]
+    fn a_tier_waits_behind_a_round_that_is_waiting_for_the_cache() {
+        let w = Waiting::new("foreign-wait-intent");
+        let lock = std::sync::Mutex::new(Some(flock_intent(&w.cache.dir, "round-vm y")));
+        let lines = std::sync::Mutex::new(Vec::new());
+        let started_while_held = std::sync::Mutex::new(None);
+        let release = frees_after_a_wait(&lock, &lines);
+        let log = |m: &str| {
+            if m.contains("waiting for the warm cache") {
+                *started_while_held.lock().unwrap() = Some(w.started());
+            }
+            release(m);
+        };
+        let (o, _) = w.run(Instant::now() + Duration::from_secs(60), &log).run("a");
+        assert_eq!(*started_while_held.lock().unwrap(), Some(0), "the tier waited: {:?}", lines.lock().unwrap());
+        assert!(lines.lock().unwrap().iter().any(|l| l.ends_with("held by round-vm y")), "{:?}", lines.lock().unwrap());
+        assert_eq!((o, w.started()), (Outcome::Pass, 1));
+    }
+
+    #[test_id(tkm92d8)]
+    #[test]
+    fn the_runs_cap_clock_stands_still_while_a_concurrent_tier_waits_for_the_cache() {
+        let w = Waiting::new("foreign-wait-run-cap");
+        let lock = std::sync::Mutex::new(foreign_cache::Exclusive::try_take(&w.cache.dir, "round-vm x"));
+        let lines = std::sync::Mutex::new(Vec::new());
+        let log = frees_after_a_wait(&lock, &lines);
+        let armed = crate::cap::arm(crate::cap::Cap { secs: 600, source: "test" }, None);
+        let out = w.run(Instant::now() + Duration::from_secs(60), &log).run_all(&["a".to_string()]);
+        let excused = armed.waited();
+        armed.finish();
+        assert_eq!(out[0].0, Outcome::Pass);
+        assert!(excused >= HELD, "{excused:?}");
+    }
+
+    #[test_id(teqptmp)]
+    #[test]
+    fn a_shares_later_tier_keeps_the_time_an_earlier_tier_spent_waiting() {
+        let mut w = Waiting::new("foreign-wait-share");
+        w.cache = Cache::new(w._root.path(), "r").shared(share("g", false)).polled(Duration::from_millis(1));
+        let lock = std::sync::Mutex::new(foreign_cache::Exclusive::try_take(&w.cache.dir, "round-vm x"));
+        let lines = std::sync::Mutex::new(Vec::new());
+        let log = frees_after_a_wait(&lock, &lines);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        w.run(deadline, &log).run_all(&["a".to_string(), "b".to_string()]);
+        let got = w.deadlines();
+        assert!(got.len() == 2 && got.iter().all(|d| *d >= deadline + HELD), "{} tiers", got.len());
     }
 
     #[test_id(tjidpjv)]

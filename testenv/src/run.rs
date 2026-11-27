@@ -480,6 +480,7 @@ fn run_foreign(
     let cap = args.deadline.or(decl.cap).unwrap_or(foreign::DEFAULT_CAP);
     let t0 = Instant::now();
     let pending = std::sync::Mutex::new(Vec::<String>::new());
+    let waited_for = std::sync::Mutex::new(None::<String>);
     let runner = foreign::TierRun {
         cache: &cache,
         rt: deps.rt,
@@ -488,7 +489,12 @@ fn run_foreign(
         results: &results,
         key: &key,
         deadline: Some(t0 + Duration::from_secs(cap)),
-        log: &|m| pending.lock().unwrap().push(m.to_string()),
+        log: &|m| {
+            if let Some((_, who)) = m.split_once(foreign::WAITING_FOR) {
+                *waited_for.lock().unwrap() = Some(who.to_string());
+            }
+            pending.lock().unwrap().push(m.to_string())
+        },
         cores: std::thread::available_parallelism().map_or(1, |n| n.get()),
         concurrent: if args.share.is_some() { 1 } else { tiers.len() },
         pids_limit: s.pids_limit,
@@ -544,6 +550,10 @@ fn run_foreign(
     if let Some(reason) = fault {
         if reason == "deadline-suites" {
             (deps.out)(&format!("  over the {cap}s cap after {}s", t0.elapsed().as_secs()));
+        }
+        if reason == "cache-wait" {
+            let who = waited_for.lock().unwrap().take().unwrap_or_default();
+            (deps.out)(&format!("  the warm cache stayed held for the {cap}s cap by {who}"));
         }
         return Finish::fault(2, reason, ran);
     }

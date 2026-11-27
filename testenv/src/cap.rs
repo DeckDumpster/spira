@@ -5,7 +5,7 @@
 //! signal takes) and finishes `FAULT reason=over-cap`, naming what was running. `testenv-cap`
 //! scans live runs and kills any that outlive their cap plus [`GRACE`], plus the load-wait
 //! bound for a suite-tier run, whose cap starts only once load admission lets it in. The run's
-//! own clock stands still for the whole of every admission-slot wait ([`hold`]) and it
+//! own clock stands still for the whole of every admission-slot or warm-cache wait ([`hold`]) and it
 //! publishes the waits in a ledger the scan subtracts ([`uncounted`]); a run with no ledger
 //! gets the flat slot-wait bound instead.
 
@@ -250,10 +250,25 @@ pub fn remaining() -> Option<u64> {
     Some(k.left().as_secs())
 }
 
+/// The cap armed on a thread, for a thread it spawns to [`hold`].
+#[derive(Clone)]
+pub struct Handle(Option<Arc<Mutex<Clock>>>);
+
+pub fn handle() -> Handle {
+    Handle(CURRENT.with(|c| c.borrow().clone()))
+}
+
+impl Handle {
+    pub fn adopt(self) {
+        CURRENT.with(|c| *c.borrow_mut() = self.0);
+    }
+}
+
 /// While this lives the cap armed on this thread does not count.
 pub struct Held(Option<Arc<Mutex<Clock>>>);
 
-/// Stops the clock of the cap armed on this thread while the run waits for an admission slot.
+/// Stops the clock of the cap armed on this thread while the run waits for an admission slot
+/// or a warm cache.
 pub fn hold() -> Held {
     let clock = CURRENT.with(|c| c.borrow().clone()).filter(|k| {
         let mut k = k.lock().unwrap();

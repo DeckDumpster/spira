@@ -2963,19 +2963,24 @@ fn foreign_cache_dir(cfg: &Config, args: &RunArgs) -> Option<PathBuf> {
     Some(spira_config::foreign_cache::dir(&spira_config::foreign_cache::root(&cfg.run_dir), repo))
 }
 
+type CacheHold = (spira_config::foreign_cache::Exclusive, Option<spira_config::foreign_cache::Intent>);
+
 /// The cache's exclusive lock for a host round's whole entry, which writes the target a gate
-/// reads under the shared lock. Waited for within the run's wall.
-fn hold_foreign_cache(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress::Progress, results_dir: &Path) -> Result<Option<spira_config::foreign_cache::Exclusive>, String> {
-    use spira_config::foreign_cache::{holder, prepare, Exclusive};
+/// reads under the shared lock. Waited for within the run's wall, ahead of gates that arrive
+/// during the wait.
+fn hold_foreign_cache(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress::Progress, results_dir: &Path) -> Result<Option<CacheHold>, String> {
+    use spira_config::foreign_cache::{holder, prepare, Exclusive, Intent};
     let Some(dir) = foreign_cache_dir(env.cfg, args) else { return Ok(None) };
     prepare(&dir).map_err(|e| format!("the warm cache {} cannot be made: {e}", dir.display()))?;
     let who = format!("round-vm {}", run_label(args));
     let wall = Duration::from_secs(env.cfg.cap_secs);
     let waited = Instant::now();
     let mut told = false;
+    let mut intent = None;
     loop {
+        intent = intent.or_else(|| Intent::take(&dir, &who));
         if let Some(held) = Exclusive::try_take(&dir, &who) {
-            return Ok(Some(held));
+            return Ok(Some((held, intent)));
         }
         if waited.elapsed() >= wall {
             return Err(format!("the warm cache {} stayed locked for the run's {}s wall (last exclusive holder: {:?}; a gate holds it shared)", dir.display(), wall.as_secs(), holder(&dir)));
@@ -6743,6 +6748,35 @@ mod tests {
             go_with_host(&fx, &FakeRemote::green(), &plan, &foreign_args(&fx));
         });
         assert!(!ran.jobs.lock().unwrap().is_empty());
+    }
+
+    #[test_id(tefovod)]
+    #[test]
+    fn a_foreign_round_waiting_for_the_cache_is_named_as_the_waiting_writer() {
+        let fx = fixture();
+        let cache = fx.cfg.run_dir.join("foreign-cache/sp");
+        spira_config::foreign_cache::prepare(&cache).unwrap();
+        let gate = spira_config::foreign_cache::try_flock(&cache, libc::LOCK_SH).expect("a gate attaches");
+        let mut plan = host_plan(FakeRemote::green(), CALM);
+        plan.foreign_remote = Box::new(FakeRemote::green());
+        let progress = fx.cfg.run_dir.join(crate::progress::FILE);
+        let named = Mutex::new(None);
+        std::thread::scope(|sc| {
+            sc.spawn(|| {
+                for _ in 0..2000 {
+                    if fs::read_to_string(&progress).is_ok_and(|t| t.contains("waiting for the warm cache")) {
+                        *named.lock().unwrap() = spira_config::foreign_cache::waiting_writer(&cache);
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(5)); // clock-safe: a cap on the wait for the round to say it is waiting
+                }
+                drop(gate);
+            });
+            go_with_host(&fx, &FakeRemote::green(), &plan, &foreign_args(&fx));
+        });
+        let named = named.lock().unwrap().clone();
+        assert!(named.as_deref().is_some_and(|n| n.starts_with("round-vm ")), "{named:?}");
+        assert_eq!(spira_config::foreign_cache::waiting_writer(&cache), None);
     }
 
     fn foreign_args(fx: &Fixture) -> RunArgs {
