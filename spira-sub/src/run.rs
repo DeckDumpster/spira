@@ -82,6 +82,10 @@ struct State {
     client: Option<Client>,
     /// Connections made so far: an acknowledgement counts only on the one that was asked.
     connection: u64,
+    /// This connection's `up` payload, until it comes back.
+    up: Option<String>,
+    /// The broker held this subscriber's state from before this connection.
+    kept: bool,
     asked: u64,
     acked: u64,
     readers: Vec<Reader>,
@@ -325,23 +329,45 @@ impl Server {
         format!("spira-sub-{}", self.name)
     }
 
-    /// Says it is up and takes the whole set to the new connection.
+    fn own_topic(&self) -> String {
+        format!("subscriber/{}", self.name)
+    }
+
+    /// Takes the whole set to the new connection and then says it is up. The broker works
+    /// through these in order, so `up` coming back ends the retained values they bring.
     fn connected(&self, client: Client, now_ms: u64) {
         let mut state = self.lock();
-        let up = json!({"state": "up", "since_ms": now_ms}).to_string();
-        if let Err(e) = client.try_publish(format!("subscriber/{}", self.name), QoS::AtLeastOnce, true, up) {
-            say(&self.name, &format!("cannot say it is up: {e}"));
-        }
-        state.client = Some(client);
+        state.client = Some(client.clone());
         state.connection += 1;
         state.core.reconnected();
         (state.asked, state.acked) = (0, 0);
-        for filter in std::iter::once(LIVENESS.to_string()).chain(state.core.filters()) {
+        for filter in [self.own_topic(), LIVENESS.to_string()].into_iter().chain(state.core.filters()) {
             if state.ask(&filter, true).is_none() {
                 say(&self.name, &format!("cannot subscribe {filter}"));
             }
         }
+        let up = json!({"state": "up", "since_ms": now_ms}).to_string();
+        state.up = Some(up.clone());
+        state.kept = false;
+        if let Err(e) = client.try_publish(self.own_topic(), QoS::AtLeastOnce, true, up) {
+            say(&self.name, &format!("cannot say it is up: {e}"));
+        }
         self.changed.notify_all();
+    }
+
+    /// Watches this subscriber's own topic for the end of the retained values. Only a broker
+    /// that held a copy before `up` came back is taken to have kept its state: a restarted one
+    /// whose publishers have not republished must prune nothing.
+    fn end_of_retained(&self, state: &mut State, payload: &[u8], retain: bool) {
+        if retain {
+            state.kept = true;
+        } else if state.up.as_ref().is_some_and(|up| up.as_bytes() == payload) {
+            state.up = None;
+            if state.kept {
+                let out = state.core.synced();
+                self.apply(state, out);
+            }
+        }
     }
 
     /// Drives one connection until it ends, and says why.
@@ -350,6 +376,9 @@ impl Server {
             match connection.recv() {
                 Ok(Ok(Event::Incoming(Packet::Publish(p)))) => {
                     let mut state = self.lock();
+                    if p.topic == self.own_topic() {
+                        self.end_of_retained(&mut state, &p.payload, p.retain);
+                    }
                     let listening = !state.readers.is_empty();
                     let out = state.core.message(&p.topic, &p.payload, listening);
                     self.apply(&mut state, out);
@@ -369,7 +398,7 @@ impl Server {
     /// next one makes its socket.
     fn connection(&self, broker: &Path, clock: &dyn Clock) -> String {
         let client_id = self.client_id();
-        let dial = Dial { client_id: &client_id, socket: broker, will_topic: format!("subscriber/{}", self.name), capacity: CHANNEL };
+        let dial = Dial { client_id: &client_id, socket: broker, will_topic: self.own_topic(), capacity: CHANNEL };
         let mut watch = SocketWatch::new(broker);
         // Whether the broker's socket has just appeared, so a refusal is a not-yet.
         let mut announced = false;
@@ -432,7 +461,7 @@ pub fn run(options: Options) -> Result<(), String> {
         telemetry: telemetry(options.metrics, options.name.clone()),
         name: options.name,
         set,
-        state: Mutex::new(State { core, client: None, connection: 0, asked: 0, acked: 0, readers: Vec::new(), next_reader: 0 }),
+        state: Mutex::new(State { core, client: None, connection: 0, up: None, kept: false, asked: 0, acked: 0, readers: Vec::new(), next_reader: 0 }),
         changed: Condvar::new(),
     });
     let spawn = |name: &str, body: Box<dyn FnOnce() + Send>| {
@@ -470,7 +499,7 @@ mod tests {
         Server {
             name: "t".into(),
             set: dir.join("t.subs"),
-            state: Mutex::new(State { core, client: None, connection: 0, asked: 0, acked: 0, readers: Vec::new(), next_reader: 0 }),
+            state: Mutex::new(State { core, client: None, connection: 0, up: None, kept: false, asked: 0, acked: 0, readers: Vec::new(), next_reader: 0 }),
             changed: Condvar::new(),
             telemetry: None,
         }
@@ -495,6 +524,29 @@ mod tests {
         for reader in [standing, newcomer] {
             let delivery = reader.try_recv().unwrap();
             assert!(delivery.ends_with("[sub:s1] release/active release=r1"), "{delivery}");
+        }
+    }
+
+    #[test_id(traucfi)]
+    #[test]
+    fn only_a_broker_that_held_this_subscriber_before_up_came_back_prunes() {
+        let dir = TempDir::new("sub-kept");
+        let mut core = Core::new(Arc::new(VirtualClock::new(1_000_000)), Saved::default());
+        core.add_classed("release/active", "", false, None, true).unwrap();
+        core.message("release/active", br#"{"release":"r1"}"#, true);
+        let server = server(&dir, core);
+        let mut state = server.lock();
+        let digests = |state: &State| state.core.saved().subs[0].delivered.len();
+        for (held_before, left) in [(false, 1), (true, 0)] {
+            state.core.reconnected();
+            (state.up, state.kept) = (Some("up".to_string()), false);
+            if held_before {
+                server.end_of_retained(&mut state, b"gone", true);
+            }
+            server.end_of_retained(&mut state, b"another up", false);
+            assert_eq!(digests(&state), 1, "only this connection's up ends the burst");
+            server.end_of_retained(&mut state, b"up", false);
+            assert_eq!(digests(&state), left, "held before: {held_before}");
         }
     }
 

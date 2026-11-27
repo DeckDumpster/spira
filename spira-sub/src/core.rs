@@ -71,6 +71,8 @@ pub struct Core {
     current: BTreeMap<String, Value>,
     /// The chatter message last taken, and how many more copies of it the broker owes.
     echoes: (String, Vec<u8>, usize),
+    /// The state topics that hold a value as far as this connection has heard.
+    heard: BTreeSet<String>,
     /// The current value of every `publisher/<name>`.
     pub(crate) publishers: BTreeMap<String, Value>,
 }
@@ -166,7 +168,7 @@ impl Sub {
 impl Core {
     pub fn new(clock: Arc<dyn Clock>, saved: Saved) -> Core {
         let subs = saved.subs.into_iter().map(Sub::new).collect();
-        Core { clock, next: saved.next.max(1), subs, current: BTreeMap::new(), publishers: BTreeMap::new(), echoes: Default::default() }
+        Core { clock, next: saved.next.max(1), subs, current: BTreeMap::new(), heard: BTreeSet::new(), publishers: BTreeMap::new(), echoes: Default::default() }
     }
 
     pub fn saved(&self) -> Saved {
@@ -189,6 +191,23 @@ impl Core {
     /// holds nothing about a publisher that does not come back.
     pub fn reconnected(&mut self) {
         self.publishers.clear();
+        self.heard.clear();
+    }
+
+    /// The broker has sent all it retains and kept it since the last connection, so a state
+    /// topic not heard was cleared in between. Wrong to call for a restarted broker, whose
+    /// publishers have yet to say their values again.
+    pub fn synced(&mut self) -> Out {
+        let mut out = Out::default();
+        for sub in &mut self.subs {
+            let pending = sub.pending.keys().filter(|t| is_state(t));
+            let unheard: BTreeSet<String> = sub.entry.delivered.keys().chain(pending).filter(|t| !self.heard.contains(*t)).cloned().collect();
+            for topic in unheard {
+                sub.clear(&topic, &mut out);
+            }
+        }
+        self.current.retain(|topic, _| self.heard.contains(topic));
+        out
     }
 
     /// Every topic filter the set holds.
@@ -320,6 +339,7 @@ impl Core {
         let mut out = Out::default();
         let liveness = topic.starts_with("publisher/");
         if payload.is_empty() {
+            self.heard.remove(topic);
             self.current.remove(topic);
             self.publishers.remove(topic);
             self.subs.iter_mut().for_each(|s| s.clear(topic, &mut out));
@@ -329,6 +349,9 @@ impl Core {
         let state = is_state(topic);
         if !state && self.echo(topic, payload) {
             return out;
+        }
+        if state {
+            self.heard.insert(topic.to_string());
         }
         if liveness {
             self.publishers.insert(topic.to_string(), value.clone());
@@ -848,5 +871,57 @@ mod tests {
         c.reconnected();
         let screen = c.list("concierge", true, 1);
         assert!(!screen.contains("lc-serve up"), "{screen}");
+    }
+
+    #[test_id(t9suoj5)]
+    #[test]
+    fn a_topic_not_heard_again_loses_its_digest_and_replay_value_and_a_heard_one_keeps_them() {
+        let (mut c, _) = core();
+        c.add("release/active", "", false, true).unwrap();
+        c.add("host/pressure", "", false, true).unwrap();
+        say(&mut c, "release/active", json!({"release": "r1"}));
+        say(&mut c, "host/pressure", json!({"level": "ok"}));
+
+        c.reconnected();
+        assert!(say(&mut c, "host/pressure", json!({"level": "ok"})).lines.is_empty());
+        let out = c.synced();
+
+        assert!(out.changed && out.lines.is_empty() && out.unsubscribe.is_empty(), "{out:?}");
+        let saved = c.saved();
+        assert!(saved.subs[0].delivered.is_empty(), "{saved:?}");
+        assert!(saved.subs[1].delivered.contains_key("host/pressure"), "{saved:?}");
+        c.add("release/#", "", false, false).unwrap();
+        assert!(c.attach().lines.is_empty(), "the cleared value is not replayed");
+        assert!(say(&mut c, "host/pressure", json!({"level": "ok"})).lines.is_empty());
+        assert_eq!(say(&mut c, "release/active", json!({"release": "r1"})).lines.len(), 2);
+    }
+
+    #[test_id(tasv4qb)]
+    #[test]
+    fn a_pending_state_value_not_heard_again_leaves_its_batch_and_chatter_stays() {
+        let (mut c, clock) = core();
+        batched(&mut c, "release/active");
+        say(&mut c, "release/active", json!({"release": "r1"}));
+        c.reconnected();
+        c.synced();
+        assert_eq!(c.next_due_ms(), None);
+
+        batched(&mut c, "progress/+");
+        say(&mut c, "progress/sp-a", json!({"note": "n"}));
+        c.reconnected();
+        c.synced();
+        assert_eq!(at_due(&mut c, &clock).lines.len(), 1, "chatter is not retained, so not being resent says nothing");
+    }
+
+    #[test_id(t415935)]
+    #[test]
+    fn a_topic_cleared_after_it_was_heard_is_not_counted_as_heard() {
+        let (mut c, _) = core();
+        c.add("release/active", "", false, false).unwrap();
+        c.message("release/active", br#"{"release":"r1"}"#, false);
+        c.message("release/active", b"", false);
+        c.synced();
+        assert!(c.attach().lines.is_empty());
+        assert!(c.heard.is_empty());
     }
 }
