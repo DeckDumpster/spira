@@ -1141,16 +1141,6 @@ fn the_gated_item_reaches_the_gate_string_and_the_re_entry_env() {
     }
 }
 
-#[test_id(tpulkce)]
-#[test]
-fn the_trial_env_names_the_verdict_key_its_suite_records_are_filed_under() {
-    let f = Fake::new();
-    f.ancestor.set(true);
-    assert_eq!(f.run(), PASS);
-    let key = f.env_of(0, "SPIRA_GATE_KEY");
-    assert!(key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit()), "{key:?}");
-}
-
 #[test_id(t6392xf)]
 #[test]
 fn a_path_tail_entry_inside_a_release_is_no_verdict_naming_it_and_nothing_runs() {

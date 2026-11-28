@@ -100,7 +100,6 @@ const SEND_FLUSH: std::time::Duration = std::time::Duration::from_secs(5);
 struct Caller {
     source: &'static str,
     round: String,
-    gate: String,
     bead: String,
     repo: String,
 }
@@ -108,15 +107,16 @@ struct Caller {
 impl Caller {
     fn read(var: impl Fn(&str) -> Option<String>) -> Caller {
         let get = |k: &str| var(k).unwrap_or_default();
-        let round = get("SPIRA_ROUND_BATCH_ID");
+        use gate::engine::{BEAD_ENV, BRANCH_ENV, REPO_NAME_ENV};
+        let round = get(testenv::settings::ROUND_BATCH_ID_ENV);
         let source = if !round.is_empty() {
             "round"
-        } else if !get("SPIRA_GATE_BRANCH").is_empty() {
+        } else if !get(BRANCH_ENV).is_empty() {
             "gate"
         } else {
             "local"
         };
-        Caller { source, round, gate: get("SPIRA_GATE_KEY"), bead: get("SPIRA_GATE_BEAD"), repo: get("SPIRA_GATE_REPO_NAME") }
+        Caller { source, round, bead: get(BEAD_ENV), repo: get(REPO_NAME_ENV) }
     }
 }
 
@@ -160,7 +160,8 @@ fn send_test_results(endpoint: &str, rows: &[String], tree: &str, at: &Caller) {
             runner: runner.clone(),
             load1,
             source: at.source,
-            gate: at.gate.clone(),
+            // Nothing in a trial's environment names its verdict key.
+            gate: String::new(),
             bead: at.bead.clone(),
             repo: at.repo.clone(),
             tree: tree.to_string(),
@@ -413,10 +414,10 @@ mod record_tests_tests {
 
     #[test_id(txls862)]
     #[test]
-    fn a_suite_record_names_the_gate_or_round_its_environment_names() {
+    fn a_suite_records_source_bead_and_repo_come_from_the_gate_or_round_environment() {
         let env = |pairs: &'static [(&str, &str)]| Caller::read(|k| pairs.iter().find(|p| p.0 == k).map(|p| p.1.to_string()));
-        let gate = env(&[("SPIRA_GATE_BRANCH", "spira/sp-a"), ("SPIRA_GATE_KEY", "k1"), ("SPIRA_GATE_BEAD", "sp-a"), ("SPIRA_GATE_REPO_NAME", "r")]);
-        assert_eq!((gate.source, gate.gate.as_str(), gate.bead.as_str(), gate.repo.as_str(), gate.round.as_str()), ("gate", "k1", "sp-a", "r", ""));
+        let gate = env(&[("SPIRA_GATE_BRANCH", "spira/sp-a"), ("SPIRA_GATE_BEAD", "sp-a"), ("SPIRA_GATE_REPO_NAME", "r")]);
+        assert_eq!((gate.source, gate.bead.as_str(), gate.repo.as_str(), gate.round.as_str()), ("gate", "sp-a", "r", ""));
         let round = env(&[("SPIRA_ROUND_BATCH_ID", "b1")]);
         assert_eq!((round.source, round.round.as_str()), ("round", "b1"));
         assert_eq!(env(&[]).source, "local");

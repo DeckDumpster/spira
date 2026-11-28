@@ -126,7 +126,7 @@ not the release), never the PATH the gate inherited, so a bare tool name is the 
 first and the box's own tools after the system directories. Either `SPIRA_RELEASE` unset or
 a tail entry inside a release or a checkout is `NO_VERDICT reason=release-unset` before
 anything runs, and `SPIRA_RELEASE` is passed through. `HOME`, `TERM=dumb`, `SPIRA_GATE_REPO`, `SPIRA_GATE_REPO_NAME`,
-`SPIRA_GATE_BRANCH`, `SPIRA_GATE_BASE`, `SPIRA_GATE_BEAD` (empty if the caller set none), `SPIRA_GATE_KEY` (the verdict key, which gate-diag's `test.result` records carry), `SPIRA_GATE_SELECT_HEAD=<branch>`, `SPIRA_GATE_FILES`,
+`SPIRA_GATE_BRANCH`, `SPIRA_GATE_BASE`, `SPIRA_GATE_BEAD` (empty if the caller set none), `SPIRA_GATE_SELECT_HEAD=<branch>`, `SPIRA_GATE_FILES`,
 `SPIRA_GATE_STEPS` (an empty file per trial; the gate command appends `<step name>\t<unix epoch secs>` as each step starts, and the engine reads the longest step into gate.log's `slowest_step=<name>:<secs>` and the TSD row — the last step lasts until the gate phase ends; a command that writes nothing gives no field; a verdict other than PASS also keeps the phase's whole output as `tsd/gate-out-<ts>.log`, named by `out=<path>`, newest 50 kept),
 `SPIRA_GATE_EJECTED_SUITES`, `SPIRA_GATE_ALL` (default 0),
 `SPIRA_BATCH_MAXPAR`,

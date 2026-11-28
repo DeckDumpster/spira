@@ -83,6 +83,11 @@ macro_rules! mv {
     };
 }
 
+/// What a trial's environment names itself by; gate-diag's `test.result` records read them.
+pub const REPO_NAME_ENV: &str = "SPIRA_GATE_REPO_NAME";
+pub const BRANCH_ENV: &str = "SPIRA_GATE_BRANCH";
+pub const BEAD_ENV: &str = "SPIRA_GATE_BEAD";
+
 /// What the finish needs to know about how far the trial got.
 #[derive(Default)]
 struct State {
@@ -976,12 +981,10 @@ impl<'w, W: World> Trial<'w, W> {
                 e("TMPDIR", &tmpdir.to_string_lossy()),
                 e("TERM", "dumb"),
                 e("SPIRA_GATE_REPO", &repo.to_string_lossy()),
-                e("SPIRA_GATE_REPO_NAME", &name),
-                e("SPIRA_GATE_BRANCH", branch),
+                e(REPO_NAME_ENV, &name),
+                e(BRANCH_ENV, branch),
                 e("SPIRA_GATE_BASE", &base_rev),
-                e("SPIRA_GATE_BEAD", &self.s.bead),
-                // The trial's verdict key, which a test.result record names its gate by.
-                e("SPIRA_GATE_KEY", &self.s.key),
+                e(BEAD_ENV, &self.s.bead),
                 e("SPIRA_GATE_SELECT_HEAD", &br),
                 e(
                     "SPIRA_GATE_FILES",

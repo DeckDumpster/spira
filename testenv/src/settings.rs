@@ -180,6 +180,9 @@ where
         .map_err(|e| format!("{key}={trimmed:?} does not parse: {e}"))
 }
 
+/// Names the round a run belongs to.
+pub const ROUND_BATCH_ID_ENV: &str = "SPIRA_ROUND_BATCH_ID";
+
 impl Settings {
     /// `now` names a local run (SPIRA_BATCH_RUN_ID / GITHUB_RUN_ID are not registered config
     /// — see the module doc — so this is still a plain parameter, not a `cfg` read).
@@ -235,7 +238,7 @@ impl Settings {
             mail_cmd: path("SPIRA_BATCH_MAIL_CMD"),
             incident_cmd: path("SPIRA_BATCH_INCIDENT_CMD"),
             select_head: src.get("SPIRA_GATE_SELECT_HEAD"),
-            round_batch_id: src.get("SPIRA_ROUND_BATCH_ID"),
+            round_batch_id: src.get(ROUND_BATCH_ID_ENV),
             round_members: src.num("SPIRA_ROUND_MEMBERS").unwrap_or(0),
             run_id: src
                 .get("GITHUB_RUN_ID")
