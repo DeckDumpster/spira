@@ -119,7 +119,7 @@ struct Mem {
     log: Vec<Event>,
     commits: Vec<Turn>,
     state: BTreeMap<(String, String), StateRow>,
-    effects: BTreeMap<(String, String), (EffectRow, bool)>,
+    effects: BTreeMap<(String, String), EffectRow>,
     schedules: BTreeMap<String, (ScheduleRow, bool)>,
     poison: BTreeMap<StreamKey, Poison>,
 }
@@ -163,7 +163,7 @@ impl Journal for MemJournal {
         let m = self.lock();
         Ok(Boot {
             state: m.state.values().cloned().collect(),
-            effects: m.effects.values().filter(|(_, resolved)| !resolved).map(|(r, _)| r.clone()).collect(),
+            effects: m.effects.values().cloned().collect(),
             schedules: m.schedules.values().filter(|(_, fired)| !fired).map(|(r, _)| r.clone()).collect(),
         })
     }
@@ -178,15 +178,9 @@ impl Journal for MemJournal {
             m.state.remove(key);
         }
         for e in &turn.effects {
-            m.effects.insert((e.task.clone(), e.ekey.clone()), (e.clone(), false));
+            m.effects.insert((e.task.clone(), e.ekey.clone()), e.clone());
         }
-        for id in &turn.resolved {
-            for (row, resolved) in m.effects.values_mut() {
-                if &row.request_id == id {
-                    *resolved = true;
-                }
-            }
-        }
+        m.effects.retain(|_, row| !turn.resolved.contains(&row.request_id));
         for r in &turn.schedules {
             m.schedules.entry(r.id.clone()).or_insert((r.clone(), false));
         }

@@ -260,14 +260,14 @@ pub fn incident_labels(supplied: Option<&str>, scope: Option<&str>, incident_lab
 }
 
 /// Which lane a filing lands in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Lane {
     Plan,
     Incident,
 }
 
 /// The repository a filing is filed against, and the lane there.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Route {
     pub repo: String,
     pub lane: Lane,

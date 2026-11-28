@@ -294,9 +294,6 @@ impl Drop for Passing<'_> {
     }
 }
 
-/// Entries older than this are dropped from the effect ledger.
-const LEDGER_KEEP_SECS: u64 = 86_400;
-
 impl Effects {
     /// One structural pass: the reads, in this process, as a serialised `Observation`.
     fn reconcile_observe(&self, input: &str) -> Result<String, String> {
@@ -327,22 +324,18 @@ impl Effects {
         serde_json::to_string(&observation).map_err(|e| e.to_string())
     }
 
-    /// Runs `act` once per effect key: a restart re-issues an effect that has no outcome, and a
-    /// remedy or a mail must not go twice for it.
+    /// Runs `act` once per request id: a restart re-issues an effect that has no outcome, and a
+    /// remedy or a mail must not go twice for it. The act does not run unless the store says it has not.
     fn once(&self, key: &str, act: impl FnOnce() -> Result<String, String>) -> Result<String, String> {
-        let dir = self.world.run_dir.join("reconciler-effects.d");
-        let safe: String = key.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect();
-        if dir.join(&safe).exists() {
-            return Ok(format!("effect {key} already ran"));
+        let lc = spira_store::lc_call::LcClient::socket(&self.world.lc_socket);
+        match lc.answer(&["journal", "has-done", key]).map_err(|e| format!("effect {key}: cannot tell whether it already ran: {e}"))?.trim() {
+            "true" => return Ok(format!("effect {key} already ran")),
+            "false" => {}
+            other => return Err(format!("effect {key}: cannot tell whether it already ran: the store answered {other:?}")),
         }
         let out = act()?;
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(dir.join(&safe), "");
-        let old = std::time::SystemTime::now() - Duration::from_secs(LEDGER_KEEP_SECS);
-        for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-            if e.metadata().and_then(|m| m.modified()).is_ok_and(|t| t < old) {
-                let _ = std::fs::remove_file(e.path());
-            }
+        if let Err(e) = lc.answer(&["journal", "done", key]) {
+            eprintln!("spira-runtime: effect {key} ran, but the store did not record it: {e}");
         }
         Ok(out)
     }
@@ -620,5 +613,108 @@ mod own_unit_tests {
     #[test]
     fn skip_list_holds_the_installed_runtime_service_name() {
         assert_eq!(super::super::own_skip_units("prod"), vec!["spira-runtime-prod.service".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod once_tests {
+    use super::*;
+    use spira_lc::effect_ledger;
+    use spira_lc::keys;
+    use state_store::{Config, Contract, MemBackend, Object, Ports, Request, Txn};
+    use std::cell::Cell;
+
+    /// The store's `journal done|has-done` over an in-process store, behind the socket the real
+    /// client dials. `refuse` names an op it answers "cannot tell".
+    struct Store {
+        dir: testkit::TempDir,
+        raw: Contract<MemBackend>,
+    }
+
+    fn store(refuse: &'static str) -> Store {
+        let dir = testkit::TempDir::new("once-lc");
+        let backend = MemBackend::new();
+        let open = |b: MemBackend| Contract::open(b, Ports::virtual_clock(&runtime::ports::VirtualClock::new(1_000)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        let (served, raw) = (open(backend.clone()), open(backend));
+        let listener = std::os::unix::net::UnixListener::bind(dir.join("sock")).unwrap();
+        std::thread::spawn(move || {
+            let n = std::sync::atomic::AtomicU64::new(0);
+            runtime::socket::answer(&listener, &|argv| {
+                let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+                match argv.as_slice() {
+                    ["journal", op, _] if *op == refuse => Err(runtime::RuntimeError::cannot_tell("cannot tell: deadline")),
+                    ["journal", "done", id] => {
+                        let request = Request::new(&format!("done-{}", n.fetch_add(1, Ordering::SeqCst)), "test", "journal-done");
+                        Ok(effect_ledger::done(&served, id, &request).unwrap().to_string())
+                    }
+                    ["journal", "has-done", id] => Ok(effect_ledger::has_done(&served, id).unwrap().to_string()),
+                    other => Err(runtime::RuntimeError::refused(format!("not served: {other:?}"))),
+                }
+            })
+        });
+        Store { dir, raw }
+    }
+
+    impl Store {
+        fn effects(&self) -> Effects {
+            let run_dir = self.dir.join("run");
+            std::fs::create_dir_all(&run_dir).unwrap();
+            Effects { world: world::World { run_dir, lc_socket: self.dir.join("sock"), ..Default::default() }, ..Default::default() }
+        }
+
+        fn write(&self, id: &str, txn: Txn) {
+            assert!(self.raw.txn(&txn, &Request::new(id, "test", "raw")).unwrap().succeeded);
+        }
+
+        fn open_effect(&self, id: &str) {
+            self.write("open", Txn::new().put(&keys::runtime(effect_ledger::OPEN_EFFECT, &[id]), Object::new(serde_json::json!({}))));
+        }
+
+        /// What the resolving turn does to the two keys the ledger reads.
+        fn resolve(&self, id: &str) {
+            self.write("resolve", Txn::new().delete(&keys::runtime(effect_ledger::OPEN_EFFECT, &[id])).delete(&keys::runtime(effect_ledger::DONE, &[id])));
+        }
+    }
+
+    fn run_once(e: &Effects, ran: &Cell<u32>) -> Result<String, String> {
+        e.once("r1", || {
+            ran.set(ran.get() + 1);
+            Ok("did it".into())
+        })
+    }
+
+    #[test_id(tktgwoa)]
+    #[test]
+    fn an_act_runs_once_though_the_run_directory_is_lost() {
+        let (store, ran) = (store(""), Cell::new(0));
+        store.open_effect("r1");
+        let e = store.effects();
+        assert_eq!(run_once(&e, &ran), Ok("did it".into()));
+        std::fs::remove_dir_all(&e.world.run_dir).unwrap();
+        assert_eq!(run_once(&store.effects(), &ran), Ok("effect r1 already ran".into()));
+        assert_eq!(ran.get(), 1);
+        store.resolve("r1");
+        let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket);
+        assert_eq!(lc.answer(&["journal", "done", "r1"]).unwrap(), "false");
+        assert!(!effect_ledger::has_done(&store.raw, "r1").unwrap(), "a mark written after the resolve would never be deleted");
+    }
+
+    #[test_id(t2o1w2j)]
+    #[test]
+    fn an_act_does_not_run_while_the_store_cannot_say_whether_it_already_did() {
+        let (store, ran) = (store("has-done"), Cell::new(0));
+        store.open_effect("r1");
+        let err = run_once(&store.effects(), &ran).unwrap_err();
+        assert!(err.contains("cannot tell"), "{err}");
+        assert_eq!(ran.get(), 0);
+    }
+
+    #[test_id(tttdf3t)]
+    #[test]
+    fn an_act_that_ran_keeps_its_answer_when_the_store_cannot_record_it() {
+        let (store, ran) = (store("done"), Cell::new(0));
+        store.open_effect("r1");
+        assert_eq!(run_once(&store.effects(), &ran), Ok("did it".into()));
+        assert_eq!(ran.get(), 1);
     }
 }

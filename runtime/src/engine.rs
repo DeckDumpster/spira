@@ -1784,7 +1784,8 @@ impl Executor for Engine {
             correlation: p.correlation.clone(),
         };
         self.inherit_wake(&ev.id, &EventId(key.into()));
-        if self.memory_only.remove(key) {
+        let journaled = !self.memory_only.remove(key);
+        if !journaled {
             self.enqueue_local(ev.clone());
         } else {
             self.resolves.insert(ev.id.clone(), key.into());
@@ -1801,19 +1802,19 @@ impl Executor for Engine {
             });
         }
         let w = self.unit("effect", Some(&ev));
+        w.set("task", p.task.as_str());
         w.set("effect.kind", p.spec.name.as_str());
+        w.set("effect.key", p.spec.key.as_str());
         w.set("effect.idempotency_key", key);
+        w.set("effect.requested_at", p.requested_at);
+        w.set("effect.journaled", journaled);
         w.set("effect.deadline_at", p.deadline_at);
         w.set("effect.outcome", ev.kind.tag.trim_start_matches("effect."));
         if matches!(outcome, Outcome::Failed(_) | Outcome::Lost) {
             w.set("effect.detail", clip(&outcome.detail(), EFFECT_DETAIL_MAX));
         }
         w.set("effect.attempt", self.attempts.remove(key).unwrap_or(1));
-        let children = self.children.remove(key).unwrap_or_default();
-        if !children.is_empty() {
-            w.set("task", p.task.as_str());
-        }
-        for (program, n) in children {
+        for (program, n) in self.children.remove(key).unwrap_or_default() {
             w.set(&format!("effect.children.{program}"), n);
         }
         w.set("duration_ms", ev.at.saturating_sub(p.requested_at));
@@ -1964,6 +1965,56 @@ mod tests {
         assert!(long.starts_with(clipped.as_str()));
         assert_eq!(details[2], None);
         assert_eq!(details[3], Some(LOST_AT_RESTART.into()));
+    }
+
+    struct Writer;
+
+    impl Handler for Writer {
+        fn interests(&self) -> &[EventKindTag] {
+            &["boot"]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
+            vec![Command::Effect(EffectSpec::keyed("write", "write:key", "", 10_000))]
+        }
+    }
+
+    #[test_id(tj5k9hu)]
+    #[test]
+    fn a_journaled_effects_record_names_its_task_key_request_and_times() {
+        let (clock, sink) = (VirtualClock::new(5_000), crate::wide::MemSink::new());
+        let mut e = Engine::open(MemJournal::new(), Arc::new(clock.clone()), vec![Registration::new("writer", Writer)], 1).unwrap().with_sink(sink.clone());
+        e.start("s", EventKind::new("boot", ""));
+        e.run_until_idle().unwrap();
+        let request = e.pending_effects().pop().expect("the write is pending").key;
+        clock.advance(250);
+        assert!(e.complete(&request, Outcome::Succeeded(String::new())).unwrap());
+        let record = sink.records().into_iter().find(|r| r.get("unit") == Some(&"effect".into())).expect("one effect record");
+        let want: [(&str, Value); 8] = [
+            ("task", "writer".into()),
+            ("effect.key", "write:key".into()),
+            ("effect.idempotency_key", request.as_str().into()),
+            ("effect.outcome", "succeeded".into()),
+            ("effect.requested_at", 5_000u64.into()),
+            ("event.at", 5_250u64.into()),
+            ("duration_ms", 250u64.into()),
+            ("effect.journaled", true.into()),
+        ];
+        for (field, value) in want {
+            assert_eq!(record.get(field), Some(&value), "{field}: {record:?}");
+        }
+    }
+
+    #[test_id(tmkma6k)]
+    #[test]
+    fn a_succeeded_probes_record_says_it_was_not_journaled() {
+        let sink = crate::wide::MemSink::new();
+        let mut e = Engine::open(MemJournal::new(), Arc::new(VirtualClock::new(0)), vec![Registration::new("asker", Asker)], 1).unwrap().with_sink(sink.clone());
+        e.start("s", EventKind::new("boot", ""));
+        e.run_until_idle().unwrap();
+        let probe = e.pending_effects().pop().expect("a probe is pending").key;
+        assert!(e.complete(&probe, Outcome::Succeeded(String::new())).unwrap());
+        let record = sink.records().into_iter().find(|r| r.get("unit") == Some(&"effect".into())).expect("one effect record");
+        assert_eq!(record.get("effect.journaled"), Some(&false.into()), "{record:?}");
     }
 
     /// A tick that re-arms itself every 30 s, and optionally asks a due time and an act.

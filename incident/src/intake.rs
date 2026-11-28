@@ -339,14 +339,10 @@ pub fn retry_delay(tries: u32) -> i64 {
     (RETRY_FIRST_SECS << tries.min(6)).min(RETRY_MAX_SECS)
 }
 
-/// The repository `payload` files into, whose lanes decide whether a refusal still stands:
-/// a repository its labels name, else [`decide::route`]'s answer.
+/// The repository `payload` files into, whose lanes decide whether a refusal still stands.
 pub fn route_repo(env: &Env, payload: &Payload) -> String {
-    if let Some(labelled) = payload.labels.split(',').find_map(|l| l.trim().strip_prefix("repo:")) {
-        return labelled.to_string();
-    }
-    let plan_label = env.plan_labels.as_deref().and_then(|l| l.rsplit(',').next()).unwrap_or_default();
-    decide::route(&payload.reference, &payload.labels, payload.repo.as_deref(), &env.home_repo, &env.known_repos, plan_label).repo
+    let cfg = FileConfig { repo_declared: payload.repo.as_deref(), ..env.file_config("") };
+    run::destination(&cfg, &payload.reference, &payload.labels).repo
 }
 
 fn payload_of(env: &Env, reference: &str, title: &str, body: &[u8], unit: &str, path: &str) -> Payload {
@@ -1088,6 +1084,26 @@ mod tests {
         let bd = bd_refusing("bead: repo:dumpstar does not admit lane plan — does not admit lane");
         assert!(!file_body(&env, &bd, &FakeMailer::default(), &FixedClock(NOW), "red", b"p".to_vec()));
         assert_eq!(bd.incidents.only().lanes.as_deref(), Some("groom"));
+    }
+
+    #[test_id(ticbah7)]
+    #[test]
+    fn a_batch_of_lane_refused_references_does_not_starve_a_newer_one() {
+        let dir = testkit::TempDir::new("incident-batch-starve");
+        let env = env_in(&dir);
+        let bd = bd_refusing(WALLED);
+        for (i, reference) in ["incident:walled-a", "incident:walled-b", "incident:admitted"].iter().enumerate() {
+            bd.incidents.now.set(NOW + i as i64);
+            raised(&bd, reference);
+        }
+        let first = pass(&env, &bd, "plan", NOW + 10, 2);
+        assert_eq!((first.failed.len(), first.held_back), (2, 1), "{first:?}");
+        let admitting = FakeBd::new();
+        admitting.incidents.held.replace(bd.incidents.held.take());
+        let second = pass(&env, &admitting, "plan", NOW + 20, 2);
+        assert_eq!((second.filed, second.held_back), (1, 0), "{second:?}");
+        let created: Vec<String> = admitting.created.borrow().iter().map(|c| c.1.clone()).collect();
+        assert_eq!(created, ["incident:admitted"], "the refused rows take no slot while their lanes stand");
     }
 
     // covers: UC-ops-detection-remediation-05
