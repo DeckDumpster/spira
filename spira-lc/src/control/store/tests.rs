@@ -151,12 +151,12 @@ fn a_pass_that_changes_no_judgement_leaves_the_head_and_every_readiness_key_alon
 #[test_id(t97denn)]
 #[test]
 fn a_pass_puts_exactly_the_record_whose_claim_fields_changed() {
-    let gate = spira_config::edges::gate(BeadState::Working, None, false);
-    let changes: [(&str, Box<dyn Fn(&mut Judged)>); 4] = [
-        ("claimable", Box::new(|j| j.claimable = false)),
-        ("blocked_by", Box::new(|j| j.blocked_by = vec!["sp-z".into()])),
-        ("verdict", Box::new(|j| j.verdict = Some("held".into()))),
-        ("gates", Box::new(move |j| j.gates = [("sp-z".to_string(), Some(gate.clone()))].into())),
+    type Change = fn(&mut Judged);
+    let changes: [(&str, Change); 4] = [
+        ("claimable", |j| j.claimable = false),
+        ("blocked_by", |j| j.blocked_by = vec!["sp-z".into()]),
+        ("verdict", |j| j.verdict = Some("held".into())),
+        ("gates", |j| j.gates = [("sp-z".to_string(), Some(spira_config::edges::gate(BeadState::Working, None, false)))].into()),
     ];
     for (field, change) in changes {
         let (s, _, _) = fresh();
