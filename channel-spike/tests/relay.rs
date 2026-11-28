@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ports::{SeededRng, VirtualClock};
 use serde_json::{json, Value};
@@ -71,20 +71,20 @@ impl World {
 
     /// Returns once `run` counts `want` readers, or once the relay has returned and so will
     /// never be one; no delivery is replayed to a reader that attaches after it.
-    fn readers(&self, want: usize, relay_gone: impl Fn() -> bool) {
-        let began = Instant::now();
-        loop {
-            let screen = match spira_sub::client::call(&self.socket(), &Request::List) {
+    fn readers(&self, want: usize, relay_gone: impl Fn() -> bool + Send + 'static) {
+        let (socket, want) = (self.socket(), format!("readers {want}"));
+        let (counted, count) = channel();
+        std::thread::spawn(move || loop {
+            let screen = match spira_sub::client::call(&socket, &Request::List) {
                 Ok(Reply::Done { out, .. }) => out,
                 other => panic!("list: {other:?}"),
             };
-            if screen.contains(&format!("readers {want}")) || relay_gone() {
-                return;
+            if screen.contains(&want) || relay_gone() {
+                return counted.send(());
             }
-            // clock-safe: only caps the wait for the reader count `run` reports
-            assert!(began.elapsed() < FAILSAFE, "no notification arrived: the relay attached no follow; {screen}");
             std::thread::yield_now();
-        }
+        });
+        count.recv_timeout(FAILSAFE).expect("no notification arrived: the relay attached no follow");
     }
 }
 
@@ -113,7 +113,7 @@ fn a_delivery_reaches_the_mcp_client_as_one_channel_notification_with_the_follow
     let (relay_in, mut client_out) = std::io::pipe().unwrap();
     let (client_in, relay_out) = std::io::pipe().unwrap();
     let socket = world.socket();
-    let relay = std::thread::spawn(move || channel_spike::relay(&socket, BufReader::new(relay_in), relay_out));
+    let relay = Arc::new(std::thread::spawn(move || channel_spike::relay(&socket, BufReader::new(relay_in), relay_out)));
     let from_relay = lines(client_in);
     let next = || -> Value {
         let line = from_relay.recv_timeout(FAILSAFE).expect("no notification arrived");
@@ -129,7 +129,8 @@ fn a_delivery_reaches_the_mcp_client_as_one_channel_notification_with_the_follow
     // A relay that has already gone is judged by the missing notification, not by this write.
     let _ = writeln!(client_out, "{}", json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
 
-    world.readers(2, || relay.is_finished());
+    let relaying = relay.clone();
+    world.readers(2, move || relaying.is_finished());
     world.ok(&["add", "bead/+/state", "--note", "n"]);
     let options = Options::new(broker.socket(), Arc::new(VirtualClock::new(7_000)), Box::new(SeededRng::new(1)));
     let publisher = Publisher::with("t", options).unwrap();
