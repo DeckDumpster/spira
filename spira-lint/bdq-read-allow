@@ -26,7 +26,6 @@
 2 groomer/src/bd.rs
 1 groomer/src/section.rs
 6 incident/src/stub_bd.rs
-1 kit-bump/src/real.rs
 1 lifecycle-guard/src/bd_read.rs
 1 lifecycle-guard/src/bd_status.rs
 1 lifecycle-guard/src/rules.rs

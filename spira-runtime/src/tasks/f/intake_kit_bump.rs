@@ -1,7 +1,5 @@
-//! `intake.kit_bump`: a new release of the kit crate becomes a bump bead per site. Replaces
-//! `spira-kit-bump-prod` (`bin/kit-bump pass --config run/kit-bump.conf --state
-//! run/kit-bump.state`). Pattern P1. Contract:
-//! `wiki/projects/spira/designs/tasks/intake-kit-bump.md`.
+//! `intake.kit_bump`: a new release of the kit crate becomes a bump bead per site. Pattern P1.
+//! Contract: `wiki/projects/spira/designs/tasks/intake-kit-bump.md`.
 //!
 //! # Tick
 //!
@@ -14,16 +12,14 @@
 //! index, in-process over HTTP as the heartbeat does; a 404 or 410 means nothing is published),
 //! `sites` (`git show <ref>:<file>` and the sibling `Cargo.lock`, parsed by `parse_requirement`
 //! and `parse_locked`; git stays a class B child) and `open` (the carried bump joined with the
-//! `LcClient` show). Sites come from `SPIRA_KIT_SITES` resolved against the repo map; the
-//! rendered conf file retires.
+//! `LcClient` show). Sites come from `SPIRA_KIT_SITES` resolved against the repo map.
 //!
 //! # Decide
 //!
-//! The pure core is `kit_bump::pass` and `site_pass` with `title`, `body` and `semver::admits`.
+//! The pure core is [`decide`] with `kit_bump`'s `site_specs`, `title`, `body` and `semver::admits`.
 //! Per site, against the newest release: locked at or past it is current; an open bump at that
 //! target is current; an open bump at an older target is amended; otherwise file, breaking when
 //! the requirement does not admit the release. Carried state is `intake.kit_bump.state { bumps }`.
-//! Fixtures port `kit-bump/src/tests.rs` (6 cases) and the two `main.rs` config tests.
 //!
 //! # Act
 //!
@@ -46,14 +42,15 @@
 //!
 //! # Replaces
 //!
-//! `spira-kit-bump-prod.service` and `.timer` and the rendered `run/kit-bump.conf`; children
+//! The `spira-kit-bump-prod` unit and the `kit-bump` binary, with its rendered conf file and its
+//! state file under `$SPIRA_RUN`: all gone, and install removes both files. Its children were
 //! `curl`, `git show` ×2 per site, `spira-lc show`, `bead.sh file/amend/label`. Pinned config:
 //! [`KEYS`] (`SPIRA_KIT_PERSONA` stands in for the `--persona` flag's `builder` default).
 //!
 //! # Reverse
 //!
-//! Release rollback restores the unit; the carry renders back to `kit-bump.state`
-//! (`site\tid\ttarget`). Observe mode shadows `file` and `amend`.
+//! None for the binary or its files: the carry is the only record and nothing renders it back.
+//! Observe mode shadows `file` and `amend`.
 
 use std::collections::BTreeMap;
 
@@ -140,7 +137,7 @@ pub struct Bump {
 const STORE_DEADLINE_MS: u64 = 120_000;
 
 /// The pure decision, with `config` the pinned [`KEYS`]: the next carry and the acts. Per site,
-/// as `kit_bump::site_pass` judges it against the newest release: locked at or past it is
+/// judged against the newest release: locked at or past it is
 /// current; an open bump at that target is current; an open bump at an older target is amended
 /// (its carried target moves now); otherwise a bump is filed, breaking when the requirement does
 /// not admit the release, and carried once the file answers its id. A bump the store reads as
@@ -206,7 +203,7 @@ const TERMINAL: [&str; 4] = ["LANDED", "SUPERSEDED", "DROPPED", "DONE"];
 
 fn real(e: &crate::Effects, persona: &str) -> kit_bump::real::Real {
     let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket);
-    kit_bump::real::Real::new(String::new(), String::new(), e.world.run_dir.join("kit-bump.state"), persona.into(), lc)
+    kit_bump::real::Real::new(String::new(), persona.into(), lc)
 }
 
 /// `intake.kit_bump.observe`: the newest release over HTTP, each site's requirement and locked
@@ -258,14 +255,14 @@ fn lib_site(b: &Bump) -> kit_bump::Site {
 /// `intake.kit_bump.file`: the bump bead for the site, labelled `kit-bump`; answers its id.
 pub fn run_file(e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
     let b: Bump = serde_json::from_str(&s.input).map_err(|e| format!("file input: {e}"))?;
-    real(e, &b.persona).file_bump(&lib_site(&b), &b.title, &b.body, &b.target)
+    real(e, &b.persona).file_bump(&lib_site(&b), &b.title, &b.body)
 }
 
 /// `intake.kit_bump.amend`: the open bump retargeted at the release.
 pub fn run_amend(e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
     let b: Bump = serde_json::from_str(&s.input).map_err(|e| format!("amend input: {e}"))?;
     let id = b.id.clone().ok_or("an amend names no bump")?;
-    real(e, &b.persona).amend_bump(&lib_site(&b), &kit_bump::Open { id: id.clone(), target: String::new() }, &b.body, &b.target).map(|()| id)
+    real(e, &b.persona).amend_bump(&kit_bump::Open { id: id.clone() }, &b.body, &b.target).map(|()| id)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

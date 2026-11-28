@@ -1074,11 +1074,10 @@ fn run_declared(opts: Opts) -> ExitCode {
         for (from, to) in spira_config::build_dir::migrate_flat(&spira_config::build_dir::configured_bases()) {
             info(&spira_config::build_dir::describe_move(&from, to.as_deref()));
         }
-        match install::kit_bump::install(Path::new(&host.run), Path::new(&host.home), &|k| spira_config::process::cfg(k)) {
-            Ok(Some(p)) => println!("installed {}", p.display()),
-            Ok(None) => skip("SPIRA_KIT_REGISTRY is empty — kit-bump.conf not written, any stale one removed"),
+        match install::kit_bump::remove_retired(Path::new(&host.run)) {
+            Ok(removed) => removed.iter().for_each(|p| info(&format!("removed the retired {}", p.display()))),
             Err(e) => {
-                eprintln!("install: kit-bump.conf: {e}");
+                eprintln!("install: {e}");
                 return ExitCode::from(2);
             }
         }

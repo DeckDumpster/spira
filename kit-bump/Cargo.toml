@@ -3,15 +3,11 @@ name = "kit-bump"
 version = "0.1.0"
 edition = "2021"
 autotests = false
-description = "kit-bump — files one bump bead per consuming site whose pinned kit commit is behind the kit's landing tip, and amends the open one when the kit lands again."
+description = "kit-bump — what intake.kit_bump reads of the kit's releases and consuming sites, and how it files and amends their bump beads."
 
 [lib]
 name = "kit_bump"
 path = "src/lib.rs"
-
-[[bin]]
-name = "kit-bump"
-path = "src/main.rs"
 
 [[test]]
 name = "no_fork_edges"
@@ -19,13 +15,11 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["bead/integration", "install/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
+integration = ["bead/integration", "spira-config/integration", "spira-store/integration", "testkit/integration", "spira-test-id/integration"]
 [dependencies]
 bead = { path = "../bead" }
 spira-config = { path = "../spira-config" }
 spira-store = { path = "../spira-store" }
-install = { path = "../install" }
-spira-otel = { path = "../spira-otel" }
 serde_json = "1"
 ureq = { version = "2", default-features = false, features = ["tls"] }
 
