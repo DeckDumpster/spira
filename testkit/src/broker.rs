@@ -63,7 +63,7 @@ pub struct Subscriber {
 }
 
 enum Link {
-    V3(rumqttc::Client, rumqttc::Connection),
+    V3(rumqttc::Client, Box<rumqttc::Connection>),
     /// The client is held because dropping it ends the connection.
     V5(#[allow(dead_code)] rumqttc::v5::Client, Box<rumqttc::v5::Connection>),
 }
@@ -119,7 +119,7 @@ impl Subscriber {
                 other => panic!("the broker never acknowledged the subscription: {other:?}"),
             }
         }
-        Subscriber { link: Link::V3(client, connection), early }
+        Subscriber { link: Link::V3(client, Box::new(connection)), early }
     }
 
     /// [`to`](Subscriber::to) over MQTT 5, so each message arrives with its user properties.
