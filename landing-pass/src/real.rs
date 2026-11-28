@@ -240,11 +240,18 @@ impl<'a> RealLib<'a> {
         false
     }
     fn content_on_base_checked(&self, id: &str, proof: &str) -> bool {
-        let done = self.lc().and_then(|c| spira_store::lifecycle_row::content_on_base_on(&c, id, proof, "landing-pass"));
-        if let Err(e) = &done {
-            self.seam.out.log(&format!("landing-pass: {id}: LIFECYCLE: spira-lc content-on-base did not happen: {}", e.trim()));
+        use spira_store::lifecycle_row::{content_on_base_on, LandedRecord};
+        match self.lc().and_then(|c| content_on_base_on(&c, id, proof, "landing-pass")) {
+            Ok(LandedRecord::Recorded) => true,
+            Ok(LandedRecord::Nothing { state }) => {
+                self.seam.out.log(&format!("landing-pass: {id}: already {state} — no ContentOnBase sent"));
+                false
+            }
+            Err(e) => {
+                self.seam.out.log(&format!("landing-pass: {id}: LIFECYCLE: spira-lc content-on-base did not happen: {}", e.trim()));
+                false
+            }
         }
-        done.is_ok()
     }
 
     /// lib.sh `ask_already_open <subject>` (sp-31hjr) — the strongest dedupe is "is it
@@ -552,6 +559,10 @@ impl<'a> Lib for RealLib<'a> {
     /// `hel prune <repo>`, in-process: hel's own worktree prune, logged to its reap log.
     fn content_on_base(&self, id: &str, proof: &str) -> bool {
         self.content_on_base_checked(id, proof)
+    }
+    fn reap_landed(&self, id: &str, branch: &str, repo: &Path, why: &str) -> Result<(), String> {
+        let status_file = std::env::var("SPIRA_STATUS_FILE").ok();
+        crate::land_verify::hel_reap(status_file.as_deref(), id, branch, &repo.to_string_lossy(), why)
     }
     fn prune_worktrees(&self, repo: &Path) {
         let _ = hel::reap::prune_worktrees(&hel::real::reaplog_path_in(&self.s.run), repo);
@@ -1620,6 +1631,25 @@ mod store_tests {
         let want = format!("event bead sp-a --expect SUBMITTED --version 7 --actor landing-pass --kind {{\"ContentOnBase\":{{\"proof\":\"{proof}\"}}}}");
         assert!(seen.contains(&want), "{seen:?}");
         assert!(!seen.iter().any(|l| l.starts_with("content-on-base")), "{seen:?}");
+    }
+
+    #[test_id(trlahl0)]
+    #[test]
+    fn a_content_on_base_for_a_landed_row_sends_no_event_and_says_it_is_already_landed() {
+        let (s, c) = store(|a| match a[0].as_str() {
+            "show" => (0, r#"{"bead":{"bead_id":"sp-a","state":"LANDED","version":8},"delivery":null}"#.into()),
+            "event" => (3, "refused: Terminal".into()),
+            _ => (2, "cannot tell".into()),
+        });
+        let t = testkit::TempDir::new("landing-pass-cob-landed");
+        let out = Reporter::capture(None);
+        let lib = RealLib { seam: SeamRunner { home: t.path().to_path_buf(), out: &out }, s: Settings::for_run(t.path().to_path_buf()), beads: beads(&c) };
+        assert!(!lib.content_on_base("sp-a", "p"));
+        let seen = s.seen.lock().unwrap();
+        assert!(!seen.iter().any(|l| l.starts_with("event bead")), "{seen:?}");
+        let lines = out.lines();
+        assert!(lines.iter().any(|l| l.contains("landing-pass: sp-a: already LANDED — no ContentOnBase sent")), "{lines:?}");
+        assert!(!lines.iter().any(|l| l.contains("did not happen")), "{lines:?}");
     }
 
     #[test_id(tpeotxf)]

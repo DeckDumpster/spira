@@ -299,6 +299,10 @@ enum BranchVerdict { Gone, NotClosed, WrongRepo, Superseded, CutoverRound, Eject
 
 For each branch, in order (`landing.run` repo/branch):
 
+0. The row is LANDED and the base holds the branch (merged, or its content) → reap it in this
+   pass through hel's `reap-landed-branch`, which keeps its own refusals; not a movement. Refused
+   → "left for the Hel", and the steps below run. DROPPED, SUPERSEDED and DONE are the Hel's.
+   `ContentOnBase` is never sent to a terminal row.
 1. Gone since enumeration → one of three lines (tip on base / not on base / unknown); skip.
 2. Not closed → "not landed — its bead is S, held by a live dwarf | and no dwarf holds it".
 3. Bead's repo path ≠ this path → WrongRepo line. Superseded → line. Labelled

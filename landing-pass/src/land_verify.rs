@@ -164,7 +164,7 @@ fn bdq_close(id: &str, reason: &str) -> bool {
 /// hel's `reap-landed-branch` (`[--status-from <f>] <id> <branch> <repo> <why>`), in-process
 /// through `hel::verbs`: `Ok(())` sent, `Err(why)` otherwise (failed, refused or
 /// certified-queued — each "left for the Hel" from here).
-fn hel_reap(status_file: Option<&str>, id: &str, branch: &str, repo: &str, why: &str) -> Result<(), String> {
+pub(crate) fn hel_reap(status_file: Option<&str>, id: &str, branch: &str, repo: &str, why: &str) -> Result<(), String> {
     hel::verbs::reap_landed_branch(status_file, id, branch, repo, why)
 }
 

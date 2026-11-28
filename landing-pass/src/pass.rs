@@ -508,7 +508,20 @@ impl<'a> Pass<'a> {
         let repo = w.repo;
         let name = &repo.name;
         let id = br.trim_start_matches("spira/");
+        let tip = w.enum_tip.get(br).map(String::as_str).unwrap_or_default();
 
+        // Only LANDED: the other terminal states are the Hel's to judge, under its archive rules.
+        if w.beads.get(id).is_some_and(|b| b.state == "LANDED")
+            && (w.merged.contains(br) || self.content_on_base(repo, br, tip, &w.base_fq))
+        {
+            match self.lib.reap_landed(id, br, &repo.path, &format!("LANDED; content on {}", w.base)) {
+                Ok(()) => {
+                    self.log(&format!("CHECK6 {id}: {br} is LANDED and on {} — reaped", w.base));
+                    return Screen::Done(Flow::Next);
+                }
+                Err(e) => self.log(&format!("CHECK6 {id}: {br} is LANDED — not reaped ({e}), left for the Hel")),
+            }
+        }
         if w.beads.get(id).is_some_and(|b| b.handed_on()) && w.enum_tip.get(br).is_some_and(|tip| self.files.content_settled(br, tip)) {
             self.settled_from_memory.set(self.settled_from_memory.get() + 1);
             return Screen::Done(Flow::Next);
@@ -565,7 +578,6 @@ impl<'a> Pass<'a> {
             self.log(&format!("CHECK6 {id}: {br} is {} — the batcher's now, not certified again", bead.state));
             return Screen::Done(Flow::Next);
         }
-        let tip = w.enum_tip.get(br).map(String::as_str).unwrap_or_default();
         if w.merged.contains(br) || self.content_on_base(repo, br, tip, &w.base_fq) {
             self.settle_content_on_base(w, br, id, bead);
             return Screen::Done(Flow::Next);

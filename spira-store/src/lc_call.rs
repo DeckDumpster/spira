@@ -1122,7 +1122,7 @@ mod tests {
         assert_eq!(crate::lc_state::row_on(&c, "sp-zz").unwrap(), None, "exit 1 is no row");
         crate::lifecycle_row::set_express_on(&c, "sp-a", true).unwrap();
         assert!(crate::lifecycle_row::set_express_on(&c, "sp-zz", true).is_err(), "no row is nothing to mark");
-        crate::lifecycle_row::content_on_base_on(&c, "sp-a", "p", "x").unwrap();
+        assert_eq!(crate::lifecycle_row::content_on_base_on(&c, "sp-a", "p", "x"), Ok(crate::lifecycle_row::LandedRecord::Recorded));
         assert_eq!(launched(), before, "no program ran");
         crate::lc_state::list_ids_on(&c, &["sp-a".to_string(), "sp-b".to_string()]).unwrap();
         let seen = seen.lock().unwrap();

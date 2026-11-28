@@ -192,6 +192,7 @@ impl Git for FakeGit {
 #[derive(Default)]
 struct FakeLib {
     content_refused: Cell<Option<i32>>,
+    reap_refused: RefCell<Option<String>>,
     calls: RefCell<Vec<String>>,
     rebase_fail: RefCell<HashMap<String, Rebase>>,
     recut: RefCell<Option<Recut>>,
@@ -307,6 +308,13 @@ impl Lib for FakeLib {
     fn content_on_base(&self, id: &str, proof: &str) -> bool {
         self.rec(format!("content_on_base {id} {proof}"));
         self.content_refused.get().is_none()
+    }
+    fn reap_landed(&self, id: &str, branch: &str, _: &Path, why: &str) -> Result<(), String> {
+        self.rec(format!("reap_landed {id} {branch} {why}"));
+        match self.reap_refused.borrow().clone() {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
     fn prune_worktrees(&self, _: &Path) {
         self.rec("prune_worktrees".into());
@@ -1373,13 +1381,71 @@ fn a_settled_branch_costs_no_git_call_and_the_walk_line_counts_it() {
 #[test]
 fn a_merged_unsettled_branch_of_a_terminal_bead_settles_from_the_merged_read() {
     let h = H::new(LandMode::Queue);
-    h.bead("sp-l", "LANDED", &[]);
+    h.bead("sp-l", "DONE", &[]);
     h.git.add("spira/sp-l", "t5");
     h.git.merged.borrow_mut().insert("spira/sp-l".into());
     h.git.content.borrow_mut().insert("spira/sp-l".into());
     h.run();
     assert!(Files::new(&h.s.run).content_settled("spira/sp-l", "t5"));
     assert!(!h.git.called("content_on_base", "spira/sp-l") && !h.git.called("rev_parse", "spira/sp-l"), "{:?}", h.git.calls.borrow());
+}
+
+#[test_id(t4x817d)]
+#[test]
+fn a_merged_branch_of_a_landed_bead_is_reaped_in_the_pass_and_sends_no_content_on_base() {
+    let h = H::new(LandMode::Queue);
+    h.bead("sp-l", "LANDED", &[]);
+    h.git.add("spira/sp-l", "t5");
+    h.git.merged.borrow_mut().insert("spira/sp-l".into());
+    h.run();
+    assert_eq!(h.lib.count("reap_landed sp-l spira/sp-l LANDED; content on origin/main"), 1, "{:?}", h.lib.calls.borrow());
+    assert_eq!(h.lib.count("content_on_base sp-l"), 0, "{:?}", h.lib.calls.borrow());
+    assert!(h.logged("CHECK6 sp-l: spira/sp-l is LANDED and on origin/main — reaped"), "{:?}", h.out.lines());
+    assert_eq!(h.mailbox(), "", "a reap is not a movement");
+    h.git.refs.borrow_mut().clear();
+    h.git.calls.borrow_mut().clear();
+    h.run();
+    assert!(!h.git.called("", "spira/sp-l"), "{:?}", h.git.calls.borrow());
+    assert_eq!(h.lib.count("reap_landed"), 1, "{:?}", h.lib.calls.borrow());
+}
+
+#[test_id(tkk31qz)]
+#[test]
+fn a_landed_branch_whose_content_is_on_the_base_unmerged_is_reaped_even_when_settled_before() {
+    let h = H::new(LandMode::Queue);
+    h.bead("sp-l", "LANDED", &[]);
+    h.git.add("spira/sp-l", "t5");
+    h.git.content.borrow_mut().insert("spira/sp-l".into());
+    Files::new(&h.s.run).settle_content("spira/sp-l", "t5");
+    h.run();
+    assert_eq!(h.lib.count("reap_landed sp-l spira/sp-l"), 1, "{:?}", h.lib.calls.borrow());
+}
+
+#[test_id(tkvlxw9)]
+#[test]
+fn a_landed_branch_off_the_base_is_not_reaped() {
+    let h = H::new(LandMode::Queue);
+    h.bead("sp-l", "LANDED", &[]);
+    h.git.add("spira/sp-l", "t5");
+    h.run();
+    assert!(!h.lib.has("reap_landed"), "{:?}", h.lib.calls.borrow());
+    assert!(h.logged("spira/sp-l is LANDED — the batcher's now"), "{:?}", h.out.lines());
+}
+
+#[test_id(tk7v29q)]
+#[test]
+fn a_landed_branch_whose_reap_is_refused_is_left_for_the_hel_and_settles_as_before() {
+    let h = H::new(LandMode::Queue);
+    h.bead("sp-l", "LANDED", &[]);
+    h.git.add("spira/sp-l", "t5");
+    h.git.merged.borrow_mut().insert("spira/sp-l".into());
+    h.git.content.borrow_mut().insert("spira/sp-l".into());
+    *h.lib.reap_refused.borrow_mut() = Some("held".into());
+    h.run();
+    assert!(h.logged("CHECK6 sp-l: spira/sp-l is LANDED — not reaped (held), left for the Hel"), "{:?}", h.out.lines());
+    assert!(Files::new(&h.s.run).content_settled("spira/sp-l", "t5"));
+    assert!(!h.git.called("content_on_base", "spira/sp-l") && !h.git.called("rev_parse", "spira/sp-l"), "{:?}", h.git.calls.borrow());
+    assert_eq!(h.lib.count("content_on_base sp-l"), 0, "{:?}", h.lib.calls.borrow());
 }
 
 #[test_id(tvcyfft)]

@@ -918,7 +918,7 @@ pub fn content_on_base(real: &hel::real::Real, lc: &spira_store::lc_call::LcClie
 }
 
 fn record_content_on_base(lc: &spira_store::lc_call::LcClient, id: &str, land_sha: &str) -> Result<(), String> {
-    spira_store::lifecycle_row::content_on_base_on(lc, id, &format!("merge-tree:{land_sha}"), "hel")
+    spira_store::lifecycle_row::content_on_base_on(lc, id, &format!("merge-tree:{land_sha}"), "hel").map(|_| ())
 }
 
 fn record_landed(lc: &spira_store::lc_call::LcClient, id: &str, sha: &str) -> Result<String, String> {

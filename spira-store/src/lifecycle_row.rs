@@ -147,8 +147,17 @@ fn send_bead_event(c: &LcClient, id: &str, state: &str, version: &str, kind: &Be
     status_on(c, &["event", "bead", id, "--expect", state, "--version", version, "--actor", actor, "--kind", &kind])
 }
 
-pub fn content_on_base_on(c: &LcClient, id: &str, proof: &str, actor: &str) -> Result<(), String> {
-    bead_event_on(c, id, &BeadEventKind::ContentOnBase { proof: proof.into() }, actor)
+pub fn content_on_base_on(c: &LcClient, id: &str, proof: &str, actor: &str) -> Result<LandedRecord, String> {
+    let shown = c.call(&["show", id])?;
+    if shown.code != 0 {
+        return Err(format!("{id}: no lifecycle row to mark: {}", shown.why()));
+    }
+    let (state, version) = row_head(id, &shown.out)?;
+    if crate::lc_state::is_terminal(&state) {
+        return Ok(LandedRecord::Nothing { state });
+    }
+    let kind = BeadEventKind::ContentOnBase { proof: proof.into() };
+    send_bead_event(c, id, &state, &version, &kind, actor).map(|()| LandedRecord::Recorded)
 }
 
 /// What [`landed_record_on`] did.
@@ -850,6 +859,27 @@ mod tests {
             let (r, seen) = landed_via(shown.clone(), "abc");
             assert_eq!(r, Ok(false), "{shown}");
             assert_eq!(seen, vec!["show sp-a"], "{shown}");
+        }
+    }
+
+    #[test_id(t6vb1bg)]
+    #[test]
+    fn content_on_base_records_on_a_handed_on_row_and_sends_nothing_to_a_terminal_one() {
+        for (state, want, events) in [
+            ("SUBMITTED", LandedRecord::Recorded, 1),
+            ("LANDED", LandedRecord::Nothing { state: "LANDED".into() }, 0),
+            ("SUPERSEDED", LandedRecord::Nothing { state: "SUPERSEDED".into() }, 0),
+            ("DROPPED", LandedRecord::Nothing { state: "DROPPED".into() }, 0),
+            ("DONE", LandedRecord::Nothing { state: "DONE".into() }, 0),
+        ] {
+            let t = Arc::new(Socket { row: row(state, None), event: 0, seen: Mutex::new(Vec::new()) });
+            let r = content_on_base_on(&LcClient::over(t.clone(), true), "sp-a", "p", "hel");
+            assert_eq!(r, Ok(want), "{state}");
+            let mut expect = vec!["show sp-a".to_string()];
+            if events == 1 {
+                expect.push(format!(r#"event bead sp-a --expect {state} --version 12 --actor hel --kind {{"ContentOnBase":{{"proof":"p"}}}}"#));
+            }
+            assert_eq!(*t.seen.lock().unwrap(), expect, "{state}");
         }
     }
 
