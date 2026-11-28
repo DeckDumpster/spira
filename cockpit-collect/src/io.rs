@@ -652,6 +652,14 @@ mod tests {
         assert!(units.calls().is_empty(), "a read starts and stops nothing");
     }
 
+    #[test_id(tp4qd3l)]
+    #[test]
+    fn a_history_window_start_holds_within_the_hour_and_never_shortens_the_window() {
+        let hour = 3_600 * 500_000;
+        assert_eq!([hour, hour + 1, hour + 3_599].map(window_end), [hour; 3], "one read within the hour");
+        assert_eq!(window_end(hour + 3_600), hour + 3_600, "the next hour is a new read");
+    }
+
     #[test_id(tzzzsms)]
     #[test]
     fn etimes_is_uptime_less_the_start_tick_and_survives_a_spaced_command_name() {
