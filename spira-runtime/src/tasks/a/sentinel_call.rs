@@ -218,6 +218,9 @@ pub struct Snapshot {
     pub express_ready: Option<u32>,
     pub throttle: bool,
     pub reactive_dwarves: Vec<LiveUnit>,
+    /// Every roster rune's live dwarf that a pidfile names, newest first.
+    #[serde(default)]
+    pub live_dwarves: Vec<LiveUnit>,
     /// The fleet ceiling `SPIRA_MAX_LIVE_DWARVES`, as pinned.
     pub max_live: Option<u32>,
     /// The `build-disk` limit `SPIRA_MAX_DWARVES`, as pinned.
@@ -371,6 +374,7 @@ pub fn call_world(snap: &Snapshot) -> plan::CallWorld {
         express_ready: snap.express_ready.is_some_and(|n| n > 0),
         urgent: snap.urgent.as_ref().map(|u| u.iter().map(|b| plan::Urgent { id: b.id.clone(), p0: b.p0, express: b.express }).collect()),
         reactive_dwarves: snap.reactive_dwarves.iter().map(|d| plan::ReactiveDwarf { rune: d.rune.clone(), bead: d.bead.clone(), started_ms: d.started_ms }).collect(),
+        live_dwarves: snap.live_dwarves.iter().map(|d| plan::LiveDwarf { rune: d.rune.clone(), bead: d.bead.clone() }).collect(),
     }
 }
 
@@ -707,19 +711,29 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     });
     snap.express_ready = Some(u32::from(express));
     snap.throttle = plan::ck7_throttled(run.join("queue-throttled").is_file(), pinned.get("SPIRA_QUEUE_THROTTLE_OVERRIDE").map_or("", String::as_str));
-    let reactive_names: Vec<(String, String)> = roster.iter().filter(|f| snap.runes[*f].reactive).map(|f| (f.clone(), get(f, "RUNE_NAME", f))).collect();
-    for entry in std::fs::read_dir(&run).into_iter().flatten().flatten() {
+    scan_pidfiles(&run, &mut snap, &rune_name);
+    serde_json::to_string(&snap).map_err(|e| e.to_string())
+}
+
+/// The live dwarves the pidfiles in `run` name, for each rune on `snap`'s roster.
+fn scan_pidfiles(run: &Path, snap: &mut Snapshot, rune_name: &dyn Fn(&str) -> String) {
+    let names: Vec<(String, String)> = snap.roster.iter().map(|f| (f.clone(), rune_name(f))).collect();
+    for entry in std::fs::read_dir(run).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         let Some(stem) = name.strip_prefix("dwarf-").and_then(|n| n.strip_suffix(".pid")) else { continue };
-        let Some((rune, unit)) = reactive_names.iter().find(|(_, u)| stem.starts_with(&format!("{u}-"))) else { continue };
+        let Some((rune, unit)) = names.iter().find(|(_, u)| stem.starts_with(&format!("{u}-"))) else { continue };
         let bead = stem[unit.len() + 1..].to_string();
-        if bead.starts_with("sweep-") || !sentinel::dwarf_alive(&entry.path()) {
+        if !sentinel::dwarf_alive(&entry.path()) {
             continue;
         }
         let started_ms = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as u64);
-        snap.reactive_dwarves.push(LiveUnit { unit: format!("dwarf-{stem}"), rune: rune.clone(), bead, started_ms });
+        let dwarf = LiveUnit { unit: format!("dwarf-{stem}"), rune: rune.clone(), bead, started_ms };
+        if snap.runes[rune].reactive && !dwarf.bead.starts_with("sweep-") {
+            snap.reactive_dwarves.push(dwarf.clone());
+        }
+        snap.live_dwarves.push(dwarf);
     }
-    serde_json::to_string(&snap).map_err(|e| e.to_string())
+    snap.live_dwarves.sort_by(|a, b| b.started_ms.cmp(&a.started_ms).then_with(|| a.unit.cmp(&b.unit)));
 }
 
 /// `dwarf` on this process's PATH, strictly: a bare name is never handed to the unit manager.
@@ -791,4 +805,27 @@ pub fn metric(e: &Effects, input: &str) -> Result<String, String> {
     let fields: Vec<(String, serde_json::Value)> = ["rune", "result"].iter().map(|k| (k.to_string(), v[*k].clone())).collect();
     tsd::store::Pusher::new(e.world.metrics_endpoint.clone()).push("call", &tsd::now_iso(), &fields).map_err(|e| e.to_string())?;
     Ok("call".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_id(twdkp6t)]
+    #[test]
+    fn the_pidfile_scan_names_every_rostered_dwarf_and_keeps_the_preemption_list_reactive() {
+        let run = testkit::TempDir::new("sentinel-call-pidfiles");
+        for stem in ["dwarf-builder-sp-a", "dwarf-skuld-sp-b"] {
+            std::fs::write(run.join(format!("{stem}.pid")), "1").unwrap();
+            std::fs::write(run.join(format!("{stem}.lease")), i64::MAX.to_string()).unwrap();
+        }
+        std::fs::write(run.join("dwarf-builder-sp-ended.pid"), "1").unwrap();
+        let runes = [("builder", false), ("skuld", true)];
+        let mut snap = Snapshot { roster: runes.map(|(f, _)| f.to_string()).into(), runes: runes.map(|(f, reactive)| (f.to_string(), RuneCfg { reactive, ..RuneCfg::default() })).into(), ..Snapshot::default() };
+        scan_pidfiles(&run, &mut snap, &|f| f.to_string());
+        let pairs = |v: &[LiveUnit]| v.iter().map(|d| (d.rune.clone(), d.bead.clone())).collect::<std::collections::BTreeSet<_>>();
+        let pair = |f: &str, b: &str| (f.to_string(), b.to_string());
+        assert_eq!(pairs(&snap.live_dwarves), [pair("builder", "sp-a"), pair("skuld", "sp-b")].into());
+        assert_eq!(pairs(&snap.reactive_dwarves), [pair("skuld", "sp-b")].into());
+    }
 }
