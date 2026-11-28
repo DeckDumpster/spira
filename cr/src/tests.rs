@@ -261,6 +261,11 @@ fn a_trait_unit_lists_the_interface_then_implementations_then_callers_then_test_
         trait_unit_files(&crate::units::trait_units(&ix), "trait:a/src/ports.rs::World"),
         ["a/src/ports.rs", "a/src/real.rs", "b/src/bridge.rs", "a/src/lib.rs", "b/src/main.rs", "a/src/real_tests.rs", "a/src/tests.rs", "a/tests/it.rs"]
     );
+
+    let t = t.with_file("a/src/early_tests.rs", "fn f(w: &dyn crate::ports::World) {}\n");
+    let ix = crate::index::Index::build(&t).unwrap();
+    let files = trait_unit_files(&crate::units::trait_units(&ix), "trait:a/src/ports.rs::World");
+    assert_eq!(files[5..], ["a/src/real_tests.rs", "a/src/tests.rs", "a/src/early_tests.rs", "a/tests/it.rs"]);
 }
 
 #[test_id(tejcb8b)]
