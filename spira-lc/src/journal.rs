@@ -185,10 +185,8 @@ pub(crate) fn turn_tasks(argv: &[String]) -> Option<String> {
     if journal != "journal" || op != "turn" {
         return None;
     }
-    let turn: Value = serde_json::from_str(body).ok()?;
-    let items = |k: &str| turn[k].as_array().into_iter().flatten();
-    let rows = items("state").chain(items("effects")).map(|r| &r["task"]);
-    let names: std::collections::BTreeSet<&str> = rows.chain(items("cleared").map(|c| &c[0])).chain(items("tasks")).filter_map(Value::as_str).collect();
+    let turn: runtime::journal::Turn = serde_json::from_str(body).ok()?;
+    let names = turn.task_names();
     (!names.is_empty()).then(|| names.into_iter().collect::<Vec<_>>().join(","))
 }
 

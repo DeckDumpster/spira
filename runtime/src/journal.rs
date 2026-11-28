@@ -300,6 +300,7 @@ impl Journal for FaultyJournal {
         self.inner.poisoned(stream)
     }
     fn poisoned_all(&self) -> Result<Vec<Poison>> {
+        self.gate("poisoned_all")?;
         self.inner.poisoned_all()
     }
     fn history(&self) -> Vec<Event> {

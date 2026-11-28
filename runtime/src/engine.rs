@@ -1963,6 +1963,73 @@ mod tests {
         assert_eq!(store.reads(), reads, "with nothing quarantined there is nothing to ask again");
     }
 
+    #[test_id(tarazm1)]
+    #[test]
+    fn a_poison_read_that_fails_dispatches_nothing_and_is_asked_again() {
+        let (store, clock, heard) = (Rows::standing(&["a"]), VirtualClock::new(0), Arc::new(std::sync::Mutex::new(vec![])));
+        let faulty = crate::journal::FaultyJournal::new(store.clone());
+        let mut e = Engine::open(faulty.clone(), Arc::new(clock.clone()), vec![Registration::new("pinger", Heard(heard.clone()))], 1).unwrap();
+        faulty.cannot_tell_next("poisoned_all");
+        for s in ["a", "ok"] {
+            e.submit(s, s, EventKind::new("ping", "")).unwrap();
+        }
+        assert!(e.run_until_idle().unwrap_err().is_cannot_tell());
+        assert_eq!(*heard.lock().unwrap(), Vec::<String>::new(), "nothing is dispatched unchecked");
+        e.run_until_idle().unwrap();
+        assert_eq!(*heard.lock().unwrap(), ["ok"]);
+        assert_eq!(store.reads(), 1, "the failed ask never reached the store; the next one did");
+    }
+
+    /// Asks one thing of the journal per event: a schedule row at boot, nothing when it fires, an
+    /// effect on `ask`, nothing when that is answered.
+    struct OneRowATurn;
+
+    impl Handler for OneRowATurn {
+        fn interests(&self) -> &[EventKindTag] {
+            &["boot", "rang", "ask", EFFECT_SUCCEEDED]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+            match ev.kind.tag.as_str() {
+                "boot" => vec![Command::Schedule { at: ev.at + 100, kind: EventKind::new("rang", "") }],
+                "ask" => vec![Command::Effect(EffectSpec::keyed("write", "w", "", 1_000))],
+                _ => vec![],
+            }
+        }
+    }
+
+    #[test_id(trtaf3e)]
+    #[test]
+    fn a_turn_of_a_schedule_row_or_a_mark_alone_names_the_task_that_owns_it() {
+        let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
+        let regs = vec![Registration::new("owner", OneRowATurn), Registration::new("bystander", Heard(Default::default()))];
+        let mut e = Engine::open(journal.clone(), Arc::new(clock.clone()), regs, 1).unwrap();
+        let mut seen = 0;
+        let mut turn = || {
+            let all = journal.commits();
+            assert_eq!(all.len(), seen + 1, "one turn");
+            seen += 1;
+            let t = all[seen - 1].clone();
+            assert_eq!(t.task_names(), BTreeSet::from(["owner"]), "{t:?}");
+            t
+        };
+        e.start("s", EventKind::new("boot", ""));
+        e.run_until_idle().unwrap();
+        let scheduled = turn();
+        assert_eq!((scheduled.schedules.len(), scheduled.state.len() + scheduled.fired.len()), (1, 0));
+        clock.advance_to(100);
+        e.run_until_idle().unwrap();
+        let fired = turn();
+        assert_eq!((fired.fired.len(), fired.state.len() + fired.schedules.len()), (1, 0));
+        e.submit("a1", "s", EventKind::new("ask", "")).unwrap();
+        e.run_until_idle().unwrap();
+        assert_eq!(turn().effects.len(), 1);
+        let key = e.pending_effects()[0].key.clone();
+        e.complete(&key, Outcome::Succeeded(String::new())).unwrap();
+        e.run_until_idle().unwrap();
+        let resolved = turn();
+        assert_eq!((resolved.resolved.len(), resolved.state.len() + resolved.effects.len()), (1, 0));
+    }
+
     struct Waker(std::sync::atomic::AtomicBool);
 
     impl Handler for Waker {
