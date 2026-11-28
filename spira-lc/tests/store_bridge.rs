@@ -338,11 +338,7 @@ fn ask_is_retained_until_closed_by(exit: &str) {
     let cleared = watching.recv();
     assert_eq!((cleared.topic.as_str(), cleared.payload.len()), ("ask/sp-a", 0));
 
-    // A retained value would reach this subscriber ahead of the later ask.
-    let mut after = Subscriber::to(broker.socket(), &["ask/#"]);
-    let (code, out) = server.call(&["create-ask", "sp-later"]);
-    assert_eq!(code, 0, "{out}");
-    assert_eq!(next(&mut after), ("ask/sp-later".into(), open_ask(Value::Null)));
+    assert_eq!(broker.retained("ask/#"), []);
 }
 
 #[test_id(t9uj1zf)]

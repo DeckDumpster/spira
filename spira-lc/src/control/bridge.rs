@@ -90,6 +90,13 @@ fn row_messages(r: &LifecycleRecord) -> Option<[Message; 2]> {
 pub(crate) struct Outbox(SyncSender<(u64, Message)>);
 
 impl Outbox {
+    /// An outbox and every topic handed to it, with whether the message clears it.
+    #[cfg(test)]
+    pub(crate) fn captured() -> (Outbox, impl Fn() -> Vec<(String, bool)>) {
+        let (tx, rx) = sync_channel(BACKLOG);
+        (Outbox(tx), move || rx.try_iter().map(|(_, m)| (m.topic, m.payload.is_null())).collect())
+    }
+
     fn send(&self, rev: u64, m: Message) {
         if let Err(e) = self.0.try_send((rev, m)) {
             let (std::sync::mpsc::TrySendError::Full((_, m)) | std::sync::mpsc::TrySendError::Disconnected((_, m))) = e;
