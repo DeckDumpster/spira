@@ -191,7 +191,7 @@ fn a_killed_publishers_will_says_gone_with_no_keep_alive_to_wait_out() {
     child.kill().unwrap();
     child.wait().unwrap();
 
-    // Keep-alive is 0, so the broker has no timer for this client: only its socket says so.
+    // The keep-alive outlasts the failsafe by hours, so only the closed socket can say so.
     assert_eq!(value(watching.recv()).1, json!({"state": "gone"}));
     assert_eq!(retained(broker.socket(), "publisher/t"), json!({"state": "gone"}));
 }
