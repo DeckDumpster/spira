@@ -117,7 +117,7 @@ mod store_client_tests {
     use spira_store::lc_call::{LcClient, Reply, Transport};
     use std::sync::{Arc, Mutex};
 
-    /// A content door that files `sp-new1` and refuses every other verb.
+    /// A content door that files `sp-new1`, accepts an update and a note, and refuses every other verb.
     pub struct Scripted(pub Mutex<Vec<String>>);
 
     impl Transport for Scripted {
@@ -126,6 +126,7 @@ mod store_client_tests {
             let reply = |code, out: &str| Ok(Reply { code, out: out.into(), err: String::new(), read_ended: false });
             match argv.get(1).map(String::as_str) {
                 Some("create") => reply(0, "sp-new1\n"),
+                Some("update" | "note") => reply(0, ""),
                 _ => reply(2, "cannot tell: down"),
             }
         }
@@ -144,6 +145,10 @@ mod store_client_tests {
         let toml = spira_config::process::fixture_toml(config.path(), &[("SPIRA_RUNES_DIR", &runes)]).display().to_string();
         let _env = testkit::env(&[("SPIRA_TOML", Some(&toml))]);
         let dir = testkit::TempDir::new("kit-bump-no-file");
+        let files = || std::fs::read_dir(dir.path()).unwrap().count();
+        std::fs::write(dir.path().join("planted"), "").unwrap();
+        assert_eq!(files(), 1, "the count sees a file");
+        std::fs::remove_file(dir.path().join("planted")).unwrap();
         let (lc, t) = client();
         let real = Real::new("k".into(), "builder".into(), lc);
         let site = Site { name: "app".into(), path: String::new(), git_ref: String::new(), file: String::new() };
@@ -153,7 +158,19 @@ mod store_client_tests {
         std::env::set_current_dir(before).unwrap();
         assert!(t.0.lock().unwrap().iter().any(|c| c.starts_with("content create ")), "the door was not asked to file: {filed:?}");
         assert_eq!(filed, Ok("sp-new1".to_string()));
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+        assert_eq!(files(), 0);
+    }
+
+    #[test_id(tjq6tp1)]
+    #[test]
+    fn amending_a_bump_rewrites_the_open_bead_and_notes_the_new_target() {
+        let (lc, t) = client();
+        let real = Real::new("k".into(), "builder".into(), lc);
+        assert_eq!(real.amend_bump(&Open { id: "sp-open".into() }, "text", "1.3.0"), Ok(()));
+        let sent = t.0.lock().unwrap();
+        assert!(sent[0].starts_with("content update sp-open "), "{sent:?}");
+        assert!(sent[1].starts_with("content note sp-open "), "{sent:?}");
+        assert_eq!(sent.len(), 2);
     }
 
 }
