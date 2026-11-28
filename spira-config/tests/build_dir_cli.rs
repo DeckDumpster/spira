@@ -660,6 +660,18 @@ fn a_workspace_with_glob_members_is_hashed_and_cleaned_per_crate() {
     assert_eq!(a.crates, ["crate-b"]);
 }
 
+#[test_id(t11li9f)]
+#[test]
+fn a_crate_named_by_a_literal_entry_and_a_glob_is_one_member() {
+    let b = setup("bdcli-glob-overlap");
+    glob_tree(&b, "[workspace]\nmembers = [\"crates/a\", \"crates/*\"]\n", &["a"]);
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    std::fs::write(b.tree.join("crates/a/src/lib.rs"), "pub fn f() { let _ = 1; }\n").unwrap();
+    clean_tree(&b, &d);
+    assert_eq!(only_act(&d).crates, ["crate-a"]);
+}
+
 #[test_id(t9mn575)]
 #[test]
 fn a_crate_a_glob_workspace_excludes_is_not_hashed() {
