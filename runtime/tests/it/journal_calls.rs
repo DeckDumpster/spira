@@ -71,6 +71,7 @@ impl Store {
                 j.poison(&de::<Poison>(&argv[2])?)?;
                 String::new()
             }
+            "poisoned" if argv[2] == "--all" => json(&j.poisoned_all()?),
             "poisoned" => json(&j.poisoned(&StreamKey(argv[2].clone()))?),
             op => return Err(RuntimeError::refused(format!("journal: unknown op {op:?}"))),
         })
@@ -118,6 +119,9 @@ impl Journal for Observed {
     }
     fn poisoned(&self, stream: &StreamKey) -> Result<Option<Poison>> {
         self.inner.poisoned(stream)
+    }
+    fn poisoned_all(&self) -> Result<Vec<Poison>> {
+        self.inner.poisoned_all()
     }
     fn history(&self) -> Vec<Event> {
         let want = self.recorded.load(Ordering::SeqCst);
