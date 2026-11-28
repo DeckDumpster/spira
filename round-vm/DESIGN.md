@@ -249,7 +249,9 @@ healthy warm round measured 108 s of setup, a cold image build 1314 s).
 5. Stream `git archive <commit>` of the tree to `/root/template-work` on the VM, then run
    `TEMPLATE_SCRIPT` there: `cargo run -q --locked --release -p testenv -- container image`
    (the tree's own driver — the VM has the tree and cargo but no release, sp-s0e1k; builds
-   with podman's default `--layers`, keeping the cache), `podman rmi` every other `localhost/spira-testenv:*` tag, `cargo
+   with podman's default `--layers`, keeping the cache), `podman rmi` every other `localhost/spira-testenv:*` tag, `podman image
+   prune` the untagged images and the build cache (the tagged image keeps its own layers; an untagged build stage is
+   rebuilt when the closure next changes), `cargo
    fetch --locked`, then delete the work tree and `/root/.ssh/authorized_keys`. The script
    prints `image=<ref>`; a missing line is a failure.
 6. Graceful shutdown (the guest flushes its image store), verify stopped, convert to a

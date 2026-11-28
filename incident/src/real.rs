@@ -2,7 +2,8 @@
 //! in-process, and the wall clock.
 
 use crate::decide::{status_of_lc, BeadRow, BeadStatus, Scope};
-use crate::ports::{Bd, Clock, Mailer};
+use crate::ports::{Bd, Clock, Mailer, Rows};
+use spira_store::incident::{Payload, Recorded, Row};
 
 pub struct RealBd {
     /// The store client; `None` builds the configured one at each call.
@@ -86,6 +87,84 @@ impl RealBd {
             Ok((r.code, r.out, r.err))
         })
     }
+}
+
+/// The `incidents` verb over [`RealBd`]'s store client.
+pub struct RealRows<'a>(pub &'a RealBd);
+
+impl RealRows<'_> {
+    fn answer(&self, args: &[&str]) -> Result<String, String> {
+        let argv: Vec<&str> = std::iter::once("incidents").chain(args.iter().copied()).collect();
+        let (code, out, err) = self.0.run_lc(&argv)?;
+        if code == 0 {
+            return Ok(out);
+        }
+        let said = [out.trim(), err.trim()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" ");
+        Err(format!("incidents {} exited {code}: {said}", args.first().copied().unwrap_or_default()))
+    }
+
+    fn json(&self, args: &[&str]) -> Result<serde_json::Value, String> {
+        serde_json::from_str(json_only(&self.answer(args)?)).map_err(|e| format!("incidents answered something that is not JSON: {e}"))
+    }
+}
+
+fn row_of(v: &serde_json::Value) -> Result<Row, String> {
+    serde_json::from_value(v.clone()).map_err(|e| format!("incidents answered an unreadable row: {e}"))
+}
+
+impl Rows for RealRows<'_> {
+    fn raise(&self, payload: &Payload) -> Result<String, String> {
+        let body = serde_json::to_string(&payload.clone().bounded()).map_err(|e| e.to_string())?;
+        let v = self.json(&["raise", &body])?;
+        v["key"].as_str().map(str::to_string).ok_or_else(|| format!("incidents raise answered no key: {v}"))
+    }
+
+    fn claim(&self, key: &str, by: &str, for_secs: i64) -> Result<Row, String> {
+        row_of(&self.json(&["claim", key, "--by", by, "--for", &for_secs.to_string()])?)
+    }
+
+    fn record(&self, key: &str, outcome: &Recorded) -> Result<(), String> {
+        let at;
+        let mut args = vec!["record", key];
+        match outcome {
+            Recorded::Filed { bead } => {
+                args.push("filed");
+                args.extend(bead.as_deref());
+            }
+            Recorded::Refused { reason, lanes } => {
+                args.extend(["refused", "--reason", reason]);
+                if let Some(l) = lanes {
+                    args.extend(["--lanes", l]);
+                }
+            }
+            Recorded::Unread { reason, retry_at } => {
+                at = retry_at.to_string();
+                args.extend(["unread", "--reason", reason, "--retry-at", &at]);
+            }
+        }
+        self.answer(&args).map(drop)
+    }
+
+    fn retry(&self, key: Option<&str>) -> Result<usize, String> {
+        let mut args = vec!["retry"];
+        args.extend(key);
+        let v = self.json(&args)?;
+        v["retried"].as_u64().map(|n| n as usize).ok_or_else(|| format!("incidents retry answered no count: {v}"))
+    }
+
+    fn list(&self) -> Result<Vec<(String, Row)>, String> {
+        rows_listed(&self.answer(&["list"])?) // not-a-lifecycle-list: the incidents verb's own rows
+    }
+}
+
+/// `incidents list`'s answer as keyed rows.
+pub fn rows_listed(text: &str) -> Result<Vec<(String, Row)>, String> {
+    let v: serde_json::Value = serde_json::from_str(json_only(text)).map_err(|e| format!("incidents list: not JSON: {e}"))?;
+    v.as_array()
+        .ok_or_else(|| format!("incidents list: not an array: {v}"))?
+        .iter()
+        .map(|r| Ok((r["key"].as_str().unwrap_or_default().to_string(), row_of(r)?)))
+        .collect()
 }
 
 fn json_only(s: &str) -> &str {
@@ -192,6 +271,10 @@ impl RealBd {
 }
 
 impl Bd for RealBd {
+    fn incident_rows(&self) -> Box<dyn Rows + '_> {
+        Box::new(RealRows(self))
+    }
+
     fn list(&self, _db: &str, scope: Scope, label: Option<&str>, closed_after: Option<&str>, external_ref: Option<&str>) -> Result<Vec<BeadRow>, String> {
         Ok(self.list_beads(scope, label, closed_after, external_ref)?.into_iter().map(|(r, _)| r).collect())
     }

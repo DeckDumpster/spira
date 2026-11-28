@@ -204,7 +204,7 @@ fn a_quiet_tick_of_each_task_that_read_the_store_every_tick_never_reaches_its_so
         assert!(rows(&lc, &live, &["list", "--live"]).unwrap().contains("sp-a"), "sentinel-pass reads the live rows");
         assert!(rows(&lc, &by_id, &["list", "--ids", "sp-gone"]).unwrap().contains("sp-gone"), "sentinel-pass reads the closed blockers' rows");
         assert_eq!(store_view::rows_by_ids(&lc, &closed).unwrap().len(), 1, "hel.reap_stale asks the state of a closed bead's worktree");
-        let claim = spira_claim::store::Store { lc: lc.clone(), lc_bin: String::new(), timeout: Duration::from_secs(1), views: store_view::shared() };
+        let claim = spira_claim::store::Store { lc: lc.clone(), lc_bin: String::new(), timeout: Duration::from_secs(1), views: store_view::shared(), readiness_alert: Default::default() };
         assert_eq!(claim.lifecycle_of(&closed).unwrap().len(), 1, "sentinel-call and readiness-dependents read a closed blocker's row");
         assert!(claim.lifecycle_in_states(&["READY", "REWORK"]).unwrap().is_empty(), "readiness-dependents reads the ready rows");
         assert!(claim.dependents_of(&["sp-a".to_string()]).unwrap().is_empty(), "readiness-dependents reads the edges into the changed beads");

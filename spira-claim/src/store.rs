@@ -3,6 +3,7 @@
 //! time and in argv size. DESIGN.md §2 "Data in".
 
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use crate::events::{self, EventRow};
@@ -38,6 +39,16 @@ pub struct Store {
     pub timeout: Duration,
     /// The process's held lifecycle rows, when it keeps the store's watch.
     pub views: Option<std::sync::Arc<store_view::Projection>>,
+    /// Set from raising the readiness alert until a clear of it is taken.
+    pub readiness_alert: AlertRaised,
+}
+
+/// Shared by every [`Store`] a process makes, so a later pass knows what an earlier one raised.
+pub type AlertRaised = std::sync::Arc<std::sync::atomic::AtomicBool>;
+
+fn process_alert() -> AlertRaised {
+    static RAISED: std::sync::OnceLock<AlertRaised> = std::sync::OnceLock::new();
+    RAISED.get_or_init(AlertRaised::default).clone()
 }
 
 impl std::fmt::Debug for Store {
@@ -113,7 +124,12 @@ impl Store {
     pub fn new(timeout_s: u64) -> Result<Store, String> {
         let lc_bin = spira_store::lifecycle_row::lc_bin()?;
         let timeout = Duration::from_secs(timeout_s.max(1));
-        Ok(Store { lc: LcClient::for_bin(&lc_bin)?.within(timeout), lc_bin, timeout, views: store_view::shared() })
+        Ok(Store::of_process(LcClient::for_bin(&lc_bin)?.within(timeout), lc_bin, timeout))
+    }
+
+    /// A store sharing what every other one in this process holds.
+    pub(crate) fn of_process(lc: LcClient, lc_bin: String, timeout: Duration) -> Store {
+        Store { lc, lc_bin, timeout, views: store_view::shared(), readiness_alert: process_alert() }
     }
 
     /// One lifecycle request; any exit code is an answer. `Err` only when there is none.
@@ -316,12 +332,34 @@ impl Store {
     /// Raises the alert for a refused readiness publish; the store counts each return as a flap.
     pub fn alert_readiness_refused(&self, why: &str) -> Result<(), String> {
         let message = format!("readiness not published\n\n{why}");
+        // Marked first: a set whose reply was lost may still have landed.
+        self.readiness_alert.store(true, Ordering::SeqCst);
         self.lc_verb(&["condition", "set", READINESS_ALERT, "--type", "Alert", "--reason", "Firing", "--message", &message, "--status", "True", "--owner", "heimdall"], &[0])
     }
 
-    /// Clears that alert once a publish is accepted; nothing firing is a no-op.
-    pub fn clear_readiness_refused(&self) -> Result<(), String> {
-        self.lc_verb(&["condition", "clear", READINESS_ALERT, "--reason", "Cleared", "--message", "readiness published again", "--owner", "heimdall"], &[0])
+    /// After an accepted publish: clears the alert if this process raised it or the watched
+    /// view shows it firing (another process, or this one before a restart); else sends nothing.
+    pub fn settle_readiness_alert(&self) -> Result<(), String> {
+        if !self.readiness_alert.load(Ordering::SeqCst) && !self.readiness_alert_held_firing()? {
+            return Ok(());
+        }
+        self.lc_verb(&["condition", "clear", READINESS_ALERT, "--reason", "Cleared", "--message", "readiness published again", "--owner", "heimdall"], &[0])?;
+        self.readiness_alert.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// Only a watched view is asked: it holds the answer until a condition changes, where an
+    /// unwatched one would read the store on every pass.
+    fn readiness_alert_held_firing(&self) -> Result<bool, String> {
+        let Some(views) = self.views.as_ref().filter(|v| v.watching()) else { return Ok(false) };
+        let what = "spira-lc condition list";
+        let reply = views.answer(&["condition", "list", "--owner", "heimdall"]).map_err(|e| format!("{what}: {e}"))?.value;
+        if reply.code != 0 {
+            return Err(format!("{what}: exit {}: {}", reply.code, reply.why()));
+        }
+        let v: serde_json::Value = serde_json::from_str(reply.out.trim()).map_err(|e| format!("{what}: not JSON: {e}"))?;
+        let rows = v["conditions"].as_array().ok_or_else(|| format!("{what}: no conditions array"))?;
+        Ok(rows.iter().any(|c| c["key"] == READINESS_ALERT && c["status"] == "True"))
     }
 
     /// The machine's return-to-rework, through the one client of `spira-lc reopen`.
@@ -426,7 +464,7 @@ mod tests {
 
     fn store_over_views(reply: fn(&[String]) -> Reply, views: Option<Arc<store_view::Projection>>) -> (Store, Arc<Scripted>) {
         let t = Arc::new(Scripted { seen: Mutex::new(Vec::new()), reply });
-        let st = Store { lc: LcClient::over(t.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views };
+        let st = Store { lc: LcClient::over(t.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views, readiness_alert: Default::default() };
         (st, t)
     }
 

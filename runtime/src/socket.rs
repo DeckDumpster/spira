@@ -256,6 +256,10 @@ impl Journal for SocketJournal {
         self.json(&["poisoned", &stream.0])
     }
 
+    fn poisoned_all(&self) -> Result<Vec<Poison>> {
+        self.json(&["poisoned", "--all"]).map_err(|e| RuntimeError(format!("journal poisoned --all: {}", e.0), e.1))
+    }
+
     fn shipped(&self) -> Option<ShipCounts> {
         Some(self.shipper.counts())
     }

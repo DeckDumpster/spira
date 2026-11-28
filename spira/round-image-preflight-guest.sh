@@ -5,8 +5,9 @@
 # Like the real builds (Proxmox setup_command, EC2 ssm-commands.jq), it passes ami-setup.sh no
 # foreign checkouts: a foreign repo's own dependency check is not the image's (sp-hyfjgl).
 #
-# Only the three things a container cannot do are replaced: systemd units, the nix daemon
-# install and testenv's nested image build. Every cargo and rustup step runs for real.
+# Only what a container cannot do is replaced: systemd units, the nix daemon install, testenv's
+# nested image build, the prune of that nested store and the root trim. Every cargo and rustup
+# step runs for real.
 
 # covers: spira/round-image-preflight.sh spira/round-image-preflight-guest.sh
 set -euo pipefail
@@ -24,15 +25,17 @@ export CARGO_TARGET_DIR=/cache/target
 export SPIRA_TESTENV_HARNESS=/root/tree
 
 printf '#!/bin/sh\nexit 0\n' > /usr/local/bin/systemctl
+printf '#!/bin/sh\nexit 0\n' > /usr/local/bin/fstrim
 cat > /usr/local/bin/podman <<'SHIM'
 #!/bin/sh
 case "$1 $2" in
     "image exists") exit 0 ;;
     "images "*|"images ") exit 0 ;;
+    "image prune") exit 0 ;;
 esac
 exec /usr/bin/podman "$@"
 SHIM
-chmod +x /usr/local/bin/systemctl /usr/local/bin/podman
+chmod +x /usr/local/bin/systemctl /usr/local/bin/fstrim /usr/local/bin/podman
 
 nix_bin=/nix/var/nix/profiles/default/bin
 mkdir -p "$nix_bin"

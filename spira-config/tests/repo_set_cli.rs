@@ -115,3 +115,39 @@ fn publish_target_round_trips_through_set_publish_clear_and_rm() {
     assert!(!o.status.success());
     assert!(out(&o).contains("\"error\""), "{o:?}");
 }
+
+/// A control socket that records each request and answers that it holds the value told.
+fn scheduler(sock: &Path) -> std::sync::mpsc::Receiver<Vec<String>> {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::os::unix::net::UnixListener::bind(sock).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut line = String::new();
+            BufReader::new(&stream).read_line(&mut line).unwrap();
+            let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+            let argv = v.get("argv").unwrap_or(&v).as_array().unwrap().iter().map(|a| a.as_str().unwrap().to_string()).collect();
+            let _ = tx.send(argv);
+            let body = serde_json::json!({ "state": "unchanged", "held": "m", "wanted": "m" }).to_string();
+            let mut w = &stream;
+            let _ = write!(w, "{{\"exit_code\":0,\"len\":{}}}\n{body}", body.len());
+        }
+    });
+    rx
+}
+
+#[test_id(t5hh8zn)]
+#[test]
+fn a_lanes_change_tells_the_running_scheduler_its_repository_map_was_rewritten() {
+    let (d, map) = fixture();
+    let sock = d.path().join("control.sock");
+    let asked = scheduler(&sock);
+    spira_config::process::fixture_toml(d.path(), &[("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_RUNTIME_SOCKET", sock.to_str().unwrap())]);
+    let o = run(&map, &["repo", "set", "fx", "lanes", "plan,incident"]);
+    assert!(o.status.success(), "{o:?}");
+    assert_eq!(asked.try_recv().expect("the scheduler was told before the verb returned"), ["scheduler", "repin", "SPIRA_REPO_MAP"]);
+    assert!(!out(&o).contains("scheduler"), "what the verb prints is unchanged: {o:?}");
+
+    assert!(!run(&map, &["repo", "set", "fx", "colour", "red"]).status.success());
+    assert!(asked.try_recv().is_err(), "a refused write tells nobody");
+}

@@ -66,6 +66,9 @@ if [ -z "$img" ]; then echo "round-vm template: testenv container image printed 
 podman images --format '{{.Repository}}:{{.Tag}}' \
     | { grep '^localhost/spira-testenv:' || true; } | { grep -vxF "$img" || true; } \
     | while read -r old; do podman rmi "$old" >&2; done
+podman image prune -f >&2
+# Not every podman has --build-cache, and an unknown flag would fail the whole setup.
+if podman image prune --help | grep -e --build-cache >/dev/null; then podman image prune -f --build-cache >&2; fi
 cargo fetch --locked --target x86_64-unknown-linux-gnu >&2
 "$CARGO_HOME/bin/sccache" --stop-server >&2 || true
 # verify-begin

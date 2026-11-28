@@ -1,7 +1,7 @@
 //! The store behind its trait: what must outlive a process, committed once per turn, and the
 //! event history shipped beside it. Dispatch never reads either back.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
@@ -78,11 +78,20 @@ pub struct Turn {
     pub schedules: Vec<ScheduleRow>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fired: Vec<String>,
+    /// The owners of the schedule rows and the resolved and fired marks, which name no task themselves.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub tasks: BTreeSet<String>,
 }
 
 impl Turn {
     pub fn is_empty(&self) -> bool {
         self.state.is_empty() && self.cleared.is_empty() && self.effects.is_empty() && self.resolved.is_empty() && self.schedules.is_empty() && self.fired.is_empty()
+    }
+
+    /// Every task whose rows the turn carries.
+    pub fn task_names(&self) -> BTreeSet<&str> {
+        let rows = self.state.iter().map(|r| &r.task).chain(self.cleared.iter().map(|c| &c.0)).chain(self.effects.iter().map(|e| &e.task));
+        rows.chain(&self.tasks).map(String::as_str).collect()
     }
 }
 
@@ -103,6 +112,8 @@ pub trait Journal: Send + Sync {
     fn commit(&self, turn: &Turn) -> Result<()>;
     fn poison(&self, p: &Poison) -> Result<()>;
     fn poisoned(&self, stream: &StreamKey) -> Result<Option<Poison>>;
+    /// Every poisoned stream's row, in one read.
+    fn poisoned_all(&self) -> Result<Vec<Poison>>;
     /// The events recorded so far, for a journal that keeps them: tests read history here, and
     /// nothing in the engine does.
     fn history(&self) -> Vec<Event> {
@@ -119,7 +130,7 @@ struct Mem {
     log: Vec<Event>,
     commits: Vec<Turn>,
     state: BTreeMap<(String, String), StateRow>,
-    effects: BTreeMap<(String, String), (EffectRow, bool)>,
+    effects: BTreeMap<(String, String), EffectRow>,
     schedules: BTreeMap<String, (ScheduleRow, bool)>,
     poison: BTreeMap<StreamKey, Poison>,
 }
@@ -163,7 +174,7 @@ impl Journal for MemJournal {
         let m = self.lock();
         Ok(Boot {
             state: m.state.values().cloned().collect(),
-            effects: m.effects.values().filter(|(_, resolved)| !resolved).map(|(r, _)| r.clone()).collect(),
+            effects: m.effects.values().cloned().collect(),
             schedules: m.schedules.values().filter(|(_, fired)| !fired).map(|(r, _)| r.clone()).collect(),
         })
     }
@@ -178,15 +189,9 @@ impl Journal for MemJournal {
             m.state.remove(key);
         }
         for e in &turn.effects {
-            m.effects.insert((e.task.clone(), e.ekey.clone()), (e.clone(), false));
+            m.effects.insert((e.task.clone(), e.ekey.clone()), e.clone());
         }
-        for id in &turn.resolved {
-            for (row, resolved) in m.effects.values_mut() {
-                if &row.request_id == id {
-                    *resolved = true;
-                }
-            }
-        }
+        m.effects.retain(|_, row| !turn.resolved.contains(&row.request_id));
         for r in &turn.schedules {
             m.schedules.entry(r.id.clone()).or_insert((r.clone(), false));
         }
@@ -206,6 +211,10 @@ impl Journal for MemJournal {
 
     fn poisoned(&self, stream: &StreamKey) -> Result<Option<Poison>> {
         Ok(self.lock().poison.get(stream).cloned())
+    }
+
+    fn poisoned_all(&self) -> Result<Vec<Poison>> {
+        Ok(self.lock().poison.values().cloned().collect())
     }
 
     fn history(&self) -> Vec<Event> {
@@ -289,6 +298,10 @@ impl Journal for FaultyJournal {
     }
     fn poisoned(&self, stream: &StreamKey) -> Result<Option<Poison>> {
         self.inner.poisoned(stream)
+    }
+    fn poisoned_all(&self) -> Result<Vec<Poison>> {
+        self.gate("poisoned_all")?;
+        self.inner.poisoned_all()
     }
     fn history(&self) -> Vec<Event> {
         self.inner.history()

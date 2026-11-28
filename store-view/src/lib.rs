@@ -189,8 +189,13 @@ const EDGE_TALLY: u16 = 1 << 7;
 const STAY_TALLY: u16 = 1 << 8;
 const SECTIONS: u16 = 1 << 9;
 const GRAPH: u16 = 1 << 10;
-const CLASSES: usize = 11;
+/// An incident raised, claimed or filed.
+const INCIDENTS: u16 = 1 << 11;
+const CLASSES: usize = 12;
 const ALL: u16 = (1 << CLASSES) - 1;
+/// The watch prefix of the unfiled incidents (`spira_lc::keys::INCIDENTS`). Their list is
+/// held only by a view that watches it, which [`Projection::with_prefixes`] asks for.
+pub const INCIDENTS_PREFIX: &str = "incidents/";
 /// The watch prefix of the conditions each watcher keeps (`spira_lc::keys::conditions`).
 pub const CONDITIONS_PREFIX: &str = "conditions/";
 
@@ -199,6 +204,7 @@ const ENDED_BY: &[(u16, &str)] = &[
     (CONTENT, PLANNING),
     (ROUNDS, BATCHES),
     (CONDITIONS, CONDITIONS_PREFIX),
+    (INCIDENTS, INCIDENTS_PREFIX),
     (ASKED, "asks/"),
     (MENDING, "mendings/"),
     (RECORDS, LIFECYCLE),
@@ -218,6 +224,7 @@ fn classes_of(argv: &[&str]) -> Option<u16> {
         ["content", "list" | "show" | "state", ..] | ["plan", "items" | "edges" | "children" | "watermark" | "repo-labels", ..] => Some(CONTENT),
         ["show-batch", _] => Some(ROUNDS),
         ["condition", "list", ..] => Some(CONDITIONS),
+        ["incidents", "list", ..] => Some(INCIDENTS),
         ["list", rest @ ..] if rest.contains(&"--batches") => Some(ROUNDS | CONTENT),
         ["list-asks", ..] => Some(ASKED | CONTENT),
         ["mending", "list", ..] => Some(MENDING),
