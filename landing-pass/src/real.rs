@@ -861,7 +861,7 @@ fn direct_spira_children(tips: Vec<(String, String)>) -> Vec<(String, String)> {
 impl Git for RealGit {
     fn spira_refs(&self, repo: &Path) -> Vec<(String, String)> {
         if let Some(tips) = git_refs::branch_tips(repo, "refs/heads/spira/") {
-            return tips;
+            return direct_spira_children(tips);
         }
         let mut c = git(repo);
         c.args(["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/spira/*"]);
