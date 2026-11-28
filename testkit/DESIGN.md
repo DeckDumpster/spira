@@ -65,8 +65,12 @@ neither keeps any state. `broker::Process::start(dir, conf)` is the one launcher
 test that places its own config; `stop_clean()` ends it with SIGTERM and requires a clean exit. A missing `mosquitto` panics: a test of the broker never skips.
 `broker::Subscriber::to(socket, filters)` is a raw subscriber, returned once the broker has
 acknowledged every filter; a retained message delivered between acknowledgements is kept for
-`recv()`, which hands back the next message. `Broker::retained(filter)`
-returns each retained `(topic, payload)` a new subscriber would be handed.
+`recv()`, which hands back the next message. `broker::retained(socket, filter)`
+returns each retained `(topic, payload)` a new subscriber would be handed, and
+`Broker::retained(filter)` is that on its own socket. It reads up to an end marker, which a
+broker with a full queue drops like any message, so it asks for the marker again whenever the
+stream goes quiet. `broker::retain(socket, values)` publishes each value retained at QoS 1 and
+returns once every PUBACK has arrived.
 
 `testkit::bin_exe(name)` returns the built binary beside the test executable. It builds and
 runs nothing. It panics when the binary is undeclared, not built, or older than what builds it:
