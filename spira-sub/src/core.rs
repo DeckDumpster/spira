@@ -88,6 +88,14 @@ impl Ledger {
         self.last
     }
 
+    /// A dropped subscription's lines are no longer waited for: nothing would send them again.
+    fn forget(&mut self, id: &str) {
+        self.unacked.retain(|_, subs| {
+            subs.retain(|s| s != id);
+            !subs.is_empty()
+        });
+    }
+
     fn send(&mut self, mode: Mode, seq: u64, subs: Vec<String>, text: String, out: &mut Out) {
         let held = mode == Mode::Acking;
         if held {
@@ -436,7 +444,9 @@ impl Core {
     fn discard(&mut self, positions: &[usize], out: &mut Out) {
         let mut gone = Vec::new();
         for &at in positions.iter().rev() {
-            gone.extend(self.subs.remove(at).entry.filter);
+            let entry = self.subs.remove(at).entry;
+            self.ledger.forget(&entry.id);
+            gone.extend(entry.filter);
         }
         if positions.is_empty() {
             return;
@@ -575,19 +585,22 @@ impl Core {
             return out;
         }
         let now = self.now_ms();
+        // First what no longer batches: its lines go ahead of the batch, so are numbered first.
+        for sub in self.subs.iter_mut().filter(|s| s.entry.batch_s.is_none() && s.due_ms.is_some_and(|due| due <= now)) {
+            for (topic, (value, state)) in sub.take_pending() {
+                let seq = self.ledger.next();
+                if let Some(line) = sub.deliver(&topic, &value, state, now, mode, seq, &mut out) {
+                    self.ledger.send(mode, seq, vec![sub.entry.id.clone()], line, &mut out);
+                }
+            }
+        }
         let batch_seq = self.ledger.next();
         let mut block = Vec::new();
         let mut held_by = Vec::new();
         let mut since = u64::MAX;
         for sub in self.subs.iter_mut().filter(|s| s.due_ms.is_some_and(|due| due <= now)) {
             for (topic, (value, state)) in sub.take_pending() {
-                let batched = sub.entry.batch_s.is_some();
-                let seq = if batched { batch_seq } else { self.ledger.next() };
-                let Some(line) = sub.deliver(&topic, &value, state, now, mode, seq, &mut out) else { continue };
-                if !batched {
-                    self.ledger.send(mode, seq, vec![sub.entry.id.clone()], line, &mut out);
-                    continue;
-                }
+                let Some(line) = sub.deliver(&topic, &value, state, now, mode, batch_seq, &mut out) else { continue };
                 since = since.min(sub.since_ms);
                 block.push(line);
                 if !held_by.contains(&sub.entry.id) {
@@ -1350,5 +1363,46 @@ mod tests {
         c.synced();
         c.ack(only_seq(&sent));
         assert!(c.saved().subs[0].delivered.is_empty(), "an ack records nothing for a topic that was cleared");
+    }
+
+    #[test_id(t9j403s)]
+    #[test]
+    fn seqs_rise_down_the_stream_when_unbatched_chatter_falls_due_beside_a_batch() {
+        let (mut c, clock) = core();
+        batched(&mut c, "release/active");
+        batched(&mut c, "progress/+");
+        c.message("release/active", br#"{"release":"r1"}"#, true, Mode::Nobody);
+        c.message("progress/sp-a", br#"{"note":"held"}"#, false, Mode::Nobody);
+        c.set_class("s2", None, Mode::Nobody).unwrap();
+        clock.advance(600_000);
+
+        let out = c.flush_due(Mode::Acking);
+
+        assert_eq!(out.lines.len(), 2, "{out:?}");
+        assert!(out.lines[1].starts_with("[batch] "), "{out:?}");
+        assert!(out.receipts[0].seq < out.receipts[1].seq, "{out:?}");
+    }
+
+    #[test_id(tlody5v)]
+    #[test]
+    fn dropping_a_subscription_stops_its_lines_being_counted_as_undelivered() {
+        let (mut c, clock) = core();
+        batched(&mut c, "release/active");
+        batched(&mut c, "bead/+/state");
+        c.add_at(clock.now_ms(), "n");
+        say_acking(&mut c, "release/active", json!({"release": "r1"}));
+        say_acking(&mut c, "bead/sp-a/state", json!({"state": "LANDED"}));
+        let timer = c.fire_due(Mode::Acking);
+        clock.advance_to(c.next_due_ms().unwrap());
+        let batch = c.flush_due(Mode::Acking);
+        assert_eq!(c.unacked(), 2, "positive control");
+
+        c.remove("s3").unwrap();
+        c.remove("s1").unwrap();
+
+        assert_eq!((c.unacked(), c.awaits(only_seq(&timer))), (1, false));
+        assert!(c.ack(only_seq(&batch)).changed, "the shared batch is still acked for the one left");
+        assert!(c.saved().subs[0].delivered.contains_key("bead/sp-a/state"));
+        assert_eq!(c.unacked(), 0);
     }
 }

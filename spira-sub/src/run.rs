@@ -58,6 +58,7 @@ pub fn set_path(control_dir: &Path, name: &str) -> PathBuf {
     control_dir.join(format!("{name}.subs"))
 }
 
+#[derive(Debug, PartialEq)]
 enum Happened {
     Delivered(usize),
     Command(&'static str),
@@ -772,6 +773,39 @@ mod tests {
             let page = self.pages.lock().unwrap().pop_front().expect("a page for every call");
             page.map(|out| Answer { out, ..Answer::default() })
         }
+    }
+
+    #[test_id(totfrfr)]
+    #[test]
+    fn a_line_only_a_receiver_got_is_counted_by_its_ack_and_one_a_follow_got_as_it_is_sent() {
+        let dir = TempDir::new("sub-counted");
+        let mut core = Core::new(Arc::new(VirtualClock::new(1_000_000)), Saved::default());
+        core.add("release/active", "", false, Mode::Nobody).unwrap();
+        let mut server = server(&dir, core);
+        let (tx, samples) = sync_channel(16);
+        server.telemetry = Some(tx);
+        let counted = || samples.try_iter().filter(|s| !matches!(s.what, Happened::Command(_))).map(|s| (s.what, s.unacked)).collect::<Vec<_>>();
+        let say = |release: &str| {
+            let mut state = server.lock();
+            let mode = state.mode();
+            let out = state.core.message("release/active", format!(r#"{{"release":"{release}"}}"#).as_bytes(), true, mode);
+            server.apply(&mut state, out);
+        };
+        let (_, receiver) = server.attach(Request::Receive, None);
+        counted();
+
+        say("r1");
+        assert_eq!(counted(), [(Happened::Held, 1)]);
+        let delivery: Delivery = serde_json::from_str(&receiver.try_recv().unwrap()).unwrap();
+        server.ack(delivery.seq);
+        assert_eq!(counted(), [(Happened::Delivered(1), 0)]);
+        server.ack(delivery.seq);
+        assert_eq!(counted(), [], "an ack counts once");
+
+        let (_, _follow) = follow(&server);
+        counted();
+        say("r2");
+        assert_eq!(counted(), [(Happened::Delivered(1), 0)]);
     }
 
     #[test_id(teis9zo)]

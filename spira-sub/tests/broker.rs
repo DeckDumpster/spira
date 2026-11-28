@@ -68,21 +68,23 @@ impl World {
 
     /// `run`, returned once `subscriber/concierge` reads up.
     fn run(&self, broker: &Path) -> ChildGuard {
-        let mut watching = Subscriber::to(broker, &["subscriber/concierge"]);
-        let run = ChildGuard::spawn(&mut self.command(&["run", "--as", "concierge"]));
-        until(&mut watching, "up");
-        run
+        self.spawn_run(broker, &mut self.command(&["run", "--as", "concierge"]))
     }
 
     /// [`run`](World::run), with what it logs.
     fn run_noted(&self, broker: &Path) -> (ChildGuard, Receiver<String>) {
-        let mut watching = Subscriber::to(broker, &["subscriber/concierge"]);
         let mut command = self.command(&["run", "--as", "concierge"]);
         command.stderr(Stdio::piped());
-        let mut run = ChildGuard::spawn(&mut command);
+        let mut run = self.spawn_run(broker, &mut command);
         let logged = pipe(run.pipes().1.unwrap());
-        until(&mut watching, "up");
         (run, logged)
+    }
+
+    fn spawn_run(&self, broker: &Path, command: &mut Command) -> ChildGuard {
+        let mut watching = Subscriber::to(broker, &["subscriber/concierge"]);
+        let run = ChildGuard::spawn(command);
+        until(&mut watching, "up");
+        run
     }
 
     fn receive(&self) -> Receiving {
@@ -740,4 +742,29 @@ fn a_new_receiving_reader_cuts_off_the_one_before_and_anything_but_an_ack_ends_i
     let named = format!("{:?}", r#"{"cmd":"list"}"#);
     while !logged.recv_timeout(FAILSAFE).expect("run never named the line").contains(&named) {}
     assert_eq!(next_of(second).1, None);
+}
+
+#[test_id(t8x8ocw)]
+#[test]
+fn a_gone_receivers_timer_goes_to_a_follow_which_spends_on_send_beside_a_new_receiver() {
+    let broker = Broker::up();
+    let world = World::new(broker.socket());
+    let _run = world.run(broker.socket());
+    let first = world.receive();
+    world.add_one_of_each_to_spend(broker.socket());
+    let (first, _) = both(first);
+    let follow = world.follow();
+    world.both_are_undelivered();
+
+    drop(first);
+
+    assert_eq!(follow.next(), "[sub:s2] at 2000-01-01T00:00:00Z — n");
+    let screen = world.ok(&["list"]);
+    assert!(screen.contains("s1 release/active") && !screen.contains("s2 ") && !screen.contains("undelivered"), "{screen}");
+
+    let (_second, replayed) = next_of(world.receive());
+
+    assert_eq!(replayed.expect("the stream ended").text, "[sub:s1] release/active release=r1");
+    assert_eq!(follow.next(), "[sub:s1] release/active release=r1");
+    assert!(world.ok(&["list"]).contains("no subscriptions"), "spent on send, though a receiver is attached");
 }
