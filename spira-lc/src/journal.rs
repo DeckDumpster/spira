@@ -758,10 +758,10 @@ mod tests {
     fn a_sweep_of_an_unindexed_store_deletes_marked_rows_and_indexes_the_unmarked_ones() {
         let (s, raw) = shared_store();
         put_old(&raw, "closed", true);
-        put_old(&raw, "open", false);
+        put_old(&raw, "live", false);
         let done = swept(&s, false);
         assert_eq!((done["indexed_effects"].clone(), done["deleted_effects"].clone(), done["deleted_markers"].clone()), (json!(1), json!(1), json!(1)), "{done}");
-        assert_eq!(effect_keys(&s), ["runtime/effect/t/kopen", "runtime/open-effect/open"]);
+        assert_eq!(effect_keys(&s), ["runtime/effect/t/klive", "runtime/open-effect/live"]);
     }
 
     #[test_id(t2vlnyo)]
