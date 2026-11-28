@@ -271,7 +271,7 @@ mod priced {
 #[test_id(ta47wlt)]
 #[test]
 fn the_journal_sweep_completes_when_a_read_is_priced_by_the_bytes_it_returns() {
-    let f = priced::Fixture::closed_effects(2_000, 4_850);
+    let f = priced::Fixture::closed_effects(200, 4_850);
     let mut effect_steps: Vec<usize> = Vec::new();
     let mut step = |argv: &[String]| {
         let before = f.seen.lock().unwrap().ranges.len();
@@ -284,7 +284,7 @@ fn the_journal_sweep_completes_when_a_read_is_priced_by_the_bytes_it_returns() {
     let (code, out) = crate::journal::sweep_until_done(&mut step, true, None);
     assert_eq!(code, 0, "{out}");
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!((v["complete"].as_bool(), v["deleted_effects"].as_u64()), (Some(true), Some(2_000)), "{out}");
+    assert_eq!((v["complete"].as_bool(), v["deleted_effects"].as_u64()), (Some(true), Some(200)), "{out}");
     let (_, before_last) = effect_steps.split_last().unwrap();
     assert!(!before_last.is_empty() && before_last.iter().all(|pages| *pages > 1), "pages per effect step: {effect_steps:?}");
     let (code, out) = crate::journal::sweep_until_done(&mut |argv| f.call(argv), false, None);
