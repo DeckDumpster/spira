@@ -1,7 +1,4 @@
-//! For one fixture forge, pr-notify.sh and the pr-notify handler say the same lines and mail the
-//! operator the same notes. The script is the oracle: it runs unmodified against a stubbed `gh`
-//! and `mail`; the handler runs on a virtual clock against an HTTP stub of the forge. Both are
-//! fed from one description of the world, so a disagreement is a disagreement about the same facts.
+//! The forge client's token travels in the request and stays out of its debug output.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;

@@ -74,7 +74,7 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # "$HERE/lib.sh"` for a name this file shims — acceptance-local.sh, branch-guard.sh,
 # branch-sweep.sh, cadence.sh, citations.sh, deploy.sh, escape-classify.sh,
 # gate-locks.sh, groom-trigger.sh, held.sh, hold.sh, holds.sh,
-# pr-notify.sh, publish-backlog.sh, released-defects.sh,
+# publish-backlog.sh, released-defects.sh,
 # release.sh, tokens.sh, unhold.sh — plus roughly fifty of this directory's own
 # `test-*.sh` suites that exercise a shim (or one of the allow-listed functions) directly
 # as bash, rather than through the crate's own unit tests. Wave 4 does not own any of
