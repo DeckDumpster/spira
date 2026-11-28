@@ -213,7 +213,8 @@ fn statute_check(env: &Env, subject: &str, body: &str) -> Result<Option<String>,
 
 pub type DeliverFn<'a> = &'a dyn Fn(&Path, &str, &str, bool) -> Result<PathBuf, String>;
 
-fn deliver_to_maildir(dir: &Path, msgid: &str, msg: &str, mute: bool) -> Result<PathBuf, String> {
+/// The delivery [`send`] makes.
+pub fn deliver_to_maildir(dir: &Path, msgid: &str, msg: &str, mute: bool) -> Result<PathBuf, String> {
     maildir::mail_ensure(dir).map_err(|e| format!("cannot create mailbox {}: {e}", dir.display()))?;
     let tmp = dir.join("tmp").join(msgid);
     if let Err(e) = fs::write(&tmp, msg) {

@@ -854,6 +854,7 @@ name = "heimdall"
 version = "1.0.0"
 dependencies = [
  "inbox-rules",
+ "mail",
  "ports",
  "regex",
  "runtime",

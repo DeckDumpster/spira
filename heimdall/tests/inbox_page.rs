@@ -23,6 +23,7 @@ fn a_page_is_announced_past_watchds_cursor_as_heimdall() {
         inbox: d.join("inbox.log"),
         inbox_cursor,
         inbox_bus: Bus::At(broker.socket().to_path_buf()),
+        operator_mail: Err("no mail in this rig".into()),
     };
 
     page_inbox(&paths, 0, "stalled", "BEADS sp-a").unwrap();

@@ -133,7 +133,7 @@ fn still_builder(run: &std::path::Path, lease_ahead: i64, quiet: i64) {
 fn observed(run: &std::path::Path) -> Snapshot {
     let lc = spira_store::lc_call::LcClient::over(std::sync::Arc::new(Conditions), true);
     let sock = run.join("no-scheduler.sock");
-    serde_json::from_str(&task::observe(&lc, run, sock.to_str().unwrap(), NOW_MS).unwrap()).unwrap()
+    serde_json::from_str(&task::observe(&lc, run, sock.to_str().unwrap(), &heimdall::broker::Bus::Off, NOW_MS).unwrap()).unwrap()
 }
 
 /// The raises of the second pass that sees `snap`, which `SPIRA_HEIMDALL_CONFIRM` makes the first to confirm.
@@ -337,4 +337,143 @@ fn a_source_that_could_not_be_read_neither_clears_nor_moves_its_alarm() {
     std::fs::remove_file(run.join("strands.json")).unwrap();
     let (next, _) = task::decide(&h.cfg, &carry, &Input::Observed(observed(run.path())), NOW_MS).unwrap();
     assert_eq!(standing(&next), [("lease-unreclaimed", true), ("mirror-stale", false), ("sentinel-stale", false)], "no strands file is no strands");
+}
+
+/// A store that takes every write and keeps each `condition` argv.
+#[derive(Default)]
+struct Asked(std::sync::Mutex<Vec<String>>);
+
+impl spira_store::lc_call::Transport for Asked {
+    fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+        self.0.lock().unwrap().push(argv.join(" "));
+        Ok(spira_store::lc_call::Reply { code: 0, out: String::new(), err: String::new(), read_ended: false })
+    }
+}
+
+fn page_env(dir: &std::path::Path) -> mail::env::Env {
+    mail::env::Env {
+        mail_root: dir.join("mail"),
+        kinds_dir: testkit::manifest_dir().join("../spira/mail/kinds"),
+        index_file: dir.join("index"),
+        mute: false,
+        loom_budget_ms: 1000,
+        repeat_window_s: 86_400,
+        tidy_fresh_s: 0,
+        id_prefix: "sp".into(),
+        ask_label: String::new(),
+        db: String::new(),
+        bd_conn_retries: 1,
+        operator_actor: "operator".into(),
+        run_dir: dir.to_path_buf(),
+        home: dir.to_path_buf(),
+        mail_from: None,
+        lint_considered: None,
+        repeat_considered: None,
+        operator_considered: None,
+        statute_guards: String::new(),
+        statute_considered: None,
+        allow_blocking: false,
+        bead_id: None,
+        lock_timeout_ms: 1000,
+        condition: None,
+    }
+}
+
+#[test_id(t31j52q)]
+#[test]
+fn the_hosted_pass_connects_to_the_broker_and_pages_once_per_outage_through_its_real_runners() {
+    let mut broker = testkit::broker::Broker::up();
+    let dir = testkit::TempDir::new("heimdall-hosted-broker");
+    let store = std::sync::Arc::new(Asked::default());
+    let lc = spira_store::lc_call::LcClient::over(store.clone() as std::sync::Arc<dyn spira_store::lc_call::Transport>, true);
+    let (bus, env, run) = (heimdall::broker::Bus::At(broker.socket().to_path_buf()), page_env(dir.path()), dir.path().to_path_buf());
+    let observe_lc = spira_store::lc_call::LcClient::over(std::sync::Arc::new(Conditions), true);
+    let mut r = runtime::taskrig::TaskRig::new(1, t::handler::<H>(SET).registration())
+        .unwrap()
+        .double(task::OBSERVE, move |_| {
+            let sock = run.join("no-scheduler.sock");
+            let seen: Snapshot = serde_json::from_str(&task::observe(&observe_lc, &run, sock.to_str().unwrap(), &bus, NOW_MS)?).map_err(|e| e.to_string())?;
+            Ok(json(&Snapshot { world_halted: true, ..seen }))
+        })
+        .double(task::ALARMS, |_| Ok("[]".into()))
+        .double(task::BROKER, move |input| task::broker(&lc, Ok(env.clone()), input));
+    r.tick(task::STREAM, runtime::event::EventKind::new(task::TICK, "")).unwrap();
+    let mails = || std::fs::read_dir(dir.join("mail/operator/new")).map_or(0, |d| d.count());
+    let asked = |verb: &str| store.0.lock().unwrap().iter().filter(|a| a.starts_with(&format!("condition {verb} broker-down"))).count();
+    assert_eq!((mails(), asked("set")), (0, 0), "broker up");
+
+    // One timer firing is one pass.
+    let one = |r: &mut runtime::taskrig::TaskRig| r.advance(TICK).unwrap();
+    broker.stop();
+    one(&mut r);
+    assert_eq!((mails(), asked("set")), (0, 0), "one failed pass");
+    one(&mut r);
+    assert_eq!((mails(), asked("set")), (1, 1));
+    r.reopen(t::handler::<H>(SET).registration()).unwrap();
+    r.tick(task::STREAM, runtime::event::EventKind::new(task::TICK, "")).unwrap();
+    assert_eq!((mails(), asked("set")), (1, 1), "a restart does not page again");
+
+    broker.restart();
+    one(&mut r);
+    one(&mut r);
+    assert_eq!(asked("clear"), 1);
+
+    broker.stop();
+    one(&mut r);
+    one(&mut r);
+    assert_eq!((mails(), asked("set")), (2, 2));
+}
+
+#[test_id(tqzmoqu)]
+#[test]
+fn a_down_broker_is_paged_while_the_store_is_unreachable_and_a_raise_is_pending() {
+    let h = t::handler::<H>(SET);
+    let now = 7_200_000;
+    let down = |at: u64| Input::Observed(Snapshot { db_reachable: false, broker: heimdall::broker::Reading::Down("refused".into()), ..stalled(at) });
+
+    let (carry, _) = task::decide(&h.cfg, &keyed(Phase::Seen, 1), &down(now), now).unwrap();
+    let (_, acts) = task::decide(&h.cfg, &carry, &down(now + TICK), now + TICK).unwrap();
+
+    assert!(names(&acts).contains(&task::BROKER), "{acts:?}");
+    assert!(!names(&acts).contains(&task::RAISE));
+}
+
+#[test_id(t7ejqqh)]
+#[test]
+fn a_broker_outage_alone_with_the_store_unreachable_is_listed_in_the_fallback_from_its_second_pass() {
+    let h = t::handler::<H>(SET);
+    let now = 7_200_000;
+    let down = |at: u64| Input::Observed(Snapshot { db_reachable: false, broker: heimdall::broker::Reading::Down("refused".into()), ..quiet(at) });
+    let listed = |acts: &[spira_runtime::tasks::b::kit::Act]| acts.iter().find(|a| a.name == task::FALLBACK).expect("a fallback write").input.contains("broker-down");
+
+    let (carry, acts) = task::decide(&h.cfg, &Carry::default(), &down(now), now).unwrap();
+    assert!(!listed(&acts), "one failed pass is not an outage");
+    let (_, acts) = task::decide(&h.cfg, &carry, &down(now + TICK), now + TICK).unwrap();
+    assert!(listed(&acts), "{acts:?}");
+}
+
+#[test_id(t505raf)]
+#[test]
+fn the_service_routes_hand_the_observe_its_broker_and_the_page_the_operators_mail() {
+    use runtime::host::EffectRunner;
+    let mut broker = testkit::broker::Broker::up();
+    let dir = testkit::TempDir::new("heimdall-routes");
+    let mut fx = spira_runtime::Effects { broker: heimdall::broker::Bus::At(broker.socket().to_path_buf()), mail: Some(std::sync::Arc::new(page_env(dir.path()))), ..spira_runtime::Effects::default() };
+    fx.world.run_dir = dir.path().to_path_buf();
+    let run = |name: &str, input: &str| fx.run("key", &runtime::event::EffectSpec::probe(name, input, 30_000)).unwrap();
+    let sock = dir.join("no-scheduler.sock");
+    let seen = || serde_json::from_str::<Snapshot>(&run(task::OBSERVE, sock.to_str().unwrap())).unwrap().broker;
+    assert_eq!(seen(), heimdall::broker::Reading::Up);
+    broker.stop();
+    assert!(matches!(seen(), heimdall::broker::Reading::Down(_)));
+
+    let page = json_of(&vec![heimdall::broker::Todo::Page { since: 120, why: "refused".into() }]);
+    let done: heimdall::broker::Done = serde_json::from_str(&run(task::BROKER, &page)).unwrap();
+
+    assert!(done.paged, "{done:?}");
+    assert_eq!(std::fs::read_dir(dir.join("mail/operator/new")).unwrap().count(), 1);
+}
+
+fn json_of<T: serde::Serialize>(v: &T) -> String {
+    serde_json::to_string(v).unwrap()
 }

@@ -5,6 +5,7 @@
 extern crate spira_test_id;
 pub mod alarm;
 pub mod alerts;
+pub mod broker;
 pub mod conditions;
 pub mod classify;
 pub mod judge;
