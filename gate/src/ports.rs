@@ -244,6 +244,8 @@ pub trait World {
     fn target_intact(&self, tree: &Path) -> bool;
     /// The names in `bins` that are not files in the trial's `target/debug`.
     fn absent_bins(&self, tree: &Path, bins: &[String]) -> Vec<String>;
+    /// Records `secs` as the first unit build of the lease `profile_dir` belongs to; the first note wins.
+    fn note_first_build(&self, profile_dir: &Path, secs: u64);
     /// Drop the tmpfs build output of a finished trial (target::release_tree); `keep_release`
     /// spares `release` for a caller that still has to stage it; a trial whose build directory is sound — judged, or cut at a cap — has its
     /// `debug` join the warm pool, which is held under `cap_mib`.
