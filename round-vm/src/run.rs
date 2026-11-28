@@ -688,6 +688,11 @@ if ! start_sccache; then
     export RUSTC_WRAPPER=""
     sccache_mode="without sccache (fallback after two failed server starts)"
 fi
+# What the host hashes each crate's inputs from for its test.result records; unread costs only the hash.
+rdir="$HOME/round-work/.runtime/spira/batch-results"
+mkdir -p "$rdir"
+cargo metadata --format-version 1 --no-deps --offline > "$rdir/workspace-metadata.json" || { rm -f "$rdir/workspace-metadata.json"; echo "round-vm: workspace metadata unread: this round's test.result records carry no input hash" >&2; }
+{ git -C ~/round-work ls-tree -r -d HEAD && git -C ~/round-work ls-tree HEAD; } > "$rdir/workspace-trees" || { rm -f "$rdir/workspace-trees"; echo "round-vm: workspace trees unread: this round's test.result records carry no input hash" >&2; }
 phase build
 art_base="$SCCACHE_WEBDAV_ENDPOINT/artifacts"
 "#, include_str!("../artifact-store.sh"), r#"art_tree="$(git -C ~/round-work rev-parse 'HEAD^{tree}')"
@@ -1114,6 +1119,9 @@ write_round_nextest_config() {
     tsecs="$(target/release/spira-config get spira.integration_test_deadline_secs)" && tperiods="$(target/release/spira-config get spira.integration_test_deadline_periods)" || { echo "round-vm: cannot read the tests/ deadline (spira.integration_test_deadline_secs, spira.integration_test_deadline_periods) from the round's config" >&2; exit 2; }
     write_unit_nextest_config "$secs" "$periods" "$tsecs" "$tperiods" "$HOME/round-nextest.toml" "$deny_filter_line"
 }
+write_integration_timings() {
+    { echo "unit_build_secs 0"; echo "unit_secs $1"; echo "load1 $2"; grep -E '"#, spira_config::unit_tier_timing_lines!(), r#"' ~/round-integration-tests.log; } > "$rdir/integration-timings" || true
+}
 # THE WORKSPACE'S OWN TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo), in the
 # standard two phases (sp-cddf76). UNIT FIRST: the tests inside src/ (--lib --bins) run to the end
 # BEFORE any suite. They are the cheapest red the round can find, so a red there ends the pass:
@@ -1132,6 +1140,7 @@ if [ -n "$only" ]; then
         rc=0
         write_round_nextest_config
         test_env "#, spira_config::unit_tier_integration!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#" > ~/round-integration-tests.log 2>&1 || rc=$?
+        write_integration_timings "$(( $(date +%s) - only_t0 ))" "$(cut -d' ' -f1 /proc/loadavg)"
         if [ "$rc" -ne 0 ]; then
             phase_failed integration-tests "$rc"
             test_phase_red integration-tests ~/round-integration-tests.log "$rc" "$(( $(date +%s) - only_t0 ))" "$integ_hung" "$rdir/integration-tests.out" "$rdir/integration.json" false
@@ -1153,7 +1162,7 @@ fi
 phase unit-tests
 rdir="$HOME/round-work/.runtime/spira/batch-results"
 write_unit_timings() {
-    { echo "unit_build_secs $unit_build_secs"; echo "unit_secs $unit_secs"; grep -E '"#, spira_config::unit_tier_timing_lines!(), r#"' ~/round-unit-tests.log; } > "$rdir/unit-timings" || true
+    { echo "unit_build_secs $unit_build_secs"; echo "unit_secs $unit_secs"; echo "load1 $(cut -d' ' -f1 /proc/loadavg)"; grep -E '"#, spira_config::unit_tier_timing_lines!(), r#"' ~/round-unit-tests.log; } > "$rdir/unit-timings" || true
 }
 # One line per `test:` row of the deny list ($1) saying whether nextest ($2) reported a test ending `::<id>` skipped.
 unit_registry_skips() {
@@ -1209,9 +1218,10 @@ integ_hung="$HOME/round-integration-hung"
 : > "$integ_hung"
 integ_t0=$(date +%s)
 integ_end="$HOME/round-integration-end"
-rm -f "$integ_end"
+integ_load="$HOME/round-integration-load1"
+rm -f "$integ_end" "$integ_load"
 # The job stamps its own end: it is collected only after the suites, so the wait says nothing of its length.
-( integ_cargo; r=$?; date +%s > "$integ_end"; exit "$r" ) > ~/round-integration-tests.log 2>&1 &
+( integ_cargo; r=$?; date +%s > "$integ_end"; cut -d' ' -f1 /proc/loadavg > "$integ_load"; exit "$r" ) > ~/round-integration-tests.log 2>&1 &
 integ_pid=$!
 tail -n +1 -f --pid="$integ_pid" ~/round-integration-tests.log | unit_stream "$integ_total" "$integ_progress" integration &
 integ_stream_pid=$!
@@ -1290,6 +1300,7 @@ integ_secs=$(( $(cat "$integ_end" 2>/dev/null || date +%s) - integ_t0 ))
 wait "$integ_stream_pid"
 [ ! -s "$integ_hung" ] || [ "$integ_rc" -ne 0 ] || integ_rc=1
 echo "round-vm: INTEGRATION-TESTS took ${integ_secs}s (tests/, ${integ_total} test binaries, beside the suites)" >&2
+write_integration_timings "$integ_secs" "$(cat "$integ_load")"
 unit_registry_skips ~/round-deny-list ~/round-integration-tests.log INTEGRATION-TESTS
 if [ "$integ_rc" -eq 0 ]; then
     echo "round-vm: INTEGRATION-TESTS: PASS ($(awk '/^ *Summary \[/ { print $4 }' ~/round-integration-tests.log) tests)" >&2
@@ -2325,6 +2336,8 @@ struct Facts {
     instance_type: Option<String>,
     marks: Option<crate::progress::Marks>,
     attribution_s: u64,
+    /// The tree the host sent to be tested.
+    tree: Option<String>,
 }
 
 /// Seconds per fence from this pass's pulled `fence-times` (`<name> <secs> <rc>` lines); a file
@@ -2344,12 +2357,82 @@ fn fence_seconds(results: &Path, started: u64) -> Vec<(String, u64)> {
     out
 }
 
-/// The unit tier's seconds and nextest timings from this pass's pulled `unit-timings`; a file
-/// older than the pass is a previous pass's and reads as empty, as [`fence_seconds`] does.
-fn unit_timings(results: &Path, started: u64) -> spira_config::unit_tier::UnitFile {
-    let path = results.join(UNIT_TIMINGS);
+/// A pulled file this pass wrote; one older than the pass is a previous pass's, as in [`fence_seconds`].
+fn pass_file(results: &Path, name: &str, started: u64) -> Option<String> {
+    let path = results.join(name);
     let fresh = fs::metadata(&path).and_then(|m| m.modified()).is_ok_and(|t| t >= std::time::UNIX_EPOCH + Duration::from_secs(started));
-    fresh.then(|| fs::read_to_string(&path).ok()).flatten().and_then(|t| spira_config::unit_tier::parse(&t)).unwrap_or_default()
+    fresh.then(|| fs::read_to_string(&path).ok()).flatten()
+}
+
+/// The unit tier's seconds and nextest timings from this pass's pulled `unit-timings`, else empty.
+fn unit_timings(results: &Path, started: u64) -> spira_config::unit_tier::UnitFile {
+    pass_file(results, UNIT_TIMINGS, started).and_then(|t| spira_config::unit_tier::parse(&t)).unwrap_or_default()
+}
+
+/// One request to the Collector.
+const EVENT_DEADLINE: Duration = Duration::from_secs(2);
+/// The most a finishing pass waits for its queued records.
+const EVENT_FLUSH: Duration = Duration::from_secs(10);
+/// Several times the whole workspace's tests: a pass's records are queued at once.
+const EVENT_QUEUE: usize = 1 << 16;
+
+fn crate_hashes(results: &Path, started: u64) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let read = |name: &str| pass_file(results, name, started).ok_or_else(|| format!("no {name} from this pass"));
+    let members: Vec<_> = gate::compose::parse_metadata(&read(WORKSPACE_METADATA)?)?.iter().map(spira_config::input_hash::Member::from).collect();
+    Ok(spira_config::input_hash::input_hashes(&members, &read(WORKSPACE_TREES)?))
+}
+
+/// One `test.result` per unit and integration test this pass's timings files report; returns how
+/// many were queued. Best effort: it changes neither the pass's record nor its exit code.
+/// `tree_sent` names the tree of a pass that ended before `batch.meta` was written.
+fn emit_test_results(endpoint: &str, results: &Path, started: u64, tree_sent: Option<&str>, rec: &tsd::pass::PassRecord) -> usize {
+    use spira_otel::testresult::{self, Tier};
+    if endpoint.trim().is_empty() {
+        return 0;
+    }
+    let reported = pass_file(results, "batch.meta", started).and_then(|_| reported_tree(results));
+    let tree = reported.as_deref().or(tree_sent).unwrap_or_default();
+    let hashes = crate_hashes(results, started).unwrap_or_else(|e| {
+        eprintln!("round-vm run: test.result records carry no input hash: {e}");
+        Default::default()
+    });
+    let runner = format!("{}:{}", rec.place.as_str(), rec.instance_type);
+    let sink = spira_otel::logs::LogPush::new(endpoint, "spira-round-vm", EVENT_DEADLINE, EVENT_QUEUE);
+    let mut queued = 0;
+    for (file, tier) in [(UNIT_TIMINGS, Tier::Unit), (INTEGRATION_TIMINGS, Tier::Integration)] {
+        let Some(text) = pass_file(results, file, started) else {
+            eprintln!("round-vm run: no {file} from this pass: no {} test.result records", tier.as_str());
+            continue;
+        };
+        let load1 = spira_config::unit_tier::parse(&text).and_then(|f| f.load1);
+        for t in spira_config::unit_tier::results(&text) {
+            let record = testresult::Result {
+                test_id: t.test_id().to_string(),
+                crate_name: t.crate_name().to_string(),
+                tier,
+                input_hash: hashes.get(t.crate_name()).cloned().unwrap_or_default(),
+                outcome: t.outcome,
+                duration_ms: (t.secs * 1000.0).round() as u64,
+                name: t.name,
+                runner: runner.clone(),
+                load1,
+                source: "round",
+                gate: String::new(),
+                bead: String::new(),
+                repo: rec.repo.clone(),
+                tree: tree.to_string(),
+                round: rec.batch.clone(),
+                members: rec.members.clone(),
+            };
+            sink.emit(testresult::EVENT, &testresult::attrs(&record));
+            queued += 1;
+        }
+    }
+    let lost = sink.close(EVENT_FLUSH);
+    if lost > 0 {
+        eprintln!("round-vm run: {lost} test.result record(s) not sent to the Collector");
+    }
+    queued
 }
 
 fn with_unit_timings(rec: tsd::pass::PassRecord, unit: &spira_config::unit_tier::UnitFile) -> tsd::pass::PassRecord {
@@ -2390,6 +2473,13 @@ pub const FENCE_TIMES: &str = "fence-times";
 
 /// What REMOTE_SCRIPT writes after the unit tier, green or red: its build and run seconds and nextest's per-test lines.
 pub const UNIT_TIMINGS: &str = "unit-timings";
+
+/// [`UNIT_TIMINGS`] for the integration tier.
+pub const INTEGRATION_TIMINGS: &str = "integration-timings";
+
+/// What REMOTE_SCRIPT writes after its checkout, from which each crate's input hash is computed: `cargo metadata` and the head's tree ids.
+pub const WORKSPACE_METADATA: &str = "workspace-metadata.json";
+pub const WORKSPACE_TREES: &str = "workspace-trees";
 
 /// What REMOTE_SCRIPT leaves at the top of the results when a test phase goes red (sp-cddf76):
 /// each phase's verdict as a record and its failures' output — the unit phase's, before any
@@ -2480,7 +2570,7 @@ fn emit_phase_ops(run_dir: &Path, results: &Path, args: &RunArgs, handle: Option
 
 /// Carries the files the VM leaves outside testenv's leaf from `pulled` to `results_dir`, by name.
 pub fn keep_top_files(pulled: &Path, results_dir: &Path) {
-    let tops = [FIXTURE_FAULT_FILE, FENCE_TIMES, UNIT_TIMINGS, CI_STARTED_FILE].into_iter().chain(PROGRESS_FILES).chain(TEST_PHASE_FILES).chain(SCRIPT_FILES);
+    let tops = [FIXTURE_FAULT_FILE, FENCE_TIMES, UNIT_TIMINGS, INTEGRATION_TIMINGS, WORKSPACE_METADATA, WORKSPACE_TREES, CI_STARTED_FILE].into_iter().chain(PROGRESS_FILES).chain(TEST_PHASE_FILES).chain(SCRIPT_FILES);
     copy_present(pulled, results_dir, tops);
 }
 
@@ -2577,6 +2667,9 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         unit_slowest: String::new(),
     };
     let record = with_unit_timings(record, &unit);
+    // An unreadable key sends nothing, as an empty one does.
+    let endpoint = spira_config::process::cfg("SPIRA_OTEL_COLLECTOR_ENDPOINT").unwrap_or_default();
+    emit_test_results(&endpoint, &results_root, started, facts.tree.as_deref(), &record);
     match env.record.pass_record(&env.cfg.run_dir, &record) {
         Ok(()) => {
             crate::telemetry::push_pass(&record);
@@ -2690,6 +2783,7 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
     {
         let mut f = facts.lock().unwrap_or_else(|e| e.into_inner());
         f.started = Some(crate::progress::now_secs());
+        f.tree = Some(tree_sha.clone());
         f.marks = Some(progress.lock().unwrap_or_else(|e| e.into_inner()).marks());
     }
     let (host_slot, spill_reason, decision) = match place_on_host(env, args, &commit_sha) {
@@ -5043,6 +5137,121 @@ mod tests {
         assert_eq!(unit_timings(&dir.path().join("none"), started), Default::default());
     }
 
+    /// `app` depends on `lib`; the metadata is cargo's own shape, cut to what the reader reads.
+    const METADATA: &str = r#"{"workspace_root":"/w","workspace_members":["a","l"],"packages":[
+        {"id":"a","name":"app","manifest_path":"/w/app/Cargo.toml","dependencies":[{"path":"/w/lib"}],"targets":[{"kind":["lib"],"name":"app"}]},
+        {"id":"l","name":"lib","manifest_path":"/w/lib/Cargo.toml","dependencies":[],"targets":[{"kind":["lib"],"name":"lib"}]}]}"#;
+    const TREES: &str = "040000 tree aaa\tapp\n040000 tree bbb\tlib\n100644 blob ccc\tCargo.lock\n";
+
+    /// A pass's pulled results: three unit tests, two integration tests, and what they are hashed from.
+    fn results_with_test_timings() -> (TempDir, u64) {
+        let dir = TempDir::new();
+        let unit = "load1 1.5\n        PASS [   0.250s] (1/3) app a::t0aaaaa\n        FAIL [   1.000s] (2/3) lib b\n     TIMEOUT [  60.000s] (3/3) lib c\n     Summary [  61.000s] 3 tests run: 1 passed, 2 failed, 0 skipped\n        FAIL [   1.000s] (2/3) lib b\n";
+        let integration = "load1 7.25\n        PASS [   2.000s] (1/2) app::it d\n        PASS [   3.000s] (2/2) lib::it e\n     Summary [   5.000s] 2 tests run: 2 passed, 0 skipped\n";
+        for (name, text) in [(UNIT_TIMINGS, spira_config::unit_tier::render(1, 61, unit)), (INTEGRATION_TIMINGS, spira_config::unit_tier::render(0, 5, integration))] {
+            fs::write(dir.path().join(name), text).unwrap();
+        }
+        fs::write(dir.path().join(WORKSPACE_METADATA), METADATA).unwrap();
+        fs::write(dir.path().join(WORKSPACE_TREES), TREES).unwrap();
+        fs::write(dir.path().join("batch.meta"), "key=k\ntree=29518c0d\n").unwrap();
+        let started = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() - 100;
+        (dir, started)
+    }
+
+    fn pass_of_two_members() -> tsd::pass::PassRecord {
+        let a: Vec<String> = "--repo r --batch round-9 --pass 1 --where ec2 --cause green --instance-type c7i.8xlarge --members sp-a,sp-b".split(' ').map(String::from).collect();
+        tsd::pass::from_args(&a).unwrap()
+    }
+
+    fn text_of(e: &spira_otel::fixture::Event, key: &str) -> String {
+        match e.attr(key) {
+            Some(spira_otel::logs::Attr::Str(s)) => s.clone(),
+            other => panic!("{key}: {other:?}"),
+        }
+    }
+
+    #[test_id(t8zeopa)]
+    #[test]
+    fn every_unit_and_integration_test_of_a_pass_is_one_test_result_record() {
+        use spira_otel::logs::Attr;
+        let (dir, started) = results_with_test_timings();
+        let fake = spira_otel::fixture::Collector::start();
+        emit_test_results(fake.addr(), dir.path(), started, None, &pass_of_two_members());
+        let member = |name: &str, deps: &[&str]| spira_config::input_hash::Member {
+            name: name.into(),
+            dir: name.into(),
+            deps: deps.iter().map(|d| d.to_string()).collect(),
+            build_deps: deps.iter().map(|d| d.to_string()).collect(),
+            test_bins: vec![],
+        };
+        let hashes = spira_config::input_hash::input_hashes(&[member("app", &["lib"]), member("lib", &[])], TREES);
+        assert_ne!(hashes["app"], hashes["lib"], "positive control: the two crates hash apart");
+        let got = fake.events();
+        let rows: Vec<[String; 4]> = got.iter().map(|e| ["name", "crate", "tier", "outcome"].map(|k| text_of(e, k))).collect();
+        let want = [["a::t0aaaaa", "app", "unit", "pass"], ["b", "lib", "unit", "fail"], ["c", "lib", "unit", "timeout"], ["d", "app", "integration", "pass"], ["e", "lib", "integration", "pass"]];
+        assert_eq!(rows, want.map(|r| r.map(String::from)));
+        assert_eq!(text_of(&got[0], "test_id"), "t0aaaaa");
+        assert_eq!(got[0].attr("duration_ms"), Some(&Attr::Int(250)));
+        for e in &got {
+            assert_eq!(e.body, spira_otel::testresult::EVENT);
+            assert_eq!(["source", "round", "tree", "runner", "repo"].map(|k| text_of(e, k)), ["round", "round-9", "29518c0d", "ec2:c7i.8xlarge", "r"]);
+            assert_eq!(e.attr("members"), Some(&Attr::Strs(vec!["sp-a".into(), "sp-b".into()])));
+            assert_eq!(text_of(e, "input_hash"), hashes[&text_of(e, "crate")]);
+            let load1 = if text_of(e, "tier") == "unit" { 1.5 } else { 7.25 };
+            assert_eq!(e.attr("load1"), Some(&Attr::Float(load1)));
+        }
+    }
+
+    #[test_id(t1ur6fa)]
+    #[test]
+    fn a_timings_file_older_than_the_pass_sends_none_of_its_tiers_tests() {
+        let (dir, started) = results_with_test_timings();
+        let stale = std::time::UNIX_EPOCH + Duration::from_secs(started - 1);
+        fs::File::options().write(true).open(dir.path().join(INTEGRATION_TIMINGS)).unwrap().set_modified(stale).unwrap();
+        let fake = spira_otel::fixture::Collector::start();
+        emit_test_results(fake.addr(), dir.path(), started, None, &pass_of_two_members());
+        let tiers: Vec<String> = fake.events().iter().map(|e| text_of(e, "tier")).collect();
+        assert_eq!(tiers, ["unit", "unit", "unit"]);
+    }
+
+    #[test_id(tfk4o9x)]
+    #[test]
+    fn a_pass_red_before_any_suite_names_the_tree_the_host_sent() {
+        let (dir, started) = results_with_test_timings();
+        fs::remove_file(dir.path().join("batch.meta")).unwrap();
+        let fake = spira_otel::fixture::Collector::start();
+        emit_test_results(fake.addr(), dir.path(), started, Some("sent-tree"), &pass_of_two_members());
+        let got = fake.events();
+        assert_eq!(got.len(), 5);
+        assert!(got.iter().all(|e| text_of(e, "tree") == "sent-tree"), "{got:?}");
+    }
+
+    #[test_id(tfion2d)]
+    #[test]
+    fn an_empty_endpoint_sends_no_test_result_and_leaves_the_pass_record_unchanged() {
+        let (dir, started) = results_with_test_timings();
+        let (record, before) = (pass_of_two_members(), pass_of_two_members());
+        assert_eq!(emit_test_results("", dir.path(), started, None, &record), 0);
+        assert_eq!(record, before);
+        let fake = spira_otel::fixture::Collector::start();
+        assert_eq!(emit_test_results(fake.addr(), dir.path(), started, None, &record), 5, "positive control: the same pass has five to send");
+    }
+
+    #[test_id(t7qjkta)]
+    #[test]
+    fn the_workspace_files_and_integration_timings_are_pulled_with_the_unit_timings() {
+        let pulled = TempDir::new();
+        let kept = TempDir::new();
+        let names = [INTEGRATION_TIMINGS, WORKSPACE_METADATA, WORKSPACE_TREES];
+        for name in names {
+            fs::write(pulled.path().join(name), "x").unwrap();
+        }
+        keep_top_files(pulled.path(), kept.path());
+        for name in names {
+            assert!(kept.path().join(name).is_file(), "{name}");
+        }
+    }
+
     #[test_id(tqupoiw)]
     #[test]
     fn the_script_writes_unit_timings_after_the_unit_tier_on_the_green_and_the_red_path() {
@@ -5054,6 +5263,19 @@ mod tests {
         let body = script_fn("write_unit_timings");
         assert!(body.contains("unit_build_secs") && body.contains("unit_secs") && body.contains("$rdir/unit-timings") && body.contains("round-unit-tests.log"), "{body}");
         assert!(body.contains(&format!("grep -E '{}'", spira_config::unit_tier_timing_lines!())), "{body}");
+        assert!(body.contains(r#"echo "load1 $(cut -d' ' -f1 /proc/loadavg)""#), "{body}");
+        let integ = script_fn("write_integration_timings");
+        assert!(integ.contains("$rdir/integration-timings") && integ.contains("round-integration-tests.log") && integ.contains(r#"echo "load1 $2""#), "{integ}");
+        assert!(integ.contains(&format!("grep -E '{}'", spira_config::unit_tier_timing_lines!())), "{integ}");
+        assert!(REMOTE_SCRIPT.contains(r#"date +%s > "$integ_end"; cut -d' ' -f1 /proc/loadavg > "$integ_load"; exit "$r""#), "the load is read at the tier's own end, not after the suites");
+        let call = REMOTE_SCRIPT.find("\nwrite_integration_timings \"$integ_secs\" \"$(cat \"$integ_load\")\"\n").expect("the corpus path writes them");
+        assert!(call < REMOTE_SCRIPT.find("INTEGRATION-TESTS: PASS").unwrap() && call < REMOTE_SCRIPT.find("INTEGRATION-TESTS: FAIL").unwrap(), "before either verdict branch");
+        assert!(REMOTE_SCRIPT.contains("write_integration_timings \"$(( $(date +%s) - only_t0 ))\""), "and the one-step path");
+        let (checkout, build) = (REMOTE_SCRIPT.find("\nphase checkout\n").unwrap(), REMOTE_SCRIPT.find("\nphase build\n").unwrap());
+        for write in [r#"cargo metadata --format-version 1 --no-deps --offline > "$rdir/workspace-metadata.json""#, r#"{ git -C ~/round-work ls-tree -r -d HEAD && git -C ~/round-work ls-tree HEAD; } > "$rdir/workspace-trees""#] {
+            let at = REMOTE_SCRIPT.find(write).unwrap_or_else(|| panic!("{write}"));
+            assert!(checkout < at && at < build, "{write}");
+        }
     }
 
     #[test_id(tcplfb7)]

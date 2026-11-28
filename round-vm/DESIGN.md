@@ -543,3 +543,14 @@ profile (release DESIGN.md "artifacts") and on a hit unpacks the stored executab
 `target/release` and skips cargo, logging `round-vm: artifacts: hit <key>`. After a build it
 stores the executables; an unreachable or refusing store costs speed, never the round. The
 unit-test build is separate and still compiles.
+
+## One record per test (`test.result`)
+
+The VM script leaves `unit-timings` and `integration-timings` (each tier's seconds, its `load1`
+as the tier ended, and nextest's per-test lines), `workspace-metadata.json` and
+`workspace-trees`. At the pass's record the host sends one `test.result` per line to
+`SPIRA_OTEL_COLLECTOR_ENDPOINT` (empty sends nothing), `source=round`, with the batch, its
+members, `runner=<place>:<instance type>` and the crate's `input_hash`. `tree` is
+`batch.meta`'s; a pass red before any suite wrote none, and names the tree the host sent.
+A file this pass did not write sends nothing for its tier and says so on stderr. The push is
+bounded and changes neither the pass's record nor its exit code.

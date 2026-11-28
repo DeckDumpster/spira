@@ -62,6 +62,7 @@ integration = ["runtime/integration", "spira-config/integration", "spira-store/i
 [dependencies]
 spira-config = { path = "../spira-config" }
 spira-store = { path = "../spira-store" }
+gate = { path = "../gate" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tsd = { path = "../tsd" }
@@ -82,6 +83,5 @@ testkit = { path = "../testkit" }
 toml = "0.8"
 test-registry = { path = "../test-registry" }
 runtime = { path = "../runtime" }
-gate = { path = "../gate" }
 batcher = { path = "../batcher" }
 batcher-cut = { path = "../batcher-cut" }
