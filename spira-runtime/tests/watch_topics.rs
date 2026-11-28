@@ -25,7 +25,8 @@ const FAILSAFE: Duration = Duration::from_secs(30);
 
 /// The service's effect runner, its watch publisher on the broker at `socket`.
 fn service(broker: &Broker) -> Arc<Effects> {
-    let fx = Effects::default();
+    let run_dir = broker.socket().parent().unwrap().to_path_buf();
+    let fx = Effects { world: spira_runtime::world::World { run_dir, ..Default::default() }, ..Default::default() };
     let options = Options::new(broker.socket(), Arc::new(VirtualClock::new(0)), Box::new(SeededRng::new(1)));
     assert!(fx.watch_topics.set(Some(WatchTopics::new(Publisher::with("spira-runtime", options).unwrap()))).is_ok());
     Arc::new(fx)
@@ -135,6 +136,7 @@ fn holds_once_then_clears(mut row: Row, broker: &Broker, mut watching: Subscribe
 #[test_id(tcr36vf)]
 #[test]
 fn a_stale_image_is_one_retained_value_while_it_holds_and_none_once_it_reads_fresh() {
+    let _env = testkit::env_read();
     let broker = Broker::up();
     let watching = Subscriber::to(broker.socket(), &["watch/#"]);
     let row = ami_row(service(&broker));
@@ -144,6 +146,7 @@ fn a_stale_image_is_one_retained_value_while_it_holds_and_none_once_it_reads_fre
 #[test_id(tdcpf0f)]
 #[test]
 fn an_over_claimed_item_is_one_retained_value_while_it_is_live_and_none_once_it_leaves() {
+    let _env = testkit::env_read();
     let broker = Broker::up();
     let watching = Subscriber::to(broker.socket(), &["watch/#"]);
     let row = claim_row(service(&broker));
@@ -165,11 +168,17 @@ fn comes_back_after_a_broker_restart(row: &Row, broker: &mut Broker, subjects: u
         back.insert(d.topic, String::from_utf8_lossy(&d.payload).into_owned());
     }
     assert_eq!(back.into_iter().collect::<Vec<_>>(), before);
+    // The whole republish is queued at once, so a flush covers anything still behind these.
+    flush(&row.fx.lock().unwrap());
+    let mut after = broker.retained(&row.filter());
+    after.sort();
+    assert_eq!(after, before);
 }
 
 #[test_id(tlhr7s6)]
 #[test]
 fn a_restarted_broker_is_given_the_stale_image_again() {
+    let _env = testkit::env_read();
     let mut broker = Broker::up();
     let mut row = ami_row(service(&broker));
     row.pass(&stale());
@@ -179,6 +188,7 @@ fn a_restarted_broker_is_given_the_stale_image_again() {
 #[test_id(t6ojzvn)]
 #[test]
 fn a_restarted_broker_is_given_every_held_claim_and_no_cleared_one() {
+    let _env = testkit::env_read();
     let mut broker = Broker::up();
     let mut row = claim_row(service(&broker));
     row.pass(&claim_world(&[("sp-a", 4), ("sp-b", 8), ("sp-gone", 4)]));
@@ -190,6 +200,7 @@ fn a_restarted_broker_is_given_every_held_claim_and_no_cleared_one() {
 #[test_id(t21q195)]
 #[test]
 fn a_restarted_runtime_says_its_carried_claims_again_to_a_broker_that_kept_nothing() {
+    let _env = testkit::env_read();
     let mut broker = Broker::up();
     let mut row = claim_row(service(&broker));
     let held = claim_world(&[("sp-a", 4)]);
@@ -213,9 +224,96 @@ fn a_restarted_runtime_says_its_carried_claims_again_to_a_broker_that_kept_nothi
     assert_eq!(vec![(d.topic, String::from_utf8_lossy(&d.payload).into_owned())], before);
 }
 
+/// The same, for the image row's own observe runner. Spill is not on EC2 in its configuration,
+/// so the observe behind the tracking asks AWS nothing.
+#[test_id(tfirjgp)]
+#[test]
+fn a_restarted_runtime_says_the_carried_stale_image_again_to_a_broker_that_kept_nothing() {
+    let dir = testkit::TempDir::new("watch-ami-spill");
+    let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_ROUND_VM_SPILL", "local")]);
+    let _env = testkit::env(&[("SPIRA_TOML", toml.to_str())]);
+    let mut broker = Broker::up();
+    let mut row = ami_row(service(&broker));
+    row.pass(&stale());
+    let before = broker.retained(&row.filter());
+    assert_eq!(before.len(), 1, "{before:?}");
+
+    broker.restart();
+    let fx = service(&broker);
+    let mut watching = Subscriber::to(broker.socket(), &["watch/#"]);
+    let mark = row.rig.requested().len();
+    row.rig.advance(ami::CADENCE_MS).unwrap();
+    let asked = row.rig.requested()[mark..].iter().find(|q| q.name == ami::OBSERVE).expect("a stale image is asked about again").input.clone();
+    let answered = fx.run("o", &EffectSpec::probe(ami::OBSERVE, asked, 1000)).expect("the observe answers");
+    assert!(answered.contains("local"), "{answered}");
+    flush(&fx);
+
+    let d = watching.recv();
+    assert_eq!(vec![(d.topic, String::from_utf8_lossy(&d.payload).into_owned())], before);
+}
+
+/// A broker that keeps a value while this publisher cannot reach it: the publisher's path to it
+/// does not exist until the test makes it.
+#[test_id(txhrbiy)]
+#[test]
+fn a_clear_the_broker_could_not_take_is_sent_once_it_can_be_reached() {
+    let _env = testkit::env_read();
+    let broker = Broker::up();
+    let direct = Publisher::with("before", Options::new(broker.socket(), Arc::new(VirtualClock::new(0)), Box::new(SeededRng::new(2)))).unwrap();
+    direct.publish(spira_pub::Class::State, "watch/claim-count/sp-a", &json!({"text": "old"})).unwrap();
+    direct.flush(FAILSAFE).unwrap();
+
+    let dir = testkit::TempDir::new("watch-unreached");
+    let path = dir.join("s");
+    let topics = WatchTopics::new(Publisher::with("spira-runtime", Options::new(&path, Arc::new(VirtualClock::new(0)), Box::new(SeededRng::new(1)))).unwrap());
+    topics.publish(&json!({"row": "claim-count", "set": {}, "clear": ["sp-a"]}).to_string()).unwrap();
+    assert_eq!(broker.retained("watch/#").len(), 1, "the clear had no way to the broker");
+
+    std::os::unix::fs::symlink(broker.socket(), &path).unwrap();
+    let value = json!({"level": "P2", "text": "new", "since": 1, "at": 1});
+    topics.publish(&json!({"row": "claim-count", "set": {"sp-b": value}, "clear": []}).to_string()).unwrap();
+    topics.flush(FAILSAFE).unwrap();
+
+    let held: Vec<String> = broker.retained("watch/#").into_iter().map(|(t, _)| t).collect();
+    assert_eq!(held, ["watch/claim-count/sp-b"]);
+}
+
+#[test_id(ttx5vdv)]
+#[test]
+fn a_clear_lost_with_a_stopping_runtime_is_asked_for_again_after_the_restart() {
+    let _env = testkit::env_read();
+    let broker = Broker::up();
+    let fx = service(&broker);
+    // What the process that is about to stop had put on the broker.
+    let held = json!({"row": "claim-count", "set": {"sp-a": {"level": "P2", "text": "x", "since": 1, "at": 1}}, "clear": []}).to_string();
+    fx.run("k", &EffectSpec::keyed(WATCH_PUBLISH, "k", held, 10_000)).unwrap();
+    flush(&fx);
+
+    let world = Arc::new(Mutex::new(claim_world(&[("sp-a", 4)])));
+    let (seen, runner) = (world.clone(), fx.clone());
+    let registration = || claims::ClaimCount { interval_ms: 60_000, every: 4 }.registration();
+    let mut rig = TaskRig::new(1, registration())
+        .unwrap()
+        .double(claims::OBSERVE, move |_| Ok(seen.lock().unwrap().clone()))
+        .double(INBOX_APPEND, |l| Ok(l.into()))
+        .double(WATCH_PUBLISH, move |input| runner.run("k", &EffectSpec::keyed(WATCH_PUBLISH, "k", input, 10_000)))
+        .hanging(WATCH_PUBLISH);
+    let (_, stream, boot) = claims::ClaimCount::boot();
+    rig.tick(stream, boot).unwrap();
+    *world.lock().unwrap() = claim_world(&[]);
+    rig.advance(60_000).unwrap();
+    assert_eq!(broker.retained("watch/#").len(), 1, "the clear never ran");
+
+    rig.reopen(registration()).unwrap();
+    rig.run_until_idle().unwrap();
+    flush(&fx);
+    assert_eq!(broker.retained("watch/#"), vec![]);
+}
+
 #[test_id(t83rse6)]
 #[test]
 fn a_publish_with_no_broker_configured_says_so_and_is_no_failure() {
+    let _env = testkit::env_read();
     let fx = Effects::default();
     assert!(fx.watch_topics.set(None).is_ok());
     let input = json!({"row": "claim-count", "set": {}, "clear": ["sp-a"]}).to_string();

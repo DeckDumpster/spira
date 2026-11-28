@@ -207,6 +207,9 @@ impl Handler for WatchAmiStale {
             let held = watch_topics::carried(INBOX_TAG, &carried::<Carry>(view, &ev.stream, STATE).published);
             return vec![Command::Probe(EffectSpec::probe(OBSERVE, held, OBSERVE_DEADLINE_MS))];
         }
+        if let Some(again) = watch_topics::again(view, ev, &carried::<Carry>(view, &ev.stream, STATE).published) {
+            return vec![Command::Effect(again)];
+        }
         if !answers_observe(view, ev, OBSERVE) {
             return vec![];
         }

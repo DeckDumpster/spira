@@ -102,7 +102,7 @@ impl ClaimCount {
 
 impl Handler for ClaimCount {
     fn interests(&self) -> &[EventKindTag] {
-        &[TICK, EFFECT_SUCCEEDED]
+        &[TICK, EFFECT_SUCCEEDED, EFFECT_TIMED_OUT]
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
@@ -115,6 +115,10 @@ impl Handler for ClaimCount {
                 Command::Probe(EffectSpec::probe(OBSERVE, held, OBSERVE_DEADLINE_MS)),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
+        }
+        if ev.kind.tag == EFFECT_TIMED_OUT {
+            let carry: Carry = carried(view, &ev.stream, STATE);
+            return watch_topics::again(view, ev, &carry.published).map(Command::Effect).into_iter().collect();
         }
         let observed = ev.cause.as_ref().is_some_and(|cause| {
             view.events(&ev.stream).iter().rev().find(|e| &e.id == cause && e.kind.tag == EFFECT_REQUESTED).and_then(|e| serde_json::from_str::<serde_json::Value>(&e.kind.body).ok()).is_some_and(|b| b["spec"]["name"] == OBSERVE)

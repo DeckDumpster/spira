@@ -3,18 +3,20 @@
 //! to a broker that comes back is what each row's latest observe carried, with every publish
 //! since on top.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use runtime::event::{fnv1a, EffectSpec};
+use runtime::event::{fnv1a, EffectSpec, Event, Projection};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use spira_pub::{Class, Publisher};
 
-use crate::watchers::WATCH_PUBLISH;
+use crate::watchers::{answered_spec, lost_at_restart, WATCH_PUBLISH};
 
 const PUBLISH_DEADLINE_MS: u64 = 10_000;
+/// How long the broker is given to take a clear before it is kept to be sent again.
+const CLEAR_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// One held condition: the payload of its topic.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,6 +82,16 @@ pub fn effect(change: &Change, now_ms: u64) -> EffectSpec {
     EffectSpec::keyed(WATCH_PUBLISH, format!("watch/{}/{now_ms}/{:016x}", change.row, fnv1a(&input)), input, PUBLISH_DEADLINE_MS)
 }
 
+/// The effect again when `ev` says a `watch.publish` was lost with a stopping process, less
+/// whatever `published` has moved past. A lost clear is in no carry, so nothing else resends it.
+pub fn again(view: &Projection, ev: &Event, published: &Published) -> Option<EffectSpec> {
+    let lost = answered_spec(view, ev).filter(|s| s.name == WATCH_PUBLISH && lost_at_restart(ev))?;
+    let mut change: Change = serde_json::from_str(&lost.input).ok()?;
+    change.set.retain(|subject, value| published.get(subject) == Some(value));
+    change.clear.retain(|subject| !published.contains_key(subject));
+    (!change.set.is_empty() || !change.clear.is_empty()).then(|| effect(&change, ev.at))
+}
+
 /// What `row`'s observe is asked with; empty when it has published nothing.
 pub fn carried(row: &str, published: &Published) -> String {
     if published.is_empty() {
@@ -92,38 +104,47 @@ fn topic(row: &str, subject: &str) -> String {
     format!("watch/{row}/{}", spira_pub::segment(subject))
 }
 
-type Held = BTreeMap<String, Published>;
+#[derive(Default)]
+struct State {
+    held: BTreeMap<String, Published>,
+    /// Topics cleared here that the broker has not been seen to take.
+    uncleared: BTreeSet<String>,
+}
 
 pub struct WatchTopics {
     publisher: Publisher,
-    held: Arc<Mutex<Held>>,
+    state: Arc<Mutex<State>>,
     asked_to_connect: AtomicBool,
 }
 
-fn lock(m: &Mutex<Held>) -> MutexGuard<'_, Held> {
+fn lock(m: &Mutex<State>) -> MutexGuard<'_, State> {
     m.lock().unwrap_or_else(|e| e.into_inner()) // loop-safe: taken only by effects on the pool and the publisher thread
 }
 
 impl WatchTopics {
     pub fn new(publisher: Publisher) -> WatchTopics {
-        let held = Arc::new(Mutex::new(Held::new()));
-        let republish = held.clone();
+        let state = Arc::new(Mutex::new(State::default()));
+        let republish = state.clone();
         publisher.on_connect(move |again| {
-            for (row, published) in lock(&republish).iter() {
+            let state = lock(&republish);
+            for (row, published) in &state.held {
                 for (subject, value) in published {
                     // A refusal is the publisher's to log; nothing here can mend it.
                     let _ = again.publish(Class::State, &topic(row, subject), &json!(value));
                 }
             }
+            for cleared in &state.uncleared {
+                let _ = again.clear(cleared);
+            }
         });
-        WatchTopics { publisher, held, asked_to_connect: AtomicBool::new(false) }
+        WatchTopics { publisher, state, asked_to_connect: AtomicBool::new(false) }
     }
 
     /// Takes the carried state an observe was asked with. Whatever of it is not already held is
     /// published, so a restarted process says it again.
     pub fn track(&self, input: &str) {
         let Ok(Carried { row, published }) = serde_json::from_str(input) else { return };
-        let held = lock(&self.held).get(&row).cloned().unwrap_or_default();
+        let held = lock(&self.state).held.get(&row).cloned().unwrap_or_default();
         let unsaid: Vec<(&String, &Condition)> = published.iter().filter(|(s, v)| held.get(*s) != Some(*v)).collect();
         if !unsaid.is_empty() && !self.asked_to_connect.swap(true, Ordering::SeqCst) {
             // A failure is logged by the publisher, which connects when the broker appears.
@@ -132,22 +153,53 @@ impl WatchTopics {
         for (subject, value) in unsaid {
             let _ = self.publisher.publish(Class::State, &topic(&row, subject), &json!(value));
         }
+        let mut state = lock(&self.state);
+        for subject in published.keys() {
+            state.uncleared.remove(&topic(&row, subject));
+        }
         // Held only after the publishes: the connect hook takes this lock while they wait.
-        lock(&self.held).insert(row, published);
+        state.held.insert(row, published);
+        drop(state);
+        self.send_clears();
     }
 
     /// Publishes the [`Change`] in `input`. A broker that cannot be reached is logged by the
     /// publisher and is not the effect's failure: the state goes out on reconnect.
     pub fn publish(&self, input: &str) -> Result<String, String> {
         let Change { row, set, clear } = serde_json::from_str(input).map_err(|e| e.to_string())?;
-        let total = set.len() + clear.len();
-        let sent = set.iter().filter(|(s, v)| self.publisher.publish(Class::State, &topic(&row, s), &json!(v)).is_ok()).count()
-            + clear.iter().filter(|s| self.publisher.clear(&topic(&row, s)).is_ok()).count();
-        let mut held = lock(&self.held);
-        let published = held.entry(row).or_default();
-        published.retain(|subject, _| !clear.contains(subject));
-        published.extend(set);
-        Ok(format!("published {sent} of {total} change(s)"))
+        {
+            // A clear is recorded before anything is sent, so a connect on the way cannot put
+            // the old value back.
+            let mut state = lock(&self.state);
+            for subject in &clear {
+                state.uncleared.insert(topic(&row, subject));
+                if let Some(published) = state.held.get_mut(&row) {
+                    published.remove(subject);
+                }
+            }
+            for subject in set.keys() {
+                state.uncleared.remove(&topic(&row, subject));
+            }
+        }
+        let sent = set.iter().filter(|(s, v)| self.publisher.publish(Class::State, &topic(&row, s), &json!(v)).is_ok()).count();
+        let said = format!("published {sent} of {} value(s), {} clear(s)", set.len(), clear.len());
+        // Held only after the publishes: the connect hook takes this lock while they wait.
+        lock(&self.state).held.entry(row).or_default().extend(set);
+        self.send_clears();
+        Ok(said)
+    }
+
+    /// Sends every clear not yet seen to arrive, and forgets those the broker then takes.
+    fn send_clears(&self) {
+        let owed: Vec<String> = lock(&self.state).uncleared.iter().cloned().collect();
+        let queued: Vec<&String> = owed.iter().filter(|t| self.publisher.clear(t).is_ok()).collect();
+        if queued.is_empty() || self.publisher.flush(CLEAR_DEADLINE).is_err() {
+            return;
+        }
+        let mut state = lock(&self.state);
+        for taken in queued {
+            state.uncleared.remove(taken);
+        }
     }
 
     /// Waits for the broker to take what is queued.
