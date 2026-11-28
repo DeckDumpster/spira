@@ -186,7 +186,7 @@ pub fn unfinished_incidents(beads: Vec<Bead>, lc: &std::collections::HashMap<Str
 /// "nothing in that category", matching every bash `2>/dev/null` guard in the original.
 pub fn detect_livelocked(cfg: &Config, door: &LcClient) -> String {
     let reg = registry(cfg);
-    let held: HashSet<String> = spira_store::lc_state::list_live()
+    let held: HashSet<String> = spira_store::lc_state::list_live_on(door)
         .map(|rows| rows.into_iter().filter(|r| r.held("ask") || r.held("poison")).map(|r| r.bead_id).collect())
         .unwrap_or_default();
     livelock_rows(

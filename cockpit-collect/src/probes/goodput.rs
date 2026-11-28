@@ -8,7 +8,7 @@ use spira_store::lc_call::LcClient;
 
 pub fn goodput_keys() -> Kv {
     let Some(client) = crate::store::client() else { return Kv::new() };
-    keys_on(&client)
+    keys_on(&store_view::through_views(client))
 }
 
 pub fn keys_on(client: &LcClient) -> Kv {

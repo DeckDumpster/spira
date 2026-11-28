@@ -123,7 +123,8 @@ pub fn main(args: &[String]) -> i32 {
 /// `gate fence-run <name> --repo <root> --tip <sha> --base <ref>`: one fence of the tip's own
 /// `gate.steps`, run in a throwaway checkout of the tip. A bin the fence reads is the installed
 /// one by bare name; the round, which builds the tree's own, is what finally judges. Exit 0 the
-/// fence passed, 1 it failed, 2 it could not be run (unknown name, no checkout).
+/// fence passed, 1 it failed, 2 it could not be run (unknown name, no checkout, or the fence
+/// itself refusing with 75).
 pub fn run_main(args: &[String]) -> i32 {
     match spira_config::release_env::child_path_env_for_process() {
         Ok(envs) => run_with(args, &envs),
@@ -204,6 +205,10 @@ fn run_in(tree: &std::path::Path, name: &str, base: &str, envs: &[(String, Strin
         .status();
     match status {
         Ok(s) if s.success() => 0,
+        Ok(s) if s.code() == Some(crate::engine::NOVERDICT) => {
+            eprintln!("gate fence-run: {name} refused (exit {}); no verdict", crate::engine::NOVERDICT);
+            2
+        }
         Ok(_) => 1,
         Err(e) => {
             eprintln!("gate fence-run: cannot run {name}: {e}");
@@ -282,6 +287,7 @@ mod tests {
         std::fs::create_dir_all(r.join("spira")).unwrap();
         std::fs::write(r.join("spira/ok.sh"), "echo \"on $SPIRA_GATE_BRANCH vs $SPIRA_GATE_BASE\"\n").unwrap();
         std::fs::write(r.join("spira/bad.sh"), "exit 7\n").unwrap();
+        std::fs::write(r.join("spira/refuse.sh"), "exit 75\n").unwrap();
         testkit::git(r, &["add", "."]);
         testkit::git(r, &["commit", "-q", "-m", "x"]);
         let tip = testkit::git(r, &["rev-parse", "HEAD"]);
@@ -293,12 +299,14 @@ mod tests {
         run_with(&[name.into(), "--repo".into(), root.into(), "--tip".into(), tip.into(), "--base".into(), "main".into()], &[("PATH".to_string(), std::env::var("PATH").unwrap_or_default())])
     }
 
+    // Real bash and git: the contract is how a fence process's own exit status is read.
     #[test_id(tfysag0)]
     #[test]
     fn one_named_fence_runs_at_the_tip_and_its_exit_is_the_answer() {
-        let (_t, root, tip) = repo_with_fences("fence-run", "step bash spira/ok.sh\nstep bash spira/bad.sh\n");
+        let (_t, root, tip) = repo_with_fences("fence-run", "step bash spira/ok.sh\nstep bash spira/bad.sh\nstep bash spira/refuse.sh\n");
         assert_eq!(fence_run(&root, &tip, "ok"), 0);
         assert_eq!(fence_run(&root, &tip, "bad"), 1, "any red exit of the fence is a red");
+        assert_eq!(fence_run(&root, &tip, "refuse"), 2, "a fence's refusal (75) is no verdict, not a red");
         assert_eq!(fence_run(&root, &tip, "fence-ok"), 2, "the round's `fence-` prefix is not part of the fence's name");
         assert_eq!(fence_run(&root, &tip, "nonesuch"), 2, "an unknown fence cannot be run, which is not a pass");
         assert_eq!(fence_run(&root, "0000000000000000000000000000000000000000", "ok"), 2, "a tip the repository lacks cannot be run");

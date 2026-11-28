@@ -191,6 +191,15 @@ fn ask(server: &Server) {
     spira_store::lc_call::exchange_once(stream, &["list".to_string(), "--live".to_string()], None).expect("an answer");
 }
 
+/// A worker counts itself idle before the connection closes, so the next request after the close finds it.
+fn ask_until_closed(server: &Server) {
+    let stream = std::os::unix::net::UnixStream::connect(&server.socket).expect("connect");
+    stream.set_read_timeout(Some(CAP)).unwrap();
+    let mut closed = stream.try_clone().unwrap();
+    spira_store::lc_call::exchange_once(Box::new(spira_store::lc_call::UnixPort::from(stream)), &["list".to_string(), "--live".to_string()], None).expect("an answer");
+    std::io::Read::read_to_end(&mut closed, &mut Vec::new()).expect("the server closes the connection");
+}
+
 fn assert_no_span_file(server: &Server) {
     let files: Vec<String> = std::fs::read_dir(server._dir.join("run/otel"))
         .into_iter()
@@ -208,17 +217,18 @@ fn a_collector_holding_requests_unanswered_stalls_no_request_worker() {
     let collector = Collector::hanging();
     let server = start_server(Some(&collector));
     assert!(collector.wait_until(|p| !p.is_empty(), CAP), "the start-up span's push is held");
-    ask(&server);
-    let before = thread_names(server.pid).len();
+    ask_until_closed(&server);
+    let workers = || thread_names(server.pid).into_iter().filter(|n| n == "lc-conn" || n == "lc-run").count();
+    let before = workers();
     for _ in 0..30 {
-        ask(&server);
+        ask_until_closed(&server);
     }
-    let grown = thread_names(server.pid).len().saturating_sub(before);
+    let grown = workers().saturating_sub(before);
     assert_no_span_file(&server);
     let Server { mut child, .. } = server;
     let _ = child.kill();
     let _ = child.wait();
-    assert!(grown <= 4, "threads grew by {grown} over 30 requests while the collector answered nothing");
+    assert!(grown <= 2, "request workers grew by {grown} over 30 requests while the collector answered nothing");
 }
 
 #[test_id(tyigr7q)]
