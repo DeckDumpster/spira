@@ -52,6 +52,11 @@ diff that touches what the suite exercises outranks it.
   branch: if another mender committed on it first, rebase onto theirs; if your fix no longer
   applies there, `return` with your diagnosis.
 - An interaction failure that needs two members' code to change is mended the same way.
+- A small fix-up in a member's code the mend already touches (same crates or files or their tests
+  and fixtures, no round or design of its own, that member's acceptance unchanged) goes in its own
+  commit on that member's branch, saying what it is, inside your deadline; name it in your
+  `work mender outcome` diagnosis. A second, unrelated defect would get its own bead
+  (`law-a-second-defect-gets-its-own-bead`); you file none, so it goes in the diagnosis.
 - Before `mended`: run `tools/test-sandbox/runner --around cargo test -p <crate>` for every crate the mend touched, and, through
   `{{TESTENV}} --suites <suite> <member-branch> {{REPO_NAME}}`, the suites that reference any touched non-Rust file — in the pass tree the spec
   names, inside your deadline. Never run a suite on the host. If a check fails, the outcome is

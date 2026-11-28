@@ -1594,6 +1594,69 @@ fn filing_through_the_real_bead(lc: &Lc) {
     testkit::write_exe(lc.dir.join("release/bin/bead.sh"), &shim);
 }
 
+#[test_id(t7up6y3)]
+#[test]
+fn a_followup_files_at_p3_and_goes_higher_only_with_a_statement_its_review_reads() {
+    let Some(store) = Store::up() else { return };
+    let writer = store.dir.join("rank.writer");
+    let map = spira_config::process::fixture_filing_repo_map(&store.dir, &["spira"]).display().to_string();
+    let mut lc = Lc::with_keys(&store, "rank", &writer.display().to_string(), &[("SPIRA_REPO_MAP", &map)]);
+    provision(&lc);
+    lc.admin("admin-provision-writer");
+    filing_through_the_real_bead(&lc);
+    lc.serve();
+    let sent = |args: &[&str]| {
+        let (rc, out) = lc.settled(args, None);
+        lc.finished(rc, out)
+    };
+    let ok = |args: &[&str]| {
+        let (rc, out) = sent(args);
+        assert_eq!(rc, 0, "{args:?}: {out}");
+        out
+    };
+    let bound = first_line(&ok(&["content", "create", "a builder's own bead", "--silent", "--labels", "repo:spira"]));
+    ok(&["create-bead", &bound, "--ready", "--repo", "spira"]);
+    let request = |title: &'static str, flags: &[&str]| -> Vec<String> {
+        let mut args = vec!["work", &bound, "file-followup", title, "--for", "builder", "--repo", "spira"];
+        args.extend_from_slice(flags);
+        args.extend(["--body-file", "-", "--stdin", "## Build\nthe artifact, in spira-lc\n", "--actor", "builder"]);
+        args.iter().map(|a| a.to_string()).collect()
+    };
+    let file = |title: &'static str, flags: &[&str]| {
+        let args = request(title, flags);
+        let out = ok(&args.iter().map(String::as_str).collect::<Vec<_>>());
+        let review = out.lines().nth(1).and_then(|l| l.split_whitespace().next()).unwrap_or_else(|| panic!("no review filed: {out}")).to_string();
+        (first_line(&out), review)
+    };
+    let shown = |id: &str| {
+        let shown: serde_json::Value = serde_json::from_str(&lc.shows(id)).unwrap();
+        shown.as_array().map_or_else(|| shown.clone(), |a| a[0].clone())
+    };
+
+    let (plain, plain_review) = file("A tidy of x", &[]);
+    assert_eq!((shown(&plain)["priority"].as_i64(), shown(&plain_review)["priority"].as_i64()), (Some(3), Some(3)));
+
+    let blocks = format!("blocks {plain} from landing");
+    let (urgent, urgent_review) = file("Fix y", &["--priority", "1", "--blocks", &blocks]);
+    let item = shown(&urgent);
+    assert_eq!((item["priority"].as_i64(), shown(&urgent_review)["priority"].as_i64()), (Some(1), Some(1)), "{item}");
+    let notes = item["notes"].as_str().unwrap_or_default();
+    assert!(notes.contains(&format!("Filed at P1 by builder from {bound}: blocks: {blocks}")), "{notes}");
+    let asked = shown(&urgent_review)["description"].as_str().unwrap_or_default().to_string();
+    assert!(asked.contains(&format!("\nPriority: P1 — blocks: {blocks}\n")), "{asked}");
+
+    let waiting = || {
+        let listed = ok(&["work", "-", "open-items", "--repo", "spira", "--json", "--actor", "skuld"]);
+        serde_json::from_str::<Vec<serde_json::Value>>(&listed).unwrap().len()
+    };
+    let before = waiting();
+    let args = request("Fix z", &["--priority", "1"]);
+    let (rc, out) = sent(&args.iter().map(String::as_str).collect::<Vec<_>>());
+    assert_ne!(rc, 0, "{out}");
+    assert!(out.contains("--blocks") && out.contains("--defect"), "{out}");
+    assert_eq!(waiting(), before, "a refusal files nothing");
+}
+
 #[test_id(t3xplmr)]
 #[test]
 fn a_second_filing_of_a_waiting_outcome_is_folded_into_the_first_and_leaves_no_new_row() {

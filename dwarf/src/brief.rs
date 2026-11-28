@@ -95,8 +95,14 @@ pub fn no_bd_brief() -> String {
 /// parent the child for the model and never copy its `branch:` label (sp-o4co5).
 pub fn followup_brief(bead_id: &str) -> String {
     format!(
-        "**File it as a bead** — `work file-followup \"<title>\" --repo <name>` for work that follows
-  from this one, `work split \"<title>\" --repo <name>` for a piece of this bead's own scope.
+        "A small fix-up you find while working this bead is not filed: do it now, in its own commit that
+  says what it is, and name it in your `work note` before you submit. Small means it stays in the
+  crates or files the bead already touches (or their tests and fixtures), needs no round or design
+  of its own, and leaves the acceptance unchanged. A second, unrelated defect still gets its own
+  bead (`law-a-second-defect-gets-its-own-bead`); a small fix-up in the same area does not.
+  **Work that cannot ride this branch is filed as a bead** — `work file-followup \"<title>\" --repo <name>`
+  for work that follows from this one. It files at P3 unless you pass `--blocks \"<the work it blocks>\"`
+  or `--defect \"<what is broken for a user now>\"`. Use `work split \"<title>\" --repo <name>` for a piece of this bead's own scope.
   Both are parented to `{bead_id}` for you. For a piece that must land before this bead can,
   use `work split … --prerequisite`: it is filed beside this bead, not under it, and this bead
   waits on it. None carries this bead's `branch:` label. `--repo` is required and is the repo
@@ -132,9 +138,15 @@ When you are blocked on a question only the operator can answer:
 This both holds the bead and files the ask; you do not also send mail yourself. The question is
 the human topic and must not start with a bead id: the bound bead is attached automatically.
 
-When you discover other work rather than doing it:
+A small fix-up you find while working this bead is not filed: do it now, in its own commit that
+says what it is, and name it in your `work note` before you submit. Small means it stays in the
+crates or files the bead already touches (or their tests and fixtures), needs no round or design of
+its own, and leaves the acceptance unchanged. A second, unrelated defect still gets its own bead
+(`law-a-second-defect-gets-its-own-bead`); a small fix-up in the same area does not.
 
-    work file-followup \"<title>\" --repo <name>
+When you discover work that cannot ride this branch:
+
+    work file-followup \"<title>\" --repo <name>   (P3 unless --blocks \"<the work it blocks>\" or --defect \"<what is broken for a user now>\")
     work split \"<title>\" --repo <name>
 
 Both file through `bead.sh`'s own contract, and both are parented to `{bead_id}` unless you add
@@ -855,6 +867,11 @@ mod tests {
         assert!(on.contains("work split"));
         assert!(on.contains("work split … --prerequisite"));
         assert!(finish_brief("sp-a").contains("work split … --prerequisite"));
+        for brief in [&on, &finish_brief("sp-a")] {
+            for said in ["small fix-up", "its own commit", "work note", "cannot ride", "P3", "--blocks", "--defect", "law-a-second-defect-gets-its-own-bead"] {
+                assert!(brief.contains(said), "no {said:?} in {brief}");
+            }
+        }
         assert!(!on.contains("bead.sh file"));
     }
 

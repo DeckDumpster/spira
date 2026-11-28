@@ -52,7 +52,8 @@ fn retiring_a_key_removes_its_registry_file_names_it_in_the_delta_and_keeps_the_
     assert_eq!(added, ["spira.added"], "the delta's own additions survive");
     assert!(read(t.path(), "spira/testlib/complete.toml").contains("old_knob = \"x\""), "the landing ref still requires the line");
     let said = String::from_utf8_lossy(&out.stdout);
-    assert!(said.contains("complete.toml") && said.contains("follow-up"), "{said}");
+    assert!(!said.contains("follow-up"), "{said}");
+    assert!(said.contains("complete.toml") && said.contains("later branch") && said.contains("deletes the line"), "{said}");
     assert!(said.contains("code that reads"), "{said}");
 }
 

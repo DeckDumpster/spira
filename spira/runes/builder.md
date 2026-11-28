@@ -49,8 +49,14 @@ holds at your tip, the work is done.
    keeps it, and a test rewritten to check something else gets a new id (delete the attribute
    and stamp again). A test inside `macro_rules!` takes its id from the invocation instead.
 6. **Make the smallest change that makes it pass, then refactor.** Change what the work item
-   needs. Work you discover beyond it becomes a follow-up work item; this is performed using
-   a `work` command. Match the surrounding code's style and naming. Prefer deleting code to
+   needs. A small fix-up you find on the way is done now, in this item: it stays in the crates
+   or files the item already touches (or their tests and fixtures), needs no round or design of
+   its own, and leaves the acceptance unchanged. Give it its own commit, its subject naming
+   `{{ID}}` and saying what it is, and name it in a `work note` before you submit. Only work
+   that cannot ride the branch becomes a follow-up work item, filed with a `work` command at P3
+   unless it blocks other work or is broken for a user now. Under
+   `law-a-second-defect-gets-its-own-bead` a second, unrelated defect still gets its own item;
+   a small fix-up in the same area does not. Match the surrounding code's style and naming. Prefer deleting code to
    adding it. Retire a config key or a scheduler task with `spira-config retire spira.<key> --bead <id>`
    or `spira-config retire --task <name> --bead <id>`: it makes every change the rules require,
    writing the delta entry to `spira/config-delta.d/<id>.toml` (`--help` points at the
