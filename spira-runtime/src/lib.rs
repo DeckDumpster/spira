@@ -623,7 +623,6 @@ mod once_tests {
     use spira_lc::keys;
     use state_store::{Config, Contract, MemBackend, Object, Ports, Request, Txn};
     use std::cell::Cell;
-    use std::io::{BufRead, BufReader, Write};
 
     /// The store's `journal done|has-done` over an in-process store, behind the socket the real
     /// client dials. `refuse` names an op it answers "cannot tell".
@@ -639,19 +638,19 @@ mod once_tests {
         let (served, raw) = (open(backend.clone()), open(backend));
         let listener = std::os::unix::net::UnixListener::bind(dir.join("sock")).unwrap();
         std::thread::spawn(move || {
-            for (n, stream) in listener.incoming().flatten().enumerate() {
-                let mut line = String::new();
-                BufReader::new(&stream).read_line(&mut line).unwrap();
-                let head: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
-                let argv: Vec<&str> = head.get("argv").unwrap_or(&head).as_array().unwrap().iter().map(|a| a.as_str().unwrap()).collect();
-                let (code, out) = match argv.as_slice() {
-                    ["journal", op, _] if *op == refuse => (2, "cannot tell: deadline".to_string()),
-                    ["journal", "done", id] => (0, effect_ledger::done(&served, id, &Request::new(&format!("done-{n}"), "test", "journal-done")).unwrap().to_string()),
-                    ["journal", "has-done", id] => (0, effect_ledger::has_done(&served, id).unwrap().to_string()),
-                    other => (3, format!("not served: {other:?}")),
-                };
-                let _ = write!(&stream, "{{\"exit_code\":{code},\"len\":{}}}\n{out}", out.len());
-            }
+            let n = std::sync::atomic::AtomicU64::new(0);
+            runtime::socket::answer(&listener, &|argv| {
+                let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+                match argv.as_slice() {
+                    ["journal", op, _] if *op == refuse => Err(runtime::RuntimeError::cannot_tell("cannot tell: deadline")),
+                    ["journal", "done", id] => {
+                        let request = Request::new(&format!("done-{}", n.fetch_add(1, Ordering::SeqCst)), "test", "journal-done");
+                        Ok(effect_ledger::done(&served, id, &request).unwrap().to_string())
+                    }
+                    ["journal", "has-done", id] => Ok(effect_ledger::has_done(&served, id).unwrap().to_string()),
+                    other => Err(runtime::RuntimeError::refused(format!("not served: {other:?}"))),
+                }
+            })
         });
         Store { dir, raw }
     }

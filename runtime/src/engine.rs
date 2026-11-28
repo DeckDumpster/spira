@@ -1992,6 +1992,19 @@ mod tests {
         }
     }
 
+    #[test_id(tmkma6k)]
+    #[test]
+    fn a_succeeded_probes_record_says_it_was_not_journaled() {
+        let sink = crate::wide::MemSink::new();
+        let mut e = Engine::open(MemJournal::new(), Arc::new(VirtualClock::new(0)), vec![Registration::new("asker", Asker)], 1).unwrap().with_sink(sink.clone());
+        e.start("s", EventKind::new("boot", ""));
+        e.run_until_idle().unwrap();
+        let probe = e.pending_effects().pop().expect("a probe is pending").key;
+        assert!(e.complete(&probe, Outcome::Succeeded(String::new())).unwrap());
+        let record = sink.records().into_iter().find(|r| r.get("unit") == Some(&"effect".into())).expect("one effect record");
+        assert_eq!(record.get("effect.journaled"), Some(&false.into()), "{record:?}");
+    }
+
     /// A tick that re-arms itself every 30 s, and optionally asks a due time and an act.
     struct Poller {
         tag: &'static str,

@@ -859,10 +859,10 @@ mod tests {
     #[test]
     fn only_reads_are_retried() {
         let s = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-        for r in [&["show", "x"][..], &["claimable"], &["list", "--state", "WORKING"], &["content", "list"], &["content", "show", "x"], &["content", "search", "x"], &["content", "events", "--id", "x"], &["content", "dep", "list", "x"], &["content", "label", "list", "x"], &["fact", "list", "--ids", "x"]] {
+        for r in [&["show", "x"][..], &["claimable"], &["list", "--state", "WORKING"], &["content", "list"], &["content", "show", "x"], &["content", "search", "x"], &["content", "events", "--id", "x"], &["content", "dep", "list", "x"], &["content", "label", "list", "x"], &["fact", "list", "--ids", "x"], &["journal", "has-done", "x"]] {
             assert!(is_read(&s(r)), "{r:?}");
         }
-        for w in [&["hold", "x"][..], &["event", "x"], &["content", "close", "x"], &["content", "note", "x"], &["content", "comments", "add", "x", "text"], &["content", "label", "add", "sp-a", "x"], &["work", "x", "show"], &["create-bead"], &["fact", "add", "x", "--kind", "claimed", "--actor", "a"], &["facts"], &[]] {
+        for w in [&["hold", "x"][..], &["event", "x"], &["content", "close", "x"], &["content", "note", "x"], &["content", "comments", "add", "x", "text"], &["content", "label", "add", "sp-a", "x"], &["work", "x", "show"], &["create-bead"], &["fact", "add", "x", "--kind", "claimed", "--actor", "a"], &["facts"], &["journal", "done", "x"], &[]] {
             assert!(!is_read(&s(w)), "{w:?}");
         }
     }

@@ -764,6 +764,30 @@ mod tests {
         assert_eq!(effect_keys(&s), ["runtime/effect/t/klive", "runtime/open-effect/live"]);
     }
 
+    #[test_id(txqvfnd)]
+    #[test]
+    fn an_effect_sweep_larger_than_a_step_deletes_at_most_one_step_of_rows_at_a_time_and_keeps_the_open_ones() {
+        use crate::control::journal::SWEEP_STEP;
+        let (s, raw) = shared_store();
+        put_raw(&raw, &crate::control::keys::runtime("journal-meta", &["indexed"]), json!({}));
+        let open: Vec<Value> = (0..20).map(|n| effect_n(&format!("open{n:02}"))).collect();
+        turned(&s, json!({ "effects": open }));
+        let closed = SWEEP_STEP + 5;
+        for n in 0..closed {
+            put_old(&raw, &format!("closed{n:05}"), false);
+        }
+        let (mut cursor, mut per_step) = (Some("effect:".parse().unwrap()), Vec::new());
+        while let Some(c) = cursor {
+            let (out, next) = s.journal_sweep_step(Some(&c), false, "t").unwrap();
+            per_step.push(out.deleted_effects);
+            cursor = next;
+        }
+        assert!(per_step.iter().all(|d| *d <= SWEEP_STEP), "{per_step:?}");
+        assert!(per_step.iter().filter(|d| **d > 0).count() > 1, "the rows took more than one step: {per_step:?}");
+        assert_eq!(per_step.iter().sum::<usize>(), closed);
+        assert_eq!(effect_keys(&s).len(), 40, "20 open rows and their 20 index keys");
+    }
+
     #[test_id(t2vlnyo)]
     #[test]
     fn a_marker_step_deletes_at_most_one_step_of_rows_and_resumes_after_them() {
