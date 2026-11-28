@@ -1168,6 +1168,9 @@ impl World for Real {
         let debug = tree.join("target/debug");
         bins.iter().filter(|b| !debug.join(b).is_file()).cloned().collect()
     }
+    fn note_first_build(&self, profile_dir: &Path, secs: u64) {
+        spira_config::build_dir::note_first_build(profile_dir, Duration::from_secs(secs));
+    }
     fn release_target(&self, tree: &Path, keep_release: bool, hand_on: bool, cap_mib: u64, repo: &str) {
         if hand_on {
             if let Some(line) = crate::warm::donate_tree(tree, repo, cap_mib) {
@@ -1491,6 +1494,39 @@ mod tests {
         assert!(std::fs::symlink_metadata(p.tree.join("target/debug")).is_err());
         assert!(lockable(&p), "the lease is released");
         let _ = &p.t;
+    }
+
+    // Exception to the no-binary unit rule: only a real lease from `pool()`, which runs git, can show what its report reads.
+    #[test_id(tdnkade)]
+    #[test]
+    fn a_first_build_a_gate_notes_is_in_the_leased_folders_report_and_not_in_the_next_leases() {
+        use crate::ports::World;
+        let p = pool("exit 0\n");
+        let debug = p.tree.join("target/debug");
+        let held = |p: &Pool| p.real.leases.borrow().get(&p.tree).map(|(l, _, _)| l.report("sp-a").first_build_secs);
+        p.real.build_in_bases(&p.tree, &builder(&p), &p.bases).unwrap();
+        p.real.note_first_build(&debug, 12);
+        assert!(p.slot.join("debug").join(spira_config::build_dir::FIRST_BUILD).is_file());
+        assert_eq!(held(&p), Some(Some(12)));
+        p.real.release_target(&p.tree, false, false, 1 << 10, "r");
+        std::fs::create_dir_all(p.tree.join("target")).unwrap();
+        p.real.build_in_bases(&p.tree, &builder(&p), &p.bases).unwrap();
+        assert_eq!(held(&p), Some(None));
+    }
+
+    #[test_id(tm9nehh)]
+    #[test]
+    fn a_first_build_noted_without_a_lease_stays_in_the_trees_own_directory() {
+        use crate::ports::World;
+        let t = testkit::TempDir::new("gate-no-lease");
+        let (tree, own) = (t.path().join("tree"), t.path().join("own"));
+        std::fs::create_dir_all(tree.join("target")).unwrap();
+        std::fs::create_dir_all(&own).unwrap();
+        std::os::unix::fs::symlink(&own, tree.join("target/debug")).unwrap();
+        let real = super::super::Real::new(t.path().to_path_buf());
+        real.note_first_build(&tree.join("target/debug"), 12);
+        assert!(own.join(spira_config::build_dir::FIRST_BUILD).is_file());
+        assert!(real.leases.borrow().is_empty());
     }
 
     #[test_id(tltngq9)]

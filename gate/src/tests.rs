@@ -86,6 +86,8 @@ struct Fake {
     builders: RefCell<Vec<Option<crate::ports::Builder>>>,
     lc_refusal: RefCell<String>,
     removed_trees: Cell<u32>,
+    /// Every (profile directory, seconds) `note_first_build` was handed.
+    first_builds: RefCell<Vec<(PathBuf, u64)>>,
     err: RefCell<Vec<String>>,
     clock: Cell<u64>,
     signal: Cell<bool>,
@@ -331,6 +333,7 @@ impl Fake {
             builders: RefCell::new(Vec::new()),
             lc_refusal: RefCell::new(String::new()),
             removed_trees: Cell::new(0),
+            first_builds: RefCell::new(Vec::new()),
             err: RefCell::new(Vec::new()),
             clock: Cell::new(1_000_000),
             signal: Cell::new(false),
@@ -594,6 +597,9 @@ impl Fake {
 }
 
 impl World for Fake {
+    fn note_first_build(&self, profile_dir: &Path, secs: u64) {
+        self.first_builds.borrow_mut().push((profile_dir.to_path_buf(), secs));
+    }
     fn deny_list(&self, _at: u64) -> Result<String, String> {
         self.deny_calls.set(self.deny_calls.get() + 1);
         self.deny.borrow().clone()
@@ -2829,6 +2835,63 @@ const UNIT_DATA = [{"name":"runtime","target":"","start":4.2,"duration":88.4}];"
     assert!(builds[1].contains("cargo test --no-run --timings"), "{builds:?}");
     let m = meter(&f);
     assert!(m.contains(" compiled=14 fresh=6 "), "{m}");
+}
+
+/// The summed walls of the `build` phases the gate.log row names.
+fn build_phase_secs(f: &Fake) -> u64 {
+    let m = meter(f);
+    let phases = m.split_once(" phases=").unwrap_or_else(|| panic!("{m}")).1.split(' ').next().unwrap();
+    phases.split(',').filter_map(|p| p.strip_prefix("build:")).map(|s| s.parse::<u64>().unwrap()).sum()
+}
+
+#[test_id(tp8sop7)]
+#[test]
+fn a_passing_unit_gate_notes_its_build_phases_seconds_once_as_the_lease_folders_first_build() {
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    f.phase_secs.set(7);
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let secs = build_phase_secs(&f);
+    assert_eq!(secs, 7, "{}", meter(&f));
+    assert_eq!(*f.first_builds.borrow(), [(PathBuf::from(GATE_TREE).join("target/debug"), secs)]);
+}
+
+#[test_id(tuoj7ij)]
+#[test]
+fn a_unit_gate_with_two_build_commands_notes_their_sum_once() {
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    f.phase_secs.set(7);
+    let meta = metadata_json(&[("gate", &[]), ("spira-config", &[]), ("queue", &["spira-config"])])
+        .replace(r#""name":"queue","#, r#""name":"queue","metadata":{"spira":{"test-bins":["gate"]}},"#);
+    f.metadata.borrow_mut().insert(MERGE_SHA.into(), Ok(meta));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert_eq!(build_phase_secs(&f), 14, "{}", meter(&f));
+    assert_eq!(*f.first_builds.borrow(), [(PathBuf::from(GATE_TREE).join("target/debug"), 14)]);
+}
+
+#[test_id(taznl9x)]
+#[test]
+fn a_unit_gate_whose_build_fails_notes_no_first_build() {
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    f.phase_secs.set(7);
+    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "build"), (101, "error: could not compile".into()));
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert!(f.first_builds.borrow().is_empty(), "{:?}", f.first_builds.borrow());
+}
+
+#[test_id(tp9y2yy)]
+#[test]
+fn a_gate_that_runs_no_unit_build_notes_no_first_build_even_after_a_tools_build() {
+    let fences = unit_fake(&["docs/x.md"]);
+    fences.phase_secs.set(7);
+    assert_eq!(fences.run(), PASS, "{}", fences.stderr());
+    assert!(fences.first_builds.borrow().is_empty(), "{:?}", fences.first_builds.borrow());
+
+    let tools = fences_fake(&["Cargo.lock", "spira/lib.sh"]);
+    tools.put_var("SPIRA_GATE_BEAD", "");
+    tools.phase_secs.set(7);
+    assert_eq!(tools.run(), PASS, "{}", tools.stderr());
+    assert!(meter(&tools).contains(" phases=tools:7,fences:7"), "{}", meter(&tools));
+    assert!(tools.first_builds.borrow().is_empty(), "{:?}", tools.first_builds.borrow());
 }
 
 #[test_id(tnpiai0)]

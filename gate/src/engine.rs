@@ -3073,6 +3073,7 @@ pub fn run_composed<W: World>(
     // string's budget deferred or skipped after a suites gate).
     let mut reentry_done = false;
     let mut built = false;
+    let mut built_secs = 0;
     loop {
         let (name, c) = if !steps.is_empty() {
             steps.remove(0)
@@ -3185,6 +3186,12 @@ pub fn run_composed<W: World>(
                 out.push_str(&format!("\n{} {fences_rc}", parse::FENCES_EXITED));
             }
             return (r, out, phases);
+        }
+        if timed {
+            built_secs += wall;
+            if steps.first().is_none_or(|(next, _)| *next != "build") {
+                w.note_first_build(&tree.join("target").join("debug"), built_secs);
+            }
         }
         if w.signalled() {
             return (r, out, phases);
