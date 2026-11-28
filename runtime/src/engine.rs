@@ -20,7 +20,7 @@ use crate::scheduler::Scheduler;
 use crate::wide::{Fields, NullSink, TurnRss, Value, Wide, WideSink};
 use crate::{Result, RuntimeError};
 
-/// A stream found quarantined is asked again after this long, so a cleared row resumes it; a stream found healthy is not.
+/// While any stream is quarantined the rows are read again after this long, so a cleared row resumes it.
 const POISON_RECHECK_MS: u64 = 300_000;
 
 /// Memory-only events a stream keeps in the projection; older ones are dropped.
@@ -289,10 +289,11 @@ pub struct Engine {
     children: BTreeMap<String, BTreeMap<String, u64>>,
     baseline: Vec<(String, Value)>,
     started: Instant,
-    poison_seen: BTreeMap<StreamKey, bool>,
+    /// The streams refused a dispatch.
+    poison_seen: BTreeSet<StreamKey>,
     quarantined_here: BTreeSet<StreamKey>,
     set_aside: BTreeSet<EventId>,
-    poison_cleared_at: u64,
+    poison_read_at: Option<u64>,
     /// Every event waiting for its handlers, in the order it was made; `true` is memory-only.
     queue: VecDeque<(Event, bool)>,
     queued_ids: BTreeSet<EventId>,
@@ -461,10 +462,10 @@ impl Engine {
             children: BTreeMap::new(),
             baseline: vec![],
             started: Instant::now(),
-            poison_seen: BTreeMap::new(),
+            poison_seen: BTreeSet::new(),
             quarantined_here: BTreeSet::new(),
             set_aside: BTreeSet::new(),
-            poison_cleared_at: 0,
+            poison_read_at: None,
             queue: VecDeque::new(),
             queued_ids: BTreeSet::new(),
             replies: BTreeMap::new(),
@@ -902,6 +903,18 @@ impl Engine {
         }
     }
 
+    /// Arms the tick of task `name` as a change to what it reads would, for a cause no store
+    /// change reports. A task that polls, or an engine with no sweep, keeps its own timer.
+    pub fn wake(&mut self, name: &str) {
+        if self.sweep.is_none() {
+            return;
+        }
+        let now = self.clock.now_ms();
+        if let Some(t) = self.ticking.get_mut(name).filter(|t| t.stream.is_some() && !t.wake.polls && t.signal_at.is_none()) {
+            t.signal_at = Some(now.max(t.last_tick_at.saturating_add(t.wake.min_gap_ms)));
+        }
+    }
+
     /// The body of the newest carry of `task` under `tag`, as the engine holds it now.
     pub fn carry_body(&self, task: &str, tag: &str) -> Option<String> {
         self.carries.get(task)?.iter().filter(|((_, t), _)| t == tag).map(|(_, e)| e).max_by_key(|e| e.at).map(|e| e.kind.body.clone())
@@ -1071,6 +1084,7 @@ impl Engine {
                     let row = ScheduleRow { id, at, stream: ev.stream.clone(), kind, cause: Some(ev.id.clone()), correlation: ev.correlation.clone() };
                     self.turn.schedules.retain(|r| r.id != row.id);
                     self.turn.schedules.push(row.clone());
+                    self.turn.tasks.insert(handler.into());
                     self.scheduler.insert(row);
                     self.found_work(ev, handler);
                 }
@@ -1292,8 +1306,14 @@ impl Engine {
         }
         if let Some(row) = self.fire_of.remove(&ev.id) {
             self.turn.fired.push(row);
+            let mut heard = self.regs.iter().filter(|r| r.handler.interests().contains(&ev.kind.tag.as_str())).map(|r| r.name.clone()).peekable();
+            if heard.peek().is_none() {
+                self.turn.tasks.insert(SCHEDULER_TASK.into());
+            }
+            self.turn.tasks.extend(heard);
         }
         if let Some(request) = self.resolves.remove(&ev.id) {
+            self.turn.tasks.insert(self.requesters.get(&request).map_or(SCHEDULER_TASK, String::as_str).to_string());
             self.turn.resolved.push(request);
         }
         if !local && ev.stream.0 == HALT_STREAM {
@@ -1302,13 +1322,13 @@ impl Engine {
         if ev.kind.tag == STORE_CHANGED {
             self.wake_on_change(ev);
         }
-        let offered = if self.is_poisoned(&ev.stream)? {
+        let offered = if self.poison_seen.contains(&ev.stream) {
             self.park(ev);
             Ok(())
         } else {
             let offered = self.offer(ev);
             if offered.is_ok() {
-                if self.poison_seen.get(&ev.stream) == Some(&true) {
+                if self.poison_seen.contains(&ev.stream) {
                     self.park(ev);
                 } else {
                     self.tick_of.remove(&ev.id);
@@ -1473,39 +1493,45 @@ impl Engine {
         wide
     }
 
-    fn is_poisoned(&mut self, stream: &StreamKey) -> Result<bool> {
-        if let Some(p) = self.poison_seen.get(stream) {
-            return Ok(*p);
+    /// One read of every poison row: at the first turn, then at each recheck while a stream is
+    /// refused. A failed read fails the turn, so nothing is dispatched unchecked.
+    fn recheck_poison(&mut self) -> Result<()> {
+        let now = self.clock.now_ms();
+        if self.poison_read_at.is_some_and(|at| now.saturating_sub(at) < POISON_RECHECK_MS) {
+            return Ok(());
         }
-        let step = self.steps.enter("journal.poisoned", &stream.0);
-        let found = self.journal.poisoned(stream);
-        drop(step);
-        let p = match found? {
-            None => {
-                self.quarantined_here.remove(stream);
-                false
+        if self.poison_read_at.is_none() || !self.poison_seen.is_empty() {
+            let step = self.steps.enter("journal.poisoned", "");
+            let found = self.journal.poisoned_all();
+            drop(step);
+            self.refill_poison(found?);
+        }
+        self.poison_read_at = Some(now);
+        Ok(())
+    }
+
+    fn refill_poison(&mut self, rows: Vec<Poison>) {
+        let standing: BTreeSet<&StreamKey> = rows.iter().map(|r| &r.stream).collect();
+        self.quarantined_here.retain(|s| standing.contains(s));
+        self.poison_seen.clear();
+        for row in rows {
+            if row.handler != SCHEDULER_TASK || self.quarantined_here.contains(&row.stream) {
+                self.poison_seen.insert(row.stream);
+            } else if self.set_aside.insert(row.event.clone()) {
+                let w = self.unit("poison.set_aside", None);
+                w.set("stream", row.stream.0.as_str());
+                w.set("poison.event", row.event.0.as_str());
+                w.set("poison.message", row.message.as_str());
+                self.finish(&w);
             }
-            Some(row) if row.handler == SCHEDULER_TASK && !self.quarantined_here.contains(stream) => {
-                if self.set_aside.insert(row.event.clone()) {
-                    let w = self.unit("poison.set_aside", None);
-                    w.set("stream", stream.0.as_str());
-                    w.set("poison.event", row.event.0.as_str());
-                    w.set("poison.message", row.message.as_str());
-                    self.finish(&w);
-                }
-                false
-            }
-            Some(_) => true,
-        };
-        self.poison_seen.insert(stream.clone(), p);
-        Ok(p)
+        }
     }
 
     fn quarantine(&mut self, ev: &Event, handler: &str, message: &str) -> Result<()> {
         let step = self.steps.enter("journal.poison", &ev.stream.0);
         self.journal.poison(&Poison { stream: ev.stream.clone(), event: ev.id.clone(), handler: handler.into(), message: message.into() })?;
         drop(step);
-        self.poison_seen.insert(ev.stream.clone(), true);
+        self.poison_seen.insert(ev.stream.clone());
         self.quarantined_here.insert(ev.stream.clone());
         let w = self.unit("quarantine", Some(ev));
         w.set("handler", handler);
@@ -1536,11 +1562,7 @@ impl Engine {
         self.commit_turn()?;
         self.answer_committed(Ok(()));
         let mut n = 0;
-        let now = self.clock.now_ms();
-        if now.saturating_sub(self.poison_cleared_at) >= POISON_RECHECK_MS {
-            self.poison_seen.retain(|_, p| !*p);
-            self.poison_cleared_at = now;
-        }
+        self.recheck_poison()?;
         while let Some((ev, local)) = self.queue.pop_front() {
             if let Err(e) = self.dispatch(&ev, local) {
                 self.queue.push_front((ev, local));
@@ -1772,7 +1794,8 @@ impl Executor for Engine {
             correlation: p.correlation.clone(),
         };
         self.inherit_wake(&ev.id, &EventId(key.into()));
-        if self.memory_only.remove(key) {
+        let journaled = !self.memory_only.remove(key);
+        if !journaled {
             self.enqueue_local(ev.clone());
         } else {
             self.resolves.insert(ev.id.clone(), key.into());
@@ -1789,19 +1812,19 @@ impl Executor for Engine {
             });
         }
         let w = self.unit("effect", Some(&ev));
+        w.set("task", p.task.as_str());
         w.set("effect.kind", p.spec.name.as_str());
+        w.set("effect.key", p.spec.key.as_str());
         w.set("effect.idempotency_key", key);
+        w.set("effect.requested_at", p.requested_at);
+        w.set("effect.journaled", journaled);
         w.set("effect.deadline_at", p.deadline_at);
         w.set("effect.outcome", ev.kind.tag.trim_start_matches("effect."));
         if matches!(outcome, Outcome::Failed(_) | Outcome::Lost) {
             w.set("effect.detail", clip(&outcome.detail(), EFFECT_DETAIL_MAX));
         }
         w.set("effect.attempt", self.attempts.remove(key).unwrap_or(1));
-        let children = self.children.remove(key).unwrap_or_default();
-        if !children.is_empty() {
-            w.set("task", p.task.as_str());
-        }
-        for (program, n) in children {
+        for (program, n) in self.children.remove(key).unwrap_or_default() {
             w.set(&format!("effect.children.{program}"), n);
         }
         w.set("duration_ms", ev.at.saturating_sub(p.requested_at));
@@ -1838,6 +1861,9 @@ mod tests {
         fn poisoned(&self, _: &StreamKey) -> Result<Option<Poison>> {
             Ok(None)
         }
+        fn poisoned_all(&self) -> Result<Vec<Poison>> {
+            Ok(vec![])
+        }
     }
 
     #[test_id(tjh7mzx)]
@@ -1851,6 +1877,169 @@ mod tests {
         assert!(err.0.contains("journal open-effects: no reply from the store"), "{err}");
         assert!(err.0.contains("2 attempt(s)"), "{err}");
         assert_eq!(j.asked.load(std::sync::atomic::Ordering::SeqCst), 2, "no ask begins once 10 s are spent");
+    }
+
+    /// The store's poison rows, which the operator can clear, and the reads made of them.
+    struct Rows {
+        inner: Arc<MemJournal>,
+        cleared: std::sync::atomic::AtomicBool,
+        reads: std::sync::atomic::AtomicU32,
+    }
+
+    impl Rows {
+        fn standing(streams: &[&str]) -> Arc<Self> {
+            let inner = MemJournal::new();
+            for s in streams {
+                inner.poison(&Poison { stream: StreamKey((*s).into()), event: EventId(format!("earlier/{s}")), handler: "pinger".into(), message: "left by the run before".into() }).unwrap();
+            }
+            Arc::new(Rows { inner, cleared: Default::default(), reads: Default::default() })
+        }
+
+        fn reads(&self) -> u32 {
+            self.reads.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl Journal for Rows {
+        fn record(&self, ev: &Event) {
+            self.inner.record(ev)
+        }
+        fn boot(&self) -> Result<Boot> {
+            self.inner.boot()
+        }
+        fn commit(&self, t: &Turn) -> Result<()> {
+            self.inner.commit(t)
+        }
+        fn poison(&self, p: &Poison) -> Result<()> {
+            self.inner.poison(p)
+        }
+        fn poisoned(&self, stream: &StreamKey) -> Result<Option<Poison>> {
+            self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(self.inner.poisoned(stream)?.filter(|_| !self.cleared.load(std::sync::atomic::Ordering::SeqCst)))
+        }
+        fn poisoned_all(&self) -> Result<Vec<Poison>> {
+            self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(if self.cleared.load(std::sync::atomic::Ordering::SeqCst) { vec![] } else { self.inner.poisoned_all()? })
+        }
+    }
+
+    struct Heard(Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl Handler for Heard {
+        fn interests(&self) -> &[EventKindTag] {
+            &["ping"]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+            self.0.lock().unwrap().push(ev.stream.0.clone());
+            vec![]
+        }
+    }
+
+    /// Pings every stream at `at` and returns the streams a handler heard.
+    fn pinged(e: &mut Engine, clock: &VirtualClock, heard: &std::sync::Mutex<Vec<String>>, at: u64, streams: &[&str]) -> Vec<String> {
+        clock.advance_to(at);
+        for s in streams {
+            e.submit(&format!("{at}/{s}"), s, EventKind::new("ping", "")).unwrap();
+        }
+        e.run_until_idle().unwrap();
+        std::mem::take(&mut heard.lock().unwrap())
+    }
+
+    #[test_id(tkplgbw)]
+    #[test]
+    fn a_stream_poisoned_before_boot_is_refused_after_the_boot_and_after_a_recheck_at_one_read_each() {
+        let streams = ["a", "b", "c", "ok"];
+        let (store, clock, heard) = (Rows::standing(&["a", "b", "c"]), VirtualClock::new(0), Arc::new(std::sync::Mutex::new(vec![])));
+        let mut e = Engine::open(store.clone(), Arc::new(clock.clone()), vec![Registration::new("pinger", Heard(heard.clone()))], 1).unwrap();
+        assert_eq!(pinged(&mut e, &clock, &heard, 0, &streams), ["ok"]);
+        assert_eq!(store.reads(), 1, "one read at boot, however many streams");
+        assert_eq!(pinged(&mut e, &clock, &heard, POISON_RECHECK_MS - 1, &streams), ["ok"]);
+        assert_eq!(store.reads(), 1, "no read between rechecks");
+        assert_eq!(pinged(&mut e, &clock, &heard, POISON_RECHECK_MS, &streams), ["ok"]);
+        assert_eq!(store.reads(), 2, "one read at the recheck");
+    }
+
+    #[test_id(t4vjo91)]
+    #[test]
+    fn a_poison_cleared_in_the_store_is_seen_at_the_next_recheck_and_then_the_reads_stop() {
+        let (store, clock, heard) = (Rows::standing(&["a"]), VirtualClock::new(0), Arc::new(std::sync::Mutex::new(vec![])));
+        let mut e = Engine::open(store.clone(), Arc::new(clock.clone()), vec![Registration::new("pinger", Heard(heard.clone()))], 1).unwrap();
+        assert_eq!(pinged(&mut e, &clock, &heard, 0, &["a"]), Vec::<String>::new());
+        store.cleared.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(pinged(&mut e, &clock, &heard, POISON_RECHECK_MS - 1, &["a"]), Vec::<String>::new(), "not before the recheck");
+        assert_eq!(pinged(&mut e, &clock, &heard, POISON_RECHECK_MS, &["a"]), ["a"]);
+        let reads = store.reads();
+        for n in 2..14 {
+            assert_eq!(pinged(&mut e, &clock, &heard, n * POISON_RECHECK_MS, &["a"]), ["a"]);
+        }
+        assert_eq!(store.reads(), reads, "with nothing quarantined there is nothing to ask again");
+    }
+
+    #[test_id(tarazm1)]
+    #[test]
+    fn a_poison_read_that_fails_dispatches_nothing_and_is_asked_again() {
+        let (store, clock, heard) = (Rows::standing(&["a"]), VirtualClock::new(0), Arc::new(std::sync::Mutex::new(vec![])));
+        let faulty = crate::journal::FaultyJournal::new(store.clone());
+        let mut e = Engine::open(faulty.clone(), Arc::new(clock.clone()), vec![Registration::new("pinger", Heard(heard.clone()))], 1).unwrap();
+        faulty.cannot_tell_next("poisoned_all");
+        for s in ["a", "ok"] {
+            e.submit(s, s, EventKind::new("ping", "")).unwrap();
+        }
+        assert!(e.run_until_idle().unwrap_err().is_cannot_tell());
+        assert_eq!(*heard.lock().unwrap(), Vec::<String>::new(), "nothing is dispatched unchecked");
+        e.run_until_idle().unwrap();
+        assert_eq!(*heard.lock().unwrap(), ["ok"]);
+        assert_eq!(store.reads(), 1, "the failed ask never reached the store; the next one did");
+    }
+
+    /// Asks one thing of the journal per event: a schedule row at boot, nothing when it fires, an
+    /// effect on `ask`, nothing when that is answered.
+    struct OneRowATurn;
+
+    impl Handler for OneRowATurn {
+        fn interests(&self) -> &[EventKindTag] {
+            &["boot", "rang", "ask", EFFECT_SUCCEEDED]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+            match ev.kind.tag.as_str() {
+                "boot" => vec![Command::Schedule { at: ev.at + 100, kind: EventKind::new("rang", "") }],
+                "ask" => vec![Command::Effect(EffectSpec::keyed("write", "w", "", 1_000))],
+                _ => vec![],
+            }
+        }
+    }
+
+    #[test_id(trtaf3e)]
+    #[test]
+    fn a_turn_of_a_schedule_row_or_a_mark_alone_names_the_task_that_owns_it() {
+        let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
+        let regs = vec![Registration::new("owner", OneRowATurn), Registration::new("bystander", Heard(Default::default()))];
+        let mut e = Engine::open(journal.clone(), Arc::new(clock.clone()), regs, 1).unwrap();
+        let mut seen = 0;
+        let mut turn = || {
+            let all = journal.commits();
+            assert_eq!(all.len(), seen + 1, "one turn");
+            seen += 1;
+            let t = all[seen - 1].clone();
+            assert_eq!(t.task_names(), BTreeSet::from(["owner"]), "{t:?}");
+            t
+        };
+        e.start("s", EventKind::new("boot", ""));
+        e.run_until_idle().unwrap();
+        let scheduled = turn();
+        assert_eq!((scheduled.schedules.len(), scheduled.state.len() + scheduled.fired.len()), (1, 0));
+        clock.advance_to(100);
+        e.run_until_idle().unwrap();
+        let fired = turn();
+        assert_eq!((fired.fired.len(), fired.state.len() + fired.schedules.len()), (1, 0));
+        e.submit("a1", "s", EventKind::new("ask", "")).unwrap();
+        e.run_until_idle().unwrap();
+        assert_eq!(turn().effects.len(), 1);
+        let key = e.pending_effects()[0].key.clone();
+        e.complete(&key, Outcome::Succeeded(String::new())).unwrap();
+        e.run_until_idle().unwrap();
+        let resolved = turn();
+        assert_eq!((resolved.resolved.len(), resolved.state.len() + resolved.effects.len()), (1, 0));
     }
 
     struct Waker(std::sync::atomic::AtomicBool);
@@ -1952,6 +2141,56 @@ mod tests {
         assert!(long.starts_with(clipped.as_str()));
         assert_eq!(details[2], None);
         assert_eq!(details[3], Some(LOST_AT_RESTART.into()));
+    }
+
+    struct Writer;
+
+    impl Handler for Writer {
+        fn interests(&self) -> &[EventKindTag] {
+            &["boot"]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
+            vec![Command::Effect(EffectSpec::keyed("write", "write:key", "", 10_000))]
+        }
+    }
+
+    #[test_id(tj5k9hu)]
+    #[test]
+    fn a_journaled_effects_record_names_its_task_key_request_and_times() {
+        let (clock, sink) = (VirtualClock::new(5_000), crate::wide::MemSink::new());
+        let mut e = Engine::open(MemJournal::new(), Arc::new(clock.clone()), vec![Registration::new("writer", Writer)], 1).unwrap().with_sink(sink.clone());
+        e.start("s", EventKind::new("boot", ""));
+        e.run_until_idle().unwrap();
+        let request = e.pending_effects().pop().expect("the write is pending").key;
+        clock.advance(250);
+        assert!(e.complete(&request, Outcome::Succeeded(String::new())).unwrap());
+        let record = sink.records().into_iter().find(|r| r.get("unit") == Some(&"effect".into())).expect("one effect record");
+        let want: [(&str, Value); 8] = [
+            ("task", "writer".into()),
+            ("effect.key", "write:key".into()),
+            ("effect.idempotency_key", request.as_str().into()),
+            ("effect.outcome", "succeeded".into()),
+            ("effect.requested_at", 5_000u64.into()),
+            ("event.at", 5_250u64.into()),
+            ("duration_ms", 250u64.into()),
+            ("effect.journaled", true.into()),
+        ];
+        for (field, value) in want {
+            assert_eq!(record.get(field), Some(&value), "{field}: {record:?}");
+        }
+    }
+
+    #[test_id(tmkma6k)]
+    #[test]
+    fn a_succeeded_probes_record_says_it_was_not_journaled() {
+        let sink = crate::wide::MemSink::new();
+        let mut e = Engine::open(MemJournal::new(), Arc::new(VirtualClock::new(0)), vec![Registration::new("asker", Asker)], 1).unwrap().with_sink(sink.clone());
+        e.start("s", EventKind::new("boot", ""));
+        e.run_until_idle().unwrap();
+        let probe = e.pending_effects().pop().expect("a probe is pending").key;
+        assert!(e.complete(&probe, Outcome::Succeeded(String::new())).unwrap());
+        let record = sink.records().into_iter().find(|r| r.get("unit") == Some(&"effect".into())).expect("one effect record");
+        assert_eq!(record.get("effect.journaled"), Some(&false.into()), "{record:?}");
     }
 
     /// A tick that re-arms itself every 30 s, and optionally asks a due time and an act.

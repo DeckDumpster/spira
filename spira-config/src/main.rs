@@ -271,6 +271,15 @@ fn tell_scheduler(written: ExitCode, in_force: bool, path: &str) -> ExitCode {
     written
 }
 
+/// After a write to the repository map, tells the running scheduler: the map keeps its path,
+/// so the tasks that read it learn of a change only from this. The write has happened
+/// whatever the answer, which goes to stderr, apart from what the verb prints.
+fn repo_map_written() -> ExitCode {
+    let (line, _) = spira_config::scheduler_link::told(spira_config::process::cfg("SPIRA_RUNTIME_SOCKET"), "SPIRA_REPO_MAP");
+    eprintln!("{line}");
+    ExitCode::SUCCESS
+}
+
 /// A scheduler that was reached and kept its old value has not taken the write: not success.
 fn exit_for_told(taken: bool) -> ExitCode {
     if taken { ExitCode::SUCCESS } else { ExitCode::FAILURE }
@@ -694,6 +703,8 @@ fn cmd_repo_add(args: &[String]) -> ExitCode {
             }
             if did.is_empty() {
                 println!("repo add: {name} already registered, nothing changed");
+            } else {
+                repo_map_written();
             }
             let code = cmd_repo_check(&repo_registry(), std::slice::from_ref(name));
             print_contract(name);
@@ -767,7 +778,7 @@ fn cmd_repo_set(args: &[String]) -> ExitCode {
     match spira_config::repo_admin::set(name, field, value, &repo_targets()) {
         Ok((old, new)) => {
             println!("repo set: {name} {field}: {old:?} -> {new:?}");
-            ExitCode::SUCCESS
+            repo_map_written()
         }
         Err(e) => {
             eprintln!("{e}");
@@ -804,7 +815,7 @@ fn cmd_repo_rm(args: &[String]) -> ExitCode {
     match spira_config::repo_admin::rm(name, &repo_targets()) {
         Ok(old) => {
             println!("repo rm: {name}: removed {old:?}");
-            ExitCode::SUCCESS
+            repo_map_written()
         }
         Err(e) => {
             eprintln!("{e}");

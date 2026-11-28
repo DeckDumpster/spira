@@ -179,6 +179,17 @@ pub fn turn_of(turn: &Value) -> Result<Turn, String> {
     Ok(out)
 }
 
+/// The tasks whose rows a `journal turn` request carries, comma-joined, for its span.
+pub(crate) fn turn_tasks(argv: &[String]) -> Option<String> {
+    let [journal, op, body, ..] = argv else { return None };
+    if journal != "journal" || op != "turn" {
+        return None;
+    }
+    let turn: runtime::journal::Turn = serde_json::from_str(body).ok()?;
+    let names = turn.task_names();
+    (!names.is_empty()).then(|| names.into_iter().collect::<Vec<_>>().join(","))
+}
+
 fn failed(op: &str, what: impl std::fmt::Display) -> String {
     format!("journal {op}: {what}")
 }
@@ -216,6 +227,12 @@ pub(crate) fn run<B: state_store::Backend>(args: &[String], store: &crate::contr
             let rows = store.journal_due(now).map_err(cannot)?;
             Ok(Value::Array(rows.iter().map(row_of).collect()).to_string())
         }
+        "done" | "has-done" => {
+            let id = text_arg(a(1), "request_id")?;
+            check_text(op, "request_id", id, ID_MAX)?;
+            let answer = if op == "done" { store.journal_done(id, "runtime") } else { store.journal_has_done(id) };
+            Ok(answer.map_err(cannot)?.to_string())
+        }
         "sweep" => {
             let refused = || "journal: sweep takes only --dry-run and --from <cursor>".to_string();
             let (mut dry_run, mut from) = (false, None);
@@ -228,7 +245,7 @@ pub(crate) fn run<B: state_store::Backend>(args: &[String], store: &crate::contr
                 }
             }
             let (s, next) = store.journal_sweep_step(from.as_ref(), dry_run, "journal-sweep").map_err(cannot)?;
-            Ok(json!({ "dry_run": dry_run, "idless_schedules": s.idless_schedules, "legacy_deleted": s.legacy_deleted, "retained": s.retained, "indexed_schedules": s.indexed_schedules, "indexed_effects": s.indexed_effects, "next": next.map(|c| c.to_string()) }).to_string())
+            Ok(json!({ "dry_run": dry_run, "idless_schedules": s.idless_schedules, "legacy_deleted": s.legacy_deleted, "deleted_effects": s.deleted_effects, "deleted_markers": s.deleted_markers, "indexed_schedules": s.indexed_schedules, "indexed_effects": s.indexed_effects, "next": next.map(|c| c.to_string()) }).to_string())
         }
         "poison" => {
             let p = parse(a(1), "poison")?;
@@ -242,10 +259,14 @@ pub(crate) fn run<B: state_store::Backend>(args: &[String], store: &crate::contr
         }
         "poisoned" => {
             let stream = text_arg(a(1), "stream")?;
+            let of = |r: PoisonRow| json!({ "stream": r.stream, "event": r.event, "handler": r.handler, "message": r.message });
+            if stream == "--all" {
+                return Ok(Value::Array(store.journal_poisons().map_err(cannot)?.into_iter().map(of).collect()).to_string());
+            }
             let row = store.journal_poisoned(stream).map_err(cannot)?;
-            Ok(row.map_or("null".into(), |r| json!({ "stream": r.stream, "event": r.event, "handler": r.handler, "message": r.message }).to_string()))
+            Ok(row.map_or("null".into(), |r| of(r).to_string()))
         }
-        _ => Err(format!("journal: unknown op {op:?} (turn|state|open-effects|due|poison|poisoned|sweep)")),
+        _ => Err(format!("journal: unknown op {op:?} (turn|state|open-effects|due|done|has-done|poison|poisoned [--all]|sweep)")),
     }
 }
 
@@ -293,11 +314,16 @@ pub fn parse_sweep_args(args: &[String]) -> Option<SweepArgs> {
 
 /// Sends `journal sweep` steps through `step`, from `from`, until the cursor runs out and sums their counts.
 pub fn sweep_until_done(step: &mut dyn FnMut(&[String]) -> (i32, String), dry_run: bool, from: Option<String>) -> (i32, String) {
-    let mut totals = [0u64; 5];
+    const COUNTS: [&str; 6] = ["idless_schedules", "indexed_schedules", "indexed_effects", "legacy_deleted", "deleted_effects", "deleted_markers"];
+    let mut totals = [0u64; COUNTS.len()];
     let mut cursor = from;
     let mut steps = 0;
-    let summary = |totals: &[u64; 5], steps: i32, complete: bool| {
-        json!({ "dry_run": dry_run, "idless_schedules": totals[0], "indexed_schedules": totals[1], "indexed_effects": totals[2], "legacy_deleted": totals[3], "retained": totals[4], "steps": steps, "complete": complete })
+    let summary = |totals: &[u64; COUNTS.len()], steps: i32, complete: bool| {
+        let mut v = json!({ "dry_run": dry_run, "steps": steps, "complete": complete });
+        for (k, t) in COUNTS.iter().zip(totals) {
+            v[*k] = json!(t);
+        }
+        v
     };
     loop {
         let mut argv: Vec<String> = vec!["journal".into(), "sweep".into()];
@@ -316,7 +342,7 @@ pub fn sweep_until_done(step: &mut dyn FnMut(&[String]) -> (i32, String), dry_ru
         }
         let Ok(v) = serde_json::from_str::<Value>(&out) else { return (CANNOT_TELL, format!("cannot tell: sweep step answered {out:?}")) };
         steps += 1;
-        for (t, k) in totals.iter_mut().zip(["idless_schedules", "indexed_schedules", "indexed_effects", "legacy_deleted", "retained"]) {
+        for (t, k) in totals.iter_mut().zip(COUNTS) {
             *t += v[k].as_u64().unwrap_or(0);
         }
         match v["next"].as_str() {
@@ -494,6 +520,37 @@ mod tests {
         assert_eq!(turn_of(&json!({})).unwrap(), Turn::default(), "an empty turn writes nothing");
     }
 
+    #[test_id(tpqdds6)]
+    #[test]
+    fn a_turns_span_names_the_task_of_each_row_it_carries_once() {
+        let argv = |turn: &Value| vec!["journal".to_string(), "turn".to_string(), turn.to_string()];
+        let state = json!({"state": [{"task": "claim-count", "skey": "carry", "value": "v", "at": 1}]});
+        assert_eq!(turn_tasks(&argv(&state)).as_deref(), Some("claim-count"));
+        let sent = runtime::journal::Turn { cleared: vec![("c".into(), "k".into())], fired: vec!["r1".into()], tasks: ["b".to_string()].into(), ..Default::default() };
+        let mut body = serde_json::to_value(sent).unwrap();
+        body["effects"] = json!([effect(), effect()]);
+        body["state"] = json!([{"task": "c", "skey": "carry", "value": "v", "at": 1}]);
+        assert_eq!(turn_tasks(&argv(&body)).as_deref(), Some("b,c,t"), "state, cleared, effect and the rows that name no task of their own");
+        assert!(turn_of(&body).is_ok(), "the body the runtime sends is accepted");
+        for other in [vec!["journal".to_string(), "poisoned".into(), "--all".into()], argv(&json!({})), vec!["journal".to_string(), "turn".into(), "not json".into()], vec!["show".to_string()]] {
+            assert_eq!(turn_tasks(&other), None, "{other:?}");
+        }
+    }
+
+    #[test_id(tvp6bm9)]
+    #[test]
+    fn poisoned_all_answers_every_poisoned_stream_in_one_call() {
+        let s = store();
+        assert_eq!(call(&s, &["poisoned", "--all"]), (0, "[]".into()));
+        for stream in ["a", "b"] {
+            let p = json!({"stream": stream, "event": "e", "handler": "h", "message": "m"});
+            assert_eq!(call(&s, &["poison", &p.to_string()]).0, 0);
+        }
+        let all = parsed(&s, &["poisoned", "--all"]);
+        assert_eq!(all, json!([parsed(&s, &["poisoned", "a"]), parsed(&s, &["poisoned", "b"])]));
+        assert!(call(&s, &["no-such-op"]).1.contains("poisoned [--all]"));
+    }
+
     #[test_id(thpzk1e)]
     #[test]
     fn a_nul_in_a_payload_is_refused_before_any_write() {
@@ -588,29 +645,97 @@ mod tests {
         e
     }
 
-    fn retain_ms() -> u64 {
-        crate::control::journal::JOURNAL_RETAIN_SECS * 1_000
+    const MUCH_LATER_MS: u64 = 400 * 24 * 60 * 60 * 1_000;
+
+    /// The effect keys the journal holds: rows, open index, old markers and the ran ledger.
+    fn effect_keys<B: state_store::Backend>(s: &crate::control::store::Store<B>) -> Vec<String> {
+        let tables: Vec<String> = ["effect", "open-effect", "resolved", "done"].iter().map(|t| crate::control::keys::runtime_table(t)).collect();
+        let refs: Vec<&str> = tables.iter().map(String::as_str).collect();
+        s.contract().list(&refs, &state_store::Selector::Everything).unwrap().0.into_iter().map(|i| i.key).collect()
     }
 
-    #[test_id(tsptnsb)]
+    fn turned<B: state_store::Backend>(s: &crate::control::store::Store<B>, turn: Value) {
+        let (code, out) = call(s, &["turn", &turn.to_string()]);
+        assert_eq!(code, 0, "{out}");
+    }
+
+    fn resolving_a_request_leaves_no_key_for_it<B: state_store::Backend>(s: &crate::control::store::Store<B>) {
+        turned(s, json!({"effects": [effect_n("r1")]}));
+        call(s, &["done", "r1"]);
+        turned(s, json!({"resolved": ["r1"]}));
+        assert_eq!(effect_keys(s), Vec::<String>::new());
+    }
+
+    /// A schedule insert carries a compare, so it commits the request ahead of the resolve; without
+    /// one the two share a txn.
+    fn a_request_resolved_in_its_own_turn_leaves_no_key<B: state_store::Backend>(s: &crate::control::store::Store<B>) {
+        turned(s, json!({"effects": [effect_n("r1")], "schedules": [sched("timer", 4)], "resolved": ["r1"]}));
+        assert_eq!(effect_keys(s), Vec::<String>::new());
+        turned(s, json!({"effects": [effect_n("r2")], "resolved": ["r2"]}));
+        assert_eq!(effect_keys(s), Vec::<String>::new());
+    }
+
+    fn a_re_request_in_the_turn_that_resolves_the_first_keeps_the_open_row<B: state_store::Backend>(s: &crate::control::store::Store<B>) {
+        turned(s, json!({"effects": [effect_n("r1")]}));
+        let mut again = effect_n("r1");
+        again["request_id"] = json!("r2");
+        turned(s, json!({"effects": [again], "resolved": ["r1"]}));
+        assert_eq!(effect_keys(s), ["runtime/effect/t/kr1", "runtime/open-effect/r2"]);
+        assert_eq!(s.journal_open_effects().unwrap().iter().map(|r| r.request_id.as_str()).collect::<Vec<_>>(), ["r2"]);
+    }
+
+    fn an_effect_is_marked_run_only_while_it_is_open<B: state_store::Backend>(s: &crate::control::store::Store<B>) {
+        let answer = |argv: &[&str]| call(s, argv);
+        assert_eq!(answer(&["done", "r1"]), (0, "false".to_string()), "an effect never requested");
+        turned(s, json!({"effects": [effect_n("r1")]}));
+        assert_eq!(answer(&["has-done", "r1"]), (0, "false".to_string()));
+        assert_eq!(answer(&["done", "r1"]), (0, "true".to_string()));
+        assert_eq!(answer(&["has-done", "r1"]), (0, "true".to_string()));
+        turned(s, json!({"resolved": ["r1"]}));
+        assert_eq!(answer(&["done", "r1"]), (0, "false".to_string()), "a runner that finishes after its timeout");
+        assert_eq!(answer(&["has-done", "r1"]), (0, "false".to_string()));
+        assert_eq!(effect_keys(s), Vec::<String>::new());
+    }
+
+    fn on_mem(body: fn(&crate::control::store::Store<MemBackend>)) {
+        body(&store());
+    }
+
+    fn sqlite_at(path: &std::path::Path) -> crate::control::store::Store<state_store_sqlite::SqliteBackend> {
+        let clock = VirtualClock::new(1_000);
+        let opts = state_store_sqlite::Options { clock: std::sync::Arc::new(clock.clone()), max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Default::default() };
+        let backend = state_store_sqlite::SqliteBackend::open(path, opts).unwrap();
+        let c = Contract::open(backend, Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        crate::control::store::Store::new(c, 1_000)
+    }
+
+    fn on_sqlite(body: fn(&crate::control::store::Store<state_store_sqlite::SqliteBackend>)) {
+        let dir = testkit::TempDir::new("spira-lc-journal");
+        body(&sqlite_at(&dir.path().join("control.db")));
+    }
+
+    macro_rules! on_each_backend {
+        ($( #[test_id($mem:ident)] #[test_id($sqlite:ident)] $name:ident ),* $(,)?) => {
+            mod mem { $( #[test_id($mem)] #[test] fn $name() { super::super::on_mem(super::super::$name); } )* }
+            mod sqlite { $( #[test_id($sqlite)] #[test] fn $name() { super::super::on_sqlite(super::super::$name); } )* }
+        };
+    }
+
+    on_each_backend!(
+        #[test_id(tmqfjzu)] #[test_id(t0tm38h)] resolving_a_request_leaves_no_key_for_it,
+        #[test_id(t36vy6r)] #[test_id(t8w12tw)] a_request_resolved_in_its_own_turn_leaves_no_key,
+        #[test_id(tn2ijrw)] #[test_id(tktnvxy)] a_re_request_in_the_turn_that_resolves_the_first_keeps_the_open_row,
+        #[test_id(t6iw2h6)] #[test_id(t9x2cqr)] an_effect_is_marked_run_only_while_it_is_open,
+    );
+
+    #[test_id(te758zu)]
     #[test]
-    fn a_resolved_effect_and_its_marker_expire_after_the_retention_and_an_open_one_never_does() {
-        use state_store::gc::Controller;
-        let (s, raw, clock) = clocked_store();
-        let gc = Controller::new(&raw);
-        call(&s, &["turn", &json!({"effects": [effect_n("a"), effect_n("b")]}).to_string()]);
-        call(&s, &["turn", &json!({"resolved": ["a"]}).to_string()]);
-        assert_eq!(present(&raw, "a"), (true, true));
-        clock.advance(retain_ms() - 1);
-        gc.tick(clock.now_ms()).unwrap();
-        assert_eq!(present(&raw, "a"), (true, true));
-        clock.advance(1);
-        gc.tick(clock.now_ms()).unwrap();
-        assert_eq!(present(&raw, "a"), (false, false));
-        clock.advance(100 * retain_ms());
-        gc.tick(clock.now_ms()).unwrap();
-        assert_eq!(present(&raw, "b"), (true, false));
-        assert_eq!(parsed(&s, &["open-effects"]).as_array().unwrap().len(), 1);
+    fn an_open_effect_is_returned_with_its_spec_by_a_store_reopened_on_the_same_file() {
+        let dir = testkit::TempDir::new("spira-lc-journal-restart");
+        let path = dir.path().join("control.db");
+        turned(&sqlite_at(&path), json!({"effects": [effect_n("r1")]}));
+        let open = sqlite_at(&path).journal_open_effects().unwrap();
+        assert_eq!(open.iter().map(|r| (r.request_id.as_str(), r.spec.clone())).collect::<Vec<_>>(), [("r1", effect()["spec"].clone())]);
     }
 
     #[test_id(txf0n7a)]
@@ -623,42 +748,107 @@ mod tests {
         call(&s, &["turn", &json!({"effects": [effect_n("a")]}).to_string()]);
         call(&s, &["turn", &json!({"effects": [again]}).to_string()]);
         call(&s, &["turn", &json!({"resolved": ["a"]}).to_string()]);
-        clock.advance(100 * retain_ms());
+        clock.advance(MUCH_LATER_MS);
         Controller::new(&raw).tick(clock.now_ms()).unwrap();
         assert!(present(&raw, "a").0);
         assert_eq!(parsed(&s, &["open-effects"]).as_array().unwrap().len(), 1);
     }
 
-    #[test_id(tx2plk6)]
+    #[test_id(thnz3lz)]
     #[test]
-    fn a_carried_resolved_effect_and_its_marker_expire_and_a_carried_open_one_does_not() {
+    fn a_carried_resolved_effect_is_not_written_and_a_carried_open_one_is() {
         use crate::control::journal::{Carried, EffectRow};
-        use state_store::gc::Controller;
-        let (s, raw, clock) = clocked_store();
+        let s = store();
         let row = |id: &str| EffectRow { task: "t".into(), ekey: format!("k{id}"), request_id: id.into(), stream: "s".into(), spec: json!({}), requested_at: 1, deadline_at: 6 };
         let carried = Carried { effects: vec![(row("a"), true), (row("b"), false)], ..Default::default() };
-        assert_eq!(s.journal_carry(&carried, "test").unwrap(), 2);
-        clock.advance(retain_ms());
-        Controller::new(&raw).tick(clock.now_ms()).unwrap();
-        assert_eq!((present(&raw, "a"), present(&raw, "b")), ((false, false), (true, false)));
+        assert_eq!(s.journal_carry(&carried, "test").unwrap(), 1);
+        assert_eq!(effect_keys(&s), ["runtime/effect/t/kb", "runtime/open-effect/b"]);
     }
 
-    #[test_id(tss0pp1)]
-    #[test]
-    fn a_sweep_gives_each_resolved_effect_without_a_lifetime_one_and_a_second_sweep_gives_none() {
-        use state_store::gc::Controller;
-        let (s, raw, clock) = clocked_store();
-        for id in ["a", "b"] {
-            for (k, v) in [(crate::control::keys::runtime("effect", &["t", &format!("k{id}")]), effect_n(id)), (crate::control::keys::runtime("resolved", &[id]), json!({}))] {
-                put_raw(&raw, &k, v);
-            }
+    /// A row as an older release left it: resolved with a marker, and a lifetime or none.
+    fn put_old<B: state_store::Backend>(raw: &Contract<B>, id: &str, ttl: bool) {
+        let object = |v: Value| match ttl {
+            true => state_store::Object::new(v).with_ttl(7 * 24 * 60 * 60),
+            false => state_store::Object::new(v),
+        };
+        let key = crate::control::keys::runtime("effect", &["t", &format!("k{id}")]);
+        let mut t = state_store::Txn::new().put(&key, object(effect_n(id)));
+        if ttl {
+            t = t.put(&crate::control::keys::runtime("resolved", &[id]), object(json!({})));
         }
-        call(&s, &["turn", &json!({"effects": [effect_n("c")]}).to_string()]);
-        assert_eq!(swept(&s, false)["retained"], json!(2));
-        assert_eq!(swept(&s, false)["retained"], json!(0));
-        clock.advance(retain_ms());
-        Controller::new(&raw).tick(clock.now_ms()).unwrap();
-        assert_eq!((present(&raw, "a"), present(&raw, "b"), present(&raw, "c")), ((false, false), (false, false), (true, false)));
+        assert!(raw.txn(&t, &state_store::Request::new(&format!("old-{id}"), "test", "raw")).unwrap().succeeded);
+    }
+
+    #[test_id(tkloc8t)]
+    #[test]
+    fn a_sweep_of_an_indexed_store_leaves_only_the_open_rows_and_no_marker() {
+        let (s, raw) = shared_store();
+        put_raw(&raw, &crate::control::keys::runtime("journal-meta", &["indexed"]), json!({}));
+        let open: Vec<Value> = (0..20).map(|n| effect_n(&format!("open{n:02}"))).collect();
+        turned(&s, json!({ "effects": open }));
+        for n in 0..20 {
+            put_old(&raw, &format!("retained{n:02}"), true);
+            put_old(&raw, &format!("forever{n:02}"), false);
+        }
+        let dry = swept(&s, true);
+        assert_eq!((dry["indexed_effects"].clone(), dry["deleted_effects"].clone(), dry["deleted_markers"].clone()), (json!(0), json!(40), json!(20)), "{dry}");
+        let done = swept(&s, false);
+        assert_eq!((done["indexed_effects"].clone(), done["deleted_effects"].clone(), done["deleted_markers"].clone()), (json!(0), json!(40), json!(20)), "{done}");
+        let want: Vec<String> = (0..20).map(|n| format!("runtime/effect/t/kopen{n:02}")).chain((0..20).map(|n| format!("runtime/open-effect/open{n:02}"))).collect();
+        assert_eq!(effect_keys(&s), want);
+        assert_eq!(s.journal_open_effects().unwrap().len(), 20);
+    }
+
+    #[test_id(tnjeu4v)]
+    #[test]
+    fn a_sweep_of_an_unindexed_store_deletes_marked_rows_and_indexes_the_unmarked_ones() {
+        let (s, raw) = shared_store();
+        put_old(&raw, "closed", true);
+        put_old(&raw, "live", false);
+        let done = swept(&s, false);
+        assert_eq!((done["indexed_effects"].clone(), done["deleted_effects"].clone(), done["deleted_markers"].clone()), (json!(1), json!(1), json!(1)), "{done}");
+        assert_eq!(effect_keys(&s), ["runtime/effect/t/klive", "runtime/open-effect/live"]);
+    }
+
+    #[test_id(txqvfnd)]
+    #[test]
+    fn an_effect_sweep_larger_than_a_step_deletes_at_most_one_step_of_rows_at_a_time_and_keeps_the_open_ones() {
+        use crate::control::journal::SWEEP_STEP;
+        let (s, raw) = shared_store();
+        put_raw(&raw, &crate::control::keys::runtime("journal-meta", &["indexed"]), json!({}));
+        let open: Vec<Value> = (0..20).map(|n| effect_n(&format!("open{n:02}"))).collect();
+        turned(&s, json!({ "effects": open }));
+        let closed = SWEEP_STEP + 5;
+        for n in 0..closed {
+            put_old(&raw, &format!("closed{n:05}"), false);
+        }
+        let (mut cursor, mut per_step) = (Some("effect:".parse().unwrap()), Vec::new());
+        while let Some(c) = cursor {
+            let (out, next) = s.journal_sweep_step(Some(&c), false, "t").unwrap();
+            per_step.push(out.deleted_effects);
+            cursor = next;
+        }
+        assert!(per_step.iter().all(|d| *d <= SWEEP_STEP), "{per_step:?}");
+        assert!(per_step.iter().filter(|d| **d > 0).count() > 1, "the rows took more than one step: {per_step:?}");
+        assert_eq!(per_step.iter().sum::<usize>(), closed);
+        assert_eq!(effect_keys(&s).len(), 40, "20 open rows and their 20 index keys");
+    }
+
+    #[test_id(t2vlnyo)]
+    #[test]
+    fn a_marker_step_deletes_at_most_one_step_of_rows_and_resumes_after_them() {
+        use crate::control::journal::SWEEP_STEP;
+        let (s, raw) = shared_store();
+        for n in 0..(SWEEP_STEP + 5) {
+            put_raw(&raw, &crate::control::keys::runtime("resolved", &[&format!("g{n:05}")]), json!({}));
+        }
+        let (out, next) = s.journal_sweep_step(Some(&"resolved:".parse().unwrap()), false, "t").unwrap();
+        assert_eq!(out.deleted_markers, SWEEP_STEP);
+        let next = next.expect("more markers remain");
+        assert!(next.to_string().starts_with("resolved:runtime/resolved/"), "{next}");
+        let (out, next) = s.journal_sweep_step(Some(&next.to_string().parse().unwrap()), false, "t").unwrap();
+        assert_eq!((out.deleted_markers, next), (5, None));
+        assert_eq!(effect_keys(&s), Vec::<String>::new());
     }
 
     #[test_id(tnyc250)]
@@ -754,21 +944,23 @@ mod tests {
         resolved_effect["request_id"] = json!("gone");
         resolved_effect["ekey"] = json!("other");
         call(&s, &["turn", &json!({"effects": [effect(), resolved_effect], "schedules": [sched("r1", 4), sched("r2", 5)]}).to_string()]);
-        call(&s, &["turn", &json!({"resolved": ["gone", "ghost"], "fired": ["r2"]}).to_string()]);
+        call(&s, &["turn", &json!({"resolved": ["gone"], "fired": ["r2"]}).to_string()]);
+        put_raw(&raw, &crate::control::keys::runtime("resolved", &["ghost"]), json!({}));
         for n in 0..3 {
             put_raw(&raw, &crate::control::keys::runtime("schedule", &[&format!("carried{n}")]), json!({"at": 0, "stream": "s"}));
         }
         let (open_before, due_before) = (parsed(&s, &["open-effects"]), parsed(&s, &["due"]));
         let key_count = |table: &str| raw.list(&[crate::control::keys::runtime_table(table).as_str()], &state_store::Selector::Everything).unwrap().0.len();
         let before = (key_count("schedule"), key_count("resolved"));
+        assert_eq!(before.1, 1);
         let dry = swept(&s, true);
-        assert_eq!(dry["idless_schedules"], json!(3), "{dry}");
+        assert_eq!((dry["idless_schedules"].clone(), dry["deleted_markers"].clone()), (json!(3), json!(1)), "{dry}");
         assert_eq!((key_count("schedule"), key_count("resolved")), before, "a dry run removes nothing");
         assert_eq!(key_count("pending"), 1, "a dry run writes no index");
         assert_eq!(key_count("journal-meta"), 0, "a dry run marks nothing indexed");
         let done = swept(&s, false);
         assert_eq!((done["idless_schedules"].clone(), done["indexed_schedules"].clone(), done["indexed_effects"].clone(), done["next"].clone()), (json!(3), json!(1), json!(1), json!(null)), "{done}");
-        assert_eq!((key_count("schedule"), key_count("resolved")), (before.0 - 3, before.1), "orphan resolved markers stay");
+        assert_eq!((done["deleted_markers"].clone(), key_count("schedule"), key_count("resolved")), (json!(1), before.0 - 3, 0), "an orphan marker goes too");
         assert_eq!((parsed(&s, &["open-effects"]), parsed(&s, &["due"])), (open_before, due_before), "every legitimate row reads as it did");
     }
 
@@ -800,8 +992,8 @@ mod tests {
         let (code, out) = sweep_until_done(&mut in_process(&s), false, None);
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(code, 0, "{out}");
-        assert_eq!((v["idless_schedules"].clone(), v["indexed_schedules"].clone(), v["steps"].clone()), (json!(2_500), json!(1), json!(7)), "{v}");
-        assert_eq!(swept(&s, false)["steps"], json!(5), "a swept store ends in the schedule step, one step per legacy table and the effect step");
+        assert_eq!((v["idless_schedules"].clone(), v["indexed_schedules"].clone(), v["steps"].clone()), (json!(2_500), json!(1), json!(8)), "{v}");
+        assert_eq!(swept(&s, false)["steps"], json!(6), "a swept store ends in the schedule step, one step per legacy table, the effect step and the marker step");
     }
 
     #[test_id(t1lvoy9)]
@@ -936,7 +1128,7 @@ mod tests {
         }
         for dry_run in [true, false] {
             let (v, slowest) = sweep_timed(&s, &clock, dry_run);
-            assert_eq!((v["legacy_deleted"].clone(), v["indexed_effects"].clone(), v["retained"].clone()), (json!(300), json!(100), json!(100)), "{v}");
+            assert_eq!((v["legacy_deleted"].clone(), v["indexed_effects"].clone(), v["deleted_effects"].clone(), v["deleted_markers"].clone()), (json!(300), json!(100), json!(100), json!(100)), "{v}");
             assert!(slowest <= 100, "a step took {slowest} ms of virtual time (dry_run {dry_run})");
         }
         assert!(all_keys(&raw).iter().all(|k| !k.starts_with("runtime/event/")));
@@ -1092,7 +1284,7 @@ mod tests {
         assert_eq!(parse_sweep_args(&argv(&["journal", "due"])), None);
         let Some(Err((code, msg))) = parse_sweep_args(&argv(&["journal", "sweep", "--from", "nope:x"])) else { panic!("accepted") };
         assert_eq!(code, REFUSED);
-        assert!(msg.contains("is not schedule:<key>, legacy:<key> or effect:<key>"), "{msg}");
+        assert!(msg.contains("is not schedule:<key>, legacy:<key>, effect:<key> or resolved:<key>"), "{msg}");
     }
 
     #[test_id(tk5d2hm)]

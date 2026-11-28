@@ -40,7 +40,7 @@
 //! | Effect | Class | Deadline | Idempotency key | Refuses |
 //! |---|---|---|---|---|
 //! | `watch.sop_lint.observe` (probe) | store | 30 s (up to 15 s of read backoff today) | none | — |
-//! | `watch.sop_lint.file_incident` | store (library call into `incident`, see §2; today `incident.sh file <title> -`) | 60 s | `watch.sop_lint:incident:<title slug>:<tick at>`. The durable dedup is the incident reference | an activation-skew payload (`run.rs:126-129`). An unreachable store is spooled and retried, not dropped (`run.rs:132-136`; `main.rs:442-453`) |
+//! | `watch.sop_lint.file_incident` | store (library call into `incident`, see §2; today `incident.sh file <title> -`) | 60 s | `watch.sop_lint:incident:<title slug>:<tick at>`. The durable dedup is the incident reference | an activation-skew payload (`run.rs:126-129`). An unreachable store holds the event on its incident row, retried by `incident.file` |
 //!
 //! No inbox line is written. `run/sop-lint.log` receives only the incident's own stderr. No reader of that log was found: the only hits in the release are the unit file and forensic run listings in `run/concierge-notes/ci-forensics-*`.
 //!
@@ -55,7 +55,7 @@
 //!   - `world guard` (ExecStartPre)
 //!   - `sop lint` (`sop-lint-watch.sh:12`), which in turn forks `bash -c . lib.sh; bdjson memories` (`sop/src/real.rs:29-31`)
 //!   - `incident.sh file` (`sop-lint-watch.sh:9`), which sources `lib.sh` and execs `incident` (`spira/incident.sh:31-36`)
-//! - **Config pinned (S10):** `SOP_LINT_SOP` and `SOP_LINT_FILER` are test seams and drop away. Pinned are the sop word cap (key unverified) and the incident filer's `SPIRA_DB` and spool directory.
+//! - **Config pinned (S10):** `SOP_LINT_SOP` and `SOP_LINT_FILER` are test seams and drop away. Pinned are the sop word cap (key unverified) and the incident filer's `SPIRA_DB`.
 //!
 //! ## Reverse
 //!
@@ -177,7 +177,7 @@ pub fn observe(e: &crate::Effects, _key: &str, _spec: &EffectSpec) -> Result<Str
 }
 
 /// The filing, in-process as `incident file <title> -` files it: deduplicated on the incident
-/// reference, spooled when the store is down.
+/// reference, held on its incident row while the content store is down.
 pub fn file_incident(_e: &crate::Effects, _key: &str, spec: &EffectSpec) -> Result<String, String> {
     let f: Filing = serde_json::from_str(&spec.input).map_err(|e| format!("{FILE_INCIDENT}: bad input: {e}"))?;
     incident::intake::file_payload(&f.title, f.body.as_bytes())?;

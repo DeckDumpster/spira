@@ -33,6 +33,17 @@ pub struct Pass {
     pub judged_at_rev: Option<u64>,
 }
 
+/// Whether two readings differ only in when they were judged.
+fn same_judgement(a: &Readiness, b: &Readiness) -> bool {
+    let unstamped = |r: &Readiness| Readiness {
+        judged_at: None,
+        judged_at_planning_watermark: None,
+        judged_at_rev: 0,
+        ..r.clone()
+    };
+    unstamped(a) == unstamped(b)
+}
+
 impl<B: Backend> Store<B> {
     /// The READY and REWORK records the dispatcher's last pass judged claimable, each with that
     /// judgement, from one revision, and how many no pass has judged yet.
@@ -56,7 +67,8 @@ impl<B: Backend> Store<B> {
         Ok((claimable, unjudged))
     }
 
-    /// Publishes each judgement onto `readiness/<id>`. A record that does not exist gets none.
+    /// Publishes each judgement onto `readiness/<id>`. A record that does not exist gets none,
+    /// and one judged as it already reads is not written: its `judged_at*` stay the last write's.
     pub fn publish_readiness(&self, judged: &[Judged], pass: &Pass, req: &Request) -> Result<u64> {
         self.merge_readiness(
             judged,
@@ -64,6 +76,7 @@ impl<B: Backend> Store<B> {
             "readiness",
             req,
             |r, j, head| {
+                let before = r.clone();
                 r.claimable = j.claimable;
                 r.blocked_by = j.blocked_by.clone();
                 r.verdict = j.verdict.clone();
@@ -72,6 +85,7 @@ impl<B: Backend> Store<B> {
                 r.judged_at = Some(pass.judged_at.clone());
                 r.judged_at_planning_watermark = pass.planning_watermark.clone();
                 r.judged_at_rev = pass.judged_at_rev.unwrap_or(head);
+                !same_judgement(&before, r)
             },
         )
     }
@@ -88,18 +102,20 @@ impl<B: Backend> Store<B> {
             r.judged_for_claim = true;
             r.blocked_by = blocked_by.to_vec();
             r.verdict = Some("rejudge".into());
+            true
         })
     }
 
-    /// Merges each item into its record's readiness, in chunks within the op limit. Each put
-    /// compares the readiness it merged into, and a chunk that lost a race is merged again.
+    /// Merges each item into its record's readiness, in chunks within the op limit, putting
+    /// those `merge` answers `true` for. Each put compares the readiness it merged into, and a
+    /// chunk that lost a race is merged again.
     pub(super) fn merge_readiness<T>(
         &self,
         items: &[T],
         id_of: impl Fn(&T) -> &str,
         part: &str,
         req: &Request,
-        merge: impl Fn(&mut Readiness, &T, u64),
+        merge: impl Fn(&mut Readiness, &T, u64) -> bool,
     ) -> Result<u64> {
         let mut rev = self.contract.head()?;
         for (n, chunk) in items.chunks(PASS_CHUNK).enumerate() {
@@ -115,7 +131,7 @@ impl<B: Backend> Store<B> {
         id_of: &impl Fn(&T) -> &str,
         part: &str,
         req: &Request,
-        merge: &impl Fn(&mut Readiness, &T, u64),
+        merge: &impl Fn(&mut Readiness, &T, u64) -> bool,
     ) -> Result<u64> {
         for attempt in 0..MERGE_ATTEMPTS {
             let head = self.contract.head()?;
@@ -128,19 +144,16 @@ impl<B: Backend> Store<B> {
                 }
                 let key = keys::readiness(id);
                 let prior = self.read::<Readiness>(&key, Some(head))?;
-                t = t.when(Compare::ModRev(
-                    key.clone(),
-                    prior.as_ref().map(|(r, _)| r.mod_rev),
-                ));
-                let (mut r, value) = match prior {
-                    Some((r, item)) => (r.value, item.value),
-                    None => (
-                        Readiness::default(),
-                        Object::default().with_owners(&[owner.as_str()]),
-                    ),
+                let unread = Compare::ModRev(key.clone(), prior.as_ref().map(|(r, _)| r.mod_rev));
+                let (prior, value) = match prior {
+                    Some((r, item)) => (Some(r.value), item.value),
+                    None => (None, Object::default().with_owners(&[owner.as_str()])),
                 };
-                merge(&mut r, item, head);
-                t = t.put(
+                let mut r = prior.unwrap_or_default();
+                if !merge(&mut r, item, head) {
+                    continue;
+                }
+                t = t.when(unread).put(
                     &key,
                     Object {
                         data: encode(&r)?,
