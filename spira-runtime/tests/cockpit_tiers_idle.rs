@@ -235,7 +235,7 @@ fn a_second_observe_of_an_unchanged_store_sends_it_nothing_and_an_ask_change_rer
     }
 
     let _watching = r.watch();
-    let actor = spira_claim::store::Store { lc: r.client(), lc_bin: String::new(), timeout: Duration::from_secs(5), views: store_view::shared() };
+    let actor = spira_claim::store::Store { lc: r.client(), lc_bin: String::new(), timeout: Duration::from_secs(5), views: store_view::shared(), readiness_alert: Default::default() };
     actor.claim_view().unwrap();
     actor.claim_view().unwrap();
     assert_eq!(r.asked(), ["claimable", "claimable"], "a claim reader that acts is never answered from the held view");
