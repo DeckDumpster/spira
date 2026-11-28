@@ -81,6 +81,7 @@ impl World {
             if screen.contains(&format!("readers {want}")) || relay_gone() {
                 return;
             }
+            // clock-safe: only caps the wait for the reader count `run` reports
             assert!(began.elapsed() < FAILSAFE, "no notification arrived: the relay attached no follow; {screen}");
             std::thread::yield_now();
         }
