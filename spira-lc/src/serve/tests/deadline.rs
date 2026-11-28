@@ -82,7 +82,7 @@ fn a_watch_holding_two_seconds_is_not_cut_by_a_one_second_request_cutoff() {
     let (code, out) = send(&door, &["watch", "p/", "--from-rev", "0", "--wait-ms", "2000"], None);
     assert_eq!((code, out.as_str()), (0, "idle"));
     let bound = bound_rx.recv().unwrap().expect("the work runs under a bound deadline");
-    assert!(bound >= before + Duration::from_millis(2500), "the watch is cut at its hold plus margin, not the default: {:?}", bound - before);
+    assert!(bound >= before + Duration::from_millis(2500), "the watch is cut at its hold plus margin, not the default: {:?}", bound - before); // clock-safe: no wait; received is read after before, so bound >= before + limit on a monotonic clock
 }
 
 #[test_id(tqvecu8)]
