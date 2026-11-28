@@ -312,9 +312,13 @@ fn apply_one(p: &Ports, key: &str, i: &Intent, f: &Fleet) -> Result<String, Stri
     Ok(word.to_string())
 }
 
-fn sync_knobs(p: &Ports, ceiling: u64) -> Result<(), String> {
+/// Writes each knob whose value in `snap` is not `ceiling`.
+fn sync_knobs(p: &Ports, snap: &Value, ceiling: u64) -> Result<(), String> {
     for action in [fleet::RAISE, fleet::LOWER] {
         let knob = knob_key(&format!("{}/{}", fleet::NAME, fleet::SECTION), action);
+        if snap["knobs"][&knob] == json!(ceiling) {
+            continue;
+        }
         lc_ok(p, &knob, &argv(&["intent", "knob-init", &knob, "--actor", fleet::OWNER, "--overwrite", "--json", &ceiling.to_string()]))?;
     }
     Ok(())
@@ -347,7 +351,7 @@ pub fn run(p: &Ports, now: u64, runs: &[Run], rows: &[LcRow], live: u64, claimab
         report.acked.push((key, word));
     }
     let ceiling = p.config.get(fleet::CEILING_KEY)?;
-    sync_knobs(p, ceiling)?;
+    sync_knobs(p, &snap, ceiling)?;
     let prev = previous(&snap);
     let (status, unchanged) = status_of(prev.as_ref(), &measure(&reading(ceiling)), host_shedding(&snap), now);
     if unchanged {

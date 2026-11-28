@@ -671,7 +671,7 @@ pub fn rowless_beads(cfg: &RowlessCfg, now: i64) -> Reading {
     let mut args: Vec<String> = ["--status", "open,in_progress,blocked,deferred", "--exclude-type", &spira_config::nonwork::no_row_types_arg(), "--json", "--limit", "0", "--brief"]
         .iter().map(|s| s.to_string()).collect();
     if let Some(since) = plan.created_after {
-        args.extend(["--created-after".to_string(), crate::log::fmt_iso(since)]);
+        args.extend(["--created-after".to_string(), crate::log::fmt_iso(crate::lc::held_bound(since))]);
     }
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let open = crate::lc::content_list(&cfg.lc, &args).and_then(|o| ids_of(o.as_bytes(), "id"));

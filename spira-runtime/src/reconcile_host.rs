@@ -298,6 +298,10 @@ impl Host for RuntimeHost {
         read_ref_in(repo, name)
     }
 
+    fn one_claim_view(&self) -> Option<Box<dyn std::any::Any>> {
+        Some(Box::new(spira_claim::cli::TickView::begin()))
+    }
+
     fn dwarf_count(&self, rune: &str) -> Option<i64> {
         Some(live_dwarves(&self.units().ok()?.active, rune))
     }

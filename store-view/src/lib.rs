@@ -165,6 +165,17 @@ pub struct RowQuery<'a> {
 /// The longest a `--window` answer is held: rounds leave a window by the clock alone, which no
 /// watch event reports.
 pub const WINDOW_HOLD: Duration = Duration::from_secs(60);
+/// The longest a `claimable` answer is held: its verdicts also turn on the clock (a snooze, a
+/// conflict marker's age) and on run-directory stops and reservations, which no watch event reports.
+pub const CLAIM_VIEW_HOLD: Duration = Duration::from_secs(300);
+
+/// The longest `argv`'s answer is held with no change; `None` is until a change ends it.
+fn hold_of(argv: &[&str]) -> Option<Duration> {
+    match argv {
+        ["claimable", ..] => Some(CLAIM_VIEW_HOLD),
+        _ => argv.contains(&"--window").then_some(WINDOW_HOLD),
+    }
+}
 
 #[derive(Default)]
 struct State {
@@ -183,7 +194,9 @@ const CONTENT: u8 = 1;
 const ROUNDS: u8 = 2;
 /// A watcher's condition set or cleared.
 const CONDITIONS: u8 = 4;
-const ALL: u8 = CONTENT | ROUNDS | CONDITIONS;
+/// A change to a lifecycle row, a readiness record or the planning plane: the claim view's inputs.
+const CLAIMS: u8 = 8;
+const ALL: u8 = CONTENT | ROUNDS | CONDITIONS | CLAIMS;
 /// The watch prefix of the conditions each watcher keeps (`spira_lc::keys::conditions`).
 pub const CONDITIONS_PREFIX: &str = "conditions/";
 
@@ -193,6 +206,7 @@ fn classes_of(argv: &[&str]) -> Option<u8> {
         ["content", "list" | "show", ..] | ["plan", "items" | "edges" | "children" | "watermark", ..] => Some(CONTENT),
         ["show-batch", _] => Some(ROUNDS),
         ["condition", "list", ..] => Some(CONDITIONS),
+        ["claimable", ..] => Some(CLAIMS),
         ["list", rest @ ..] if rest.contains(&"--batches") => Some(ROUNDS | CONTENT),
         _ => None,
     }
@@ -203,16 +217,16 @@ fn classes_of(argv: &[&str]) -> Option<u8> {
 #[derive(Default)]
 struct Memo {
     held: HashMap<String, (u8, Reply, Instant)>,
-    generation: [u64; 3],
+    generation: [u64; 4],
 }
 
 impl Memo {
     fn seen(&self, classes: u8) -> u64 {
-        (0..3).filter(|i| classes & (1 << i) != 0).map(|i| self.generation[i]).sum()
+        (0..4).filter(|i| classes & (1 << i) != 0).map(|i| self.generation[i]).sum()
     }
 
     fn end(&mut self, classes: u8) {
-        for i in (0..3).filter(|i| classes & (1 << i) != 0) {
+        for i in (0..4).filter(|i| classes & (1 << i) != 0) {
             self.generation[i] += 1;
         }
         self.held.retain(|_, (held, ..)| *held & classes == 0);
@@ -222,8 +236,9 @@ impl Memo {
 /// The most terminal rows kept: at the bound the set is dropped whole and refilled by what is asked next.
 const TERMINAL_KEPT: usize = 4_096;
 
-/// The terminal rows the store was asked for, kept until a change names them or the views reload:
-/// the live set never holds one, and a reader that names one would otherwise ask the store each time.
+/// The terminal rows the store was asked for, and (under a watch) the ids it answered no row for
+/// (`null`), kept until a change names them or the views reload: the live set never holds one, and
+/// a reader that names one would otherwise ask the store each time.
 #[derive(Default)]
 struct Terminal {
     generation: u64,
@@ -415,7 +430,9 @@ fn ended_by(s: &State, events: &[Value]) -> u8 {
     let rounds: Vec<String> = s.batches.values().filter_map(|b| text(&b.data, "batch_id")).collect();
     events.iter().fold(0, |ended, e| {
         let key = e.get("key").and_then(Value::as_str).unwrap_or_default();
+        let claims = if [LIFECYCLE, READINESS, PLANNING].iter().any(|p| key.starts_with(p)) { CLAIMS } else { 0 };
         ended
+            | claims
             | if key.starts_with(PLANNING) {
                 CONTENT
             } else if key.starts_with(CONDITIONS_PREFIX) {
@@ -838,13 +855,11 @@ impl Projection {
             (r.rev, r.value.0, r.value.1)
         };
         let mut rows = held;
-        let (remembered, generation) = {
+        let (asked, generation) = {
             let t = self.terminal();
-            (unheld.iter().filter_map(|id| t.rows.get(id).cloned()).collect::<Vec<_>>(), t.generation)
+            rows.extend(unheld.iter().filter_map(|id| t.rows.get(id)).filter(|r| !r.is_null()).cloned());
+            (unheld.iter().filter(|id| !t.rows.contains_key(*id)).cloned().collect::<Vec<_>>(), t.generation)
         };
-        let known: BTreeSet<&str> = remembered.iter().filter_map(|r| r["bead_id"].as_str()).collect();
-        let asked: Vec<String> = unheld.iter().filter(|id| !known.contains(id.as_str())).cloned().collect();
-        rows.extend(remembered.iter().cloned());
         let mut learned = Vec::new();
         for chunk in asked.chunks(IDS_PER_READ) {
             let text = self.client.answer(&["list", "--ids", &chunk.join(",")])?;
@@ -856,13 +871,15 @@ impl Projection {
         {
             let mut t = self.terminal();
             if t.generation == generation {
-                for row in learned.iter().filter(|r| r["state"].as_str().is_some_and(lc_state::is_terminal)) {
+                let found: BTreeSet<&str> = learned.iter().filter_map(|r| r["bead_id"].as_str()).collect();
+                // Only a watch names the row an id gains later.
+                let absent = asked.iter().filter(|id| self.watching() && !found.contains(id.as_str())).map(|id| (id.clone(), Value::Null));
+                let terminal = learned.iter().filter(|r| r["state"].as_str().is_some_and(lc_state::is_terminal)).filter_map(|r| Some((r["bead_id"].as_str()?.to_string(), r.clone())));
+                for (id, row) in absent.chain(terminal) {
                     if t.rows.len() >= TERMINAL_KEPT {
                         t.rows.clear();
                     }
-                    if let Some(id) = row["bead_id"].as_str() {
-                        t.rows.insert(id.to_string(), row.clone());
-                    }
+                    t.rows.insert(id, row);
                 }
             }
         }
@@ -909,7 +926,7 @@ impl Projection {
         Some(self.rows(&q)?.map(|r| Value::Array(r.value).to_string()))
     }
 
-    /// The store's answer to a content, planning, `show-batch` or `list --batches` read: held until
+    /// The store's answer to a content, planning, claim-view, `show-batch` or `list --batches` read: held until
     /// a change the watch delivers could alter it, else asked of the store once and held. A process
     /// without a watch asks the store each time; one whose watch fell behind is refused.
     pub fn answer(&self, argv: &[&str]) -> Result<Read<Reply>, LcError> {
@@ -921,14 +938,16 @@ impl Projection {
         let key = argv.join("\u{1f}");
         let before = {
             let m = self.memo.lock().unwrap_or_else(|e| e.into_inner());
-            let aged_out = |at: &Instant| argv.contains(&"--window") && (self.clock)().saturating_duration_since(*at) > WINDOW_HOLD;
+            let aged_out = |at: &Instant| hold_of(argv).is_some_and(|hold| (self.clock)().saturating_duration_since(*at) > hold);
             if let Some((_, reply, _)) = m.held.get(&key).filter(|(_, _, at)| !aged_out(at)) {
                 return Ok(Read { rev: fresh.rev, value: reply.clone() });
             }
             m.seen(classes)
         };
         let reply = self.client.call(argv)?;
-        if reply.code == 0 {
+        // A claim view the content store could not describe is asked again, never held.
+        let degraded = argv.first() == Some(&"claimable") && json_of(&reply.out, "claimable").map_or(true, |v| !v["content_error"].is_null());
+        if reply.code == 0 && !degraded {
             let mut m = self.memo.lock().unwrap_or_else(|e| e.into_inner());
             if m.seen(classes) == before {
                 m.held.insert(key, (classes, reply.clone(), (self.clock)()));
