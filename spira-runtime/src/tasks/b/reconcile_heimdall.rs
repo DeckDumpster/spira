@@ -51,6 +51,12 @@
 //!
 //! Today a timeout (exit 124) is classed as *saturated*, not unreachable (`conditions.rs:61-67`). An effect `timed_out` keeps that meaning.
 //!
+//! | `reconcile.heimdall.alarms` → retained `alarm/<key>` on the broker, as `heimdall` (`heimdall::alarm`); a memory-only probe, sent every tick while an alarm or an undelivered clear is carried | host | 10 s | `heimdall/alarms/<now>` | nothing: an unreachable broker is logged and is not the effect's failure |
+//!
+//! An alarm follows the sighting, not the debounce: it is set by the first pass that sees the key
+//! firing and cleared by the first that does not. A pass refused for an unreachable store changes
+//! no alarm.
+//!
 //! ## Silence
 //!
 //! A tick where nothing is firing and every counter is unchanged emits no store write.
@@ -96,7 +102,8 @@ pub const RAISE: &str = "reconcile.heimdall.raise";
 pub const CLEAR: &str = "reconcile.heimdall.clear";
 pub const REFRESH: &str = "reconcile.heimdall.refresh";
 pub const FALLBACK: &str = "reconcile.heimdall.fallback";
-pub const EFFECTS: &[&str] = &[OBSERVE, RAISE, CLEAR, REFRESH, FALLBACK];
+pub const ALARMS: &str = "reconcile.heimdall.alarms";
+pub const EFFECTS: &[&str] = &[OBSERVE, RAISE, CLEAR, REFRESH, FALLBACK, ALARMS];
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_RECONCILE_HEIMDALL_SECS";
 /// The in-scheduler checks' keys only. `SPIRA_SYSTEMCTL`, `SPIRA_HEIMDALL_SENTINEL_LOG` and
@@ -225,6 +232,8 @@ pub struct Carry {
     pub keys: BTreeMap<String, KeyState>,
     pub restart_baselines: BTreeMap<String, u64>,
     pub probe_id: Option<String>,
+    /// What stands on `alarm/<key>`, and the clears the broker has not taken.
+    pub alarms: heimdall::alarm::Alarms,
 }
 
 pub struct ReconcileHeimdall {
@@ -288,6 +297,8 @@ pub struct Clear {
 pub const WRITE_DEADLINE_MS: u64 = 10_000;
 /// The host writes' deadline.
 pub const HOST_DEADLINE_MS: u64 = 2_000;
+/// Longer than the publisher's own connect and flush bounds together.
+pub const ALARMS_DEADLINE_MS: u64 = 10_000;
 
 fn act(name: &str, key: String, input: &impl Serialize, deadline_ms: u64, probe: bool) -> Result<Act, String> {
     Ok(Act { name: name.into(), key, input: serde_json::to_string(input).map_err(|e| e.to_string())?, deadline_ms, probe })
@@ -301,6 +312,12 @@ fn act(name: &str, key: String, input: &impl Serialize, deadline_ms: u64, probe:
 pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     let snap = match input {
         Input::Observed(s) => s,
+        Input::Outcome { effect, ok: true, body } if effect == ALARMS => {
+            let cleared: Vec<String> = serde_json::from_str(body).map_err(|e| format!("{ALARMS}: {e}"))?;
+            let mut next = carry.clone();
+            heimdall::alarm::delivered(&mut next.alarms, &cleared);
+            return Ok((next, vec![]));
+        }
         Input::Fire | Input::Outcome { .. } => return Ok((carry.clone(), vec![])),
         Input::Ran(r) => return Err(format!("{NAME}: no unit is expected, got {r:?}")),
     };
@@ -311,6 +328,8 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
     if snap.gate_runs_unread {
         heimdall::streak::hold(&snap.alert_rows, &mut firing);
     }
+    let alarms = heimdall::alarm::step(&carry.alarms, &firing, snap.gate_runs_unread, now);
+    let announce = (!alarms.is_empty()).then(|| act(ALARMS, format!("heimdall/alarms/{now}"), &alarms, ALARMS_DEADLINE_MS, true)).transpose()?;
     let prior: BTreeMap<String, heimdall::state::KeyState> = carry.keys.iter().map(|(k, v)| (k.clone(), to_heimdall(v))).collect();
     if !snap.db_reachable {
         let would = heimdall::hosted::raises(&heimdall::hosted::step(now, confirm, clear_n, refresh, true, &firing, &prior));
@@ -318,12 +337,14 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             return Err(format!("{NAME}: the store is unreachable; the raise of {} is refused and waits for it", would.join(", ")));
         }
         let doc = heimdall::fallback::build(now, false, None, &firing);
-        return Ok((carry.clone(), vec![act(FALLBACK, format!("heimdall/fallback/{now}"), &doc, HOST_DEADLINE_MS, true)?]));
+        let mut acts = vec![act(FALLBACK, format!("heimdall/fallback/{now}"), &doc, HOST_DEADLINE_MS, true)?];
+        acts.extend(announce);
+        return Ok((Carry { alarms, ..carry.clone() }, acts));
     }
     let by_key: BTreeMap<&str, &heimdall::classify::Firing> = firing.iter().map(|f| (f.key.as_str(), f)).collect();
     let when = |s: i64| crate::watchers::iso8601(s.max(0) as u64);
-    let mut next = Carry { keys: BTreeMap::new(), ..carry.clone() };
-    let mut acts = vec![];
+    let mut next = Carry { keys: BTreeMap::new(), alarms, ..carry.clone() };
+    let mut acts: Vec<Act> = announce.into_iter().collect();
     for st in heimdall::hosted::step(now, confirm, clear_n, refresh, true, &firing, &prior) {
         let was = carry.keys.get(&st.key).map(|k| k.phase).unwrap_or_default();
         let is_firing = by_key.contains_key(st.key.as_str());
@@ -442,6 +463,6 @@ pub fn fallback(run_dir: &std::path::Path, input: &str) -> Result<String, String
     heimdall::fallback::write(&run_dir.join("heimdall.alerts.json"), &doc).map(|()| "written".into()).map_err(|e| e.to_string())
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "keys", drop: &[] }, runtime::rows::Part::Map { name: "restart_baselines", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "keys", drop: &[] }, runtime::rows::Part::Map { name: "restart_baselines", drop: &[] }, runtime::rows::Part::Map { name: "alarms", drop: &[] }];
 
 super::hosted!(ReconcileHeimdall);

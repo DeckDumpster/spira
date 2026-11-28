@@ -1,5 +1,6 @@
-//! Each firing alert as one retained value on `alarm/<key>`, carried in the heartbeat from the
-//! pass it first fired until the broker has taken its clear.
+//! Each firing alert as one retained value on `alarm/<key>`, carried from the pass it first
+//! fired until the broker has taken its clear: in the hosted task's journaled carry, and in the
+//! heartbeat of the binary's pass.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -25,17 +26,54 @@ pub fn topic(key: &str) -> String {
 /// An alarm as first raised. A title carries ages, so it is frozen with `since`: a value that
 /// moved every pass would wake every subscriber every pass.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct Raised {
-    since: i64,
-    text: String,
+pub struct Raised {
+    pub since: i64,
+    pub text: String,
     /// It stopped firing and its clear has not been delivered.
     #[serde(default)]
-    clearing: bool,
+    pub clearing: bool,
+}
+
+/// By firing key.
+pub type Alarms = BTreeMap<String, Raised>;
+
+/// The alarms after a pass that found `firing`: a key that stopped is marked for clearing.
+/// With `gate_unread`, a streak that was standing stands: its check did not run.
+pub fn step(before: &Alarms, firing: &[Firing], gate_unread: bool, now: i64) -> Alarms {
+    let standing = |key: &str| before.get(key).filter(|r| !r.clearing).cloned();
+    let mut next: Alarms = firing
+        .iter()
+        .map(|f| (f.key.clone(), standing(&f.key).unwrap_or_else(|| Raised { since: now, text: f.title.clone(), clearing: false })))
+        .collect();
+    for (key, held) in before {
+        if !next.contains_key(key) {
+            let stands = gate_unread && !held.clearing && streak::is_streak(key);
+            next.insert(key.clone(), Raised { clearing: !stands, ..held.clone() });
+        }
+    }
+    next
+}
+
+/// [`send`], answering the keys whose clear the broker took. A failure is logged here or by the
+/// publisher, and takes none.
+pub fn deliver(p: &Publisher, alarms: &Alarms) -> Vec<String> {
+    match send(p, alarms) {
+        Ok(()) => alarms.iter().filter(|(_, r)| r.clearing).map(|(k, _)| k.clone()).collect(),
+        Err(e) => {
+            eprintln!("heimdall alarm topics: {e}");
+            Vec::new()
+        }
+    }
+}
+
+/// Forgets the clears [`deliver`] answered. A key that has fired again since is kept.
+pub fn delivered(alarms: &mut Alarms, cleared: &[String]) {
+    alarms.retain(|k, r| !(r.clearing && cleared.contains(k)));
 }
 
 #[derive(Debug, Default)]
 struct Carried {
-    alarms: BTreeMap<String, Raised>,
+    alarms: Alarms,
     /// The heartbeat's firing keys, which are cleared even if `alarms` cannot be read.
     firing: BTreeSet<String>,
     /// Why the alarms line could not be read.
@@ -56,7 +94,7 @@ fn carried(heartbeat: &str) -> Carried {
 }
 
 /// The heartbeat line. `'` is escaped as JSON, so the single quotes hold.
-fn line(alarms: &BTreeMap<String, Raised>) -> String {
+fn line(alarms: &Alarms) -> String {
     let json = serde_json::to_string(alarms).unwrap_or_else(|_| "{}".into()).replace('\'', "\\u0027");
     format!("{LINE}'{json}'\n")
 }
@@ -68,8 +106,7 @@ pub struct Published {
     pub errors: Vec<String>,
 }
 
-/// Publishes what `firing` holds and clears what the previous pass's heartbeat held beyond it.
-/// With `gate_unread`, a streak that was standing stands: its check did not run.
+/// [`step`] from the previous pass's heartbeat, then published.
 pub fn publish(heartbeat: &Path, firing: &[Firing], gate_unread: bool, bus: &Bus, now: i64) -> Published {
     let mut errors = Vec::new();
     let text = match std::fs::read_to_string(heartbeat) {
@@ -81,42 +118,32 @@ pub fn publish(heartbeat: &Path, firing: &[Firing], gate_unread: bool, bus: &Bus
             String::new()
         }
     };
-    let before = carried(&text);
-    errors.extend(before.unreadable.clone());
-    let standing = |key: &str| before.alarms.get(key).filter(|r| !r.clearing).cloned();
-    let mut next: BTreeMap<String, Raised> = firing
-        .iter()
-        .map(|f| (f.key.clone(), standing(&f.key).unwrap_or_else(|| Raised { since: now, text: f.title.clone(), clearing: false })))
-        .collect();
-    if gate_unread {
-        for key in before.alarms.keys().filter(|k| streak::is_streak(k)) {
-            if let Some(held) = standing(key) {
-                next.entry(key.clone()).or_insert(held);
-            }
-        }
+    let Carried { alarms: mut before, firing: recorded, unreadable } = carried(&text);
+    errors.extend(unreadable);
+    // A key known only by name has no value to hold: it is cleared unless it fires, and a
+    // streak is left alone when its check did not run.
+    for key in recorded.into_iter().filter(|k| !(gate_unread && streak::is_streak(k))) {
+        before.entry(key).or_insert(Raised { since: now, text: String::new(), clearing: true });
     }
-    let gone: BTreeSet<&String> = before.alarms.keys().chain(&before.firing).filter(|k| !next.contains_key(*k)).collect();
-    if !next.is_empty() || !gone.is_empty() {
-        if let Err(e) = bus.publisher("heimdall").and_then(|p| send(&p, &next, &gone)) {
-            errors.push(e.to_string());
-            for key in gone {
-                let held = before.alarms.get(key).cloned().unwrap_or_else(|| Raised { since: now, text: String::new(), clearing: true });
-                next.insert(key.clone(), Raised { clearing: true, ..held });
-            }
+    let mut next = step(&before, firing, gate_unread, now);
+    if !next.is_empty() {
+        match bus.publisher("heimdall").and_then(|p| send(&p, &next)) {
+            Ok(()) => next.retain(|_, r| !r.clearing),
+            Err(e) => errors.push(e.to_string()),
         }
     }
     Published { line: line(&next), errors }
 }
 
 /// Stops at the first failure, so a broker that is not answering costs the pass one wait.
-fn send(p: &Publisher, firing: &BTreeMap<String, Raised>, gone: &BTreeSet<&String>) -> Result<(), PubError> {
+fn send(p: &Publisher, alarms: &Alarms) -> Result<(), PubError> {
     let mut live = BTreeSet::new();
-    for (key, r) in firing {
+    for (key, r) in alarms.iter().filter(|(_, r)| !r.clearing) {
         let topic = topic(key);
         p.publish(Class::State, &topic, &json!({ "text": r.text, "since": r.since, "at": r.since }))?;
         live.insert(topic);
     }
-    for topic in gone.iter().map(|k| topic(k)).filter(|t| !live.contains(t)) {
+    for topic in alarms.iter().filter(|(_, r)| r.clearing).map(|(k, _)| topic(k)).filter(|t| !live.contains(t)) {
         p.clear(&topic)?;
     }
     p.flush(FLUSH)
@@ -163,6 +190,16 @@ mod tests {
         std::fs::write(&heartbeat, "SP_HEIMDALL_KEYS='a'\nSP_HEIMDALL_ALARMS='{'\n").unwrap();
         let published = publish(&heartbeat, &[], false, &Bus::Off, 9);
         assert!(published.errors.iter().any(|e| e.contains("unreadable")), "{:?}", published.errors);
+        assert_eq!(carried(&published.line).alarms.keys().collect::<Vec<_>>(), ["a"]);
+    }
+
+    #[test_id(tmi4ls5)]
+    #[test]
+    fn a_streak_known_only_by_name_is_not_cleared_while_its_check_is_unread() {
+        let dir = testkit::TempDir::new("heimdall-alarm-damaged-streak");
+        let heartbeat = dir.join("heimdall.status");
+        std::fs::write(&heartbeat, "SP_HEIMDALL_KEYS='a,gate-red-streak/r'\nSP_HEIMDALL_ALARMS='{'\n").unwrap();
+        let published = publish(&heartbeat, &[], true, &Bus::Off, 9);
         assert_eq!(carried(&published.line).alarms.keys().collect::<Vec<_>>(), ["a"]);
     }
 }

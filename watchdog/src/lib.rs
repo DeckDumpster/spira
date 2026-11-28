@@ -20,7 +20,7 @@ use runtime::ports::Clock;
 use runtime::units::{UnitFacts, UnitHandle, UnitState, Units};
 use serde::{Deserialize, Serialize};
 
-pub use alarm::watch;
+pub use alarm::{publisher, watch};
 
 /// The page is one line appended to the Concierge's durable inbox
 /// (law-concierge-signals-ride-watchd-rows): a file append and a bounded publish, so it needs

@@ -12,6 +12,11 @@ const TOPIC: &str = "alarm/watchdog";
 /// Well inside the unit's `TimeoutStartSec`.
 const FLUSH: Duration = Duration::from_secs(5);
 
+/// The publisher [`watch`] is handed, on the broker `cfg` names. Without one the passes run on.
+pub fn publisher(cfg: &dyn Fn(&str) -> Result<String, String>) -> Option<Publisher> {
+    Publisher::from_config("spira-watchdog", cfg).inspect_err(|e| eprintln!("spira-watchdog: no alarm topic: {e}")).ok()
+}
+
 /// [`pass`], then `alarm/watchdog` made to match it. A publish that fails is logged, never the
 /// pass's failure.
 pub fn watch(cfg: &Config, d: &Deps, alarm: Option<&Publisher>) -> Result<Outcome, String> {

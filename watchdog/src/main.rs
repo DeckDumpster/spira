@@ -8,7 +8,7 @@ use inbox_rules::Sink;
 use runtime::ports::{Clock, WallClock};
 use runtime::units::Units;
 use watchdog::render::{render, Platform, TimerSpec};
-use watchdog::{watch, Config, Deps, FileMarkerAge, InboxPager, SocketStatus};
+use watchdog::{publisher, watch, Config, Deps, FileMarkerAge, InboxPager, SocketStatus};
 
 #[cfg(target_os = "linux")]
 fn units(clock: Arc<dyn Clock>) -> Result<Box<dyn Units>, String> {
@@ -27,8 +27,7 @@ fn run_pass() -> Result<(String, bool), String> {
     let clock: Arc<dyn Clock> = Arc::new(WallClock);
     let units = units(clock.clone())?;
     let deps = Deps { clock: &*clock, units: &*units, status: &SocketStatus(cfg.socket.clone()), marker: &FileMarkerAge(cfg.marker.clone()), pager: &pager };
-    let alarm = spira_pub::Publisher::new("spira-watchdog").inspect_err(|e| eprintln!("spira-watchdog: no alarm topic: {e}")).ok();
-    watch(&cfg, &deps, alarm.as_ref()).map(|o| (o.to_string(), o.scheduler_down()))
+    watch(&cfg, &deps, publisher(&spira_config::process::cfg).as_ref()).map(|o| (o.to_string(), o.scheduler_down()))
 }
 
 /// A pass that found the scheduler down exits with this, so a dead scheduler is never a
