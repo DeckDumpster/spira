@@ -171,8 +171,6 @@ fn run_with(args: &[String], envs: &[(String, String)]) -> i32 {
     rc
 }
 
-const FENCE_REFUSED: i32 = 75;
-
 fn run_in(tree: &std::path::Path, name: &str, base: &str, envs: &[(String, String)]) -> i32 {
     let path = tree.join(crate::def::PATH);
     let fences = std::fs::read_to_string(&path)
@@ -207,8 +205,8 @@ fn run_in(tree: &std::path::Path, name: &str, base: &str, envs: &[(String, Strin
         .status();
     match status {
         Ok(s) if s.success() => 0,
-        Ok(s) if s.code() == Some(FENCE_REFUSED) => {
-            eprintln!("gate fence-run: {name} refused (exit {FENCE_REFUSED}); no verdict");
+        Ok(s) if s.code() == Some(crate::engine::NOVERDICT) => {
+            eprintln!("gate fence-run: {name} refused (exit {}); no verdict", crate::engine::NOVERDICT);
             2
         }
         Ok(_) => 1,
@@ -301,6 +299,7 @@ mod tests {
         run_with(&[name.into(), "--repo".into(), root.into(), "--tip".into(), tip.into(), "--base".into(), "main".into()], &[("PATH".to_string(), std::env::var("PATH").unwrap_or_default())])
     }
 
+    // Real bash and git: the contract is how a fence process's own exit status is read.
     #[test_id(tfysag0)]
     #[test]
     fn one_named_fence_runs_at_the_tip_and_its_exit_is_the_answer() {
