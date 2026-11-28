@@ -553,7 +553,7 @@ impl Run<'_> {
                 // The claim is already on the events trail; unexempted, the next one charges it.
                 self.bump_requeue(&cause);
                 self.release();
-                self.note(&format!("Released by dwarf: every one of repo:{}'s build folders were all leased, so no session started. No attempt was charged and nothing about the work is implied; the bead is claimable again once a folder is released.", self.s.repo_name));
+                self.note(&format!("Released by dwarf: repo:{}'s build folders were all leased, so no session started. No attempt was charged and nothing about the work is implied; the bead is claimable again once a folder is released.", self.s.repo_name));
                 self.log(&format!("{f}: {id} {why} — released, no attempt charged"));
                 return self.finish(rc, &status);
             }
