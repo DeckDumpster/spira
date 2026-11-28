@@ -9,7 +9,7 @@
 //! **Code vs catalogue.** `gate.sh` and `release` are not reached from `step --all`: `gate.sh` is
 //! `queue submit` only (`ops/simple.rs:63`), `release` is `land-local` (`ops/land.rs:187`). testenv
 //! is not reached. The
-//! real long legs are `batcher cut` and `batcher judgement-ci` (`real.rs:873`, called `ops/verdict.rs:2159`).
+//! real long legs are `batcher cut` and the verdict pass.
 //!
 //! ## Tick
 //!
@@ -55,7 +55,7 @@
 //! | Observing | check `pending` | Waiting | — |
 //! | Observing | check `green`, head = sealed, base unmoved | Pushing | `queue.step.push` (ff) |
 //! | Observing | check `green`, base moved | Settling | `queue.step.push` (rebased head, `:1692`) |
-//! | Observing | check `red`, batcher-owned | Judging | `queue.step.judgement` (unit.start) |
+//! | Observing | check `red`, batcher-owned | Judging | `queue.step.judgement` (unit.start of `queue verdict <repo>`) |
 //! | Observing | check `harness_fault` | Settling | `queue.step.rerun` or `queue.step.notify` |
 //! | Observing | PR `closed`/`merged` | Settling | `queue.step.reconcile` (`ops/reconcile.rs:22`) |
 //! | Observing | the flip rerun's check ([`Flip::VerdictPass`]) | Waiting | `queue.step.reconcile` (`queue verdict`), anew each tick |
@@ -65,7 +65,7 @@
 //! | Landing | `effect.succeeded` | Cutting | `queue.step.close_bead`, `queue.step.cut_wanted` |
 //! | Landing | `effect.timed_out`, lost at a restart | Landing | `queue.step.land`, the same input |
 //! | Judging | `unit.ran{ok, id=}` | Cutting | `queue.step.record` (judgement id, `:2167`) |
-//! | Judging | `unit.ran{fail}` / deadline | Idle | `queue.step.notify` |
+//! | Judging | `unit.ran{fail}` / deadline | Idle | `queue.step.notify`, once per batch; the next tick observes it again |
 //! | Judging | `queue.step.judgement` lost at a restart | Judging | — (`unit.facts` or the cap ends the leg) |
 //! | Settling | outcome | Cutting | — |
 //! | Cutting | emitted | Publishing (`queue.local`) / Idle | `queue.step.publish_wanted` |
@@ -85,7 +85,7 @@
 //! | `queue.step.pr_close` | forge | 30 s | `repo/pr` (`ops/verdict.rs:313`, `:947`, `:1332`) | — |
 //! | `queue.step.cancel_runs` | forge | 30 s | `repo/branch` (`real.rs:782`) | — |
 //! | `queue.step.rerun` | forge | 30 s | `repo/run` (`ops/verdict.rs:373`, `:1956`) | run already rerun once (`classify_fault_rerun`) |
-//! | `queue.step.judgement` | unit | `unit.start`; ends on `unit.ran`, 600 s (unverified cap) | `repo/pr/head` | batcher off (`SPIRA_BATCHER_ENABLE=0`, `:2143`) |
+//! | `queue.step.judgement` | unit | `unit.start` of `queue verdict <repo>`; ends on `unit.ran`, 600 s (unverified cap) | `repo/pr/head` | — (the pass reads batcher-off itself and still ejects a setup red) |
 //! | `queue.step.eject` | store | 5 s | `batch/member/tip` (`ops/verdict.rs:849`) | concierge-owned batch (`:1052`) |
 //! | `queue.step.reconcile` | store+forge | 60 s | `batch_id` | record opening (`ops/verdict.rs:84`) |
 //! | `queue.step.sweep` | store+forge | 60 s | `repo/tick` (`ops/verdict.rs:906`) | file-era record |
@@ -431,6 +431,9 @@ pub struct RepoCarry {
     /// The publish PR whose red was handed to the inbox, while it stays red.
     #[serde(default)]
     pub red_said: Option<u64>,
+    /// The batch whose failed judgement was told, so its re-driven legs mail no more.
+    #[serde(default)]
+    pub failed_said: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -477,6 +480,11 @@ impl Step {
     fn act(&self, effect: &str) -> Act {
         Act::new(effect, self.key.clone()).with_input(serde_json::to_string(self).unwrap_or_default())
     }
+}
+
+/// The judgement leg: the queue's verdict pass owns every kind of red.
+pub fn verdict_leg_argv(bin: String, repo: &str) -> Vec<String> {
+    vec![bin, "verdict".into(), repo.into()]
 }
 
 /// The pinned values `decide` reads.
@@ -557,8 +565,13 @@ impl Machine<'_> {
     fn judgement_failed(&mut self, why: &str) {
         self.go(Trigger::JudgementRanFailed);
         let b = self.step_of();
-        self.notify(format!("judgement for {} failed", b.batch), why.to_string(), &b.batch);
-        self.rc.settled = self.rc.batch.take();
+        // The engine refuses a repeated key only while the first is in flight.
+        if self.rc.failed_said != self.rc.batch {
+            self.notify(format!("judgement for {} failed", b.batch), why.to_string(), &b.batch);
+            self.rc.failed_said = self.rc.batch.clone();
+        }
+        // Never settled: a still-red batch must be driven again.
+        self.rc.batch = None;
         self.rc.leg = None;
         self.rc.base.clear();
         self.rc.mode.clear();
@@ -575,7 +588,7 @@ impl Machine<'_> {
             self.rc.mode.clear();
             self.cut(&base);
         } else {
-            self.judgement_failed("the batcher's judgement of a red batch failed; the batch waits for a hand");
+            self.judgement_failed("the queue's verdict pass on a red batch failed; the next tick drives it again");
         }
     }
 
@@ -583,7 +596,7 @@ impl Machine<'_> {
         if self.rc.state == State::Judging {
             // The leg's end arrives as its own `unit.ran` (`on_ran`); none by the cap is a failure.
             if self.now_ms.saturating_sub(self.rc.leg_at_ms) > JUDGEMENT_CAP_MS {
-                self.judgement_failed("the batcher's judgement of a red batch did not finish in time; the batch waits for a hand");
+                self.judgement_failed("the queue's verdict pass on a red batch did not finish in time; the next tick drives it again");
             }
             return;
         }
@@ -824,7 +837,7 @@ impl Handler for QueueStep {
 
 /// The runners: forge verbs through `forge::client` (gh its only child), git as a child through
 /// `runtime::ports::Proc`, the store over `spira-lc`'s socket, mail in-process, and the queue's
-/// own verbs (`verdict`, `batch sweep`, `eject`) and the batcher's judgement as unit legs.
+/// own verbs (`verdict`, `batch sweep`, `eject`) as unit legs.
 pub mod edge {
     use std::path::{Path, PathBuf};
     use std::time::Duration;
@@ -1026,25 +1039,21 @@ pub mod edge {
         r.ok().then(|| "{}".to_string()).ok_or_else(|| format!("workflow-rerun {run}: {}", r.err.trim()))
     }
 
-    /// `batcher judgement-ci`, as a unit: the CI-only judgement of a batcher-owned red.
+    /// The queue's verdict pass on a batcher-owned red, as a unit keyed so `on_ran` matches it.
     pub fn judgement(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let s = step(spec)?;
-        if cfg("SPIRA_BATCHER_ENABLE")?.trim() == "0" {
-            return Err("SPIRA_BATCHER_ENABLE=0: no judgement".into());
-        }
-        let dir = root(&registry()?, &s.repo)?;
-        let pr = s.pr.map(|p| p.to_string()).unwrap_or_default();
-        let status = forge_call(&dir, "check-status", &[&pr, &s.branch], None)?.out;
-        let suites = status.lines().filter_map(|l| l.strip_prefix("red-suite: ")).collect::<Vec<_>>().join(",");
-        let bin = spira_config::release_env::tool("batcher")?;
-        let argv = vec![bin, "judgement-ci".into(), s.repo.clone(), "--suites".into(), suites, "--members".into(), s.members.join(","), "--evidence".into(), format!("CI red on PR {pr} at {}", s.head)];
-        start_unit(e, super::NAME, &s.unit, argv, vec![], None)
+        queue_leg_with(e, &s.unit, |bin| super::verdict_leg_argv(bin, &s.repo))
     }
 
     /// `queue <args>`, as a unit: the queue's own verbs this task has no library entry for.
     fn queue_leg(e: &Effects, key: &str, args: &[&str]) -> Result<String, String> {
+        queue_leg_with(e, key, |bin| std::iter::once(bin).chain(args.iter().map(|a| a.to_string())).collect())
+    }
+
+    /// [`queue_leg`] with the whole argv built from the binary's path.
+    fn queue_leg_with(e: &Effects, key: &str, argv: impl FnOnce(String) -> Vec<String>) -> Result<String, String> {
         let bin = spira_config::release_env::tool("queue")?;
-        start_unit(e, super::NAME, key, std::iter::once(bin).chain(args.iter().map(|a| a.to_string())).collect(), vec![], None)
+        start_unit(e, super::NAME, key, argv(bin), vec![], None)
     }
 
     pub fn eject(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {

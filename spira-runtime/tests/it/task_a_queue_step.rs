@@ -92,6 +92,33 @@ fn t5_red_goes_to_judgement() {
     assert_eq!(carry.repos["spira"].state, State::Judging);
 }
 
+/// A leg that fails leaves its batch unsettled, so the next tick observes and drives it again.
+#[test_id(t7q30kl)]
+#[test]
+fn a_failed_judgement_leg_is_driven_again_on_the_next_tick_and_mails_once() {
+    use runtime::units::{Exit, UnitHandle, UnitRan};
+    let red = with(Repo { check: Check::Red, ..busy().repos["spira"].clone() });
+    let mut carry = Carry::default();
+    let mut mails = 0;
+    for now in [1, 2, 3] {
+        let (judging, acts) = decide_with(&Policy::default(), &carry, &red, now);
+        assert!(effects(&acts).contains(&JUDGEMENT), "tick {now}: {acts:?}");
+        let key = judging.repos["spira"].leg.clone().expect("a leg in flight");
+        let ran = UnitRan { handle: UnitHandle::of(NAME, &key).unwrap(), exit: Exit::Code(1), duration_ms: 5 };
+        let (after, acts) = on_ran(&judging, &ran, now).expect("its own leg");
+        mails += acts.iter().filter(|a| a.effect == NOTIFY).count();
+        assert_ne!(after.repos["spira"].settled.as_deref(), Some("batch-7:3"), "tick {now}");
+        carry = after;
+    }
+    assert_eq!(mails, 1);
+}
+
+#[test_id(thf1sv9)]
+#[test]
+fn the_judgement_leg_is_the_queues_verdict_pass_for_the_repo() {
+    assert_eq!(verdict_leg_argv("/r/queue".into(), "dumpstar"), ["/r/queue", "verdict", "dumpstar"]); // not a path: an argv word, never opened
+}
+
 const NAMED_TEST_RED: &str = "red\nfailed-step: gate / Run tests\nstep-log:         FAIL [   0.412s] (1/1) demo::it a_test\n";
 
 fn flipping(check: Check, pr_state: PrState, flip: Flip) -> Snapshot {
