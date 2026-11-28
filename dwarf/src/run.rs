@@ -707,7 +707,7 @@ impl<'a> Run<'a> {
             o.stderr.lines().for_each(|l| self.d.sink.err(l));
             stacks.insert(id.to_string(), p.stack);
             let rc = claim::settle_claim(o.code, self.d.exec, id, &holder, tries, delay, self.d.sleep);
-            // Only rc 2: lc_claim_bead writes the fact for every other claim that applied.
+            // A lost reply (rc 2) leaves lc_claim_bead unable to write; on 0 and 3 any fact is its to write.
             if o.code == 2 && rc == claim::LC_APPLIED {
                 let w = self.d.exec.exec(&self.claim_bin, &s(&["write-event", id, "claimed", &holder]), None, None);
                 if w.code != 0 {
