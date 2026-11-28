@@ -126,7 +126,6 @@ lifecycle = { path = "../lifecycle" }
 [[bin]]
 name = "spira-config"
 path = "src/main.rs"
-test = false
 
 # The admission pools' agent-facing entry (sp-f4ig1, gate/DESIGN-admission.md): RUSTC_WRAPPER
 # mode, `status`, `run`.

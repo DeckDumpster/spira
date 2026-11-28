@@ -12,7 +12,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "rule"
 path = "src/main.rs"
-test = false
 
 [[test]]
 name = "code"

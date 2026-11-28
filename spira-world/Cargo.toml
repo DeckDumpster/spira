@@ -12,7 +12,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "world"
 path = "src/bin/world.rs"
-test = false
 
 [[bin]]
 name = "dwarves"
@@ -22,7 +21,6 @@ test = false
 [[bin]]
 name = "slay"
 path = "src/bin/slay.rs"
-test = false
 
 [[test]]
 name = "no_fork_edges"

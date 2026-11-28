@@ -79,6 +79,11 @@ impl Shape {
     pub fn covers(&self, at: usize) -> bool {
         self.regions.iter().any(|(a, b)| *a <= at && at < *b)
     }
+
+    /// Every `mod name;`, test-gated or not: the name, and `#[path]` if any.
+    pub(crate) fn mods(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
+        self.all_mods.iter().map(|(_, n, p)| (n.as_str(), p.as_deref()))
+    }
 }
 
 /// Walk the file's attributes. An item under `#[cfg(test)]` (or `cfg(all(test, …))`,
@@ -205,7 +210,7 @@ pub fn shape(src: &[u8]) -> Shape {
 }
 
 /// The file `mod name;` in `decl` loads.
-fn mod_file(decl: &str, name: &str, path: Option<&str>) -> Vec<String> {
+pub(crate) fn mod_file(decl: &str, name: &str, path: Option<&str>) -> Vec<String> {
     let dir = decl.rsplit_once('/').map_or("", |(d, _)| d);
     let join = |d: &str, f: &str| {
         if d.is_empty() {

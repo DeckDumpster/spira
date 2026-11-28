@@ -294,6 +294,7 @@ pub const BASE_RELATIVE: &[&str] = &[
     "config-delta-folded",
     "workflow-config",
     "otel-binaries",
+    "bin-tests-skipped",
     "journal-reads",
     "release-tool-exec",
     "bare-unit-name",
