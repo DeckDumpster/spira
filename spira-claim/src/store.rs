@@ -93,6 +93,10 @@ pub struct Config {
     pub skuld_label: String,
     /// `SPIRA_QUEUE_DIR` — where each repo's `integrations` record lives; a member it names is not claimable.
     pub queue_dir: String,
+    /// `SPIRA_DWARF_BUILD_BASE` — where the build folders whose leases decide whether a repository is full live.
+    pub build_base: String,
+    /// `SPIRA_DWARF_BUILD_FOLDERS_PER_REPO` — the most build folders one repository may hold leased.
+    pub build_ceiling: usize,
     /// `SPIRA_LC_STORE_PATH` is set: the control store is where readiness is published.
     pub control_store: bool,
 }
@@ -116,6 +120,8 @@ pub fn load_config() -> Result<Config, String> {
         pilgrim_label: spira_config::process::cfg("SPIRA_PILGRIM_LABEL")?,
         skuld_label: spira_config::process::cfg("SPIRA_SKULD_LABEL")?,
         queue_dir: spira_config::process::cfg("SPIRA_QUEUE_DIR")?,
+        build_base: spira_config::process::cfg(spira_config::build_dir::BASE_ENV)?,
+        build_ceiling: spira_config::process::cfg_parse(spira_config::build_dir::CEILING_ENV)?,
         control_store: !spira_config::process::cfg("SPIRA_LC_STORE_PATH")?.is_empty(),
     })
 }

@@ -706,6 +706,10 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
             return false;
         }
         let ex = claim(pinned, &["rune-exclude".into(), f.clone(), p.exclude_labels]);
+        // A refusal prints nothing, and counting with no exclusions would count everything.
+        if ex.code != 0 {
+            return false;
+        }
         let n = claim(pinned, &["ready-count".into(), p.labels, ex.out.trim().to_string(), "--express".into()]);
         n.out.trim().parse::<i64>().unwrap_or(0) > 0
     });

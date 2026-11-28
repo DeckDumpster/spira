@@ -39,6 +39,130 @@ fn rune_home_is_spira_home_then_the_declared_release_and_refuses_naming_both() {
 }
 
 // ---- rune-ready / bulk-ready-by-rune: the machine's ready set --------------------------------
+mod full_repositories {
+    use super::*;
+    use spira_store::lc_call::{LcClient, Reply, Transport};
+    use serde_json::{json, Value};
+    use spira_config::build_dir::{lease_for, Lease};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    /// One READY builder bead in each of `repo:spira` and `repo:other`.
+    struct TwoRepos;
+
+    fn row(id: &str) -> Value {
+        json!({ "bead_id": id, "state": "READY", "holds": [], "tip": null })
+    }
+
+    fn item(id: &str, repo: &str) -> Value {
+        json!({ "id": id, "title": id, "priority": 2, "issue_type": "task", "labels": [format!("repo:{repo}")], "dependencies": [] })
+    }
+
+    impl Transport for TwoRepos {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+            let items = [item("sp-full", "spira"), item("sp-open", "other")];
+            let out = match argv.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+                ["claimable"] => json!({ "rev": 1, "cannot_tell": 0, "beads": [
+                    { "bead_id": "sp-full", "verdict": "claimable", "blocker": null, "runes": ["builder"], "row": row("sp-full"), "content": items[0] },
+                    { "bead_id": "sp-open", "verdict": "claimable", "blocker": null, "runes": ["builder"], "row": row("sp-open"), "content": items[1] },
+                ] }),
+                ["list", "--express", ..] => json!([]),
+                ["list", "--state", ..] => json!([row("sp-full"), row("sp-open")]),
+                ["plan", "items", "--ids", ..] => json!({ "watermark": 1, "items": items }),
+                _ => json!([]),
+            };
+            Ok(Reply { code: 0, out: out.to_string(), err: String::new(), read_ended: false })
+        }
+    }
+
+    fn open() -> Result<Store, String> {
+        Ok(Store { lc: LcClient::over(Arc::new(TwoRepos), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None, readiness_alert: Default::default() })
+    }
+
+    /// A home whose one rune builds, and a ceiling of 2 build folders per repository.
+    struct Fixture {
+        dir: testkit::TempDir,
+        _env: testkit::EnvGuard,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let dir = testkit::TempDir::new("claim-full-repo");
+            let runes = spira_config::runes::runes_dir(dir.path());
+            std::fs::create_dir_all(&runes).unwrap();
+            std::fs::write(runes.join("builder.rune"), "RUNE_LABELS=plan\nRUNE_BUILDS=1\n").unwrap();
+            let _env = testkit::env(&[("SPIRA_HOME", Some(dir.path().to_str().unwrap()))]);
+            Fixture { dir, _env }
+        }
+
+        fn base(&self) -> std::path::PathBuf {
+            self.dir.path().join("builds")
+        }
+
+        /// spira's folders held to the ceiling by one builder and one gate.
+        fn fill_spira(&self) -> [Lease; 2] {
+            ["sp-b", "gate sp-g.1"].map(|who| lease_for(&[self.base()], who, "spira", 2).unwrap())
+        }
+
+        fn with_env<R>(&self, base: &str, f: impl FnOnce(&mut Env) -> R) -> R {
+            let mut stdin = std::io::empty();
+            let none = |_: &str| None;
+            let config = Config { runes: "builder".into(), run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), build_base: base.into(), build_ceiling: 2, ..Config::default() };
+            f(&mut Env { stdin: &mut stdin, config, lookup: &none })
+        }
+
+        fn counted(&self) -> String {
+            self.with_env(&self.base().display().to_string(), |env| ready_by_rune_over(&Args::parse(&[]).unwrap(), env, &open).unwrap().lines)
+        }
+
+        fn listed(&self) -> Vec<String> {
+            let a = Args::parse(&["builder".into(), "--json".into()]).unwrap();
+            let o = self.with_env(&self.base().display().to_string(), |env| rune_ready_over(&a, env, self.dir.path(), "builder", &open));
+            assert_eq!(o.code, 0, "{o:?}");
+            let rows: Vec<Value> = serde_json::from_str(o.out.trim()).unwrap();
+            rows.iter().map(|r| r["id"].as_str().unwrap().to_string()).collect()
+        }
+    }
+
+    #[test_id(tf2ky8b)]
+    #[test]
+    fn a_repository_whose_build_folders_are_all_leased_has_no_builder_work_until_one_is_released() {
+        let fx = Fixture::new();
+        let held = fx.fill_spira();
+        assert_eq!(fx.counted(), "builder 1\n");
+        assert_eq!(fx.listed(), ["sp-open"]);
+        drop(held);
+        assert_eq!(fx.counted(), "builder 2\n");
+        assert_eq!(fx.listed(), ["sp-full", "sp-open"]);
+    }
+
+    #[test_id(tlo58b9)]
+    #[test]
+    fn the_exclusions_of_a_building_rune_name_a_full_repository() {
+        let fx = Fixture::new();
+        let _held = fx.fill_spira();
+        let exclude = fx.with_env(&fx.base().display().to_string(), |env| rune_exclude_str(env, fx.dir.path(), "builder", "own")).unwrap();
+        assert!(exclude.split(',').any(|x| x == "repo:spira") && !exclude.contains("repo:other"), "{exclude}");
+    }
+
+    #[test_id(t9dtzlh)]
+    #[test]
+    fn a_building_rune_whose_build_folders_cannot_be_counted_is_neither_counted_nor_listed() {
+        let fx = Fixture::new();
+        let not_a_dir = fx.dir.path().join("file");
+        std::fs::write(&not_a_dir, "").unwrap();
+        for base in ["", not_a_dir.to_str().unwrap()] {
+            let counted = fx.with_env(base, |env| ready_by_rune_over(&Args::parse(&[]).unwrap(), env, &open).unwrap());
+            assert_eq!(counted.lines, "", "{base:?}");
+            assert!(counted.warnings.iter().any(|w| w.contains("builder") && w.contains("build folders cannot be counted")), "{:?}", counted.warnings);
+            let a = Args::parse(&["builder".into()]).unwrap();
+            let o = fx.with_env(base, |env| rune_ready_over(&a, env, fx.dir.path(), "builder", &open));
+            assert_eq!((o.code, o.out.as_str()), (1, "0"), "{o:?}");
+            assert!(o.err.contains("build folders cannot be counted"), "{o:?}");
+        }
+    }
+}
+
 // ---- the lifecycle row is the claim (sp-860zj) -------------------------------------------
 //
 // bd's status and assignee are content nobody reads for claimability: the candidate set is

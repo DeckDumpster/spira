@@ -789,7 +789,7 @@ fn urgent_scope(a: &Args, env: &Env) -> Result<Vec<ready::RunePart>, String> {
         if p.labels.is_empty() {
             continue;
         }
-        let exclude = rune_exclude_str(env, &home, f, &p.exclude_labels);
+        let exclude = partition_exclude(env, &home, f, &p.exclude_labels);
         parts.push(ready::RunePart { name: f.clone(), inc: ready::split_csv(&p.labels), exc: ready::split_csv(&exclude) });
     }
     if parts.is_empty() {
@@ -848,7 +848,47 @@ fn roster(home: &std::path::Path, runes: &str) -> Vec<String> {
     spira_config::runes::spira_runes(home, ov).split_whitespace().map(str::to_string).collect()
 }
 
-fn rune_exclude_str(env: &Env, home: &std::path::Path, me: &str, own: &str) -> String {
+/// What `me` may not take right now: [`partition_exclude`], and the repositories it cannot start in.
+fn rune_exclude_str(env: &Env, home: &std::path::Path, me: &str, own: &str) -> Result<String, String> {
+    let mut out = partition_exclude(env, home, me, own);
+    for label in full_repo_labels(env, home, me)? {
+        if !out.is_empty() {
+            out.push(',');
+        }
+        out.push_str(&label);
+    }
+    Ok(out)
+}
+
+/// The `repo:<name>` of each repository with no build folder left to lease, for a rune that
+/// leases one; empty for any other. `Err` is never "none is full".
+fn full_repo_labels(env: &Env, home: &std::path::Path, me: &str) -> Result<Vec<String>, String> {
+    if spira_config::runes::rune_get(home, me, "RUNE_BUILDS", "0") != "1" {
+        return Ok(Vec::new());
+    }
+    let uncounted = |why: String| format!("{me}: build folders cannot be counted: {why}");
+    let bases = spira_config::build_dir::parse_bases(&env.config.build_base);
+    if bases.is_empty() {
+        return Err(uncounted(format!("{} names no directory", spira_config::build_dir::BASE_ENV)));
+    }
+    let full = spira_config::build_dir::full_repositories(&bases, env.config.build_ceiling).map_err(|e| uncounted(e.to_string()))?;
+    Ok(full.into_iter().map(|repo| format!("repo:{repo}")).collect())
+}
+
+/// Takes `rune` off every row of a repository in `full` (as [`full_repo_labels`] names them).
+fn withhold_full(view: &mut Viewed, rune: &str, full: &[String]) {
+    for r in view.rows.iter().filter(|r| r.labels.iter().any(|l| full.contains(l))) {
+        let Some(taking) = view.runes.get_mut(&r.id) else { continue };
+        if taking.iter().any(|t| t == rune) {
+            taking.retain(|t| t != rune);
+            view.leased_out.insert(r.id.clone());
+        }
+    }
+}
+
+/// The shared and per-rune exclusions that decide which rune a bead belongs to.
+
+fn partition_exclude(env: &Env, home: &std::path::Path, me: &str, own: &str) -> String {
     let shared = ready::shared_exclude(&queue_wait_label(env), &open_children_label(env));
     ready::rune_exclude(me, own, &roster(home, &env.config.runes), &shared)
 }
@@ -867,7 +907,10 @@ fn cmd_rune_exclude(a: &Args, env: &mut Env) -> Outcome {
         Ok(h) => h,
         Err(e) => return Outcome::cannot_tell(format!("rune-exclude: {e}")),
     };
-    Outcome::ok(rune_exclude_str(env, &home, &me, own))
+    match rune_exclude_str(env, &home, &me, own) {
+        Ok(x) => Outcome::ok(x),
+        Err(e) => Outcome::cannot_tell(format!("rune-exclude: {e}")),
+    }
 }
 
 /// `shared-exclude`: `ready_shared_exclude` (lib.sh:652) — the four labels every "is this
@@ -904,6 +947,8 @@ struct Viewed {
     express: BTreeSet<String>,
     /// The REWORK beads the claim path left out, with the rule that did it.
     dropped: Vec<Dropped>,
+    /// The rows [`withhold_full`] took a rune off.
+    leased_out: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -948,7 +993,7 @@ fn viewed(a: &Args, env: &Env, st: &Store) -> Result<Viewed, String> {
     let express = view.iter().filter(|v| v.express).map(|v| v.id.clone()).collect();
     let runes = view.iter().map(|v| (v.id.clone(), v.runes.clone())).collect();
     let lifecycle = view.into_iter().map(|v| (v.id, v.lifecycle)).collect();
-    Ok(Viewed { rows, runes, lifecycle, express, dropped })
+    Ok(Viewed { rows, runes, lifecycle, express, dropped, leased_out: BTreeSet::new() })
 }
 
 /// The claimable rows by the claim view, only the express ones when `--express` is given.
@@ -1157,6 +1202,8 @@ fn taken_split<'a>(view: &'a Viewed, rune: &str) -> (Vec<&'a rank::ReadyRow>, Ve
     for r in &view.rows {
         let rule = if ready::is_deferred(r, now) {
             "deferred"
+        } else if view.leased_out.contains(&r.id) {
+            "build-folders-leased"
         } else if !view.runes.get(&r.id).is_some_and(|taking| taking.iter().any(|t| t == rune)) {
             "not-taken"
         } else {
@@ -1221,25 +1268,37 @@ fn cmd_rune_ready(a: &Args, env: &mut Env) -> Outcome {
             err: format!("spira-claim: rune_ready: no rune in the runes: {}", file.display()),
         };
     }
+    rune_ready_over(a, env, &home, &me, &|| store(a))
+}
+
+/// [`cmd_rune_ready`] past the rune's own file, over the store `open` gives.
+fn rune_ready_over(a: &Args, env: &Env, home: &std::path::Path, me: &str, open: &dyn Fn() -> Result<Store, String>) -> Outcome {
     let json = a.has("--json");
     if let Some(cache) = (env.lookup)("SPIRA_READY_CACHE") {
         if !cache.is_empty() && !json && !a.has("--express") {
             if let Ok(text) = std::fs::read_to_string(&cache) {
-                return Outcome::ok(ready_cache_lookup(&text, &me).to_string());
+                return Outcome::ok(ready_cache_lookup(&text, me).to_string());
             }
         }
     }
     // rc 3, NEVER 2 or an empty-string widen: see this function's own doc above.
-    if let Err(e) = spira_config::runes::rune_predicate(&home, &me) {
+    if let Err(e) = spira_config::runes::rune_predicate(home, me) {
         return Outcome { code: 3, out: "0".into(), err: format!("spira-claim: rune_ready: {e}") };
     }
+    let full = match full_repo_labels(env, home, me) {
+        Ok(f) => f,
+        Err(e) => return Outcome { code: 1, out: "0".into(), err: format!("spira-claim: rune_ready: {e}") },
+    };
     let store_read = std::time::Instant::now();
-    let view = match store(a).and_then(|st| claimable_over(a, env, &st)) {
-        Ok(v) => v,
+    let view = match open().and_then(|st| claimable_over(a, env, &st)) {
+        Ok(mut v) => {
+            withhold_full(&mut v, me, &full);
+            v
+        }
         Err(e) => return Outcome { code: 1, out: "0".into(), err: format!("spira-claim: rune_ready: {}", first_line(&e)) },
     };
     spira_otel::run::phase("store", store_read.elapsed().as_millis() as u64);
-    let (mine, dropped) = taken_split(&view, &me);
+    let (mine, dropped) = taken_split(&view, me);
     if json && a.has("--freshness") {
         return Outcome::ok(format!("{}\n", serde_json::json!({ "freshness": serde_json::Value::Null, "rows": mine, "dropped": a.has("--dropped").then_some(&dropped) })));
     }
@@ -1264,14 +1323,20 @@ pub struct ReadyByRune {
 pub fn bulk_ready_by_rune() -> Result<ReadyByRune, String> {
     let config = store::load_config().map_err(|e| format!("config: {e}"))?;
     let env = Env { stdin: &mut std::io::empty(), config, lookup: &|k| std::env::var(k).ok() };
-    ready_by_rune(&Args::parse(&[])?, &env)
+    let a = Args::parse(&[])?;
+    ready_by_rune(&a, &env)
+}
+
+fn ready_by_rune(a: &Args, env: &Env) -> Result<ReadyByRune, String> {
+    ready_by_rune_over(a, env, &|| store(a))
 }
 
 /// The former ready-bucket script's bucketing ([`ready::bucket_taken`]) over the claim view.
-fn ready_by_rune(a: &Args, env: &Env) -> Result<ReadyByRune, String> {
+fn ready_by_rune_over(a: &Args, env: &Env, open: &dyn Fn() -> Result<Store, String>) -> Result<ReadyByRune, String> {
     let home = rune_home()?;
     let mut parts = Vec::new();
     let mut warnings = Vec::new();
+    let mut full = Vec::new();
     for f in roster(&home, &env.config.runes) {
         // sp-xsnid: a rune whose predicate would WIDEN (a bare config reference resolved
         // empty) is skipped exactly like a declared-empty one — `bulk_ready_by_rune`'s
@@ -1293,14 +1358,25 @@ fn ready_by_rune(a: &Args, env: &Env) -> Result<ReadyByRune, String> {
         // shared incl. open-children, and every other rune's `rune:<name>`) — counting with
         // the bare own list let the sentinel call builders for epics with open children
         // that no builder could claim (56 calls in 10 minutes, each "nothing ready").
-        let exc = rune_exclude_str(env, &home, &f, &predicate.exclude_labels);
+        // A rune with no line reads as "cannot tell", never as a count of nothing full.
+        match full_repo_labels(env, &home, &f) {
+            Ok(labels) => full.push((f.clone(), labels)),
+            Err(e) => {
+                warnings.push(e);
+                continue;
+            }
+        }
+        let exc = partition_exclude(env, &home, &f, &predicate.exclude_labels);
         parts.push(ready::RunePart { name: f, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&exc) });
     }
     if parts.is_empty() {
         return Ok(ReadyByRune { lines: String::new(), warnings });
     }
-    let st = store(a).map_err(|e| first_line(&e).to_string())?;
-    let view = viewed(a, env, &st).map_err(|e| first_line(&e).to_string())?;
+    let st = open().map_err(|e| first_line(&e).to_string())?;
+    let mut view = viewed(a, env, &st).map_err(|e| first_line(&e).to_string())?;
+    for (rune, labels) in &full {
+        withhold_full(&mut view, rune, labels);
+    }
     if let Err(e) = machine_judged(a, env, &st, true) {
         warnings.push(format!("readiness not published: {}", first_line(&e)));
     }
