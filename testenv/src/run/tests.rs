@@ -457,6 +457,37 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         (last, left.into_inner())
     }
 
+    /// Whether a run of one green suite, marked as a round's, left a `round` row; `prebuilt`
+    /// hands it `--artifacts`.
+    fn round_run_leaves_a_round_row(prebuilt: bool) -> bool {
+        let bins = testkit::TempDir::new("testenv-prebuilt");
+        for name in crate::prebuilt::FLOOR {
+            testkit::write_exe(&bins.join(name), "#!/bin/sh\n");
+        }
+        let dir = bins.path().display().to_string();
+        let mut flags = vec!["--suites", "test-a.sh"];
+        if prebuilt {
+            flags.extend(["--artifacts", dir.as_str()]);
+        }
+        let root_seen = std::sync::Mutex::new(PathBuf::new());
+        let setup = |rt: &FakeRuntime, root: &Path| {
+            *root_seen.lock().unwrap() = root.to_path_buf();
+            rt.suite("test-a.sh", 0, "TAP version 14\n1..1\nok 1 - one\n");
+        };
+        let row = std::cell::Cell::new(false);
+        let after = || row.set(find_file(&root_seen.lock().unwrap().join("run"), "round.jsonl").is_some());
+        let (last, _, _, lines) = run_flags_rt("none", "test-a.sh", None, None, &flags, "", &[("SPIRA_ROUND_BATCH_ID", "round-9")], &setup, &after);
+        assert!(last.starts_with("VERDICT GREEN ran=1"), "{lines:#?}");
+        row.get()
+    }
+
+    #[test_id(th5bhz5)]
+    #[test]
+    fn a_rounds_prebuilt_run_records_no_build_phase() {
+        assert!(round_run_leaves_a_round_row(false), "positive control: a round's run that builds records its build");
+        assert!(!round_run_leaves_a_round_row(true));
+    }
+
     #[test_id(taqqm5l)]
     #[test]
     fn a_green_run_leaves_results_jsonl_with_every_suites_cases() {

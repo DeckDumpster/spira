@@ -144,7 +144,7 @@ stderr; `attribute.sh` treats `>= 2` as a run fault; `gate-retry.sh` retries onl
 | `results.jsonl` | on a green run with suites run, `jsonl_rows` (§3.5a) per `.result`; on a red one gate-diag writes it. round-vm sends a round's suite records from it. |
 | `$SPIRA_VERDICTS/batch-<key>` | `VerdictFile` (§3.3), shared with gate.sh's directory |
 | `$SPIRA_RUN/tsd/suite-timing.jsonl` | one `SuiteTimingRow` (§3.4) per executed suite plus one `__batch__` row |
-| `$SPIRA_RUN/tsd/round.jsonl` | one `phase=build` row when `SPIRA_ROUND_BATCH_ID` is set |
+| `$SPIRA_RUN/tsd/round.jsonl` | one `phase=build` row when `SPIRA_ROUND_BATCH_ID` is set and no `--artifacts` |
 | `/tmp/spira-batch-<inst>.owner` | our pid (owner-file protocol shared with `testenv container`) |
 | `$SPIRA_LANDING_CONTAINERS` | container name appended, when that variable is set |
 
@@ -310,7 +310,7 @@ The `__batch__` row also carries the trial's phases (sp-govet, §11.2):
 and `"warm":"spare|cold|off"`. Per-suite rows are unchanged; readers that do not know the
 fields ignore them.
 
-`round` family (only with `SPIRA_ROUND_BATCH_ID`): `batch_id`, `phase="build"`, `secs`,
+`round` family (only with `SPIRA_ROUND_BATCH_ID`, never under `--artifacts`): `batch_id`, `phase="build"`, `secs`,
 `members`, `reds` (red + timeout count).
 
 ### 3.5 `TapSummary` — `<suite>.tap.json`

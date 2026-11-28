@@ -2560,7 +2560,8 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         )
         .collect::<Vec<_>>(),
     );
-    if let Some(id) = &s.round_batch_id {
+    // A prebuilt run builds nothing, so it has no build phase to record.
+    if let Some(id) = s.round_batch_id.as_ref().filter(|_| prebuilt.is_none()) {
         let batch_wall = t_batch.elapsed().as_secs();
         let reds = records.values().filter(|r| r.status.blocking()).count() as u64;
         let row = RoundPhaseRow {
@@ -2854,10 +2855,8 @@ fn write_results_jsonl(results: &Path, suite_dir: &Path) -> std::io::Result<()> 
     let mut rows = String::new();
     for path in files {
         let Some(suite) = path.file_stem().and_then(|s| s.to_str()) else { continue };
-        let record = read(&path).unwrap_or_default();
-        let fields: Vec<&str> = record.split_whitespace().collect();
-        let status = fields.first().copied().unwrap_or("red");
-        let secs = fields.get(2).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+        let record = read(&path).and_then(|t| ResultRecord::parse(&t));
+        let (status, secs) = record.map_or(("red", 0), |r| (r.status.as_str(), r.secs));
         let source = read(&suite_dir.join(suite)).unwrap_or_default();
         let out = read(&path.with_extension("out"));
         rows.push_str(&crate::tap::jsonl_rows(suite, &source, out.as_deref(), status, &secs.to_string()));

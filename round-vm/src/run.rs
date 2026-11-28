@@ -6443,6 +6443,23 @@ mod tests {
         assert_eq!((code, row), (silent_code, silent_row));
     }
 
+    #[test_id(t54txxd)]
+    #[test]
+    fn a_green_rounds_pulled_results_leaf_reaches_the_collector_as_suite_records() {
+        let fake = spira_otel::fixture::Collector::start();
+        let mut fx = fixture();
+        fx.cfg.collector_endpoint = fake.addr().to_string();
+        let mut remote = FakeRemote::green();
+        remote.files.insert(REMOTE_RESULTS, vec![
+            ("KEY/batch.meta", "key=KEY\ntree=treesha\n"),
+            ("KEY/a.sh.result", "ok 1 2 - - - 0\n"),
+            ("KEY/results.jsonl", "{\"suite\":\"a.sh\",\"case\":\"x\",\"status\":\"pass\",\"seconds\":2}\n"),
+        ]);
+        assert_eq!(go(&fx, &remote, &round_args(&fx)), 0);
+        let got: Vec<[String; 4]> = fake.events().iter().map(|e| ["tier", "test_id", "round", "tree"].map(|k| text_of(e, k))).collect();
+        assert_eq!(got, [["suite", "a.sh::x", "r-1", "treesha"].map(String::from)]);
+    }
+
     #[test_id(tlk1tpj)]
     #[test]
     fn the_round_flags_are_parsed() {

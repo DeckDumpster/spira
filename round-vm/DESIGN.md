@@ -554,8 +554,8 @@ members, `runner=<place>:<instance type>` and the crate's `input_hash`. `tree` i
 `batch.meta`'s; a pass red before any suite wrote none, and names the tree the host sent.
 The host also sends one `tier=suite` record per case of the `results.jsonl` in the pulled
 results leaf, which testenv writes on a green run and gate-diag on a red one. Its `tree` and
-`input_hash` are both the round's tree, and its `load1` the unit tier's. The VM sends no suite
-record: its script marks each `testenv` run with `SPIRA_ROUND_BATCH_ID`, which silences
-gate-diag's.
+`input_hash` are both the round's tree, and its `load1` the unit tier's. The round script sends
+no suite record: it marks each of its `testenv` runs with `SPIRA_ROUND_BATCH_ID`, which
+silences gate-diag's.
 A file this pass did not write sends nothing for its tier and says so on stderr. The push is
 bounded and changes neither the pass's record nor its exit code.
