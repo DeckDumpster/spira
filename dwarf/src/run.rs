@@ -209,6 +209,13 @@ impl<'a> Run<'a> {
         self.sdo("release_own_claim", &s(&[&self.s.bead]));
     }
 
+    /// Hands back a claim no session ran on. The `unjudged-` cause keeps the attempt fold
+    /// from charging the `claimed` fact the claim wrote.
+    fn release_unjudged(&self, status: &str) {
+        self.release();
+        self.bump_requeue(&format!("unjudged-{status}"));
+    }
+
     /// Record this run's next phase on the bead's lifecycle row. Best-effort: a refusal (the
     /// row already left WORKING, or the machine is unreachable) never ends the run.
     pub fn phase(&self, name: &str) {
@@ -376,13 +383,13 @@ impl<'a> Run<'a> {
 
     /// A persona that requires a build spec stops at once on a bead without one: the bead is
     /// held with an ask for the Concierge, and no session starts to invent a mechanism.
-    fn build_spec_gate(&mut self, c: &claim::Claimed) -> Option<i32> {
+    pub(crate) fn build_spec_gate(&mut self, c: &claim::Claimed) -> Option<i32> {
         if !self.rune.requires_build_spec || bead::has_build_spec(c.row.description.as_deref().unwrap_or("")) {
             return None;
         }
         let id = &c.id;
         let reason = format!("no build spec: {id} has no `{}` section naming what to build. Choosing a mechanism is design work: file the outcome --for spike for a proposed spec, or add the section.", bead::BUILD_HEADING);
-        self.release();
+        self.release_unjudged("no-build-spec");
         let _ = self.hold_unless_terminal(id, "ask", &reason, self.f(), &[]);
         self.note(&reason);
         self.log(&format!("{}: {id} {reason}", self.f()));
@@ -413,7 +420,7 @@ impl<'a> Run<'a> {
             }
             Tier::Hold => {
                 spira_otel::run::event("held", &[("rune", self.f())]);
-                self.release();
+                self.release_unjudged("escalation-hold");
                 let reason = escalation::hold_reason(st.stronger_rejections);
                 self.record_fact(escalation::ESCALATED, &format!("hold rejections={}", st.stronger_rejections));
                 let _ = self.hold_unless_terminal(id, "manual", &reason, escalation::HOLD_ACTOR, &["--purpose", "sequence"]);
@@ -721,7 +728,7 @@ impl<'a> Run<'a> {
             self.ledger.awake(self.now(), self.f(), &format!("claim-error row not held for {id}"));
             self.s.bead = id.clone();
             self.note(&format!("claim-error {why}"));
-            self.release();
+            self.release_unjudged("claim-error");
             return Err(1);
         }
         let mut raw = String::new();
@@ -743,7 +750,7 @@ impl<'a> Run<'a> {
             }
             _ => {
                 self.s.bead = id.clone();
-                self.release();
+                self.release_unjudged("claim-error");
                 self.log(&format!("{who}: claimed {id}, but bd returned no record of it — released"));
                 self.ledger.awake(self.now(), self.f(), &format!("claim-error no bd record for {id}"));
                 Err(1)
@@ -845,7 +852,7 @@ impl<'a> Run<'a> {
                 }
             }
             claim::Holds::Known(held) if !held.is_empty() => {
-                self.release();
+                self.release_unjudged("hold-raced");
                 self.log(&format!("{who}: {} carries a {} hold — released immediately after claim (race with the hold)", c.id, held.join(",")));
                 self.ledger_done(0, "hold-raced");
                 return Err(0);
@@ -866,7 +873,7 @@ impl<'a> Run<'a> {
 
         let occupants = worktree::live_occupants(std::path::Path::new(system_paths::PROC), &self.run_dir().join("worktree").join(&c.id), self.pid);
         if !occupants.is_empty() {
-            self.release();
+            self.release_unjudged("worktree-held");
             let pids = occupants.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
             self.log(&format!("{who}: {} worktree is held by live process(es) {pids} — released, one dwarf per worktree", c.id));
             self.note(&format!("Released by dwarf: live process(es) {pids} have their working directory in this bead's worktree. Claiming it would put two sessions in one checkout; it is claimable again once they exit."));
@@ -881,7 +888,7 @@ impl<'a> Run<'a> {
         let skip = self.conf.set_nonempty("SPIRA_WORLD_STOP_SKIP");
         match decide::world_stop(has, &live, skip) {
             WorldStop::Refuse => {
-                self.release();
+                self.release_unjudged("world-stop-fence"); // literal-ok: ledger status name, not a label
                 self.log(&format!("{who}: {} carries {label} — live dwarves present ({live}) — released. Set SPIRA_WORLD_STOP_SKIP=1 to override.", c.id));
                 self.note(&format!("Released by dwarf.sh: this bead carries {label} and requires the world halted while it runs. Live dwarves are present ({live}) and the world was not stopped. Wait for them to finish, or set SPIRA_WORLD_STOP_SKIP=1 to proceed with live dwarves."));
                 self.ledger_done(0, "world-stop-fence"); // literal-ok: ledger status name, not a label
@@ -908,6 +915,7 @@ impl<'a> Run<'a> {
         if root.is_none() || !repo.join(".git").exists() {
             self.log(&format!("{}: {} names repo:{}, which repo-map does not resolve to a checkout", self.f(), c.id, self.s.repo_name));
             self.sdo("park_unmapped", &s(&[&c.id, &self.s.repo_name]));
+            self.bump_requeue("unjudged-unmapped-repo");
             self.ledger_done(1, "unmapped-repo");
             // DESIGN.md §8.2: the world stopped for this bead is started again even here.
             self.restore_world();
