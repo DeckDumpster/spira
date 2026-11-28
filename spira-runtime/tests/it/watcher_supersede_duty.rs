@@ -2,9 +2,10 @@ use std::sync::{Arc, Mutex};
 
 use runtime::event::EventKind;
 use runtime::taskrig::TaskRig;
+
+use super::published;
 use spira_runtime::tasks::a::kit;
 use spira_runtime::watchers::supersede_duty::*;
-use spira_runtime::watch_topics::Change;
 use spira_runtime::watchers::{INBOX_APPEND, WATCH_PUBLISH};
 
 fn registration() -> runtime::Registration {
@@ -61,10 +62,6 @@ fn two_writes_failing_in_one_batch_are_both_remembered_as_failed() {
     rig.run_until_idle().unwrap();
     let failed: Vec<String> = rig.journaled().iter().filter(|e| e.kind.tag == FAILED).map(|e| e.kind.body.clone()).collect();
     assert_eq!(failed.len(), 2, "{failed:?}");
-}
-
-fn published(r: &TaskRig) -> Vec<Change> {
-    r.requested().iter().filter(|q| q.name == WATCH_PUBLISH).map(|q| serde_json::from_str(&q.input).unwrap()).collect()
 }
 
 fn watched(world: Arc<Mutex<String>>, act: Result<&'static str, &'static str>) -> TaskRig {

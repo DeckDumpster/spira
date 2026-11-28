@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use runtime::taskrig::{effects_runnable, TaskRig};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::d::watch_perf::*;
-use spira_runtime::watch_topics::Change;
+use super::published;
 use spira_runtime::watchers::{INBOX_APPEND, WATCH_PUBLISH};
 
 const MIN: u64 = 60_000;
@@ -127,10 +127,6 @@ fn t5_the_lines_are_the_ones_perf_watch_wrote() {
     assert_eq!(said(&r), ["1970-01-01T00:00:00Z [watch:perf-watch] PERF UNRUNNABLE lc-show: exit status: 1 (after 40ms; phases unreported)"]);
     let logged: Vec<&str> = r.requested().iter().filter(|q| q.name == LOG).map(|q| q.input.as_str()).collect();
     assert_eq!(logged, ["PERF UNRUNNABLE lc-show: exit status: 1 (after 40ms; phases unreported)"], "the log carries the bare alarm");
-}
-
-fn published(r: &TaskRig) -> Vec<Change> {
-    r.requested().iter().filter(|q| q.name == WATCH_PUBLISH).map(|q| serde_json::from_str(&q.input).unwrap()).collect()
 }
 
 #[test_id(td41rgu)]

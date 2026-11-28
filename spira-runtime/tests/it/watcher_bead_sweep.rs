@@ -1,16 +1,13 @@
 use std::sync::{Arc, Mutex};
 
 use runtime::taskrig::TaskRig;
-use spira_runtime::watch_topics::Change;
+
+use super::published;
 use spira_runtime::watchers::bead_sweep::*;
 use spira_runtime::watchers::{INBOX_APPEND, WATCH_PUBLISH};
 
 fn sweep() -> BeadSweep {
     BeadSweep { interval_ms: 60_000, ask_label: "ask".into(), home_repo: "spira".into(), hold_min: 30, rework_min: 5, cert_min: 5, wait_min: 45, batch_min: 60, stop_review_secs: 3600 }
-}
-
-fn published(r: &TaskRig) -> Vec<Change> {
-    r.requested().iter().filter(|q| q.name == WATCH_PUBLISH).map(|q| serde_json::from_str(&q.input).unwrap()).collect()
 }
 
 fn rig(world: Arc<Mutex<Snapshot>>) -> TaskRig {
@@ -84,4 +81,29 @@ fn a_repaired_line_is_said_to_the_inbox_and_held_as_no_condition() {
     assert!(said.iter().any(|l| l.contains("REPAIRED sp-n")), "{said:?}");
     let subjects: Vec<String> = published(&r).iter().flat_map(|c| c.set.keys().cloned()).collect();
     assert_eq!(subjects, ["sp-p"]);
+}
+
+#[test_id(tdjmaw4)]
+#[test]
+fn a_held_item_whose_findings_change_is_set_again_with_the_new_text_from_when_it_began() {
+    let world = Arc::new(Mutex::new(Snapshot { rows: vec![stale_hold("sp-a")], ..Snapshot::default() }));
+    let mut r = rig(world.clone());
+    world.lock().unwrap().rows[0].holds.push("poison".into());
+    r.advance(60_000).unwrap();
+    let all = published(&r);
+    assert_eq!(all.len(), 2, "{all:?}");
+    let (first, second) = (&all[0].set["sp-a"], &all[1].set["sp-a"]);
+    assert!(!first.text.contains("POISONED") && second.text.contains("POISONED"), "{all:?}");
+    assert_eq!(second.since, first.since);
+}
+
+#[test_id(tmdk368)]
+#[test]
+fn a_first_pass_over_many_findings_is_published_in_bounded_effects_that_cover_every_item() {
+    let rows: Vec<Row> = (0..300).map(|n| stale_hold(&format!("sp-{n:03}"))).collect();
+    let r = rig(Arc::new(Mutex::new(Snapshot { rows, ..Snapshot::default() })));
+    let inputs: Vec<usize> = r.requested().iter().filter(|q| q.name == WATCH_PUBLISH).map(|q| q.input.len()).collect();
+    assert!(inputs.len() > 1 && inputs.iter().all(|n| *n < 20_000), "{inputs:?}");
+    let subjects: std::collections::BTreeSet<String> = published(&r).iter().flat_map(|c| c.set.keys().cloned()).collect();
+    assert_eq!(subjects.len(), 300);
 }

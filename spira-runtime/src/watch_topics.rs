@@ -111,14 +111,21 @@ fn level(text: &str) -> &str {
 /// published after it, and the change that takes the broker there, if any. A condition whose
 /// line is unchanged keeps its value, `at` included.
 pub fn settle(row: &str, published: &Published, conditions: BTreeMap<String, String>, now_ms: u64) -> (Published, Option<Change>) {
+    let conditions = conditions.into_iter().map(|(subject, text)| (subject, (level(&text).to_string(), text))).collect();
+    settle_levelled(row, published, conditions, now_ms)
+}
+
+/// [`settle`] for a row whose lines name priorities that are not the condition's: subject →
+/// (level, line).
+pub fn settle_levelled(row: &str, published: &Published, conditions: BTreeMap<String, (String, String)>, now_ms: u64) -> (Published, Option<Change>) {
     let now = now_ms / 1000;
     let (mut next, mut change) = (Published::new(), Change { row: row.to_string(), ..Change::default() });
-    for (subject, text) in conditions {
+    for (subject, (level, text)) in conditions {
         let held = published.get(&subject);
         let value = match held {
             Some(held) if held.text == text => held.clone(),
             _ => {
-                let value = Condition { level: level(&text).to_string(), since: held.map_or(now, |h| h.since), at: now, text };
+                let value = Condition { level, since: held.map_or(now, |h| h.since), at: now, text };
                 change.set.insert(subject.clone(), value.clone());
                 value
             }

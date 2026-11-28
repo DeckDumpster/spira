@@ -466,6 +466,12 @@ fn subject(line: &str) -> &str {
     }
 }
 
+/// A finding's own priority: the word after its state, which only a wait for a builder has.
+/// Later words can be the priorities of other items.
+fn own_priority(line: &str) -> Option<&str> {
+    line.split_whitespace().nth(3).filter(|w| matches!(*w, "P0" | "P1" | "P2" | "P3"))
+}
+
 /// The pass's topics: a finding's condition holds while the pass still finds it, said or not.
 /// A subject whose findings have the keys they had keeps its first text, so the ages and judged
 /// times its lines carry change nothing.
@@ -482,9 +488,10 @@ fn topics(carry: &Carry, found: &[Suspect], now_ms: u64) -> (Published, Option<C
     }
     let conditions = now.into_iter().map(|(subject, (keys, lines))| {
         let held = carry.published.get(subject).filter(|_| before.get(subject) == Some(&keys));
-        (subject.to_string(), held.map_or_else(|| lines.join("; "), |h| h.text.clone()))
+        let level = lines.iter().filter_map(|l| own_priority(l)).min().unwrap_or("P2");
+        (subject.to_string(), (level.to_string(), held.map_or_else(|| lines.join("; "), |h| h.text.clone())))
     });
-    watch_topics::settle(NAME, &carry.published, conditions.collect(), now_ms)
+    watch_topics::settle_levelled(NAME, &carry.published, conditions.collect(), now_ms)
 }
 
 pub fn decide(p: &BeadSweep, carry: &Carry, snap: &Snapshot, room: Option<&Room>, repaired: &Repaired, now: f64) -> (Carry, Vec<String>) {
@@ -653,6 +660,20 @@ mod tests {
     #[test]
     fn a_p0_ready_bead_behind_a_full_pool_is_announced_with_the_working_beads() {
         assert_eq!(said(&pool(ready("sp-p"), 0), full()), [format!("SUSPECT sp-p READY P0 WAITING over 20m for a builder slot: pool full {HOLDERS}")]);
+    }
+
+    /// The holders a pool wait names carry their own priorities, which are not the finding's.
+    #[test_id(tyuyccy)]
+    #[test]
+    fn a_held_finding_takes_its_own_priority_and_not_one_its_line_names_for_another_item() {
+        let row = Row { id: "sp-x".into(), state: "REWORK".into(), express: true, ..Row::default() };
+        let mut snap = pool(row, 2);
+        // The last holder named: the one priority in the line with no comma after it.
+        snap.content.last_mut().unwrap().priority = 0;
+        let (next, ..) = pass(&sweep(), &Carry::default(), &snap, full().as_ref(), &Repaired::default(), NOW);
+        assert_eq!(next.published["sp-x"].level, "P2", "{next:?}");
+        let (next, ..) = pass(&sweep(), &Carry::default(), &pool(ready("sp-p"), 0), full().as_ref(), &Repaired::default(), NOW);
+        assert_eq!(next.published["sp-p"].level, "P0", "{next:?}");
     }
 
     #[test_id(tzjm3hm)]
