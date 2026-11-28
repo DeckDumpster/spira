@@ -30,6 +30,7 @@ fn fixture() -> testkit::TempDir {
     }
     std::fs::write(d.path().join("flake.lock"), "{}\n").unwrap();
     std::fs::write(d.path().join("notes.md"), "n\n").unwrap();
+    std::fs::write(dst.join("plan-matrix.sh"), "#!/bin/sh\n").unwrap();
     git(d.path(), &["init", "-q", "-b", "main"]);
     commit(d.path(), "R");
     std::fs::remove_file(dst.join("conf.d/SPIRA_ARCHIVIST_EVERY")).unwrap();
@@ -67,6 +68,16 @@ fn deleting_a_recipe_input_the_release_declares_is_refused_naming_it() {
     commit(d.path(), "T2");
     let e = work::reads::gate(d.path(), "L", "L").unwrap_err();
     assert!(e.contains("flake.lock"), "{e}");
+}
+
+#[test_id(tf75h1g)]
+#[test]
+fn deleting_a_script_the_round_opens_by_name_is_refused_naming_it() {
+    let d = fixture();
+    git(d.path(), &["rm", "-q", "spira/plan-matrix.sh"]);
+    commit(d.path(), "T2");
+    let e = work::reads::gate(d.path(), "L", "L").unwrap_err();
+    assert!(e.contains("spira/plan-matrix.sh"), "{e}");
 }
 
 #[test_id(tw7nz70)]
