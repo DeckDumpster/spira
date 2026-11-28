@@ -1172,6 +1172,7 @@ pub(crate) mod verdict_run {
                     r.ledger = Ledger { path: ledger.clone(), dry: false };
                     r.s.bead = "sp-a".into();
                     r.s.repo_name = "spira".into();
+                    r.hb_done.store(true, std::sync::atomic::Ordering::SeqCst);
                     let refused = r.lease_build_dir(dir.path());
                     let rc = r.work_ended(refused);
                     r.teardown(rc)

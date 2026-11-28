@@ -88,10 +88,11 @@ mod full_repositories {
     impl Fixture {
         fn new() -> Self {
             let dir = testkit::TempDir::new("claim-full-repo");
-            let runes = spira_config::runes::runes_dir(dir.path());
+            let runes = dir.path().join("runes");
+            // Locked before anything resolves: the runes directory comes from the environment.
+            let _env = testkit::env(&[("SPIRA_HOME", Some(dir.path().to_str().unwrap())), ("SPIRA_RUNES_DIR", Some(runes.to_str().unwrap()))]);
             std::fs::create_dir_all(&runes).unwrap();
             std::fs::write(runes.join("builder.rune"), "RUNE_LABELS=plan\nRUNE_BUILDS=1\n").unwrap();
-            let _env = testkit::env(&[("SPIRA_HOME", Some(dir.path().to_str().unwrap()))]);
             Fixture { dir, _env }
         }
 
