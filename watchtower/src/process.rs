@@ -13,9 +13,7 @@ pub fn meminfo_path() -> PathBuf {
 
 use crate::{cpu_throttle, deadline, incident, sweep};
 
-/// `std::env::var`, trimmed to "set and non-empty" — no `spira_config` fallback. Used only
-/// inside [`resolved_config`]'s own init, which must not call back into [`getenv`] (that
-/// would recurse into `resolved_config()` while it is still being built).
+/// `std::env::var`, trimmed to "set and non-empty" — no `spira_config` fallback.
 pub fn raw_env(k: &str) -> Option<String> {
     std::env::var(k).ok().filter(|v| !v.is_empty())
 }
@@ -153,9 +151,7 @@ mod tests {
     #[test]
     fn with_no_spira_home_the_config_resolves_from_the_releases_spira_dir() {
         let d = testkit::TempDir::new("wt-resolve-release");
-        let release = d.path().join("release");
-        std::fs::create_dir(&release).unwrap();
-        std::fs::rename(spira_config::process::fixture_registry_home(d.path()), release.join("spira")).unwrap();
+        let release = spira_config::process::fixture_release(d.path(), true);
         let decoy = d.path().join("decoy");
         std::fs::create_dir(&decoy).unwrap();
         std::fs::write(decoy.join("lib.sh"), "").unwrap();
