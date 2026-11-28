@@ -14,7 +14,7 @@
 #   publish-backlog.sh watch [--interval S] [--ticks N]   loop forever (or N times); watchd daemon
 #   publish-backlog.sh health     exit non-zero when the watch loop has stopped polling
 #
-# TRANSITIONS, NOT STATE (pr-notify.sh's own rule). A repo whose backlog was already over
+# TRANSITIONS, NOT STATE. A repo whose backlog was already over
 # threshold last tick and still is emits nothing new — only the crossing, in either
 # direction, is worth an interruption. Mailing on every tick a backlog stays over threshold
 # would make the alarm the very thing law-alerts-must-be-actionable warns against: a siren
@@ -22,7 +22,7 @@
 #
 # EVERY CROSSING IS ALSO MAILED to the concierge mailbox directly (--kind event), not only
 # printed — delivery this way does not depend on a session holding an in-session Monitor or
-# on the watch-notify escalation timer, same reasoning as pr-notify.sh's _report.
+# on the watch-notify escalation timer.
 
 # covers: spira/publish-backlog.sh spira/watchers spira/conf.sh spira/lib.sh
 set -uo pipefail
@@ -37,7 +37,7 @@ _pb_state_file() { printf '%s/%s' "$STATE_DIR" "$1"; }
 _emit() { printf '%s\n' "$1"; }
 
 # _report <line> — print it (the watchd log, for history) and mail it straight to the
-# concierge mailbox, same shape as pr-notify.sh's own _report.
+# concierge mailbox.
 _report() {
     local line="$1"
     _emit "$line"
@@ -265,7 +265,7 @@ cmd_watch() {
 
 # SOURCEABLE, AND SILENT WHEN IT IS: a T1 test wanting only _pb_backlog or _pb_tick_repo
 # (pure functions once the repo-map and fixture repos are set up) would otherwise trigger a
-# live repo-map scan on source — the same seam pr-notify.sh and watchd already open.
+# live repo-map scan on source — the same seam watchd already opens.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     case "${1:-}" in
         --show|-s|"") _pb_tick ;;

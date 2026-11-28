@@ -224,7 +224,7 @@ fn poll_script(settles: bool) -> Script {
 
 #[test_id(taj0t6b)]
 #[test]
-fn the_later_poll_repeats_no_line_still_mails_the_merge_and_asks_what_it_asked() {
+fn the_later_poll_repeats_no_line_mails_no_merge_and_asks_what_it_asked() {
     let until = 70 * 60_000;
     let with = run(poll_script(true), until);
     let without = run(poll_script(false), until);
@@ -244,8 +244,8 @@ fn the_later_poll_repeats_no_line_still_mails_the_merge_and_asks_what_it_asked()
     assert_eq!(late.len(), 1, "the poll alone says it once, late");
     assert!(late[0].1 >= NOW + 30 * 60_000);
 
-    let notes = |a: &[Ask]| a.iter().filter(|x| x.name == pr_notify::OPERATOR_NOTE && x.input.contains("MERGED #1304")).count();
-    assert_eq!((notes(&with), notes(&without)), (1, 1));
+    let notes = |a: &[Ask]| a.iter().filter(|x| x.name == pr_notify::OPERATOR_NOTE).count();
+    assert_eq!((notes(&with), notes(&without)), (0, 0));
     let observes = |a: &[Ask]| a.iter().filter(|x| x.name == pr_notify::OBSERVE).map(|x| serde_json::from_str::<pr_notify::Carry>(&x.input).unwrap().repos.get("spira").map(|r| r.prs.keys().copied().collect::<Vec<_>>())).collect::<Vec<_>>();
     assert_eq!(observes(&with), observes(&without));
 }

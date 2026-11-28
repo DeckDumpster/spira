@@ -165,7 +165,7 @@ pub struct Snapshot {
     pub repos: Vec<(String, RepoObs)>,
 }
 
-/// A merge outcome or deploy verdict for the operator's mailbox.
+/// A deploy verdict for the operator's mailbox.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Note {
     pub subject: String,
@@ -249,8 +249,8 @@ pub fn classify(checks: &[(String, String, String)]) -> (&'static str, String) {
     }
 }
 
-fn bead_lines(beads: &[String]) -> String {
-    beads.iter().map(|l| l.replacen("- ", "- bead ", 1)).collect::<Vec<_>>().join("\n")
+fn bead_lines(beads: &[String]) -> Vec<String> {
+    beads.iter().map(|l| l.replacen("- ", "- bead ", 1)).collect()
 }
 
 fn beads_block(beads: &str) -> String {
@@ -266,15 +266,11 @@ fn short(sha: &str) -> &str {
 }
 
 fn merged(repo: &str, n: u64, title: &str, f: &Final, now: u64, rc: &mut RepoCarry, say: &mut Said) {
-    let beads = bead_lines(&f.beads);
-    let at = if f.sha.is_empty() { String::new() } else { format!(" at {}", f.sha) };
-    let tag = if f.sha.is_empty() { String::new() } else { format!(" {}", short(&f.sha)) };
-    say.notes.push(Note { subject: format!("MERGED #{n} [{repo}]{tag}"), body: format!("PR #{n} {title} [{repo}] merged{at}.\n{}", beads_block(&beads)) });
     say.change(repo, n, "MERGED", &f.sha);
     if f.sha.is_empty() || rc.judged.contains(&f.sha) {
         return;
     }
-    let d = Deploy { sha: f.sha.clone(), n, at: now, title: title.replace('\t', " "), beads: f.beads.iter().map(|l| l.replacen("- ", "- bead ", 1)).collect() };
+    let d = Deploy { sha: f.sha.clone(), n, at: now, title: title.replace('\t', " "), beads: bead_lines(&f.beads) };
     match rc.deploys.iter_mut().find(|held| held.sha == f.sha) {
         Some(held) if held.n == 0 => *held = Deploy { at: held.at, ..d },
         Some(_) => {}
@@ -631,12 +627,12 @@ mod tests {
 
     #[test_id(t0zx5f6)]
     #[test]
-    fn a_merge_mails_the_operator_and_queues_its_deploy_once() {
+    fn a_merge_mails_nothing_and_queues_its_deploy_once() {
         let (c, say) = merged_carry();
         assert_eq!(say.lines, ["MERGED #7 t7 [r]"]);
-        assert_eq!(say.notes[0].subject, "MERGED #7 [r] 012345678");
-        assert_eq!(say.notes[0].body, "PR #7 t7 [r] merged at 0123456789abcdef.\n\nBeads:\n- bead sp-aaa — one\n");
+        assert!(say.notes.is_empty(), "{:?}", say.notes);
         assert_eq!(c.repos["r"].deploys.len(), 1);
+        assert_eq!(say.topics(1090)["pr/r/7"]["state"], "MERGED");
     }
 
     fn answered(sha: &str, run: DeployRun) -> RepoObs {
