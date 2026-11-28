@@ -4212,19 +4212,25 @@ fn a_flip_the_gate_declines_to_judge_files_one_deletion_incident() {
 #[test_id(ta5p3na)]
 #[test]
 fn the_cross_bead_detector_files_at_most_the_cap_of_deletions_names_the_rest_and_still_passes() {
-    let first = many_reds("FAIL", 4);
-    let other = |bead: &str, tip: &str, file: &str| (bead.to_string(), spira_config::ejection::digest(tip, &[file.into()], &first));
-    let f = flip_fake_with(&first, Ok(vec![other("sp-x", "t1", "a.rs"), other("sp-y", "t2", "b.rs")]));
-    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test-rerun"), (100, first.clone()));
-    assert_eq!(f.run(), PASS, "{}", f.stderr());
-    let filed: Vec<String> = f.flips.borrow().iter().map(|r| r.1.clone()).collect();
-    assert_eq!(filed, ["t::t000001", "t::t000002", "t::t000003"]);
+    let gate = |reds: usize| {
+        let first = many_reds("FAIL", reds);
+        let other = |bead: &str, tip: &str, file: &str| (bead.to_string(), spira_config::ejection::digest(tip, &[file.into()], &first));
+        let f = flip_fake_with(&first, Ok(vec![other("sp-x", "t1", "a.rs"), other("sp-y", "t2", "b.rs")]));
+        f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test-rerun"), (100, first.clone()));
+        assert_eq!(f.run(), PASS, "{}", f.stderr());
+        let filed: Vec<String> = f.flips.borrow().iter().map(|r| r.1.clone()).collect();
+        assert_eq!(filed, ["t::t000001", "t::t000002", "t::t000003"]);
+        assert_eq!(certified(&f, "pass"), 1);
+        f
+    };
+    let at_the_cap = gate(3);
+    assert!(!at_the_cap.stderr().contains("held back"), "{}", at_the_cap.stderr());
+    let over = gate(4);
     let held = "gate: held back by the flip cap (3): t::t000004 ";
-    assert!(f.err.borrow().iter().any(|l| l.starts_with(held)), "{}", f.stderr());
-    let verdict = verdict_message(&f);
+    assert!(over.err.borrow().iter().any(|l| l.starts_with(held)), "{}", over.stderr());
+    let verdict = verdict_message(&over);
     assert!(verdict.contains(&format!("\n{held}")), "{verdict}");
     assert!(verdict.contains("not judged — t::t000004"), "{verdict}");
-    assert_eq!(certified(&f, "pass"), 1);
 }
 
 #[test_id(tf1r2e3)]
