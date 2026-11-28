@@ -1525,7 +1525,16 @@ fn admin_create_beads_makes_a_store_the_content_verbs_work_on_and_a_second_run_c
     let shown = lc.shows(&a);
     assert!(shown.contains("a note on the new store") && shown.contains(&b), "{shown}");
     lc.children_of("close", &["close", &b, "--reason", "done"], None);
-    assert!(lc.shows(&b).contains("closed"), "{}", lc.shows(&b));
+    // A bead with its lifecycle row has its store close written by the settler after the reply.
+    let mut last = String::new();
+    for _ in 0..600 {
+        last = lc.run(&["content", "show", &b, "--json"], None).1;
+        if last.contains("\"status\":\"closed\"") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50)); // clock-safe: polls the store, the signal waited on
+    }
+    assert!(last.contains("\"status\":\"closed\""), "{last}");
     lc.children_of("content", &["content", "remember", "--key", "a-key"], Some("what is remembered"));
     let kept = lc.children_of("content", &["content", "memories", "--json"], None).0;
     assert!(kept.contains("what is remembered"), "{kept}");
