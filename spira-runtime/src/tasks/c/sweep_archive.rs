@@ -662,7 +662,11 @@ pub mod archive {
     }
 
     /// The source is read in frames of this many bytes, each compressed on its own.
+    #[cfg(not(test))]
     const FRAME: usize = 8 << 20;
+    /// Small, so a unit test spans several frames without moving megabytes through debug code.
+    #[cfg(test)]
+    pub(crate) const FRAME: usize = 64 << 10;
     /// The bytes before the cursor offset whose hash says the source still begins as it did.
     const PREFIX: u64 = 4096;
 
@@ -1143,13 +1147,13 @@ mod tests {
     fn a_source_over_one_frame_grows_by_only_the_appended_bytes() {
         let (_d, p) = world();
         let proc = Fake::new(false);
-        let mut data = lines(0, 9_500, 1_000);
-        assert!(data.len() > 9 << 20);
+        let mut data = lines(0, 100, 1_000);
+        assert!(data.len() > crate::tasks::c::sweep_archive::archive::FRAME);
         put(&p, REL, &data);
         run_store(&p, &proc, REL);
         let first = proc.input();
         let before = body(&p, REL, ".zst");
-        let tail = lines(9_500, 3, 1_000);
+        let tail = lines(100, 3, 1_000);
         data.extend_from_slice(&tail);
         put_at(&p, REL, &data, 1_795_000_000);
         run_store(&p, &proc, REL);
