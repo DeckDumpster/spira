@@ -132,8 +132,14 @@ impl Content for LiveContent {
         spira_config::repos::Registry::from_env(env, &home)
     }
     fn policy(&self) -> Result<bead::filing::Policy, String> {
-        bead::filing::Policy::load(&spira_config::process::spira_home(), &spira_config::process::cfg)
+        let contract = door_contract(spira_config::process::cfg("SPIRA_HOME_REPO")?, &crate::serve::pinned_deadlines()?);
+        bead::filing::Policy::load(&spira_config::process::spira_home(), &spira_config::process::cfg, contract)
     }
+}
+
+/// The landing-contract check a filing through the door is judged by.
+fn door_contract(home_repo: String, deadlines: &crate::serve::Deadlines) -> bead::filing::Contract {
+    bead::filing::Contract::door(home_repo, deadlines.default)
 }
 
 /// Everything a composed verb reaches: the primitives, bd's bead half, the content store, the
@@ -302,6 +308,15 @@ pub fn client_request(argv: &[String], stdin: &mut dyn FnMut() -> Result<String,
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tu686sd)]
+    #[test]
+    fn the_doors_contract_check_realises_nothing_and_is_bounded_at_the_pinned_request_deadline() {
+        let pinned = crate::serve::Deadlines { default: std::time::Duration::from_millis(750) };
+        let contract = super::door_contract("home".into(), &pinned);
+        assert_eq!(contract.home_repo, "home");
+        assert_eq!(contract.invocation, Some(bead::filing::Invocation { cached_shell: true, bound: pinned.default }));
+    }
+
     use super::*;
 
     #[test_id(ty6cksb)]

@@ -2,6 +2,7 @@
 name = "repo-contract"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "repo-contract — what a repository declares about the environment its check rows run in. The `repo-contract check` binary and the flake dev shell, entered by `nix print-dev-env --json`."
 
 [[bin]]
@@ -22,3 +23,7 @@ spira-otel = { path = "../spira-otel" }
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
+
+[[test]]
+name = "cached_shell"
+required-features = ["integration"]

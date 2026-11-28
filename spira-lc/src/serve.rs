@@ -106,6 +106,15 @@ pub(crate) fn deadlines_from(read: impl Fn(&str) -> Result<String, String>) -> R
     Ok(Deadlines { default: Duration::from_millis(default) })
 }
 
+/// The deadlines serve pinned at start. A process that runs a composed verb itself pinned none
+/// and lives for that one verb, so it reads the declared value.
+pub(crate) fn pinned_deadlines() -> Result<Deadlines, String> {
+    match DEADLINES.get() {
+        Some(d) => Ok(d.clone()),
+        None => deadlines_from(spira_config::process::cfg),
+    }
+}
+
 enum Entry {
     InFlight,
     Done(Answer, Instant),
