@@ -145,6 +145,12 @@ pub async fn run_within(cfg: Option<spira_submission::Config>, delivery: Option<
             return dormant(&tx, stop).await;
         }
     };
+    serve(listener, cfg, delivery, tx, stop, io, reply).await
+}
+
+/// [`run_within`] on a listener already bound.
+async fn serve(listener: TcpListener, cfg: spira_submission::Config, delivery: Option<Delivery>, tx: mpsc::Sender<Submit>, stop: impl Future<Output = ()>, io: Duration, reply: Duration) {
+    tokio::pin!(stop);
     let cfg = Arc::new(cfg);
     let sink = Arc::new(EventSink { tx: tx.clone(), delivery, reply_within: reply });
     let mut sessions = JoinSet::new();
@@ -491,8 +497,9 @@ mod tests {
         let (tx, mut rx) = mpsc::channel::<Submit>(1);
         tx.send(filler()).await.unwrap();
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
-        let addr = b.cfg.socket();
-        let server = tokio::spawn(run(Some(b.cfg.clone()), Some(b.delivery.clone()), tx, async { let _ = stop_rx.await; }));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(serve(listener, b.cfg.clone(), Some(b.delivery.clone()), tx, async { let _ = stop_rx.await; }, IO_TIMEOUT, IO_TIMEOUT));
         let mut c = Client::connect(addr).await;
         submit_message(&mut c, "<f1@x>").await;
         let held = timeout(Duration::from_millis(100), c.line()).await;
