@@ -2614,6 +2614,7 @@ dependencies = [
  "sop",
  "spira-claim",
  "spira-config",
+ "spira-lc",
  "spira-otel",
  "spira-pub",
  "spira-store",

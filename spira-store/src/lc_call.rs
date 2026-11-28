@@ -208,7 +208,7 @@ pub fn is_read(argv: &[String]) -> bool {
         a.as_slice(),
         ["show" | "list" | "history" | "stats" | "claimable", ..] | ["content", "list" | "show" | "memories" | "state" | "search" | "events", ..]
             | ["content", "dep" | "label", "list", ..] | ["fact", "list", ..]
-            | ["git-fact", "get", ..]
+            | ["git-fact", "get", ..] | ["journal", "has-done", ..]
     )
 }
 

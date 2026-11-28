@@ -1,11 +1,11 @@
 //! The runtime's journal on the control store: what it keeps across a restart (task state, open
-//! effects, the schedule) and the poison it recorded. A row still closes by a marker key of its
-//! own, so a re-upserted effect or a re-inserted schedule row reads exactly as its row did; a
-//! closed effect and its marker are then kept [`JOURNAL_RETAIN_SECS`] and expire. Each row not
-//! yet closed also has an index key, deleted when the row closes, so a boot read costs the rows
-//! it returns and not every row ever written.
+//! effects, the schedule) and the poison it recorded. An effect's row exists only while it is
+//! open: the turn that resolves it deletes it, and the runtime's log keeps its record. A schedule
+//! row closes by a marker key of its own, so a re-inserted row reads as it did. Each row not yet
+//! closed also has an index key, so a boot read costs the rows it returns.
 
 use serde_json::{json, Value};
+use spira_lc::effect_ledger::{self, DONE, OPEN_EFFECT};
 use state_store::{Backend, Compare, Object, Request, Result, Selector, Txn};
 
 use super::keys;
@@ -17,16 +17,8 @@ const RESOLVED: &str = "resolved";
 const SCHEDULE: &str = "schedule";
 const FIRED: &str = "fired";
 const POISON: &str = "poison";
-const OPEN_EFFECT: &str = "open-effect";
 const PENDING: &str = "pending";
 const META: &str = "journal-meta";
-
-/// How long a resolved effect and its marker are kept before the store's gc deletes them.
-pub const JOURNAL_RETAIN_SECS: u64 = 7 * 24 * 60 * 60;
-
-fn retained(data: &Value) -> Object {
-    Object::new(data.clone()).with_ttl(JOURNAL_RETAIN_SECS)
-}
 
 /// Ops one txn may carry, with room for the request's own bookkeeping.
 const CHUNK: usize = 100;
@@ -44,6 +36,8 @@ pub enum SweepPhase {
     Schedule,
     Legacy,
     Effect,
+    /// Every resolved-effect marker: no writer makes one.
+    Resolved,
 }
 
 /// Tables no reader or writer uses any more, whose rows an old import carried over; the sweep deletes them.
@@ -62,6 +56,7 @@ impl std::fmt::Display for SweepCursor {
             SweepPhase::Schedule => "schedule",
             SweepPhase::Legacy => "legacy",
             SweepPhase::Effect => "effect",
+            SweepPhase::Resolved => "resolved",
         };
         write!(f, "{phase}:{}", self.after)
     }
@@ -74,7 +69,8 @@ impl std::str::FromStr for SweepCursor {
             Some(("schedule", _)) => SweepPhase::Schedule,
             Some(("legacy", _)) => SweepPhase::Legacy,
             Some(("effect", _)) => SweepPhase::Effect,
-            _ => return Err(format!("journal: sweep cursor {s:?} is not schedule:<key>, legacy:<key> or effect:<key>")),
+            Some(("resolved", _)) => SweepPhase::Resolved,
+            _ => return Err(format!("journal: sweep cursor {s:?} is not schedule:<key>, legacy:<key>, effect:<key> or resolved:<key>")),
         };
         let after = s.split_once(':').map_or(String::new(), |(_, k)| k.to_string());
         if phase == SweepPhase::Legacy && !after.is_empty() && !LEGACY.iter().any(|t| after.starts_with(&keys::runtime_table(t))) {
@@ -160,15 +156,17 @@ fn pending(id: &str) -> Object {
     Object::new(json!({ "id": id }))
 }
 
-/// What a sweep step removed, or with `dry_run` would have: id-less schedule rows, the index
-/// keys it wrote for rows stored before the index, and the resolved effects it gave a lifetime.
+/// What a sweep step removed, or with `dry_run` would have: id-less schedule rows, legacy rows,
+/// closed effect rows and resolved markers, and the index keys it wrote for rows stored before
+/// the index.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Swept {
     pub idless_schedules: usize,
     pub legacy_deleted: usize,
     pub indexed_schedules: usize,
     pub indexed_effects: usize,
-    pub retained: usize,
+    pub deleted_effects: usize,
+    pub deleted_markers: usize,
 }
 
 fn effect_of(v: &Value) -> EffectRow {
@@ -206,7 +204,10 @@ impl<B: Backend> Store<B> {
             for (task, skey) in &turn.cleared {
                 one(vec![], vec![(keys::runtime(STATE, &[task, skey]), None)]);
             }
-            for e in &turn.effects {
+            let closing: std::collections::BTreeSet<&str> = turn.resolved.iter().map(String::as_str).collect();
+            let opening: Vec<&EffectRow> = turn.effects.iter().filter(|e| !closing.contains(e.request_id.as_str())).collect();
+            let rewritten: std::collections::BTreeSet<String> = opening.iter().map(|e| keys::runtime(EFFECT, &[&e.task, &e.ekey])).collect();
+            for e in &opening {
                 let row = json!({ "task": e.task, "ekey": e.ekey, "request_id": e.request_id, "stream": e.stream, "spec": e.spec, "requested_at": e.requested_at, "deadline_at": e.deadline_at });
                 one(vec![], vec![(keys::runtime(EFFECT, &[&e.task, &e.ekey]), Some(Object::new(row))), (keys::runtime(OPEN_EFFECT, &[&e.request_id]), Some(open_effect(&e.task, &e.ekey))), (keys::runtime(RESOLVED, &[&e.request_id]), None)]);
             }
@@ -221,13 +222,15 @@ impl<B: Backend> Store<B> {
                 one(vec![Compare::ModRev(key.clone(), None)], vec![(key, Some(Object::new(row))), (keys::runtime(PENDING, &[&s.id]), Some(pending(&s.id))), (keys::runtime(FIRED, &[&s.id]), None)]);
             }
             for id in &turn.resolved {
-                let mut put = vec![(keys::runtime(RESOLVED, &[id]), Some(retained(&json!({})))), (keys::runtime(OPEN_EFFECT, &[id]), None)];
+                let open_key = keys::runtime(OPEN_EFFECT, &[id]);
+                let mut put = vec![(open_key.clone(), None), (keys::runtime(RESOLVED, &[id]), None), (keys::runtime(DONE, &[id]), None)];
                 let mut compares = Vec::new();
-                if let Some(open) = self.contract().get(&keys::runtime(OPEN_EFFECT, &[id]))? {
+                if let Some(open) = self.contract().get(&open_key)? {
                     let key = keys::runtime(EFFECT, &[&text(&open.value.data, "task"), &text(&open.value.data, "ekey")]);
-                    if let Some(row) = self.contract().get(&key)?.filter(|r| keys::component(&text(&r.value.data, "request_id")) == keys::component(id)) {
+                    let ours = |r: &state_store::Item| keys::component(&text(&r.value.data, "request_id")) == keys::component(id);
+                    if let Some(row) = self.contract().get(&key)?.filter(|r| !rewritten.contains(&key) && ours(r)) {
                         compares.push(Compare::ModRev(key.clone(), Some(row.mod_rev)));
-                        put.push((key, Some(retained(&row.value.data))));
+                        put.push((key, None));
                     }
                 }
                 one(compares, put);
@@ -266,13 +269,10 @@ impl<B: Backend> Store<B> {
         for r in &rows.state {
             one(keys::runtime(STATE, &[&r.task, &r.skey]), Object::new(json!({ "task": r.task, "skey": r.skey, "value": r.value, "at": r.at })), vec![])?;
         }
-        for (e, resolved) in &rows.effects {
+        for (e, _) in rows.effects.iter().filter(|(_, resolved)| !resolved) {
             let row = json!({ "task": e.task, "ekey": e.ekey, "request_id": e.request_id, "stream": e.stream, "spec": e.spec, "requested_at": e.requested_at, "deadline_at": e.deadline_at });
-            let (row, extra) = match resolved {
-                true => (retained(&row), (keys::runtime(RESOLVED, &[&e.request_id]), retained(&json!({})))),
-                false => (Object::new(row), (keys::runtime(OPEN_EFFECT, &[&e.request_id]), open_effect(&e.task, &e.ekey))),
-            };
-            one(keys::runtime(EFFECT, &[&e.task, &e.ekey]), row, vec![extra])?;
+            let index = (keys::runtime(OPEN_EFFECT, &[&e.request_id]), open_effect(&e.task, &e.ekey));
+            one(keys::runtime(EFFECT, &[&e.task, &e.ekey]), Object::new(row), vec![index])?;
         }
         for (s, fired) in &rows.schedules {
             let row = json!({ "id": s.id, "at": s.at, "stream": s.stream, "tag": s.tag, "body": s.body, "cause": s.cause, "correlation": s.correlation });
@@ -319,6 +319,15 @@ impl<B: Backend> Store<B> {
         Ok(self.contract().get(&keys::runtime(META, &["indexed"]))?.is_some())
     }
 
+    /// Marks an open effect run; see [`effect_ledger::done`].
+    pub fn journal_done(&self, id: &str, actor: &str) -> Result<bool> {
+        effect_ledger::done(self.contract(), id, &Request::new(&super::served::request_id(), actor, "journal-done"))
+    }
+
+    pub fn journal_has_done(&self, id: &str) -> Result<bool> {
+        effect_ledger::has_done(self.contract(), id)
+    }
+
     pub fn journal_open_effects(&self) -> Result<Vec<EffectRow>> {
         let mut rows: Vec<EffectRow> = if self.indexed()? {
             let mut rows = Vec::new();
@@ -326,7 +335,7 @@ impl<B: Backend> Store<B> {
                 let request = open.0;
                 if let Some(i) = self.contract().get(&keys::runtime(EFFECT, &[&text(&open.1, "task"), &text(&open.1, "ekey")]))? {
                     let row = effect_of(&i.value.data);
-                    if keys::component(&row.request_id) == request && self.contract().get(&keys::runtime(RESOLVED, &[&row.request_id]))?.is_none() {
+                    if keys::component(&row.request_id) == request {
                         rows.push(row);
                     }
                 }
@@ -366,11 +375,13 @@ impl<B: Backend> Store<B> {
 
     /// One bounded step of the sweep: reads pages of [`SWEEP_PAGE`] rows after `from` until
     /// [`SWEEP_STEP`] rows are read or [`SWEEP_BUDGET_MS`] is spent, and for each page deletes the
-    /// schedule rows stored without an id, the [`LEGACY`] rows, indexes the open rows an older release stored
-    /// without one, and gives each resolved effect without a lifetime [`JOURNAL_RETAIN_SECS`] unless the
-    /// row changed since the step read it. The step that exhausts the effects marks the store indexed and answers no
-    /// cursor. A page whose write is refused for the deadline after an earlier page committed ends the step
-    /// with what committed. Every write is idempotent, so a step that fails is run again from the same cursor.
+    /// schedule rows stored without an id and the [`LEGACY`] rows, indexes the open rows an older release stored
+    /// without one, and deletes each closed effect row, with its marker, unless it changed since the step read
+    /// it. In an indexed store a row is open only if its index names it; before that, only a marker closes one.
+    /// The step that exhausts the effects marks the store indexed; the markers left are then deleted, and the
+    /// step that exhausts them answers no cursor. A page whose write is refused for the deadline after an
+    /// earlier page committed ends the step with what committed. Every write is idempotent, so a step that
+    /// fails is run again from the same cursor.
     /// With `dry_run` it counts and writes nothing.
     pub fn journal_sweep_step(&self, from: Option<&SweepCursor>, dry_run: bool, actor: &str) -> Result<(Swept, Option<SweepCursor>)> {
         let contract = self.contract();
@@ -382,7 +393,9 @@ impl<B: Backend> Store<B> {
             SweepPhase::Schedule => SCHEDULE,
             SweepPhase::Legacy => LEGACY[legacy_at],
             SweepPhase::Effect => EFFECT,
+            SweepPhase::Resolved => RESOLVED,
         };
+        let indexed = phase == SweepPhase::Effect && contract.get_many_at(&[keys::runtime(META, &["indexed"]).as_str()], head)?.iter().any(Option::is_some);
         let mut out = Swept::default();
         let mut after = start_after;
         let mut read = 0;
@@ -390,24 +403,24 @@ impl<B: Backend> Store<B> {
             let page = contract.range_at(&keys::runtime_table(table), after.as_deref(), SWEEP_PAGE, head)?;
             let exhausted = page.len() < SWEEP_PAGE;
             let mut ops: Vec<state_store::Op> = Vec::new();
-            let mut stamps: Vec<Txn> = Vec::new();
+            let mut closed: Vec<(Txn, bool)> = Vec::new();
             let mut counts = Swept::default();
-            let markers: Vec<Option<state_store::Item>> = match phase {
-                SweepPhase::Schedule | SweepPhase::Effect => {
-                    let keys: Vec<String> = page
-                        .iter()
-                        .filter_map(|item| match phase {
-                            SweepPhase::Schedule => Some(text(&item.value.data, "id")).filter(|id| !id.is_empty()).map(|id| keys::runtime(FIRED, &[&id])),
-                            _ => Some(keys::runtime(RESOLVED, &[&effect_of(&item.value.data).request_id])),
-                        })
-                        .collect();
-                    let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
-                    contract.get_many_at(&refs, head)?
+            let looked_up: Vec<String> = match phase {
+                SweepPhase::Schedule => page.iter().map(|item| text(&item.value.data, "id")).filter(|id| !id.is_empty()).map(|id| keys::runtime(FIRED, &[&id])).collect(),
+                SweepPhase::Effect => {
+                    let ids: Vec<String> = page.iter().map(|item| effect_of(&item.value.data).request_id).collect();
+                    let markers = ids.iter().map(|id| keys::runtime(RESOLVED, &[id]));
+                    match indexed {
+                        true => markers.chain(ids.iter().map(|id| keys::runtime(OPEN_EFFECT, &[id]))).collect(),
+                        false => markers.collect(),
+                    }
                 }
-                SweepPhase::Legacy => Vec::new(),
+                SweepPhase::Legacy | SweepPhase::Resolved => Vec::new(),
             };
-            let mut found = markers.into_iter();
-            for item in &page {
+            let refs: Vec<&str> = looked_up.iter().map(String::as_str).collect();
+            let found = if refs.is_empty() { Vec::new() } else { contract.get_many_at(&refs, head)? };
+            let mut fired = found.iter();
+            for (n, item) in page.iter().enumerate() {
                 let v = &item.value.data;
                 match phase {
                     SweepPhase::Schedule => {
@@ -415,7 +428,7 @@ impl<B: Backend> Store<B> {
                         if id.is_empty() {
                             counts.idless_schedules += 1;
                             ops.push(state_store::Op::Delete(item.key.clone()));
-                        } else if found.next().flatten().is_none() {
+                        } else if fired.next().and_then(Option::as_ref).is_none() {
                             counts.indexed_schedules += 1;
                             ops.push(state_store::Op::Put(keys::runtime(PENDING, &[&id]), pending(&id)));
                         }
@@ -426,17 +439,25 @@ impl<B: Backend> Store<B> {
                     }
                     SweepPhase::Effect => {
                         let e = effect_of(v);
-                        let marker_key = keys::runtime(RESOLVED, &[&e.request_id]);
-                        match found.next().flatten() {
-                            None => {
-                                counts.indexed_effects += 1;
-                                ops.push(state_store::Op::Put(keys::runtime(OPEN_EFFECT, &[&e.request_id]), open_effect(&e.task, &e.ekey)));
+                        let marked = found[n].is_some();
+                        let open = match indexed {
+                            true => found[page.len() + n].as_ref().is_some_and(|i| text(&i.value.data, "task") == e.task && text(&i.value.data, "ekey") == e.ekey),
+                            false => !marked,
+                        };
+                        if !open {
+                            let mut t = Txn::new().when(Compare::ModRev(item.key.clone(), Some(item.mod_rev))).delete(&item.key);
+                            if marked {
+                                t = t.delete(&keys::runtime(RESOLVED, &[&e.request_id]));
                             }
-                            Some(marker) if item.value.metadata.ttl_secs.is_none() => {
-                                stamps.push(Txn::new().when(Compare::ModRev(item.key.clone(), Some(item.mod_rev))).put(&item.key, retained(v)).put(&marker_key, retained(&marker.value.data)));
-                            }
-                            Some(_) => {}
+                            closed.push((t, marked));
+                        } else if !indexed {
+                            counts.indexed_effects += 1;
+                            ops.push(state_store::Op::Put(keys::runtime(OPEN_EFFECT, &[&e.request_id]), open_effect(&e.task, &e.ekey)));
                         }
+                    }
+                    SweepPhase::Resolved => {
+                        counts.deleted_markers += 1;
+                        ops.push(state_store::Op::Delete(item.key.clone()));
                     }
                 }
             }
@@ -447,24 +468,30 @@ impl<B: Backend> Store<B> {
                 ops.push(state_store::Op::Put(keys::runtime(META, &["indexed"]), Object::new(json!({}))));
             }
             if dry_run {
-                counts.retained = stamps.len();
+                // A dry run leaves every marker for the marker phase to count.
+                counts.deleted_effects = closed.len();
             } else {
-                let mut stamped = 0;
+                let (mut rows, mut markers) = (0, 0);
                 let written = (|| -> Result<()> {
                     let req = || Request::new(&super::served::request_id(), actor, "journal-sweep");
                     for chunk in ops.chunks(CHUNK) {
                         contract.txn(&Txn { ops: chunk.to_vec(), ..Txn::default() }, &req())?;
                     }
-                    for t in &stamps {
-                        stamped += usize::from(contract.txn(t, &req())?.succeeded);
+                    for (t, marked) in &closed {
+                        if contract.txn(t, &req())?.succeeded {
+                            rows += 1;
+                            markers += usize::from(*marked);
+                        }
                     }
                     Ok(())
                 })();
-                counts.retained = stamped;
+                counts.deleted_effects = rows;
+                counts.deleted_markers += markers;
                 match written {
                     Ok(()) => {}
                     Err(state_store::Error::Deadline) if read > page.len() => {
-                        out.retained += stamped;
+                        out.deleted_effects += rows;
+                        out.deleted_markers += markers;
                         break false;
                     }
                     Err(e) => return Err(e),
@@ -474,7 +501,8 @@ impl<B: Backend> Store<B> {
             out.legacy_deleted += counts.legacy_deleted;
             out.indexed_schedules += counts.indexed_schedules;
             out.indexed_effects += counts.indexed_effects;
-            out.retained += counts.retained;
+            out.deleted_effects += counts.deleted_effects;
+            out.deleted_markers += counts.deleted_markers;
             after = last.or(after);
             if exhausted {
                 break true;
@@ -490,7 +518,8 @@ impl<B: Backend> Store<B> {
                 Some(t) => SweepCursor { phase, after: keys::runtime_table(t) },
                 None => SweepCursor { phase: SweepPhase::Effect, after: String::new() },
             }),
-            (true, SweepPhase::Effect) => None,
+            (true, SweepPhase::Effect) => Some(SweepCursor { phase: SweepPhase::Resolved, after: String::new() }),
+            (true, SweepPhase::Resolved) => None,
         };
         Ok((out, next))
     }

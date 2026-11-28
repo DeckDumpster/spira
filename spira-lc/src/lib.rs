@@ -5,6 +5,7 @@
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
+pub mod effect_ledger;
 pub mod goodput;
 pub mod keys;
 pub mod rc;
