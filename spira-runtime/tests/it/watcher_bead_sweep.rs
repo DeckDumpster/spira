@@ -80,7 +80,7 @@ fn a_repaired_line_is_said_to_the_inbox_and_held_as_no_condition() {
     let (_, stream, kind) = BeadSweep::boot();
     r.tick(stream, kind).unwrap();
     r.run_until_idle().unwrap();
-    let said: Vec<_> = r.requested().into_iter().filter(|q| q.name == INBOX_APPEND).map(|q| q.input.clone()).collect();
+    let said: Vec<_> = r.requested().iter().filter(|q| q.name == INBOX_APPEND).map(|q| q.input.clone()).collect();
     assert!(said.iter().any(|l| l.contains("REPAIRED sp-n")), "{said:?}");
     let subjects: Vec<String> = published(&r).iter().flat_map(|c| c.set.keys().cloned()).collect();
     assert_eq!(subjects, ["sp-p"]);
