@@ -29,7 +29,7 @@ pub const STATE_PAGE: usize = 1_000;
 /// Rows one sweep page asks for at most.
 pub const SWEEP_PAGE: usize = 25;
 /// Rows a step's first page asks for, before it has seen how large they are.
-const SWEEP_FIRST_PAGE: usize = 4;
+pub const SWEEP_FIRST_PAGE: usize = 4;
 /// Value bytes a later page aims to read, sized by the largest value the step has seen.
 pub const SWEEP_PAGE_BYTES: usize = 32 * 1024;
 /// Milliseconds a sweep step spends before it stops after a page: half the store's 100 ms target.
