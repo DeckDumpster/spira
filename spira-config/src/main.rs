@@ -1178,7 +1178,7 @@ fn write_doc(file: &str, text: &str, verb: &str, reg: Option<&ConfRegistry>) -> 
         .map_err(|e| e.to_string())
         .and_then(|()| mirror.map_or(Ok(false), |m| m.commit_or_restore(path, &old).map(|()| true)));
     match written {
-        Ok(true) if reg.is_none() => repo_map_written(),
+        Ok(true) => repo_map_written(),
         Ok(_) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("spira-config {verb}: {file}: {e}");

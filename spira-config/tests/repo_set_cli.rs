@@ -256,3 +256,65 @@ fn a_generic_set_and_an_import_that_rewrite_the_map_tell_the_running_scheduler()
     assert!(run(&map, &["repo", "import"]).status.success());
     assert!(asked.try_recv().is_err(), "a no-op import tells nobody");
 }
+
+/// Runs the binary against `<fixture config>:<over>`.
+fn run_layered(map: &Path, over: &Path, args: &[&str]) -> Output {
+    Command::new(testkit::bin_exe("spira-config"))
+        .env_clear()
+        .env("SPIRA_TOML", format!("{}:{}", config(map).display(), over.display()))
+        .env("SPIRA_HOME", spira_config::resolve::locate_home_for_process().unwrap())
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+fn field_layered(map: &Path, over: &Path, name: &str, col: &str) -> String {
+    out(&run_layered(map, over, &["repo", "field", name, col])).trim().to_string()
+}
+
+#[test_id(tr27x0b)]
+#[test]
+fn a_layered_rm_the_map_refuses_leaves_every_layer_as_it_was() {
+    let (d, map) = fixture();
+    let over = d.path().join("over.toml");
+    let base = std::fs::read_to_string(config(&map)).unwrap();
+    let (rest, table) = base.split_at(base.find("\n[repo.fx]").unwrap());
+    std::fs::write(config(&map), format!("{rest}\n[publish.fx]\nremote = \"none\"\n")).unwrap();
+    std::fs::write(&over, table).unwrap();
+    let mut rows = std::fs::read_to_string(&map).unwrap();
+    rows.push_str("hand | srv/hand | push | origin/main | | | plan\n");
+    std::fs::write(&map, rows).unwrap();
+    let before = (both_files(&map), std::fs::read_to_string(&over).unwrap());
+    let o = run_layered(&map, &over, &["repo", "rm", "fx"]);
+    assert!(!o.status.success(), "{o:?}");
+    assert_eq!((both_files(&map), std::fs::read_to_string(&over).unwrap()), before);
+}
+
+#[test_id(t2ublz6)]
+#[test]
+fn clearing_a_key_in_a_layer_does_not_bring_back_the_lower_layers_value() {
+    let (d, map) = fixture();
+    let over = d.path().join("over.toml");
+    std::fs::write(&over, "[repo.fx]\npath = \"/srv/fx\"\nmode = \"queue.local\"\nformat = \"other\"\n").unwrap();
+    let o = run_layered(&map, &over, &["repo", "set", "fx", "format", ""]);
+    assert!(o.status.success(), "{o:?}");
+    assert_eq!(field_layered(&map, &over, "fx", "format"), "");
+}
+
+#[test_id(tajzu9r)]
+#[test]
+fn a_layered_import_of_an_empty_column_overrides_the_lower_layer_and_settles() {
+    let (d, map) = fixture();
+    let over = d.path().join("over.toml");
+    std::fs::write(&over, "").unwrap();
+    std::fs::write(&map, "fx | /srv/fx | queue.local |  |  |  | plan\n").unwrap();
+    let o = run_layered(&map, &over, &["repo", "import"]);
+    assert!(o.status.success(), "{o:?}");
+    assert_eq!(field_layered(&map, &over, "fx", "base"), "");
+    assert_eq!(field_layered(&map, &over, "fx", "format"), "");
+    let after = std::fs::read_to_string(&over).unwrap();
+    let again = run_layered(&map, &over, &["repo", "import"]);
+    assert!(again.status.success(), "{again:?}");
+    assert!(!out(&again).contains("[repo.fx]"), "{again:?}");
+    assert_eq!(std::fs::read_to_string(&over).unwrap(), after);
+}

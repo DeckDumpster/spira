@@ -86,6 +86,17 @@ fn write_layer(spec: &Path, table: &str, name: &str) -> PathBuf {
     declaring.or(all.last()).cloned().unwrap_or_else(|| spec.to_path_buf())
 }
 
+/// A layer other than `target` sets `repo.<name>.<key>`, so unsetting it in `target` would
+/// leave that value in force: an empty one has to be written out.
+fn set_in_another_layer(spec: &Path, target: &Path, name: &str, key: &str) -> bool {
+    layers(spec).iter().filter(|f| *f != target).any(|f| {
+        std::fs::read_to_string(f)
+            .ok()
+            .and_then(|t| t.parse::<toml::Value>().ok())
+            .is_some_and(|v| v.get("repo").and_then(|t| t.get(name)).and_then(|t| t.get(key)).is_some())
+    })
+}
+
 fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
     let out = crate::bounded::bounded("git")
         .arg("-C")
@@ -470,11 +481,11 @@ pub fn set(name: &str, field: &str, value: &str, t: &Targets) -> Result<(String,
         ));
     }
     let path = format!("repo.{name}.{key}");
-    let toml = &write_layer(toml, "repo", name);
-    if stored.is_empty() {
-        crate::unset_paths_in_file(toml, &[&path])?;
+    let target = &write_layer(toml, "repo", name);
+    if stored.is_empty() && !set_in_another_layer(toml, target, name, key) {
+        crate::unset_paths_in_file(target, &[&path])?;
     } else {
-        crate::set_paths_in_file(toml, &[(&path, &stored)])?;
+        crate::set_paths_in_file(target, &[(&path, &stored)])?;
     }
     Ok((old, value.to_string()))
 }
@@ -534,7 +545,7 @@ pub fn import(t: &Targets) -> Result<Vec<String>, String> {
         if !declares(&target, "repo", n) {
             let mut table = serde_json::json!({"path": want.path, "mode": want.land, "lanes": serde_json::from_str::<serde_json::Value>(&lanes_json(&want.lanes)).expect("a JSON array")});
             for (key, value) in [("base", &want.base), ("format", &want.format)] {
-                if !value.is_empty() {
+                if !value.is_empty() || set_in_another_layer(toml, &target, n, key) {
                     table[key] = serde_json::Value::String(value.clone());
                 }
             }
@@ -545,7 +556,7 @@ pub fn import(t: &Targets) -> Result<Vec<String>, String> {
             let path = format!("repo.{n}.{key}");
             match *key {
                 "lanes" => sets.push((path, lanes_json(value))),
-                _ if value.is_empty() => unsets.push(path),
+                _ if value.is_empty() && !set_in_another_layer(toml, &target, n, key) => unsets.push(path),
                 _ => sets.push((path, (*value).clone())),
             }
         }
@@ -639,7 +650,10 @@ pub fn publish_target(name: &str, t: &Targets) -> Result<serde_json::Value, Stri
 /// Removes `[repo.<name>]` and `[publish.<name>]` in one write, returning the row it removed.
 pub fn rm(name: &str, t: &Targets) -> Result<String, String> {
     let (toml, row) = registered_table("rm", name, t)?;
-    for layer in layers(toml).iter().filter(|f| declares(f, "repo", name) || declares(f, "publish", name)) {
+    let mut holding: Vec<PathBuf> = layers(toml).into_iter().filter(|f| declares(f, "repo", name) || declares(f, "publish", name)).collect();
+    // The removals the repo-map can refuse go first, so a refusal has written nothing.
+    holding.sort_by_key(|f| !declares(f, "repo", name));
+    for layer in &holding {
         crate::remove_named_tables_in_file(layer, &["repo", "publish"], name)?;
     }
     Ok(repos::row_line(&row))

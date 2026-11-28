@@ -525,6 +525,23 @@ mod tests {
     }
 
     // covers: UC-config-store-preflight-07
+    #[test_id(th576ic)]
+    #[test]
+    fn a_map_that_already_has_rows_keeps_them_and_gains_only_the_home_row() {
+        let d = testkit::TempDir::new("spira-config-init-existing-map");
+        let out = d.path().join("cfg/spira.toml");
+        let map = d.path().join("cfg/repo-map");
+        std::fs::create_dir_all(d.path().join("cfg")).unwrap();
+        std::fs::write(&map, "# kept\nother | b/other | push | origin/main | |").unwrap();
+        let mut a = full();
+        a.insert("home_repo_path".into(), "b/scratch".into());
+        ensure(&out, a, None, &reg()).unwrap();
+        let text = std::fs::read_to_string(&map).unwrap();
+        assert!(text.starts_with("# kept\nother | b/other | push | origin/main | |\n"), "{text}");
+        assert_eq!(crate::repos::names(&crate::repos::parse(&text)), ["other", "scratch"]);
+    }
+
+    // covers: UC-config-store-preflight-07
     #[test_id(tnles9o)]
     #[test]
     fn a_written_config_reads_back_what_was_answered_and_a_second_run_leaves_it_untouched() {
