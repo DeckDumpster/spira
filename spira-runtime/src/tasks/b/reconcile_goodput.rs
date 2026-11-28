@@ -61,6 +61,8 @@
 //! | `reconcile.goodput.record` (`pass record --token --json`, `:271`) | store | 5 s | pass n + token | deadline passed (`:270`) |
 //! | `reconcile.goodput.release` (`lock release --token --holder`, `:211`) | store | 5 s | token | none; always attempted once the token was read |
 //!
+//! - A leg lost at a restart gives up the pass: a lock, standby or release goes idle; a judge,
+//!   put or record releases the lock.
 //! - Pass deadline: `TIMEOUT_SECS` from the lock grant, on the injected clock (`goodput_pass.rs:136`).
 //! - Metrics (`reconciler/src/goodput_pass.rs:62-86`) become wide-event fields on the record outcome
 //!   (`ctx.event().set`), not an effect.
@@ -280,6 +282,19 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         Ok(LegConfig { token: c.token.clone().ok_or("no token is carried")?, holder: c.holder.clone().unwrap_or_default(), shadow: shadow(cfg), halted: c.halted, deadline_at_ms: c.deadline_at.unwrap_or(0) })
     };
     let idle = |c: &Carry| Carry { phase: Phase::Idle, token: None, deadline_at: None, holder: None, halted: false, ..c.clone() };
+    let release = |c: &Carry| -> Result<(Carry, Vec<Act>), String> {
+        let r = ReleaseIn { token: c.token.clone().unwrap_or_default(), holder: c.holder.clone().unwrap_or_default() };
+        Ok((Carry { phase: Phase::Releasing, ..c.clone() }, vec![act(RELEASE, &r.token, &r)?]))
+    };
+    let expected = |phase: Phase| match phase {
+        Phase::Locking => LOCK,
+        Phase::Standby => STANDBY,
+        Phase::Judging => JUDGE,
+        Phase::Stepping => PUT,
+        Phase::Recording => RECORD,
+        Phase::Releasing => RELEASE,
+        Phase::Idle => "",
+    };
     match input {
         Input::Fire => Ok((carry.clone(), vec![])),
         Input::Observed(snap) => {
@@ -302,26 +317,13 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             Ok((next, vec![act(LOCK, &holder, &LockIn { holder: holder.clone(), ttl_secs: timeout })?]))
         }
         Input::Outcome { effect, ok, body } => {
-            let expected = match carry.phase {
-                Phase::Locking => LOCK,
-                Phase::Standby => STANDBY,
-                Phase::Judging => JUDGE,
-                Phase::Stepping => PUT,
-                Phase::Recording => RECORD,
-                Phase::Releasing => RELEASE,
-                Phase::Idle => "",
-            };
-            if effect != expected {
+            if effect != expected(carry.phase) {
                 return Err(format!("{NAME}: in state {} no outcome of {effect} is expected", phase_name(carry.phase)));
             }
             let under_lock = matches!(carry.phase, Phase::Judging | Phase::Stepping | Phase::Recording);
             if under_lock && carry.deadline_at.is_some_and(|d| now_ms >= d) {
                 return Err(format!("{NAME}: in state {} the pass deadline passed at {} ms; no further write is made", phase_name(carry.phase), carry.deadline_at.unwrap_or(0)));
             }
-            let release = |c: &Carry| -> Result<(Carry, Vec<Act>), String> {
-                let r = ReleaseIn { token: c.token.clone().unwrap_or_default(), holder: c.holder.clone().unwrap_or_default() };
-                Ok((Carry { phase: Phase::Releasing, ..c.clone() }, vec![act(RELEASE, &r.token, &r)?]))
-            };
             match carry.phase {
                 Phase::Locking if *ok => {
                     let v: serde_json::Value = serde_json::from_str(body.trim()).map_err(|e| format!("{NAME}: the lock grant is not JSON: {e}"))?;
@@ -353,6 +355,13 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                 Phase::Idle => unreachable!("an idle task expects no outcome, refused above"),
             }
         }
+        // A leg the pass has moved past (the observe released it first) changes nothing.
+        Input::Lost(a) if a.name != expected(carry.phase) => Ok((carry.clone(), vec![])),
+        Input::Lost(_) => match carry.phase {
+            Phase::Judging | Phase::Stepping | Phase::Recording => release(carry),
+            Phase::Locking | Phase::Standby | Phase::Releasing => Ok((idle(carry), vec![])),
+            Phase::Idle => Ok((carry.clone(), vec![])),
+        },
         Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {r:?}", phase_name(carry.phase))),
     }
 }

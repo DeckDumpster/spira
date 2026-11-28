@@ -152,7 +152,7 @@ fn phase_name(p: Phase) -> &'static str {
 /// An observation while a release is still `Releasing` returns the task to `idle` and asks for
 /// nothing: the next tick decides afresh from the pool, whose lock re-checks every release, so
 /// a release refused (a lease took the VM) never wedges the task.
-pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     match input {
         Input::Fire => Ok((carry.clone(), vec![])),
         Input::Observed(_) if carry.phase == Phase::Releasing => Ok((Carry::default(), vec![])),
@@ -169,6 +169,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
         // A release that outlived its tick answers after the task went back to idle.
         Input::Outcome { effect, .. } if effect == RELEASE => Ok((carry.clone(), vec![])),
         Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} an outcome of {effect} is not expected", phase_name(carry.phase))),
+        Input::Lost(lost) => lost.as_failure(decide, cfg, carry, now_ms),
         Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase_name(carry.phase), r.handle)),
     }
 }

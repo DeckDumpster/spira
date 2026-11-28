@@ -190,7 +190,7 @@ fn named<'a>(carry: &'a Carry, body: &str) -> Option<&'a String> {
 /// Each planned image is deregistered, then its snapshots are deleted (never the reverse); a
 /// finished image leaves the carry on the next day's observation, and one whose snapshot delete
 /// failed is asked again then.
-pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     match input {
         Input::Fire => Ok((carry.clone(), vec![])),
         Input::Observed(s) if s.world_halted => Ok((carry.clone(), vec![])),
@@ -249,6 +249,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
             }
         }
         Input::Outcome { effect, .. } => Err(format!("{NAME}: an outcome of {effect} is not expected")),
+        Input::Lost(lost) => lost.as_failure(decide, cfg, carry, now_ms),
         Input::Ran(r) => Err(format!("{NAME}: no unit is expected, got {:?}", r.handle)),
     }
 }

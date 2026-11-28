@@ -90,3 +90,51 @@ fn a_boot_repeats_no_mislabelled_note_and_misses_none() {
     let both = Snapshot { mislabelled: vec![("sp-e".into(), "epic".into(), "an epic with the ask label".into()), ("sp-f".into(), "epic".into(), "another".into())], ..mislabelled_epic() };
     t::assert_boot_matches_an_unstopped_run::<H>(SET, vec![json(&mislabelled_epic()), json(&both)], |_| {});
 }
+
+#[test_id(t8j36k0)]
+#[test]
+fn a_close_lost_at_a_restart_is_asked_for_again() {
+    let observed = json(&Snapshot { asks: vec![ask("sp-a", "test -f /done", &[])], ..Snapshot::default() });
+    let mut rig = runtime::taskrig::TaskRig::new(1, t::handler::<H>(SET).registration())
+        .unwrap()
+        .hanging(task::CLOSE)
+        .double(task::OBSERVE, move |_| Ok(observed.clone()))
+        .double(task::CHECK, |_| Ok(serde_json::to_string(&CheckOutcome { id: "sp-a".into(), rc: 0, output: "ok".into() }).unwrap()));
+    let (_, stream, kind) = H::boot();
+    rig.tick(stream, kind).unwrap();
+    rig.reopen(t::handler::<H>(SET).registration()).unwrap();
+    rig = rig.double(task::CLOSE, |_| Ok("sp-a".into()));
+    rig.run_until_idle().unwrap();
+    let closes: Vec<&str> = rig.requested().iter().filter(|q| q.name == task::CLOSE).map(|q| q.input.as_str()).collect();
+    assert_eq!(closes.len(), 2, "the lost close is asked for again: {closes:?}");
+    assert_eq!(closes[0], closes[1]);
+    assert!(!rig.wide_set("asks.verify.refused"));
+}
+
+fn lost(name: &str, input: &str) -> Input<Snapshot> {
+    Input::Lost(spira_runtime::tasks::b::kit::Act { name: name.into(), key: format!("key/{name}"), input: input.into(), deadline_ms: 1_000, probe: false })
+}
+
+fn asked_again(name: &str, input: &str) -> Vec<spira_runtime::tasks::b::kit::Act> {
+    match lost(name, input) {
+        Input::Lost(a) => vec![a],
+        _ => unreachable!(),
+    }
+}
+
+fn failed(effect: &str, body: &str) -> Input<Snapshot> {
+    Input::Outcome { effect: effect.into(), ok: false, body: body.into() }
+}
+
+#[test_id(tcfu2ue)]
+#[test]
+fn decide_asks_a_lost_close_withdraw_or_note_again_and_still_reads_a_failure_as_before() {
+    let h = t::handler::<H>(SET);
+    let carry = |phase| Carry { asks: BTreeMap::from([("sp-a".to_string(), phase)]), ..Carry::default() };
+    for (effect, phase) in [(task::CLOSE, Phase::Satisfied), (task::WITHDRAW, Phase::Closed), (task::NOTE, Phase::Closed)] {
+        assert_eq!(task::decide(&h.cfg, &carry(phase), &lost(effect, "in"), TICK).unwrap(), (carry(phase), asked_again(effect, "in")), "{effect}");
+    }
+    assert_eq!(task::decide(&h.cfg, &carry(Phase::Satisfied), &failed(task::CLOSE, "sp-a: why"), TICK).unwrap(), (carry(Phase::StillOpen), vec![]));
+    assert_eq!(task::decide(&h.cfg, &carry(Phase::Closed), &failed(task::WITHDRAW, "sp-a: why"), TICK).unwrap(), (Carry::default(), vec![]));
+    assert_eq!(task::decide(&h.cfg, &carry(Phase::Closed), &failed(task::NOTE, "sp-a: why"), TICK).unwrap(), (carry(Phase::Closed), vec![]));
+}

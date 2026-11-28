@@ -102,3 +102,47 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 fn a_boot_does_not_take_the_lock_again_for_a_pass_in_flight() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(judging, registration, task::STREAM, runtime::event::EventKind::new(task::TICK, ""));
 }
+
+fn hanging_on(effect: &str) -> runtime::taskrig::TaskRig {
+    let halted = json(&Snapshot { halted: true, ..quiet() });
+    let mut rig = runtime::taskrig::TaskRig::new(1, registration())
+        .unwrap()
+        .hanging(effect)
+        .double(task::OBSERVE, move |_| Ok(halted.clone()))
+        .double(task::LOCK, |_| Ok(r#"{"token":"tok"}"#.into()));
+    let (_, stream, kind) = H::boot();
+    rig.tick(stream, kind).unwrap();
+    rig.reopen(registration()).unwrap();
+    rig.run_until_idle().unwrap();
+    rig
+}
+
+#[test_id(tufup6w)]
+#[test]
+fn a_leg_lost_at_a_restart_goes_idle_or_releases_the_lock_without_a_refusal() {
+    let lock_lost = hanging_on(task::LOCK);
+    assert_eq!(t::recorded::<H>(&lock_lost).unwrap().phase, Phase::Idle);
+    assert!(!lock_lost.wide_set("reconcile.goodput.refused"));
+    let judge_lost = hanging_on(task::JUDGE);
+    assert!(judge_lost.requested().iter().any(|q| q.name == task::RELEASE), "{:?}", judge_lost.requested());
+    assert!(!judge_lost.wide_set("reconcile.goodput.refused"));
+}
+
+#[test_id(t55ovne)]
+#[test]
+fn decide_gives_up_the_pass_for_a_lost_leg_even_past_its_deadline_and_reads_a_failure_as_before() {
+    let h = t::handler::<H>(SET);
+    let at = |phase| Carry { phase, token: Some("tok".into()), holder: Some("h".into()), deadline_at: Some(50_000), ..Carry::default() };
+    let lost = |effect: &str| Input::Lost(spira_runtime::tasks::b::kit::Act { name: effect.into(), key: "k".into(), input: "{}".into(), deadline_ms: 1_000, probe: false });
+    let failed = |effect: &str| Input::Outcome { effect: effect.into(), ok: false, body: "tok: why".into() };
+    let legs = [(Phase::Locking, task::LOCK, Phase::Idle), (Phase::Standby, task::STANDBY, Phase::Idle), (Phase::Judging, task::JUDGE, Phase::Releasing), (Phase::Stepping, task::PUT, Phase::Releasing), (Phase::Recording, task::RECORD, Phase::Releasing), (Phase::Releasing, task::RELEASE, Phase::Idle)];
+    for (phase, effect, want) in legs {
+        let (next, acts) = task::decide(&h.cfg, &at(phase), &lost(effect), 1_000).unwrap();
+        assert_eq!((next.phase, names(&acts)), (want, if want == Phase::Releasing { vec![task::RELEASE] } else { vec![] }), "{effect}");
+        assert_eq!(task::decide(&h.cfg, &at(phase), &failed(effect), 1_000).unwrap(), (next.clone(), acts.clone()), "{effect}");
+        assert_eq!(task::decide(&h.cfg, &at(phase), &lost(effect), 60_000).unwrap(), (next, acts), "{effect} past the deadline");
+    }
+    let refused = task::decide(&h.cfg, &at(Phase::Judging), &failed(task::JUDGE), 60_000).unwrap_err();
+    assert!(refused.contains("deadline"), "{refused}");
+    assert_eq!(task::decide(&h.cfg, &at(Phase::Releasing), &lost(task::JUDGE), 60_000).unwrap(), (at(Phase::Releasing), vec![]), "a leg the pass moved past");
+}

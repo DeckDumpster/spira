@@ -77,6 +77,8 @@
 //! `attempt` is recorded by the `page`/`retry`/`floor_ask` runners themselves, so a page and its
 //! attempt row never diverge.
 //!
+//! A `floor_ask` lost at a restart is asked again; any other lost effect changes nothing.
+//!
 //! ## Silence
 //!
 //! Idle: no candidate Sends or Notes, no retry intent, no floor change, section unchanged and
@@ -325,6 +327,8 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         Input::Fire => return Ok((carry.clone(), vec![])),
         Input::Observed(s) => s,
         Input::Outcome { effect, ok, body } => return outcome(carry, effect, *ok, body),
+        // The store refuses a second ask of one binding, so the floor stays asking.
+        Input::Lost(a) => return Ok((carry.clone(), Some(a.clone()).into_iter().filter(|a| a.name == FLOOR_ASK).collect())),
         Input::Ran(r) => return Err(format!("{NAME}: no unit is expected, got {r:?}")),
     };
     let deadman_secs = cfg.get(DEADMAN_KEY).and_then(|v| v.trim().parse::<u64>().ok()).filter(|v| *v > 0).ok_or_else(|| format!("{DEADMAN_KEY} must be a positive integer"))?;

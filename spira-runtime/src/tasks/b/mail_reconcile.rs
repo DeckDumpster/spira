@@ -412,6 +412,9 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             Ok((next, acts))
         }
         Input::Outcome { effect, ok, body } if effect == PUBLISH => Ok((if *ok { carry.clone() } else { unknown(carry, body) }, vec![])),
+        // A lost publish is one not known to have landed. A lost step marks nothing, so the next observe plans it again.
+        Input::Lost(a) if a.name == PUBLISH => Ok((unknown(carry, &a.input), vec![])),
+        Input::Lost(_) => Ok((carry.clone(), vec![])),
         Input::Outcome { effect, .. } if effect == MARK => Ok((carry.clone(), vec![])),
         Input::Outcome { effect, ok, body } if EFFECTS.contains(&effect.as_str()) => {
             let Some((key, step, _)) = key_step(body) else { return Ok((carry.clone(), vec![])) };

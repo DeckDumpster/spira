@@ -238,3 +238,65 @@ fn a_skew_red_or_failed_close_makes_the_next_scan_a_full_pass_so_the_bead_is_lis
     let (_, acts) = task::decide(&h.cfg, &failed, &Input::Observed(head), now + TICK).unwrap();
     assert_eq!(acts[0].input, "full");
 }
+
+#[test_id(tzeo2li)]
+#[test]
+fn a_close_lost_at_a_restart_leaves_the_bead_open_for_the_next_observe_to_close() {
+    let listing = json(&Snapshot { pass: Pass::Full, through_seq: Some(41), work: vec![close("sp-a", "LANDED")], ..Snapshot::default() });
+    let mut rig = runtime::taskrig::TaskRig::new(1, registration())
+        .unwrap()
+        .hanging(task::CLOSE)
+        .double(task::OBSERVE, move |_| Ok(listing.clone()))
+        .double(task::SKEW_CHECK, |_| Ok("ok".into()));
+    let (_, stream, kind) = H::boot();
+    rig.tick(stream, kind).unwrap();
+    rig.reopen(registration()).unwrap();
+    rig.run_until_idle().unwrap();
+    let carried = t::recorded::<H>(&rig).unwrap();
+    assert_eq!(carried.beads.get("sp-a"), Some(&Phase::Open), "{carried:?}");
+    assert!(!rig.wide_set("reconcile.content.refused"), "a lost close is not refused");
+    rig.tick(task::STREAM, tick()).unwrap();
+    assert_eq!(rig.requested().iter().filter(|q| q.name == task::CLOSE).count(), 2, "{:?}", rig.requested());
+}
+
+#[test_id(t5yixtx)]
+#[test]
+fn a_skew_check_lost_at_a_restart_still_holds_the_closes_it_was_asked_for() {
+    let listing = json(&Snapshot { pass: Pass::Full, through_seq: Some(41), work: vec![close("sp-a", "LANDED")], ..Snapshot::default() });
+    let mut rig = runtime::taskrig::TaskRig::new(1, registration()).unwrap().hanging(task::SKEW_CHECK).double(task::OBSERVE, move |_| Ok(listing.clone())).double(task::CLOSE, |input| Ok(serde_json::from_str::<Close>(input).unwrap().id));
+    let (_, stream, kind) = H::boot();
+    rig.tick(stream, kind).unwrap();
+    rig.reopen(registration()).unwrap();
+    rig = rig.double(task::SKEW_CHECK, |_| Ok("ok".into()));
+    rig.run_until_idle().unwrap();
+    assert!(rig.requested().iter().any(|q| q.name == task::CLOSE && q.input.contains("sp-a")), "{:?}", rig.requested());
+}
+
+fn lost(name: &str, input: &str) -> Input<Snapshot> {
+    Input::Lost(spira_runtime::tasks::b::kit::Act { name: name.into(), key: format!("key/{name}"), input: input.into(), deadline_ms: 1_000, probe: false })
+}
+
+fn asked_again(name: &str, input: &str) -> Vec<spira_runtime::tasks::b::kit::Act> {
+    match lost(name, input) {
+        Input::Lost(a) => vec![a],
+        _ => unreachable!(),
+    }
+}
+
+fn failed(effect: &str, body: &str) -> Input<Snapshot> {
+    Input::Outcome { effect: effect.into(), ok: false, body: body.into() }
+}
+
+#[test_id(tkgopif)]
+#[test]
+fn decide_reopens_a_lost_close_asks_a_lost_skew_check_again_and_reads_a_failure_as_before() {
+    let h = t::handler::<H>(SET);
+    let carry = |phase, full_at| Carry { beads: BTreeMap::from([("sp-a".to_string(), phase)]), full_at, ..Carry::default() };
+    let input = serde_json::to_string(&close("sp-a", "LANDED")).unwrap();
+    assert_eq!(task::decide(&h.cfg, &carry(Phase::CloseRequested, 7), &lost(task::CLOSE, &input), TICK).unwrap(), (carry(Phase::Open, 0), vec![]));
+    assert!(task::TRANSITIONS.contains(&(Phase::CloseRequested, "close:lost", Phase::Open)));
+    assert_eq!(task::decide(&h.cfg, &carry(Phase::CloseRequested, 7), &failed(task::CLOSE, "sp-a: why"), TICK).unwrap(), (carry(Phase::Failed, 0), vec![]));
+    let pending = Carry { pending: vec![close("sp-a", "LANDED")], ..Carry::default() };
+    assert_eq!(task::decide(&h.cfg, &pending, &lost(task::SKEW_CHECK, ""), TICK).unwrap(), (pending.clone(), asked_again(task::SKEW_CHECK, "")));
+    assert_eq!(task::decide(&h.cfg, &pending, &failed(task::SKEW_CHECK, "sp-a: why"), TICK).unwrap(), (Carry { skew_red_at: Some(TICK), ..Carry::default() }, vec![]));
+}

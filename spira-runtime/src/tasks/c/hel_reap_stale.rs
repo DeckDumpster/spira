@@ -210,7 +210,7 @@ fn idle_secs(cfg: &Cfg) -> Result<u64, String> {
 }
 
 /// `hel::stale::decide` per worktree.
-pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     match input {
         Input::Fire if carry.phase == Phase::Reaping => Err(format!("{NAME}: a tick in state reaping: the pass in flight has not ended")),
         Input::Fire => Ok((Carry { phase: Phase::Observing }, vec![])),
@@ -235,6 +235,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -
         Input::Outcome { effect, ok: false, .. } if effect == DESTROY_WORKTREE => Ok((carry.clone(), vec![])),
         Input::Outcome { effect, .. } if effect == PRUNE => Ok((Carry::default(), vec![])),
         Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} an outcome of {effect} is not expected", phase_name(carry.phase))),
+        Input::Lost(lost) => lost.as_failure(decide, cfg, carry, now_ms),
         Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase_name(carry.phase), r.handle)),
     }
 }

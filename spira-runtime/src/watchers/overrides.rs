@@ -7,7 +7,7 @@ use runtime::event::*;
 use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
-use super::{answered_effect, carried, iso8601, INBOX_APPEND};
+use super::{answered_effect, carried, iso8601, lost_at_restart, INBOX_APPEND};
 use crate::tasks::a::sentinel_pass::LANDING_UNIT;
 
 pub const STREAM: &str = "watch.overrides";
@@ -68,7 +68,8 @@ impl Handler for Overrides {
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
-        if answered_effect(view, ev).as_deref() != Some(APPLY) {
+        // The boot tick has already asked for a new pass; this one's result is unknown.
+        if lost_at_restart(ev) || answered_effect(view, ev).as_deref() != Some(APPLY) {
             return vec![];
         }
         let failure = if ev.kind.tag == EFFECT_SUCCEEDED {

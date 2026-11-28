@@ -28,6 +28,7 @@ use crate::engine::{Engine, Executor, Outcome};
 use crate::event::*;
 use crate::journal::MemJournal;
 use crate::ports::{Clock, VirtualClock};
+use crate::wide::MemSink;
 use crate::Result;
 
 pub type Double = Box<dyn Fn(&str) -> std::result::Result<String, String> + Send + Sync>;
@@ -63,19 +64,21 @@ pub struct TaskRig {
     hung: BTreeSet<String>,
     parked: BTreeSet<String>,
     delivered: u64,
+    sink: Arc<MemSink>,
 }
 
 impl TaskRig {
     pub fn new(seed: u64, reg: Registration) -> Result<Self> {
         let journal = MemJournal::new();
         let clock = VirtualClock::new(0);
-        let engine = Engine::open(journal.clone(), Arc::new(clock.clone()), vec![reg], seed)?;
-        Ok(TaskRig { journal, clock, engine, doubles: BTreeMap::new(), requested: vec![], refused: vec![], ticks: BTreeMap::new(), read_to: 0, journaled_requests: BTreeSet::new(), timing_out: false, hung: BTreeSet::new(), parked: BTreeSet::new(), delivered: 0 })
+        let sink = MemSink::new();
+        let engine = Engine::open(journal.clone(), Arc::new(clock.clone()), vec![reg], seed)?.with_sink(sink.clone());
+        Ok(TaskRig { journal, clock, engine, doubles: BTreeMap::new(), requested: vec![], refused: vec![], ticks: BTreeMap::new(), read_to: 0, journaled_requests: BTreeSet::new(), timing_out: false, hung: BTreeSet::new(), parked: BTreeSet::new(), delivered: 0, sink })
     }
 
     /// Stop the engine and open a new one on the same journal and clock: a runtime restart.
     pub fn reopen(&mut self, reg: Registration) -> Result<()> {
-        self.engine = Engine::open(self.journal.clone(), Arc::new(self.clock.clone()), vec![reg], 0)?;
+        self.engine = Engine::open(self.journal.clone(), Arc::new(self.clock.clone()), vec![reg], 0)?.with_sink(self.sink.clone());
         self.parked.clear();
         self.hung.clear();
         Ok(())
@@ -188,6 +191,11 @@ impl TaskRig {
             spec: EffectSpec,
         }
         self.journaled().into_iter().filter(|e| e.kind.tag == EFFECT_SHADOWED).filter_map(|e| serde_json::from_str::<Body>(&e.kind.body).ok()).map(|b| b.spec).collect()
+    }
+
+    /// Whether any wide event, before or after a [`reopen`](Self::reopen), set `key`.
+    pub fn wide_set(&self, key: &str) -> bool {
+        self.sink.records().iter().any(|r| r.contains_key(key))
     }
 
     /// Effect names the handler asked for that had no double.
@@ -388,5 +396,33 @@ mod tests {
         assert_eq!(effects_runnable(&["a"], &["a"], &["a"]), Ok(()));
         assert_eq!(effects_runnable(&["a", "b"], &["a", "b"], &["a"]), Err("b: sim".into()));
         assert_eq!(effects_runnable(&[PLANTED_UNKNOWN], &[], &[]), Err(format!("{PLANTED_UNKNOWN}: real, {PLANTED_UNKNOWN}: sim")));
+    }
+
+    /// Refuses, as a task does, when it hears an effect failed or timed out.
+    struct Refuser;
+
+    impl Handler for Refuser {
+        fn interests(&self) -> &[EventKindTag] {
+            &[TICK, EFFECT_TIMED_OUT]
+        }
+        fn handle(&self, ctx: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+            if ev.kind.tag == TICK {
+                return vec![Command::Effect(EffectSpec { name: "say".into(), input: String::new(), deadline_ms: 100, key: "say".into() })];
+            }
+            ctx.event().set("toy.refused", "lost");
+            vec![]
+        }
+    }
+
+    #[test_id(tv9sgwx)]
+    #[test]
+    fn a_wide_field_set_after_a_reopen_is_seen() {
+        let reg = || Registration::new("toy", Refuser);
+        let mut r = TaskRig::new(1, reg()).unwrap().hanging("say");
+        r.tick(S, EventKind::new(TICK, "")).unwrap();
+        assert!(!r.wide_set("toy.refused"));
+        r.reopen(reg()).unwrap();
+        r.run_until_idle().unwrap();
+        assert!(r.wide_set("toy.refused"));
     }
 }

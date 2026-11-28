@@ -129,12 +129,13 @@ pub struct ReconcileSection {
 /// Always asks for one publish per tick (the tick's probe); records the first `published:true`
 /// and nothing after it, so a steady store journals nothing. The publish time is the store's
 /// (the section record carries it); the carry keeps no clock, so a replay records the same state.
-pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     match input {
         Input::Fire => Ok((carry.clone(), vec![])),
         Input::Observed(s) if s.published && carry.phase == Phase::Idle => Ok((Carry { phase: Phase::Published, published_at: None }, vec![])),
         Input::Observed(_) => Ok((carry.clone(), vec![])),
         Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} no outcome of {effect} is expected; the publish is the tick's probe", phase_name(carry.phase))),
+        Input::Lost(a) => a.as_failure(decide, cfg, carry, now_ms),
         Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {r:?}", phase_name(carry.phase))),
     }
 }

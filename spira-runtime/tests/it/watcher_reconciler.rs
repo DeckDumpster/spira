@@ -152,3 +152,28 @@ fn one_reconciler_observe_asks_for_the_claim_view_once_however_many_partitions_i
         assert_eq!(counted(&asked)["claimable"], 1, "{asked:?}");
     });
 }
+
+#[test_id(t0ck9re)]
+#[test]
+fn a_mail_lost_at_a_restart_is_forgotten_and_the_next_pass_sends_it_again() {
+    let observed = serde_json::to_string(&Observation { now_secs: 2900, groups: vec![gap("disk:/", escalating())], ..Observation::default() }).unwrap();
+    let first = serde_json::to_string(&Observation { now_secs: 1000, groups: vec![gap("disk:/", escalating())], ..Observation::default() }).unwrap();
+    let asked = std::sync::atomic::AtomicUsize::new(0);
+    let mut rig = TaskRig::new(1, registration())
+        .unwrap()
+        .hanging(MAIL)
+        .double(OBSERVE, move |_| Ok(if asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 { first.clone() } else { observed.clone() }))
+        .double(RECORD, |i| Ok(i.into()));
+    for _ in 0..2 {
+        rig.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+        rig.clock.advance(1);
+    }
+    let alerted = |rig: &TaskRig| rig.journaled().iter().rev().find(|e| e.stream.0 == STREAM && e.kind.tag == STATE).map(|e| serde_json::from_str::<reconciler::Book>(&e.kind.body).unwrap().alerted.contains_key("disk:/"));
+    let mails = |rig: &TaskRig| rig.requested().iter().filter(|q| q.name == MAIL).count();
+    assert_eq!((mails(&rig), alerted(&rig)), (1, Some(true)));
+    rig.reopen(registration()).unwrap();
+    rig.run_until_idle().unwrap();
+    assert_eq!(alerted(&rig), Some(false), "the lost mail's alert is forgotten");
+    rig.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    assert_eq!(mails(&rig), 2, "{:?}", rig.requested());
+}
