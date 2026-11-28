@@ -416,12 +416,12 @@ impl Core {
         for (at, sub) in self.subs.iter_mut().enumerate() {
             let Some(filter) = sub.entry.filter.clone() else { continue };
             let direct = topics::filter_selects(&filter, topic);
-            let notice = !direct && liveness && depends_on(&self.topics, &filter, topic.trim_start_matches("publisher/"));
-            if notice && !is_gone(&value) {
-                // Back up: its next going is news again.
+            if liveness && !direct && !is_gone(&value) {
+                // Back up: its next going is news again, whatever the record says by now.
                 sub.clear(topic, &mut out);
                 continue;
             }
+            let notice = !direct && liveness && depends_on(&self.topics, &filter, topic.trim_start_matches("publisher/"));
             if let Some(batch_s) = sub.entry.batch_s.filter(|_| direct) {
                 sub.hold(topic, &value, state, batch_s, now);
                 continue;
@@ -615,6 +615,18 @@ mod tests {
         c.set_topics(vec![row("bead/+/state", &["lc-serve"])]);
         assert_eq!(c.gone_notices().lines, ["[sub:s1] publisher/lc-serve state=gone"]);
         assert!(c.gone_notices().lines.is_empty(), "told once");
+    }
+
+    #[test_id(t4nc54b)]
+    #[test]
+    fn a_publisher_back_up_before_the_record_is_read_makes_its_next_going_news() {
+        let (mut before, clock) = core();
+        before.add("bead/+/state", "", false, true).unwrap();
+        assert_eq!(say(&mut before, "publisher/lc-serve", json!({"state": "gone"})).lines.len(), 1, "positive control");
+        let mut c = Core::new(Arc::new(clock), before.saved());
+        say(&mut c, "publisher/lc-serve", json!({"state": "up", "since_ms": 2}));
+        c.set_topics(record());
+        assert_eq!(say(&mut c, "publisher/lc-serve", json!({"state": "gone"})).lines, ["[sub:s1] publisher/lc-serve state=gone"]);
     }
 
     #[test_id(ts3ekw7)]

@@ -6,7 +6,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ports::Clock;
 use rumqttc::v5::mqttbytes::v5::{Filter, Packet};
@@ -28,8 +28,8 @@ const ACK_DEADLINE: Duration = Duration::from_secs(3);
 const RETRY: Duration = Duration::from_secs(5);
 /// The longest one sleep toward a timer, so a stepped wall clock is noticed.
 const TIMER_SLICE: Duration = Duration::from_secs(60);
-/// The most one page of the topic record is waited for: with [`ACK_DEADLINE`], inside the
-/// time an `add` waits for its reply.
+/// The most the whole topic record is waited for: with [`ACK_DEADLINE`], inside the time an
+/// `add` waits for its reply.
 const READ_DEADLINE: Duration = Duration::from_millis(1500);
 /// Requests the client holds ahead of the connection: the whole set, resubscribed at once.
 const CHANNEL: usize = 1 << 12;
@@ -138,8 +138,14 @@ fn read_topics(store: &LcClient) -> Result<Vec<TopicRow>, String> {
     }
     let mut rows = Vec::new();
     let mut argv = vec!["topics".to_string()];
+    // Real time: this bounds socket I/O.
+    let began = Instant::now();
     loop {
-        let out = store.call(&argv)?.into_answer()?;
+        let left = READ_DEADLINE.saturating_sub(began.elapsed());
+        if left.is_zero() {
+            return Err(format!("`spira-lc topics` was still paging after {READ_DEADLINE:?}"));
+        }
+        let out = store.within(left).not_running_wait(Duration::ZERO).call(&argv)?.into_answer()?;
         let page: Page = serde_json::from_str(&out).map_err(|e| format!("`spira-lc topics` answered {:?}: {e}", out.trim()))?;
         rows.extend(page.topics);
         let Some(next) = page.next else { return Ok(rows) };
@@ -226,8 +232,8 @@ impl Server {
     }
 
     /// Reads the topic record, unlocked so no delivery waits on the store, and says whatever
-    /// notices it now owes the readers.
-    fn read_record(&self) {
+    /// notices it now owes the readers. Returns the line it logged, one per failure streak.
+    fn read_record(&self) -> Option<String> {
         let read = self.store.as_ref().map_err(String::clone).and_then(read_topics);
         let mut state = self.lock();
         match read {
@@ -238,13 +244,22 @@ impl Server {
                     let out = state.core.gone_notices();
                     self.apply(&mut state, out);
                 }
+                None
             }
             Err(why) => {
                 state.core.topics_unread();
-                if !std::mem::replace(&mut state.record_failing, true) {
-                    eprintln!("spira-sub: cannot read the topic record: {why}");
-                }
+                let first = !std::mem::replace(&mut state.record_failing, true);
+                first.then(|| format!("spira-sub: cannot read the topic record: {why}")).inspect(|line| eprintln!("{line}"))
             }
+        }
+    }
+
+    /// [`read_record`](Server::read_record) off this thread, so a slow store stalls no connection.
+    fn read_record_aside(self: &Arc<Self>) {
+        let server = self.clone();
+        let reading = std::thread::Builder::new().name("spira-sub-record".into()).spawn(move || drop(server.read_record()));
+        if let Err(e) = reading {
+            say(&self.name, &format!("cannot start a read of the topic record: {e}"));
         }
     }
 
@@ -466,7 +481,7 @@ impl Server {
 
     /// Holds a connection for as long as there is a broker. Between brokers it sleeps until the
     /// next one makes its socket.
-    fn connection(&self, broker: &Path, clock: &dyn Clock) -> String {
+    fn connection(self: &Arc<Self>, broker: &Path, clock: &dyn Clock) -> String {
         let client_id = self.client_id();
         let dial = Dial { client_id: &client_id, socket: broker, will_topic: self.own_topic(), capacity: CHANNEL };
         let mut watch = SocketWatch::new(broker);
@@ -480,8 +495,7 @@ impl Server {
             match dial.connect_v5(announced, &[]) {
                 Ok((client, mut connection)) => {
                     self.connected(client, clock.now_ms());
-                    // Ahead of `drive`, so the retained values are judged against it.
-                    self.read_record();
+                    self.read_record_aside();
                     let why = self.drive(&mut connection);
                     self.lock().client = None;
                     self.changed.notify_all();
@@ -529,7 +543,7 @@ pub fn run(options: Options) -> Result<(), String> {
     let socket = socket_path(dir, &options.name);
     let _ = std::fs::remove_file(&socket);
     let listener = UnixListener::bind(&socket).map_err(|e| format!("cannot listen on {}: {e}", socket.display()))?;
-    let store = LcClient::configured().map(|store| store.within(READ_DEADLINE).not_running_wait(Duration::ZERO));
+    let store = LcClient::configured();
     let server = Arc::new(Server {
         telemetry: telemetry(options.metrics, options.name.clone()),
         name: options.name,
@@ -538,7 +552,7 @@ pub fn run(options: Options) -> Result<(), String> {
         changed: Condvar::new(),
         store,
     });
-    server.read_record();
+    server.read_record_aside();
     let spawn = |name: &str, body: Box<dyn FnOnce() + Send>| {
         std::thread::Builder::new().name(name.into()).spawn(body).map(drop).map_err(|e| format!("cannot start {name}: {e}"))
     };
@@ -650,23 +664,33 @@ mod tests {
         core.add("bead/+/state", "", false, false).unwrap();
         core.message("publisher/lc-serve", br#"{"state":"gone"}"#, true, false);
         let store = Arc::new(Pages::default());
+        // Rows as `spira-lc topics` records them.
+        let row = |family: &str, resident: &[&str], next: serde_json::Value| {
+            let record = json!({"family": family, "retained": true, "mixed": false, "first_seen": 1, "last_seen": 2, "publishers": resident, "resident": resident});
+            Ok(json!({"topics": [record], "next": next}).to_string())
+        };
+        let down = || Err("down".to_string());
         store.pages.lock().unwrap().extend([
-            Err("down".to_string()),
-            Ok(r#"{"topics":[{"family":"a/+","resident":[],"retained":true}],"next":"a/+"}"#.to_string()),
-            Ok(r#"{"topics":[{"family":"bead/+/state","resident":["lc-serve"]}],"next":null}"#.to_string()),
+            down(),
+            down(),
+            row("a/+", &[], json!("a/+")),
+            row("bead/+/state", &["lc-serve"], serde_json::Value::Null),
+            down(),
         ]);
         let mut server = server(&dir, core);
         server.store = Ok(LcClient::over(store.clone(), false));
         let (_, reader) = server.attach();
 
-        server.read_record();
+        let logged = server.read_record().expect("the first failure of a streak is logged");
+        assert!(logged.starts_with("spira-sub: cannot read the topic record: ") && logged.contains("down"), "{logged}");
+        assert_eq!(server.read_record(), None, "the streak goes on");
         assert!(reader.try_recv().is_err(), "an unread record names no resident");
-        assert!(server.lock().record_failing);
-        server.read_record();
+
+        assert_eq!(server.read_record(), None);
 
         assert_eq!(reader.try_recv().unwrap(), "[sub:s1] publisher/lc-serve state=gone");
-        assert!(!server.lock().record_failing);
-        assert_eq!(*store.asked.lock().unwrap(), ["topics", "topics", "topics --after a/+"]);
+        assert_eq!(*store.asked.lock().unwrap(), ["topics", "topics", "topics", "topics --after a/+"]);
+        assert!(server.read_record().is_some(), "a new streak is logged again");
     }
 
     // The set file's temp path is a FIFO and the set outgrows its buffer, so `apply` is held

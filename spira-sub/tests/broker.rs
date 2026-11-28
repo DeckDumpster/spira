@@ -84,12 +84,17 @@ impl World {
     }
 }
 
-/// A `spira-lc` whose `topics` answers these families.
-fn stand_in_store(dir: &Path) -> String {
-    let families = [("bead/+/state", "lc-serve"), ("gate/r/+", ""), ("progress/+", ""), ("release/active", ""), ("round/r/+", "")];
+/// The record the stand-in answers `topics` with: these families and their residents.
+fn record(dir: &Path, families: &[(&str, &str)]) {
     let rows: Vec<Value> = families.iter().map(|(family, resident)| json!({"family": family, "resident": resident.split_whitespace().collect::<Vec<_>>()})).collect();
+    std::fs::write(dir.join("record"), format!("{}\n", json!({"topics": rows, "next": null}))).unwrap();
+}
+
+/// A `spira-lc` whose `topics` answers the record in `dir`.
+fn stand_in_store(dir: &Path) -> String {
+    record(dir, &[("bead/+/state", "lc-serve"), ("gate/r/+", ""), ("progress/+", ""), ("release/active", ""), ("round/r/+", "")]);
     let bin = dir.join("spira-lc");
-    testkit::write_exe(&bin, &format!("#!/bin/sh\nprintf '%s\\n' '{}'\n", json!({"topics": rows, "next": null})));
+    testkit::write_exe(&bin, &format!("#!/bin/sh\nread -r answer < '{}'\nprintf '%s\\n' \"$answer\"\n", dir.join("record").display()));
     bin.display().to_string()
 }
 
@@ -478,6 +483,27 @@ fn a_resident_publisher_going_reaches_its_familys_subscriptions() {
     publish(&bridge, "bead/sp-a/state", json!({"state": "WORKING"}));
     assert_eq!(follow.next(), "[sub:s1] bead/sp-a/state state=WORKING");
 
+    drop(bridge);
+
+    assert_eq!(follow.next(), "[sub:s1] publisher/lc-serve state=gone");
+}
+
+#[test_id(ta6cqp8)]
+#[test]
+fn a_reconnect_reads_the_record_again_without_an_add() {
+    let mut broker = Broker::up();
+    let world = World::new(broker.socket());
+    record(world.dir.path(), &[("bead/+/state", "")]);
+    let _run = world.run(broker.socket());
+    let follow = world.follow();
+    world.ok(&["add", "bead/+/state"]);
+    record(world.dir.path(), &[("bead/+/state", "lc-serve")]);
+
+    broker.restart();
+    until(&mut Subscriber::to(broker.socket(), &["subscriber/concierge"]), "up");
+    let bridge = publisher("lc-serve", broker.socket());
+    publish(&bridge, "bead/sp-a/state", json!({"state": "WORKING"}));
+    assert_eq!(follow.next(), "[sub:s1] bead/sp-a/state state=WORKING");
     drop(bridge);
 
     assert_eq!(follow.next(), "[sub:s1] publisher/lc-serve state=gone");
