@@ -217,6 +217,8 @@ pub struct BatchJob {
     pub deny_list: String,
     /// The one step the VM runs after set-up; empty runs the whole round.
     pub only: String,
+    /// The round's batch id, which marks the VM's testenv run as the round's; empty outside one.
+    pub round_batch: String,
     /// Set by the host when the VM showed no sign of the round: `run_batch` stops the batch's ssh.
     pub cancel: std::sync::atomic::AtomicBool,
 }
@@ -411,7 +413,7 @@ pub const REMOTE_SCRIPT: &str = concat!(r#"set -Eeuo pipefail
 unset SPIRA_HOME
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" round_ref="${12}" round_sha="${13}"
 testenv_limits="${15:-}" resume_url="${16:-}" fences="${17:-}" want_tag="${18:-}"
-deny_list="${19:-}" deny_filter_line="${20:-}" only="${23:-}"
+deny_list="${19:-}" deny_filter_line="${20:-}" only="${23:-}" round_batch="${25:-}"
 rm -rf ~/round-bins ~/round-launcher.env ~/round-setup.log ~/round-script.log ~/round-work/.runtime/spira/batch-results/round-phases
 mkdir -p ~/round-work/.runtime/spira/batch-results
 : > ~/round-runner.out
@@ -1149,7 +1151,7 @@ if [ -n "$only" ]; then
         ;;
     *)
         : > ~/round-runner.out
-        testenv --artifacts "$HOME/round-work/target/release" --mode parallel --suites "$only" round 2>&1 | tee -a ~/round-runner.out >&2
+        SPIRA_ROUND_BATCH_ID="${round_batch:-}" testenv --artifacts "$HOME/round-work/target/release" --mode parallel --suites "$only" round 2>&1 | tee -a ~/round-runner.out >&2
         rc=${PIPESTATUS[0]}
         [ "$rc" -eq 0 ] || phase_failed "$only" "$rc"
         ;;
@@ -1271,9 +1273,9 @@ if [ "$suites" = "-" ]; then
     printf 'ok 1 0 - - - 0\n' > "$rdir/unit-tests.result"
     true &
 elif [ -n "$suites" ]; then
-    testenv --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" round > >(suites_mark_stream | tee -a "$runner_out") 2> >(suites_mark_stream | tee -a "$runner_out" >&2) &
+    SPIRA_ROUND_BATCH_ID="${round_batch:-}" testenv --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" round > >(suites_mark_stream | tee -a "$runner_out") 2> >(suites_mark_stream | tee -a "$runner_out" >&2) &
 else
-    testenv --mode parallel --artifacts "$HOME/round-work/target/release" round > >(suites_mark_stream | tee -a "$runner_out") 2> >(suites_mark_stream | tee -a "$runner_out" >&2) &
+    SPIRA_ROUND_BATCH_ID="${round_batch:-}" testenv --mode parallel --artifacts "$HOME/round-work/target/release" round > >(suites_mark_stream | tee -a "$runner_out") 2> >(suites_mark_stream | tee -a "$runner_out" >&2) &
 fi
 testenv_pid=$!
 suites_cap_guard "$suites_mark" "$cap" "$cap_fired" "$testenv_pid" &
@@ -1460,6 +1462,7 @@ pub(crate) fn remote_args(job: &BatchJob) -> Vec<String> {
     args.push(job.ci_workdir.clone().unwrap_or_default());
     args.push(job.only.clone());
     args.push(job.pids_limit.to_string());
+    args.push(job.round_batch.clone());
     args
 }
 
@@ -2380,8 +2383,8 @@ fn crate_hashes(results: &Path, started: u64) -> Result<std::collections::BTreeM
     Ok(spira_config::input_hash::input_hashes(&members, &read(WORKSPACE_TREES)?))
 }
 
-/// One `test.result` per unit and integration test this pass's timings files report; returns how
-/// many were queued. Best effort: it changes neither the pass's record nor its exit code.
+/// One `test.result` per unit and integration test this pass's timings files report, and per
+/// shell-suite case of its `results.jsonl`; returns how many were queued. Best effort: it changes neither the pass's record nor its exit code.
 /// `tree_sent` names the tree of a pass that ended before `batch.meta` was written.
 fn emit_test_results(endpoint: &str, results: &Path, started: u64, tree_sent: Option<&str>, rec: &tsd::pass::PassRecord) -> usize {
     use spira_otel::testresult::{self, Tier};
@@ -2396,7 +2399,29 @@ fn emit_test_results(endpoint: &str, results: &Path, started: u64, tree_sent: Op
     });
     let runner = format!("{}:{}", rec.place.as_str(), rec.instance_type);
     let sink = spira_otel::logs::LogPush::new(endpoint, "spira-round-vm", EVENT_DEADLINE, EVENT_QUEUE);
+    let of_round = |tier: Tier, test_id: String, name: String, crate_name: String, input_hash: String, outcome, duration_ms, load1| testresult::Result {
+        test_id,
+        name,
+        crate_name,
+        tier,
+        input_hash,
+        outcome,
+        duration_ms,
+        runner: runner.clone(),
+        load1,
+        source: "round",
+        gate: String::new(),
+        bead: String::new(),
+        repo: rec.repo.clone(),
+        tree: tree.to_string(),
+        round: rec.batch.clone(),
+        members: rec.members.clone(),
+    };
     let mut queued = 0;
+    let mut send = |record: testresult::Result| {
+        sink.emit(testresult::EVENT, &testresult::attrs(&record));
+        queued += 1;
+    };
     for (file, tier) in [(UNIT_TIMINGS, Tier::Unit), (INTEGRATION_TIMINGS, Tier::Integration)] {
         let Some(text) = pass_file(results, file, started) else {
             eprintln!("round-vm run: no {file} from this pass: no {} test.result records", tier.as_str());
@@ -2404,27 +2429,20 @@ fn emit_test_results(endpoint: &str, results: &Path, started: u64, tree_sent: Op
         };
         let load1 = spira_config::unit_tier::parse(&text).and_then(|f| f.load1);
         for t in spira_config::unit_tier::results(&text) {
-            let record = testresult::Result {
-                test_id: t.test_id().to_string(),
-                crate_name: t.crate_name().to_string(),
-                tier,
-                input_hash: hashes.get(t.crate_name()).cloned().unwrap_or_default(),
-                outcome: t.outcome,
-                duration_ms: (t.secs * 1000.0).round() as u64,
-                name: t.name,
-                runner: runner.clone(),
-                load1,
-                source: "round",
-                gate: String::new(),
-                bead: String::new(),
-                repo: rec.repo.clone(),
-                tree: tree.to_string(),
-                round: rec.batch.clone(),
-                members: rec.members.clone(),
-            };
-            sink.emit(testresult::EVENT, &testresult::attrs(&record));
-            queued += 1;
+            let input_hash = hashes.get(t.crate_name()).cloned().unwrap_or_default();
+            let (test_id, crate_name) = (t.test_id().to_string(), t.crate_name().to_string());
+            send(of_round(tier, test_id, t.name, crate_name, input_hash, t.outcome, (t.secs * 1000.0).round() as u64, load1));
         }
+    }
+    // A suite reads the whole tree, so the tree is its input hash.
+    match results_leaf(results).and_then(|leaf| pass_file(&leaf, SUITE_RESULTS, started)) {
+        Some(jsonl) => {
+            let load1 = pass_file(results, UNIT_TIMINGS, started).and_then(|t| spira_config::unit_tier::parse(&t)).and_then(|f| f.load1);
+            for c in testresult::suite_results(&jsonl) {
+                send(of_round(Tier::Suite, c.test_id, c.name, String::new(), tree.to_string(), c.outcome, c.duration_ms, load1));
+            }
+        }
+        None => eprintln!("round-vm run: no {SUITE_RESULTS} from this pass: no {} test.result records", Tier::Suite.as_str()),
     }
     let lost = sink.close(EVENT_FLUSH);
     if lost > 0 {
@@ -2471,6 +2489,9 @@ pub const FENCE_TIMES: &str = "fence-times";
 
 /// What REMOTE_SCRIPT writes after the unit tier, green or red: its build and run seconds and nextest's per-test lines.
 pub const UNIT_TIMINGS: &str = "unit-timings";
+
+/// testenv's per-case record of its suites, in the results leaf.
+const SUITE_RESULTS: &str = "results.jsonl";
 
 /// [`UNIT_TIMINGS`] for the integration tier.
 pub const INTEGRATION_TIMINGS: &str = "integration-timings";
@@ -3268,6 +3289,7 @@ fn on_vm_run(
         fences: args.fences.clone().unwrap_or_default(),
         deny_list: args.deny_list.clone().unwrap_or_default(),
         only: args.only.clone().unwrap_or_default(),
+        round_batch: args.round_batch.clone().unwrap_or_default(),
         cancel: Default::default(),
     };
     if let (Some(dir), None) = (&cfg.resume_credentials, &args.ci_entry) {
@@ -5163,6 +5185,14 @@ mod tests {
         fs::write(dir.path().join(WORKSPACE_METADATA), METADATA).unwrap();
         fs::write(dir.path().join(WORKSPACE_TREES), TREES).unwrap();
         fs::write(dir.path().join("batch.meta"), "key=k\ntree=29518c0d\n").unwrap();
+        let leaf = dir.path().join("KEY");
+        fs::create_dir(&leaf).unwrap();
+        fs::write(leaf.join("a.sh.result"), "ok 1 2 - - - 0\n").unwrap();
+        fs::write(
+            leaf.join("results.jsonl"),
+            "{\"suite\":\"a.sh\",\"case\":\"x\",\"status\":\"pass\",\"seconds\":2}\n{\"suite\":\"a.sh\",\"case\":\"y\",\"status\":\"fail\",\"seconds\":0.5}\n",
+        )
+        .unwrap();
         let started = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() - 100;
         (dir, started)
     }
@@ -5195,7 +5225,7 @@ mod tests {
         };
         let hashes = spira_config::input_hash::input_hashes(&[member("app", &["lib"]), member("lib", &[])], TREES);
         assert_ne!(hashes["app"], hashes["lib"], "positive control: the two crates hash apart");
-        let got = fake.events();
+        let got: Vec<_> = fake.events().into_iter().filter(|e| text_of(e, "tier") != "suite").collect();
         let rows: Vec<[String; 4]> = got.iter().map(|e| ["name", "crate", "tier", "outcome"].map(|k| text_of(e, k))).collect();
         let want = [["a::t0aaaaa", "app", "unit", "pass"], ["b", "lib", "unit", "fail"], ["c", "lib", "unit", "timeout"], ["d", "app", "integration", "pass"], ["e", "lib", "integration", "pass"]];
         assert_eq!(rows, want.map(|r| r.map(String::from)));
@@ -5219,8 +5249,40 @@ mod tests {
         fs::File::options().write(true).open(dir.path().join(INTEGRATION_TIMINGS)).unwrap().set_modified(stale).unwrap();
         let fake = spira_otel::fixture::Collector::start();
         emit_test_results(fake.addr(), dir.path(), started, None, &pass_of_two_members());
-        let tiers: Vec<String> = fake.events().iter().map(|e| text_of(e, "tier")).collect();
+        let tiers: Vec<String> = fake.events().iter().map(|e| text_of(e, "tier")).filter(|t| t != "suite").collect();
         assert_eq!(tiers, ["unit", "unit", "unit"]);
+    }
+
+    #[test_id(tdleexk)]
+    #[test]
+    fn every_shell_suite_case_a_round_ran_is_one_test_result_record_of_the_rounds_tree() {
+        use spira_otel::logs::Attr;
+        let (dir, started) = results_with_test_timings();
+        let fake = spira_otel::fixture::Collector::start();
+        assert_eq!(emit_test_results(fake.addr(), dir.path(), started, None, &pass_of_two_members()), 7);
+        let got = fake.events();
+        let suite: Vec<_> = got.iter().filter(|e| text_of(e, "tier") == "suite").collect();
+        assert_eq!(got.len() - suite.len(), 5);
+        let rows: Vec<[String; 4]> = suite.iter().map(|e| ["test_id", "name", "crate", "outcome"].map(|k| text_of(e, k))).collect();
+        assert_eq!(rows, [["a.sh::x", "x", "", "pass"], ["a.sh::y", "y", "", "fail"]].map(|r| r.map(String::from)));
+        assert_eq!(suite[1].attr("duration_ms"), Some(&Attr::Int(500)));
+        for e in suite {
+            let want = ["round", "round-9", "ec2:c7i.8xlarge", "r", "29518c0d", "29518c0d"];
+            assert_eq!(["source", "round", "runner", "repo", "tree", "input_hash"].map(|k| text_of(e, k)), want);
+            assert_eq!(e.attr("members"), Some(&Attr::Strs(vec!["sp-a".into(), "sp-b".into()])));
+            assert_eq!(e.attr("load1"), Some(&Attr::Float(1.5)), "the unit tier's load");
+        }
+    }
+
+    #[test_id(thwn1i0)]
+    #[test]
+    fn a_results_jsonl_older_than_the_pass_sends_no_shell_suite_record() {
+        let (dir, started) = results_with_test_timings();
+        let stale = std::time::UNIX_EPOCH + Duration::from_secs(started - 1);
+        fs::File::options().write(true).open(dir.path().join("KEY/results.jsonl")).unwrap().set_modified(stale).unwrap();
+        let fake = spira_otel::fixture::Collector::start();
+        assert_eq!(emit_test_results(fake.addr(), dir.path(), started, None, &pass_of_two_members()), 5);
+        assert!(fake.events().iter().all(|e| text_of(e, "tier") != "suite"));
     }
 
     #[test_id(tfk4o9x)]
@@ -5231,7 +5293,7 @@ mod tests {
         let fake = spira_otel::fixture::Collector::start();
         emit_test_results(fake.addr(), dir.path(), started, Some("sent-tree"), &pass_of_two_members());
         let got = fake.events();
-        assert_eq!(got.len(), 5);
+        assert_eq!(got.len(), 7);
         assert!(got.iter().all(|e| text_of(e, "tree") == "sent-tree"), "{got:?}");
     }
 
@@ -5243,7 +5305,7 @@ mod tests {
         assert_eq!(emit_test_results("", dir.path(), started, None, &record), 0);
         assert_eq!(record, before);
         let fake = spira_otel::fixture::Collector::start();
-        assert_eq!(emit_test_results(fake.addr(), dir.path(), started, None, &record), 5, "positive control: the same pass has five to send");
+        assert_eq!(emit_test_results(fake.addr(), dir.path(), started, None, &record), 7, "positive control: the same pass has seven to send");
     }
 
     #[test_id(t7qjkta)]
@@ -5391,6 +5453,7 @@ mod tests {
             ci_image: Some("registry.example/rust:1".into()),
             ci_workdir: Some("work".into()),
             fences: String::new(), deny_list: String::new(), only: String::new(), pids_limit: 32768,
+            round_batch: String::new(),
             cancel: Default::default(),
         }
     }
@@ -5399,7 +5462,7 @@ mod tests {
     #[test]
     fn remote_command_keeps_empty_arguments_in_place() {
         let cmd = remote_command(&sample_job());
-        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' 'opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' 'registry.example/rust:1' 'work' '' '32768'", shell_quote(REMOTE_LAUNCHER)));
+        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' 'opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' 'registry.example/rust:1' 'work' '' '32768' ''", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -5427,6 +5490,16 @@ mod tests {
         }
         for (name, pos) in reads {
             assert!(expected.iter().any(|(n, _)| *n == name), "{name} reads position {pos} and no field is pinned to it");
+        }
+    }
+
+    #[test_id(tjtrw29)]
+    #[test]
+    fn every_testenv_the_round_script_starts_is_told_the_rounds_batch_id() {
+        let runs: Vec<&str> = REMOTE_SCRIPT.lines().filter(|l| l.contains("--mode parallel") && l.contains("testenv ")).collect();
+        assert_eq!(runs.len(), 3, "positive control: the one-step run and both corpus runs: {runs:#?}");
+        for l in runs {
+            assert!(l.trim_start().starts_with("SPIRA_ROUND_BATCH_ID=\"${round_batch:-}\" testenv "), "{l}");
         }
     }
 
@@ -5464,6 +5537,7 @@ mod tests {
             fences: "fence\ttrue\n".into(),
             deny_list: deny_list.into(),
             only: "integration-tests".into(),
+            round_batch: "batch-sentinel".into(),
             ..sample_job()
         };
         let filter = spira_config::unit_tier::DenyList::parse(deny_list).unwrap().config_filter_line();
@@ -5488,6 +5562,7 @@ mod tests {
             ("deny_list", deny_list.into()),
             ("deny_filter_line", filter),
             ("only", "integration-tests".into()),
+            ("round_batch", "batch-sentinel".into()),
         ]);
     }
 
@@ -5571,10 +5646,10 @@ mod tests {
         let deny = spira_config::unit_tier::DenyList::parse(text).unwrap();
         let mut job = BatchJob { deny_list: text.into(), ..sample_job() };
         let cmd = remote_command(&job);
-        let tail = format!("'{}' '{}' 'registry.example/rust:1' 'work' '' '32768'", text, deny.config_filter_line());
+        let tail = format!("'{}' '{}' 'registry.example/rust:1' 'work' '' '32768' ''", text, deny.config_filter_line());
         assert!(cmd.ends_with(&tail), "{cmd}");
         job.deny_list = String::new();
-        assert!(remote_command(&job).ends_with(" '' '' 'registry.example/rust:1' 'work' '' '32768'"));
+        assert!(remote_command(&job).ends_with(" '' '' 'registry.example/rust:1' 'work' '' '32768' ''"));
     }
 
     #[test_id(thuax12)]
@@ -5587,7 +5662,7 @@ mod tests {
             assert!(parse_run_args(&args(bad)).unwrap_err().contains("--only"), "{bad:?}");
         }
         let job = BatchJob { only: "integration-tests".into(), ..sample_job() };
-        assert!(remote_command(&job).ends_with(" 'work' 'integration-tests' '32768'"));
+        assert!(remote_command(&job).ends_with(" 'work' 'integration-tests' '32768' ''"));
         let only = REMOTE_SCRIPT.find("if [ -n \"$only\" ]; then").unwrap();
         let exit = only + REMOTE_SCRIPT[only..].find("exit \"$rc\"\nfi\n").unwrap();
         assert!(REMOTE_SCRIPT[exit..].starts_with("exit \"$rc\"\nfi\nphase unit-tests\n"), "the only step ends the script before the unit tier");
@@ -5829,9 +5904,9 @@ mod tests {
             host_addr: "h".into(), mirror_port: 1, suites: None, maxpar: 1, toolchain: None, cache_home: None,
             testenv_registry: None, resume_url: Some("s3://bkt/pre".into()), setup_alarm_secs: 1, cap_secs: 1,
             testenv_limits: "x".into(), post_guard_secs: 1, lint: false, image_tag: None,
-            ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, ci_image: None, ci_workdir: None, fences: String::new(), deny_list: String::new(), only: String::new(), pids_limit: 1, cancel: Default::default(),
+            ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, ci_image: None, ci_workdir: None, fences: String::new(), deny_list: String::new(), only: String::new(), pids_limit: 1, round_batch: String::new(), cancel: Default::default(),
         };
-        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '' '' '' '' '' '' '' '1'"));
+        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '' '' '' '' '' '' '' '1' ''"));
         assert!(!REMOTE_SCRIPT.contains("AWS_SECRET_ACCESS_KEY"), "the script never carries a key");
         let remote = FakeRemote::green();
         push_resume_credentials(&remote, "10.0.0.2", Path::new("creds"));
@@ -7206,7 +7281,7 @@ mod tests {
         let remote = FakeRemote::green();
         go(&fx, &remote, &foreign_args(&fx));
         let jobs = remote.jobs.lock().unwrap();
-        assert!(jobs.iter().any(|j| j.starts_with("bash -c ") && j.ends_with(" '12345'")), "{jobs:?}");
+        assert!(jobs.iter().any(|j| j.starts_with("bash -c ") && j.ends_with(" '12345' 'r-1'")), "{jobs:?}");
     }
 
     /// Records, while the batch runs, whether a gate could take the cache's shared lock.

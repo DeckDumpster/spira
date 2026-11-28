@@ -141,6 +141,7 @@ stderr; `attribute.sh` treats `>= 2` as a run fault; `gate-retry.sh` retries onl
 | `batch.meta` | `image_tag= branch= base= key= mode= selection=` then new `profile= artifacts= worktree= tree=` — `key=value` lines; gate-timing.sh reads `key`, `branch`, `base`. Under `--deadline` only, three more lines: `deadline=<S> deferred=<d> deferred_suites=<space list>` (D7). Under `--deadline` also `phases=<name>:<secs>,…` and `warm=spare|cold|off` (§11.2). Under `--artifacts`, `profile=prebuilt`, `artifacts=<DIR, absolute>` (the directory given, not the staging copy), and three more lines: `build=prebuilt artifacts_id=<sha256> staged=<wt>/target/prebuilt` (D8). Without it the file is unchanged. |
 | `runner.meta` | `nproc= memtotal_kb= maxpar= cpu_busy_pct= suites_wall_s=` |
 | `timing.tsv` | `<suite>\t<wall_s>\t<status>\t<bd_ms or ->` per suite with a result |
+| `results.jsonl` | on a green run with suites run, `jsonl_rows` (§3.5a) per `.result`; on a red one gate-diag writes it. round-vm sends a round's suite records from it. |
 | `$SPIRA_VERDICTS/batch-<key>` | `VerdictFile` (§3.3), shared with gate.sh's directory |
 | `$SPIRA_RUN/tsd/suite-timing.jsonl` | one `SuiteTimingRow` (§3.4) per executed suite plus one `__batch__` row |
 | `$SPIRA_RUN/tsd/round.jsonl` | one `phase=build` row when `SPIRA_ROUND_BATCH_ID` is set |
@@ -327,8 +328,8 @@ that first failing case (`first red: case <n> <name> at <file>:<line>`, `first=<
 
 ### 3.5a `jsonl_rows` — a suite's `results.jsonl` rows (sp-9gd4e)
 
-Replaces `spira/tap-jsonl.sh`'s `tap_jsonl_rows`, deleted (sp-9gd4e). Its only caller,
-`gate-diag`, now depends on this crate and calls `tap::jsonl_rows` directly instead of
+Replaces `spira/tap-jsonl.sh`'s `tap_jsonl_rows`, deleted (sp-9gd4e). Its callers are this
+crate's green path and `gate-diag`, which calls `tap::jsonl_rows` directly instead of
 shelling out to the bash — "ONE PARSER, ONE PLACE" (the bash's own rule for itself and
 `suite-covers.sh`, which it sourced) now means one Rust function two crates share, not one
 sourced file. `suite-covers.sh` itself is untouched (`suites.sh`/`gate-touched.sh`'s

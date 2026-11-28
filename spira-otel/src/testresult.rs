@@ -100,6 +100,40 @@ pub fn attrs(r: &Result) -> Vec<(String, Attr)> {
     out
 }
 
+/// One case of a run's `results.jsonl`.
+#[derive(Clone, Debug)]
+pub struct SuiteCase {
+    pub test_id: String,
+    pub name: String,
+    pub outcome: Outcome,
+    pub duration_ms: u64,
+}
+
+/// The cases of a `results.jsonl`. `(verdict)` rows are the retry classifier's, not tests, and a
+/// row with no suite or no case names nothing.
+pub fn suite_results(jsonl: &str) -> Vec<SuiteCase> {
+    jsonl
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter_map(|row| {
+            let (suite, case) = (row["suite"].as_str()?, row["case"].as_str()?);
+            if suite.is_empty() || case.is_empty() || case == "(verdict)" {
+                return None;
+            }
+            Some(SuiteCase {
+                test_id: format!("{suite}::{case}"),
+                name: case.to_string(),
+                outcome: match row["status"].as_str().unwrap_or_default() {
+                    "pass" => Outcome::Pass,
+                    "skip" | "unreached" | "bail" => Outcome::Skipped,
+                    _ => Outcome::Fail,
+                },
+                duration_ms: (row["seconds"].as_f64().unwrap_or(0.0) * 1000.0).round() as u64,
+            })
+        })
+        .collect()
+}
+
 /// A test that both passed and went red on one input.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Flip {
@@ -373,6 +407,22 @@ mod tests {
         let garbled = FakeLogs::start();
         garbled.answer("test.result", Script { status: 200, body: "{\"test_id\":\"t1\",\"n\":\"1\"}\n".into(), hang: false });
         assert!(matches!(Logs::new(&garbled.url()).unwrap().flips(60), Err(LogsError::Malformed(_))), "a row without its fields is not skipped");
+    }
+
+    #[test_id(tcwoflp)]
+    #[test]
+    fn suite_results_reads_each_case_of_results_jsonl_and_leaves_out_the_verdict_rows() {
+        let jsonl = concat!(
+            "{\"suite\":\"a.sh\",\"case\":\"x\",\"status\":\"pass\",\"seconds\":2}\n",
+            "{\"suite\":\"a.sh\",\"case\":\"y\",\"status\":\"fail\",\"seconds\":0.5}\n",
+            "{\"suite\":\"b.sh\",\"case\":\"z\",\"status\":\"unreached\",\"seconds\":0}\n",
+            "{\"suite\":\"a.sh\",\"case\":\"(verdict)\",\"status\":\"red-red\",\"seconds\":0}\n",
+        );
+        let got: Vec<(String, String, Outcome, u64)> = suite_results(jsonl).into_iter().map(|c| (c.test_id, c.name, c.outcome, c.duration_ms)).collect();
+        let case = |id: &str, name: &str, o, ms| (id.to_string(), name.to_string(), o, ms);
+        assert_eq!(got, [case("a.sh::x", "x", Outcome::Pass, 2000), case("a.sh::y", "y", Outcome::Fail, 500), case("b.sh::z", "z", Outcome::Skipped, 0)]);
+        let other = "{\"suite\":\"c.sh\",\"case\":\"s\",\"status\":\"skip\",\"seconds\":1}\n{\"suite\":\"c.sh\",\"case\":\"b\",\"status\":\"bail\",\"seconds\":1}\n{\"suite\":\"\",\"case\":\"n\",\"status\":\"pass\"}\nnot json\n";
+        assert_eq!(suite_results(other).iter().map(|c| c.outcome).collect::<Vec<_>>(), [Outcome::Skipped, Outcome::Skipped], "a row naming no suite is no test");
     }
 
     #[test_id(t6e6bag)]

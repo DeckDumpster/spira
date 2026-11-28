@@ -66,12 +66,12 @@ planted TAP/skip-all/bail-out/escaping fixtures (sp-9gd4e's report).
 Each case of `results.jsonl` (never a `(verdict)` row) is also one OTLP log record to
 `SPIRA_OTEL_COLLECTOR_ENDPOINT` (empty sends nothing), `tier=suite`, its `test_id`
 `<suite>::<case>`, its `tree` and `input_hash` the `tree=` of the results root's `batch.meta`.
-`source` is `round` where the environment names `SPIRA_ROUND_BATCH_ID`, `gate` where it names
-`SPIRA_GATE_BRANCH`, else `local`. The push is bounded and never changes the exit code.
+`source` is `gate` where the environment names `SPIRA_GATE_BRANCH`, else `local`. The push is
+bounded and never changes the exit code.
 
-A round VM's suite cases do not yet arrive as a round's: nothing there sets
-`SPIRA_ROUND_BATCH_ID` or declares a Collector the VM can reach, `members` is empty and
-`runner` is the host name; and testenv runs this report only after a red pass.
+Where the environment names `SPIRA_ROUND_BATCH_ID` this binary sends nothing: a round's suite
+records are the host's, which sends them from the pulled `results.jsonl` with the batch's
+members and runner (round-vm/DESIGN.md), on a green pass as on a red one.
 
 ## Design
 
