@@ -17,7 +17,7 @@ pub const TITLE: &str = "The broker is down: the Concierge cannot see watchers, 
 /// resident one gone.
 const PUBLISHER: &str = "heimdall-check";
 /// Well inside the unit's `TimeoutStartSec`.
-pub const MAIL_DEADLINE: Duration = Duration::from_secs(10);
+pub const MAIL_DEADLINE: Duration = Duration::from_secs(5);
 
 /// What one connect found.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
