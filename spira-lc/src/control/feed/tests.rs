@@ -678,10 +678,13 @@ fn audits_names_next_when_it_stops_inside_a_stretch_of_commits_with_no_audit() {
         let txn = state_store::Txn::new().put("pad/k", state_store::Object::new(serde_json::json!(n)));
         s.contract().txn(&txn, &req(&format!("pad-{n}"))).unwrap();
     }
+    let end_of_gap = s.contract().head().unwrap().to_string();
     create(&s, "sp-b");
     let got = call(&s, &["audits", "--after", &first.to_string(), "--limit", "100"]);
     assert_eq!(got["rows"], serde_json::json!([]), "{got}");
     assert!(got["next"].as_u64().unwrap() > first, "{got}");
+    let reached = call(&s, &["audits", "--after", &end_of_gap]);
+    assert_eq!((reached["rows"].as_array().unwrap().len(), reached.get("next")), (1, None), "{reached}");
 }
 
 #[test_id(tpk6pd9)]

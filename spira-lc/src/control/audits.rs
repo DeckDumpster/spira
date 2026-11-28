@@ -181,7 +181,8 @@ impl<B: Backend> Store<B> {
         let mut cursor = (after > 0).then(|| events_key(after));
         let (mut keys, mut next) = (0usize, None);
         while audits.len() < limit {
-            let want = EVENTS_PER_READ.min(limit - audits.len()).min(cap - keys);
+            // Past a revision, pages stay full: shrinking them to the audits still wanted costs a read per key.
+            let want = EVENTS_PER_READ.min(if after > 0 { cap - keys } else { limit - audits.len() });
             let page = self.contract().range_at(EVENTS_PREFIX, cursor.as_deref(), want, head)?;
             for item in &page {
                 audits.extend(branch_audits(item).into_iter().map(|audit| Logged { rev: item.mod_rev.main, audit }));
@@ -343,5 +344,30 @@ mod tests {
         assert_eq!(found, ["sp-b"]);
         let all = s.audits_after(first).unwrap();
         assert_eq!((all.audits.len(), all.next), (1, None), "the unbounded read ignores the cap");
+    }
+
+    #[test_id(tk9kx7r)]
+    #[test]
+    fn a_small_limit_still_reads_full_pages_and_a_limit_met_on_the_capping_page_names_no_next() {
+        use super::super::super::store::counting::Counting;
+        use serde_json::json;
+        use state_store::{Object, Txn};
+        let c = Contract::open(Counting::default(), Ports::virtual_clock(&VirtualClock::new(0)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        let s = Store::new(c, 1_000);
+        let pad = |from: usize, to: usize| {
+            for n in from..to {
+                s.contract().txn(&Txn::new().put("pad/k", Object::new(json!(n))), &Request::new(&format!("pad-{n}"), "t", "t")).unwrap();
+            }
+        };
+        pad(0, 1);
+        let start = s.contract().head().unwrap();
+        pad(1, AUDIT_SCAN_KEYS - 9);
+        s.create("sp-b", None, Some("0123456789abcdef0123456789abcdef01234567"), 100, &Request::new("b", "t", "t")).unwrap();
+        pad(AUDIT_SCAN_KEYS, AUDIT_SCAN_KEYS + 200);
+        s.contract().backend().take();
+        let got = s.audits_after_upto(start, 1).unwrap();
+        let calls = s.contract().backend().take().iter().filter(|(k, p, _)| *k == "range" && p.starts_with(EVENTS_PREFIX)).count();
+        assert!(calls <= AUDIT_SCAN_KEYS / EVENTS_PER_READ, "{calls} reads of the events log");
+        assert_eq!((got.audits.len(), got.next), (1, None), "the caller resumes from its last row");
     }
 }
