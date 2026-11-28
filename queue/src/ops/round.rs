@@ -1806,14 +1806,9 @@ fn tag_inputs_touched(w: &World, repo: &Path, base: &str, tip: &str) -> Vec<Stri
         .collect()
 }
 
-fn tag_inputs_touched_recipe(w: &World, repo: &Path, base: &str, tip: &str) -> bool {
-    !recipe_inputs_touched(w, repo, base, tip).is_empty()
-}
-
-/// A member whose tip changes the testenv image tag and whose image neither this host's store
-/// nor a round AMI holds: no pass could run it, and no pass builds one. Its skip names the tag
-/// and the command that builds it by hand.
-fn image_absent(w: &World, repo: &Path, wt: &Path, base: &str, m: &Member) -> Option<Skip> {
+/// A member whose tip changes the testenv image tag and whose image this host's store does not
+/// hold: no round builds one. Its skip names the tag and the command that builds it by hand.
+fn image_absent(w: &World, repo: &Path, base: &str, m: &Member) -> Option<Skip> {
     if tag_inputs_touched(w, repo, base, &m.tip).is_empty() {
         return None;
     }
@@ -1825,16 +1820,8 @@ fn image_absent(w: &World, repo: &Path, wt: &Path, base: &str, m: &Member) -> Op
             return None;
         }
     };
-    // A tip that changes the recipe has no checkout here to hash, so its image cannot be looked up.
-    let held_by_ami = !tag_inputs_touched_recipe(w, repo, base, &m.tip)
-        && w.scripts
-            .recipe_sha(Some(wt))
-            .is_some_and(|sha| matches!(w.scripts.ami_for(&sha), AmiLookup::Found(_)));
-    if held_by_ami {
-        return None;
-    }
     let why = format!(
-        "{}: {} needs testenv image localhost/spira-testenv:{tag}, which neither this host nor a round AMI holds, and no round builds one — not admitted; build it from a checkout of {} with `{}`",
+        "{}: {} needs testenv image localhost/spira-testenv:{tag}, which this host's container store does not hold, and no round builds one — not admitted; build it from a checkout of {} with `{}`",
         m.id, m.tip, m.tip, spira_config::recipe::HAND_BUILD
     );
     Some(Skip { image: Some(tag), ..skip(&m.id, "image-absent", why) })
@@ -2215,7 +2202,7 @@ fn open_timed(
             steps.lap(&format!("merge.{}", m.id));
             continue;
         }
-        if let Some(sk) = image_absent(w, &path, &wt, &landed_sha, &m) {
+        if let Some(sk) = image_absent(w, &path, &landed_sha, &m) {
             skips.push(sk);
             steps.lap(&format!("merge.{}", m.id));
             continue;
