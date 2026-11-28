@@ -707,6 +707,13 @@ impl<'a> Run<'a> {
             o.stderr.lines().for_each(|l| self.d.sink.err(l));
             stacks.insert(id.to_string(), p.stack);
             let rc = claim::settle_claim(o.code, self.d.exec, id, &holder, tries, delay, self.d.sleep);
+            // Only rc 2: lc_claim_bead writes the fact for every other claim that applied.
+            if o.code == 2 && rc == claim::LC_APPLIED {
+                let w = self.d.exec.exec(&self.claim_bin, &s(&["write-event", id, "claimed", &holder]), None, None);
+                if w.code != 0 {
+                    self.log(&format!("{who}: {id} claimed, but its claimed fact was not written ({})", w.first_err_line()));
+                }
+            }
             claim::Attempt { rc, reason: o.stderr }
         });
         self.s.refused.extend(stack_refusals);
