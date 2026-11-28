@@ -151,7 +151,8 @@ mod tests {
     }
 
     const RESOLVE: &str = "scripted-resolve";
-    type Answer = Result<(i32, &'static str), &'static str>;
+    /// Exit code, stdout, stderr; or the failure to run.
+    type Answer = Result<(i32, &'static str, &'static str), &'static str>;
 
     /// Answers a predicate by its text and `resolve` by its program, recording every spec.
     struct ScriptedProc {
@@ -183,7 +184,7 @@ mod tests {
                 assert_eq!((spec.prog.as_str(), spec.args[0].as_str()), ("bash", "-c"));
                 self.predicates.iter().find(|(p, _)| *p == spec.args[1]).expect("a scripted predicate").1
             };
-            answer.map(|(code, out)| ProcOutput { code: Some(code), stdout: out.into(), stderr: vec![] }).map_err(String::from)
+            answer.map(|(code, out, err)| ProcOutput { code: Some(code), stdout: out.into(), stderr: err.into() }).map_err(String::from)
         }
     }
 
@@ -223,7 +224,7 @@ mod tests {
             ask("sp-t", "open", &["needs-ryan"], "MOOT-WHEN: sleep 5"),
         ]);
         let (t, lc) = crate::lc::scripted::scripted(0, &rows.to_string());
-        let proc = ScriptedProc::new(&[("echo gone", Ok((0, "gone\n"))), ("false", Ok((1, ""))), ("sleep 5", Err("bash exceeded its 1s deadline"))], Ok((0, "")));
+        let proc = ScriptedProc::new(&[("echo gone", Ok((0, "gone\n", ""))), ("false", Ok((1, "", ""))), ("sleep 5", Err("bash exceeded its 1s deadline"))], Ok((0, "", "")));
         assert_eq!(sweep(&cfg_over(&d, lc, proc.clone()), true), Summary { found: 3, resolved: 1, errors: 1 });
         assert_eq!(proc.resolve_args(), vec![vec!["sp-c", "auto-resolved: MOOT-WHEN predicate cleared — echo gone → exit 0. Evidence: gone"]]);
         assert_eq!(proc.predicate_deadlines(), vec![Duration::from_secs(1); 3]);
@@ -235,7 +236,7 @@ mod tests {
     #[test]
     fn a_predicate_that_cannot_be_run_counts_an_error_and_resolves_nothing() {
         let refused: Answer = Err("spawn bash: resource temporarily unavailable");
-        let proc = ScriptedProc::new(&[("a", refused), ("b", refused)], Ok((0, "")));
+        let proc = ScriptedProc::new(&[("a", refused), ("b", refused)], Ok((0, "", "")));
         assert_eq!(sweep_over(&["a", "b"], proc.clone(), true), Summary { found: 2, resolved: 0, errors: 2 });
         assert!(proc.resolve_args().is_empty());
     }
@@ -243,7 +244,7 @@ mod tests {
     #[test_id(t524z1b)]
     #[test]
     fn a_predicate_exiting_124_counts_an_error_and_resolves_nothing() {
-        let proc = ScriptedProc::new(&[("a", Ok((124, "")))], Ok((0, "")));
+        let proc = ScriptedProc::new(&[("a", Ok((124, "", "")))], Ok((0, "", "")));
         assert_eq!(sweep_over(&["a"], proc.clone(), true), Summary { found: 1, resolved: 0, errors: 1 });
         assert!(proc.resolve_args().is_empty());
     }
@@ -251,8 +252,8 @@ mod tests {
     #[test_id(tza9cz2)]
     #[test]
     fn a_resolve_that_fails_counts_an_error_and_no_resolution() {
-        for failed in [Ok((1, "")), Err("scripted-resolve exceeded its 5s deadline")] {
-            let proc = ScriptedProc::new(&[("a", Ok((0, "")))], failed);
+        for failed in [Ok((1, "", "")), Err("scripted-resolve exceeded its 5s deadline")] {
+            let proc = ScriptedProc::new(&[("a", Ok((0, "", "")))], failed);
             assert_eq!(sweep_over(&["a"], proc.clone(), true), Summary { found: 1, resolved: 0, errors: 1 });
             assert_eq!(proc.resolve_args().len(), 1);
         }
@@ -261,9 +262,17 @@ mod tests {
     #[test_id(tpqdbpt)]
     #[test]
     fn without_apply_a_cleared_predicate_is_neither_resolved_nor_an_error() {
-        let proc = ScriptedProc::new(&[("a", Ok((0, "")))], Ok((0, "")));
+        let proc = ScriptedProc::new(&[("a", Ok((0, "", "")))], Ok((0, "", "")));
         assert_eq!(sweep_over(&["a"], proc.clone(), false), Summary { found: 1, resolved: 0, errors: 0 });
         assert!(proc.resolve_args().is_empty());
+    }
+
+    #[test_id(t5e2xth)]
+    #[test]
+    fn the_evidence_is_the_predicates_stdout_then_its_stderr() {
+        let proc = ScriptedProc::new(&[("a", Ok((0, "out\n", "err\n")))], Ok((0, "", "")));
+        sweep_over(&["a"], proc.clone(), true);
+        assert_eq!(proc.resolve_args()[0][1], "auto-resolved: MOOT-WHEN predicate cleared — a → exit 0. Evidence: out\nerr");
     }
 
     #[test_id(t7swceo)]
