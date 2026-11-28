@@ -240,7 +240,7 @@ fn a_transition_with_the_broker_down_is_applied_and_the_failed_publish_is_logged
     let server = bridged(&broker);
     server.create("sp-bra");
     broker.stop();
-    server.wait_line("lost the broker");
+    server.wait_line("spira-pub[lc-serve]: lost the broker");
 
     server.claim("sp-bra");
 
