@@ -788,6 +788,39 @@ pub fn lease_for(bases: &[PathBuf], who: &str, repo: &str, ceiling: usize) -> Re
     Ok(Lease { notes, ..take(bases, dir, repo, lock)? })
 }
 
+/// The repositories under `bases` holding at least `ceiling` leased folders: those
+/// [`lease_for`] would refuse now. Makes no folder and moves none.
+pub fn full_repositories(bases: &[PathBuf], ceiling: usize) -> Result<Vec<String>, LeaseError> {
+    let mut repos = BTreeSet::new();
+    for base in bases {
+        // The listing helpers read an unreadable directory as empty, which here would be "not full".
+        readable(base)?;
+        for dir in repo_dirs(base) {
+            readable(&dir)?;
+            repos.extend(dir.file_name().and_then(|n| n.to_str()).map(str::to_string));
+        }
+    }
+    let mut full = Vec::new();
+    for repo in repos {
+        if repo_folders(bases, &repo).is_empty() {
+            continue;
+        }
+        let _alloc = alloc_lock(bases, &repo)?;
+        if leased_count(bases, &repo) >= ceiling {
+            full.push(repo);
+        }
+    }
+    Ok(full)
+}
+
+/// `dir` can be listed, or is not there.
+fn readable(dir: &Path) -> std::io::Result<()> {
+    match std::fs::read_dir(dir) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(std::io::Error::new(e.kind(), format!("cannot list {}: {e}", dir.display()))),
+        _ => Ok(()),
+    }
+}
+
 /// Why [`lease_dir`] did not lease the folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refused {
@@ -2455,6 +2488,35 @@ mod tests {
         assert_eq!(text, "repo:A already has 2 build folders leased, the most builds that can run at once (SPIRA_DWARF_BUILD_FOLDERS_PER_REPO)");
         assert!(!bases[0].join("A/3.lock").exists(), "a refusal makes no folder");
         assert!(lease_for(&bases, "b1", "B", 2).is_ok());
+    }
+
+    #[test_id(ttf8e5h)]
+    #[test]
+    fn a_repository_whose_folders_builders_and_gates_hold_to_the_ceiling_is_full_until_one_is_released() {
+        let d = testkit::TempDir::new("bdir-full");
+        let bases = vec![d.path().join("base"), d.path().join("absent")];
+        let _builder = lease_for(&bases, "sp-b", "spira", 2).unwrap();
+        let gate = lease_for(&bases, "gate sp-g.1", "spira", 2).unwrap();
+        let _other = lease_for(&bases, "sp-o", "other", 2).unwrap();
+        assert_eq!(full_repositories(&bases, 2).unwrap(), ["spira"]);
+        gate.release();
+        assert!(full_repositories(&bases, 2).unwrap().is_empty());
+    }
+
+    #[test_id(t9eljjc)]
+    #[test]
+    fn counting_full_repositories_makes_nothing_and_refuses_a_base_it_cannot_read() {
+        let d = testkit::TempDir::new("bdir-full-bare");
+        let absent = d.path().join("absent");
+        assert!(full_repositories(std::slice::from_ref(&absent), 0).unwrap().is_empty());
+        assert!(!absent.exists());
+        std::fs::create_dir_all(d.path().join("base/empty")).unwrap();
+        std::fs::write(d.path().join("base/empty/.alloc.lock"), "").unwrap();
+        assert!(full_repositories(&[d.path().join("base")], 0).unwrap().is_empty(), "a repository with no folders is never full");
+        let file = d.path().join("not-a-dir");
+        std::fs::write(&file, "").unwrap();
+        let e = full_repositories(std::slice::from_ref(&file), 1).unwrap_err().to_string();
+        assert!(e.contains(&file.display().to_string()), "{e}");
     }
 
     #[test_id(tbelzkm)]
