@@ -6137,6 +6137,18 @@ fn publish_adopts_an_open_pr_at_the_same_head_instead_of_opening_a_second() {
     );
 }
 
+#[test_id(tabn8ti)]
+#[test]
+fn an_adopted_publish_pushes_nothing_and_so_writes_no_deny_list_variable() {
+    let t = deny_list_publish_world();
+    t.git.set("refs/remotes/origin/spira/publish/1794422613", "m3");
+    *t.forge.publish_prs.borrow_mut() = vec![("1086".into(), "spira/publish/1794422613".into())];
+    assert_eq!(t.run(&["publish"]), 0, "{}", t.err());
+    assert!(t.out().contains("adopted"), "{}", t.out());
+    assert!(variable_writes(&t).is_empty());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("deny-list")));
+}
+
 #[test_id(t2j4l4g)]
 #[test]
 fn publish_does_not_adopt_an_open_pr_at_another_head() {
