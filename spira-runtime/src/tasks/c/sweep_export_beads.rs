@@ -291,7 +291,12 @@ pub fn observe(lc: &LcClient, wiki: &str) -> Result<String, String> {
             _ => break,
         }
     }
-    let mirror = std::fs::read(std::path::Path::new(wiki).join(REL)).unwrap_or_default();
+    let mirror = match std::fs::read(std::path::Path::new(wiki).join(REL)) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        // Read as empty, it would drop every mirror-only bead and disarm the shrink guard.
+        Err(e) => return Err(format!("{REL}: {e}")),
+    };
     let text = String::from_utf8_lossy(&mirror);
     let mirrored: Vec<&str> = text.lines().filter_map(mirrored_id).collect();
     let mirrored_count = mirrored.len();

@@ -149,16 +149,27 @@ fn a_mirrored_bead_without_a_lifecycle_row_is_still_read() {
 #[test]
 fn a_mirror_over_twice_the_lifecycle_store_is_rewritten_not_refused_as_a_shrink() {
     let n = task::CONTENT_CHUNK;
-    let lines: Vec<String> = (0..2 * n + 1).map(|i| bead_line(&format!("sp-m{i:05}"))).collect();
+    let lines: Vec<String> = (0..2 * n + 1).map(|i| bead_line(&format!("sp-{i:05}"))).collect();
     let wiki = mirrored_wiki("export-beads-outgrown", &lines);
     let store = std::sync::Arc::new(Store(Default::default(), n));
     let lc = spira_store::lc_call::LcClient::over(store.clone(), true);
     let snap: Snapshot = serde_json::from_str(&task::observe(&lc, wiki.path().to_str().unwrap()).unwrap()).unwrap();
     let h = t::handler::<H>(SET);
-    let (c, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(snap), TICK).unwrap();
+    let (c, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(snap.clone()), TICK).unwrap();
     assert_eq!((c.refused.as_deref(), names(&acts)), (None, vec![task::WRITE]));
+    assert_eq!(snap.content.len(), 2 * n + 1, "a bead in both sources is read once");
     let calls = store.0.lock().unwrap().clone();
     assert!(calls.iter().filter(|a| a.starts_with(&["content".into(), "list".into()])).all(|a| a[3].split(',').count() <= n), "{calls:?}");
+}
+
+#[test_id(t7pjl81)]
+#[test]
+fn an_unreadable_mirror_fails_the_probe_instead_of_reading_as_empty() {
+    let wiki = testkit::TempDir::new("export-beads-unreadable");
+    std::fs::create_dir_all(wiki.path().join(task::REL)).unwrap();
+    let lc = spira_store::lc_call::LcClient::over(std::sync::Arc::new(Store(Default::default(), 3)), true);
+    let err = task::observe(&lc, wiki.path().to_str().unwrap()).unwrap_err();
+    assert!(err.contains(task::REL), "{err}");
 }
 
 #[test_id(t82aaq3)]
