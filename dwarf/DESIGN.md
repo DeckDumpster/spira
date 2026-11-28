@@ -40,6 +40,10 @@ refusal (`LeaseError::Ceiling`) is not a harness red: the bead is released, the 
 reads `lease-refused`, the requeue `unjudged-lease-refused` keeps the claim from being charged,
 and neither RAPID-RECUR nor the harness-red streak reads the line.
 
+Any claim handed back before its session starts is requeued the same way, as
+`unjudged-<status>` (`unjudged-claim-error` when the claim itself could not be confirmed). A
+stack conflict is requeued as `stack-conflict`, which the attempt fold also leaves uncharged.
+
 Sweep mode (`--sweep`) runs a persona without a bead: capacity/draining/paused checks, the
 ledger, the session — no claim, no worktree, no verdict.
 
