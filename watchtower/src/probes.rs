@@ -957,7 +957,7 @@ mod tests {
         assert_eq!(sweep(r#"{"watermark":7}"#, now), 1, "the first sweep is full");
         assert_eq!(sweep(r#"{"watermark":7}"#, now + 120), 0, "no bead was created since");
         assert_eq!(sweep(r#"{"watermark":8}"#, now + 240), 1, "a planning write");
-        assert_eq!(sweep(r#"{"watermark":8}"#, now + 3600), 1, "the hourly full sweep reads whatever the watermark says");
+        assert_eq!(sweep(r#"{"watermark":8}"#, now + 3600), 1, "the hourly full sweep asks its client whatever the watermark says");
     }
 
     #[test_id(taoe892)]

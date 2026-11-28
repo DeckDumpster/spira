@@ -904,6 +904,9 @@ pub(crate) mod observe_store_calls {
         in_own_process(module_path!(), |dir| {
             let [_, second] = two_passes(dir);
             assert!(counted(&second).values().all(|n| *n == 0), "{:?}: {second:?}", counted(&second));
+            let mut sent: Vec<String> = second.iter().map(|argv| argv.iter().take(2).take_while(|w| !w.starts_with('-')).cloned().collect::<Vec<_>>().join(" ")).collect();
+            sent.sort();
+            assert_eq!(sent, ["audits", "reconcile-content", "section snapshot"], "all the unchanged pass sends: reads the view does not hold");
         });
     }
 }
