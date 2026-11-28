@@ -226,7 +226,7 @@ fn a_lanes_change_tells_the_running_scheduler_its_repository_map_was_rewritten()
     let (d, map) = fixture();
     let sock = d.path().join("control.sock");
     let asked = scheduler(&sock);
-    spira_config::process::fixture_toml(d.path(), &[("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_RUNTIME_SOCKET", sock.to_str().unwrap())]);
+    spira_config::set_paths_in_file(&config(&map), &[("spira.runtime_socket", sock.to_str().unwrap())]).unwrap();
     let o = run(&map, &["repo", "set", "fx", "lanes", "plan,incident"]);
     assert!(o.status.success(), "{o:?}");
     assert_eq!(asked.try_recv().expect("the scheduler was told before the verb returned"), ["scheduler", "repin", "SPIRA_REPO_MAP"]);
@@ -234,4 +234,25 @@ fn a_lanes_change_tells_the_running_scheduler_its_repository_map_was_rewritten()
 
     assert!(!run(&map, &["repo", "set", "fx", "colour", "red"]).status.success());
     assert!(asked.try_recv().is_err(), "a refused write tells nobody");
+}
+
+#[test_id(tb3ep00)]
+#[test]
+fn a_generic_set_and_an_import_that_rewrite_the_map_tell_the_running_scheduler() {
+    let (d, map) = fixture();
+    let sock = d.path().join("control.sock");
+    let asked = scheduler(&sock);
+    let toml = config(&map);
+    spira_config::set_paths_in_file(&toml, &[("spira.runtime_socket", sock.to_str().unwrap())]).unwrap();
+    let repin = ["scheduler", "repin", "SPIRA_REPO_MAP"];
+    assert!(run(&map, &["set", "repo.fx.lanes", r#"["plan","incident"]"#, toml.to_str().unwrap()]).status.success());
+    assert_eq!(asked.try_recv().expect("the generic set told the scheduler"), repin);
+
+    let mut rows = std::fs::read_to_string(&map).unwrap();
+    rows.push_str("hand | srv/hand | push | origin/main | | | plan\n");
+    std::fs::write(&map, rows).unwrap();
+    assert!(run(&map, &["repo", "import"]).status.success());
+    assert_eq!(asked.try_recv().expect("import told the scheduler"), repin);
+    assert!(run(&map, &["repo", "import"]).status.success());
+    assert!(asked.try_recv().is_err(), "a no-op import tells nobody");
 }
