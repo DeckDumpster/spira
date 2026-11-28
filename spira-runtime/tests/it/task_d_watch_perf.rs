@@ -173,6 +173,25 @@ fn a_reminder_says_the_value_again_and_keeps_when_the_alarm_began() {
     assert_eq!(again.since, held[0].set["lc-list"].since);
 }
 
+/// A cut probe measured nothing, so it is no recovery: the first cut says nothing at all.
+#[test_id(ti2smw1)]
+#[test]
+fn a_slow_probe_that_is_then_cut_stays_held_from_when_it_began() {
+    let world = Arc::new(Mutex::new(slow("lc-list", 900)));
+    let mut r = rig(1, world.clone());
+    let mut cut = idle();
+    cut.timings[0] = Timing { error: Some("deadline".into()), timed_out_ms: Some(5000), ..timing("lc-list", 5000) };
+    *world.lock().unwrap() = cut;
+    r.advance(CADENCE_MS).unwrap();
+    assert_eq!(published(&r).len(), 1, "the first cut clears nothing and sets nothing");
+    r.advance(CADENCE_MS).unwrap();
+    let held = published(&r);
+    assert!(held.iter().all(|c| c.clear.is_empty()), "{held:?}");
+    let [first, second] = held.as_slice() else { panic!("the second cut changes the text: {held:?}") };
+    assert!(second.set["lc-list"].text.starts_with("PERF TIMEOUT lc-list"), "{second:?}");
+    assert_eq!(second.set["lc-list"].since, first.set["lc-list"].since);
+}
+
 fn standing_alarm() -> TaskRig {
     let mut r = rig(1, Arc::new(Mutex::new(slow("lc-list", 900))));
     r.advance(CADENCE_MS).unwrap();

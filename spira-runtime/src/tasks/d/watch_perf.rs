@@ -35,7 +35,7 @@
 //! | `watch.perf.slow_sample` | host | 5 s | `watch.perf:slow:<probe>:<epoch>` | a path outside `SPIRA_RUN` |
 //! | `watch.perf.metrics` | host | 5 s | `watch.perf:metrics:<epoch>` | nothing; a lost push is a gap in the series, not a failure |
 //!
-//! - **`watch.publish`** holds each standing alarm on `watch/perf-watch/<probe>`, whether or not this pass prints it. The value reads as the line last printed, and is cleared when the library's `settle` forgets the alarm.
+//! - **`watch.publish`** holds each standing alarm on `watch/perf-watch/<probe>`, whether or not this pass prints it. The value reads as the line last printed. It is cleared when a pass measures the probe and `settle` forgets the alarm; a probe cut at its deadline keeps what it held.
 //! - **`inbox.append`** carries `<UTC ISO> [watch:perf-watch] <alarm>` (`inbox_line`, `lib.rs:226-239`, test `lib.rs:350-352`). The alarm is one of `PERF SLOW <name> <ms>ms (limit <L>ms) phases <p|unreported> [rest=<ms>ms; slowest: <phase> <ms>ms (<words>)]; top callers: <c1, c2, c3|unknown>`, `PERF UNRUNNABLE <name>: <err> (after <ms>ms; phases …)` (`lib.rs:116-117`), or `PERF TIMEOUT <name> timed out at <d>ms twice in a row (limit <L>ms); top callers: <c…>` when a probe was cut at its deadline on two passes running. The shared runner adds the newline, so the task drops the trailing `\n` that `inbox_line` appends.
 //! - **`watch.perf.log`** appends the bare alarm line to `run/perf-watch.log`, the log row `spira/watchers:122` that the unit's stdout fills today (`main.rs:144`).
 //! - **`watch.perf.slow_sample`** appends `<epoch>\t<probe>\t<ms>\t<phases>\trest=<ms>\t<top callers>` to `run/perf-slow.log` (`lib.rs:128-141`, `main.rs:147-151`).
@@ -169,16 +169,19 @@ fn spec(name: &str, key: String, input: String, deadline_ms: u64) -> EffectSpec 
 }
 
 /// A probe's alarm is its condition: it reads as the line last printed, so the times of a
-/// standing alarm this pass kept quiet about change nothing.
+/// standing alarm this pass kept quiet about change nothing. A probe cut at its deadline measured
+/// nothing: with no alarm for it this pass, what it held is not over.
 fn conditions(published: &Published, pass: &perf_watch::Pass) -> BTreeMap<String, String> {
-    pass.standing
+    let cut = pass.timings.iter().filter(|t| t.timed_out_ms.is_some()).filter_map(|t| Some((t.name.clone(), published.get(&t.name)?.text.clone())));
+    let mut out: BTreeMap<String, String> = cut.collect();
+    out.extend(pass.standing
         .iter()
         .map(|line| {
             let probe = perf_watch::alarm_probe(line).unwrap_or("all");
             let held = published.get(probe).filter(|h| !pass.lines.contains(line) && perf_watch::alarm_key(&h.text) == perf_watch::alarm_key(line));
             (probe.to_string(), held.map_or_else(|| line.clone(), |h| h.text.clone()))
-        })
-        .collect()
+        }));
+    out
 }
 
 /// `run_pass` with the probing lifted out: the next carry and the writes, among them each

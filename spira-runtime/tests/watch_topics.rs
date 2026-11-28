@@ -18,6 +18,7 @@ use spira_runtime::tasks::e::watch_ami_stale as ami;
 use spira_runtime::tasks::e::watch_throughput as throughput;
 use spira_runtime::tasks::e::watch_transitions as transitions;
 use spira_runtime::watch_topics::WatchTopics;
+use spira_runtime::world::World;
 use spira_runtime::watchers::bead_sweep as sweep;
 use spira_runtime::watchers::claim_count as claims;
 use spira_runtime::watchers::supersede_duty as supersede;
@@ -30,8 +31,12 @@ const FAILSAFE: Duration = Duration::from_secs(30);
 
 /// The service's effect runner, its watch publisher on the broker at `socket`.
 fn service(broker: &Broker) -> Arc<Effects> {
+    service_in(broker, World::default())
+}
+
+fn service_in(broker: &Broker, world: World) -> Arc<Effects> {
     let run_dir = broker.socket().parent().unwrap().to_path_buf();
-    let fx = Effects { world: spira_runtime::world::World { run_dir, ..Default::default() }, ..Default::default() };
+    let fx = Effects { world: World { run_dir, ..world }, ..Default::default() };
     let options = Options::new(broker.socket(), Arc::new(VirtualClock::new(0)), Box::new(SeededRng::new(1)));
     assert!(fx.watch_topics.set(Some(WatchTopics::new(Publisher::with("spira-runtime", options).unwrap()))).is_ok());
     Arc::new(fx)
@@ -113,9 +118,12 @@ fn sweep_world(rows: &[&str]) -> String {
     serde_json::to_string(&sweep::Snapshot { rows, ..Default::default() }).unwrap()
 }
 
+fn sweep_task() -> sweep::BeadSweep {
+    sweep::BeadSweep { interval_ms: 60_000, ask_label: "ask".into(), home_repo: "spira".into(), hold_min: 30, rework_min: 5, cert_min: 5, wait_min: 45, batch_min: 60, stop_review_secs: 3600 }
+}
+
 fn sweep_row(fx: Arc<Effects>) -> Row {
-    let task = sweep::BeadSweep { interval_ms: 60_000, ask_label: "ask".into(), home_repo: "spira".into(), hold_min: 30, rework_min: 5, cert_min: 5, wait_min: 45, batch_min: 60, stop_review_secs: 3600 };
-    Row::boot(sweep::NAME, sweep::OBSERVE, 60_000, task.registration(), sweep::BeadSweep::boot(), sweep_world(&[]), fx)
+    Row::boot(sweep::NAME, sweep::OBSERVE, 60_000, sweep_task().registration(), sweep::BeadSweep::boot(), sweep_world(&[]), fx)
 }
 
 fn perf_world(lc_list_ms: u64) -> String {
@@ -123,9 +131,12 @@ fn perf_world(lc_list_ms: u64) -> String {
     serde_json::to_string(&perf::Snapshot { timings, ..Default::default() }).unwrap()
 }
 
+fn perf_task() -> perf::WatchPerf {
+    perf::WatchPerf::new(perf::Config { budget_ms: 500, interval_secs: 300, remind_secs: 3600, inbox: "q/inbox".into(), metrics_endpoint: "127.0.0.1:9".into(), run: "r".into() })
+}
+
 fn perf_row(fx: Arc<Effects>) -> Row {
-    let config = perf::Config { budget_ms: 500, interval_secs: 300, remind_secs: 3600, inbox: "q/inbox".into(), metrics_endpoint: "127.0.0.1:9".into(), run: "r".into() };
-    Row::boot(perf::INBOX_TAG, perf::OBSERVE, perf::CADENCE_MS, perf::WatchPerf::new(config).registration(), perf::WatchPerf::boot(), perf_world(40), fx)
+    Row::boot(perf::INBOX_TAG, perf::OBSERVE, perf::CADENCE_MS, perf_task().registration(), perf::WatchPerf::boot(), perf_world(40), fx)
 }
 
 fn supersede_world(requested: bool) -> String {
@@ -134,9 +145,12 @@ fn supersede_world(requested: bool) -> String {
     serde_json::to_string(&supersede::Snapshot { held: held.into_iter().collect() }).unwrap()
 }
 
+fn supersede_task() -> supersede::SupersedeDuty {
+    supersede::SupersedeDuty { interval_ms: 60_000 }
+}
+
 fn supersede_row(fx: Arc<Effects>) -> Row {
-    let task = supersede::SupersedeDuty { interval_ms: 60_000 };
-    Row::boot(supersede::NAME, supersede::OBSERVE, 60_000, task.registration(), supersede::SupersedeDuty::boot(), supersede_world(false), fx)
+    Row::boot(supersede::NAME, supersede::OBSERVE, 60_000, supersede_task().registration(), supersede::SupersedeDuty::boot(), supersede_world(false), fx)
 }
 
 fn payload(held: &str) -> Value {
@@ -325,8 +339,8 @@ fn a_restarted_broker_is_given_every_held_claim_and_no_cleared_one() {
 
 /// Drops the runner `row` has been publishing through, publisher and held values with it, and
 /// puts a new one in its place: only that one can say anything afterwards.
-fn replace_the_process(row: &Row, broker: &Broker) -> Arc<Effects> {
-    let fx = service(broker);
+fn replace_the_process(row: &Row, broker: &Broker, world: World) -> Arc<Effects> {
+    let fx = service_in(broker, world);
     let old = std::mem::replace(&mut *row.fx.lock().unwrap(), fx.clone());
     assert_eq!(Arc::strong_count(&old), 1, "something else still holds the old process");
     fx
@@ -344,7 +358,7 @@ fn a_restarted_runtime_says_its_carried_claims_again_to_a_broker_that_kept_nothi
     let before = broker.retained(&row.filter());
     assert_eq!(before.len(), 1, "{before:?}");
 
-    let fx = replace_the_process(&row, &broker);
+    let fx = replace_the_process(&row, &broker, World::default());
     broker.restart();
     let mut watching = Subscriber::to(broker.socket(), &["watch/#"]);
     row.rig.reopen(claims::ClaimCount { interval_ms: 60_000, every: 4 }.registration()).unwrap();
@@ -374,7 +388,7 @@ fn a_restarted_runtime_says_the_carried_stale_image_again_to_a_broker_that_kept_
     let before = broker.retained(&row.filter());
     assert_eq!(before.len(), 1, "{before:?}");
 
-    let fx = replace_the_process(&row, &broker);
+    let fx = replace_the_process(&row, &broker, World::default());
     broker.restart();
     let mut watching = Subscriber::to(broker.socket(), &["watch/#"]);
     let mark = row.rig.requested().len();
@@ -388,45 +402,143 @@ fn a_restarted_runtime_says_the_carried_stale_image_again_to_a_broker_that_kept_
     assert_eq!(vec![(d.topic, String::from_utf8_lossy(&d.payload).into_owned())], before);
 }
 
-/// What each flow row's boot after a restart asks its observe, run by the service's own runner:
-/// the observe's own answer needs a store, but what it was asked with is published either way.
-fn says_its_carried_value_again(mut row: Row, mut broker: Broker, held: &str, observe: &str, registration: Registration, boot: (&str, &str, EventKind)) {
+/// A new process on a broker that kept nothing, handed `row`'s own observe with what the row
+/// asks it. The observe's answer needs a world the test does not give; what it was asked with is
+/// published either way. Returns the new process's answer.
+fn says_its_carried_value_again(mut row: Row, broker: &mut Broker, held: &str, observe: &str, registration: Registration, boot: (&str, &str, EventKind), world: World) -> Result<String, String> {
     row.pass(held);
     let before = broker.retained(&row.filter());
     assert_eq!(before.len(), 1, "{before:?}");
 
-    let fx = replace_the_process(&row, &broker);
+    let fx = replace_the_process(&row, broker, world);
     broker.restart();
     let mut watching = Subscriber::to(broker.socket(), &["watch/#"]);
     row.rig.reopen(registration).unwrap();
     let mark = row.rig.requested().len();
     row.rig.tick(boot.1, boot.2).unwrap();
     let asked = row.rig.requested()[mark..].iter().find(|q| q.name == observe).expect("the boot observes").input.clone();
-    let _ = fx.run("o", &EffectSpec::probe(observe, asked, 1000));
+    let answered = fx.run("o", &EffectSpec::probe(observe, asked, 1000));
     flush(&fx);
 
     let d = watching.recv();
     assert_eq!(vec![(d.topic, String::from_utf8_lossy(&d.payload).into_owned())], before);
+    answered
 }
 
 #[test_id(txzcfv6)]
 #[test]
 fn a_restarted_runtime_says_its_carried_flow_stall_again_to_a_broker_that_kept_nothing() {
     let _env = testkit::env_read();
-    let broker = Broker::up();
+    let mut broker = Broker::up();
     let row = transitions_row(service(&broker));
     let registration = transitions::WatchTransitions::new(transitions_config()).registration();
-    says_its_carried_value_again(row, broker, &transitions_world(true), transitions::OBSERVE, registration, transitions::WatchTransitions::boot());
+    let _ = says_its_carried_value_again(row, &mut broker, &transitions_world(true), transitions::OBSERVE, registration, transitions::WatchTransitions::boot(), World::default());
 }
 
 #[test_id(t9089zn)]
 #[test]
 fn a_restarted_runtime_says_its_carried_landing_stall_again_to_a_broker_that_kept_nothing() {
     let _env = testkit::env_read();
-    let broker = Broker::up();
+    let mut broker = Broker::up();
     let row = throughput_row(service(&broker));
     let registration = throughput::WatchThroughput::new(throughput_config()).registration();
-    says_its_carried_value_again(row, broker, &throughput_world(true), throughput::OBSERVE, registration, throughput::WatchThroughput::boot());
+    let _ = says_its_carried_value_again(row, &mut broker, &throughput_world(true), throughput::OBSERVE, registration, throughput::WatchThroughput::boot(), World::default());
+}
+
+#[test_id(tpwet1a)]
+#[test]
+fn a_restarted_runtime_says_its_carried_suspect_again_to_a_broker_that_kept_nothing() {
+    let _env = testkit::env_read();
+    let mut broker = Broker::up();
+    let row = sweep_row(service(&broker));
+    let _ = says_its_carried_value_again(row, &mut broker, &sweep_world(&["sp-a"]), sweep::OBSERVE, sweep_task().registration(), sweep::BeadSweep::boot(), World::default());
+}
+
+#[test_id(tyyufkc)]
+#[test]
+fn a_restarted_runtime_says_its_carried_slow_probe_again_to_a_broker_that_kept_nothing() {
+    // A home with no probe file, so the observe behind the tracking times nothing.
+    let home = testkit::TempDir::new("watch-perf-home");
+    let _env = testkit::env(&[("SPIRA_HOME", home.to_str())]);
+    let mut broker = Broker::up();
+    let row = perf_row(service(&broker));
+    let answered = says_its_carried_value_again(row, &mut broker, &perf_world(900), perf::OBSERVE, perf_task().registration(), perf::WatchPerf::boot(), World::default());
+    assert!(answered.is_err(), "{answered:?}");
+}
+
+/// The hold the carry read as no request must still be skipped: the versions reach the snapshot
+/// out of what the observe was asked.
+#[test_id(t5xkn4r)]
+#[test]
+fn a_restarted_runtime_says_its_carried_request_again_and_reads_no_known_hold_twice() {
+    let _env = testkit::env_read();
+    let mut broker = Broker::up();
+    let mut row = supersede_row(service(&broker));
+    let other = supersede::Held { id: "sp-other".into(), version: "7".into(), reading: supersede::Reading::NotARequest };
+    let mut held: supersede::Snapshot = serde_json::from_str(&supersede_world(true)).unwrap();
+    held.held.push(other);
+    let dir = testkit::TempDir::new("watch-supersede-lc");
+    let socket = dir.join("lc.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    std::thread::spawn(move || runtime::socket::answer(&listener, &|_| Ok(json!([{"bead_id": "sp-other", "version": "7", "state": "READY"}]).to_string())));
+    row.pass(&serde_json::to_string(&held).unwrap());
+    let world = World { lc_socket: socket, ..World::default() };
+    let answered = says_its_carried_value_again(row, &mut broker, &serde_json::to_string(&held).unwrap(), supersede::OBSERVE, supersede_task().registration(), supersede::SupersedeDuty::boot(), world).expect("the observe answers");
+    let snap: supersede::Snapshot = serde_json::from_str(&answered).unwrap();
+    assert_eq!(snap.held.iter().map(|h| &h.reading).collect::<Vec<_>>(), [&supersede::Reading::Skipped]);
+}
+
+/// The process that is about to stop had `subject` of `row` on the broker, and its clear is
+/// still in flight when it stops.
+fn asks_for_a_lost_clear_again(row: &str, subject: &str, registration: impl Fn() -> Registration, boot: (&str, &str, EventKind), observe: &str, held_world: String, gone: String, cadence_ms: u64) {
+    let broker = Broker::up();
+    let fx = service(&broker);
+    let held = json!({"row": row, "set": {subject: {"level": "P2", "text": "x", "since": 1, "at": 1}}, "clear": []}).to_string();
+    fx.run("k", &EffectSpec::keyed(WATCH_PUBLISH, "k", held, 10_000)).unwrap();
+    flush(&fx);
+
+    let world = Arc::new(Mutex::new(held_world));
+    let (seen, runner) = (world.clone(), fx.clone());
+    let mut rig = TaskRig::new(1, registration())
+        .unwrap()
+        .double(observe, move |_| Ok(seen.lock().unwrap().clone()))
+        .double(INBOX_APPEND, |l| Ok(l.into()))
+        .double(supersede::ACT, |_| Ok(String::new()))
+        .double(perf::LOG, |l| Ok(l.into()))
+        .double(perf::SLOW_SAMPLE, |l| Ok(l.into()))
+        .double(perf::METRICS, |_| Ok("{}".into()))
+        .double(WATCH_PUBLISH, move |input| runner.run("k", &EffectSpec::keyed(WATCH_PUBLISH, "k", input, 10_000)))
+        .hanging(WATCH_PUBLISH);
+    rig.tick(boot.1, boot.2).unwrap();
+    *world.lock().unwrap() = gone;
+    rig.advance(cadence_ms).unwrap();
+    assert_eq!(broker.retained("watch/#").len(), 1, "the clear never ran");
+
+    rig.reopen(registration()).unwrap();
+    rig.run_until_idle().unwrap();
+    flush(&fx);
+    assert_eq!(broker.retained("watch/#"), vec![]);
+}
+
+#[test_id(t0bqn8l)]
+#[test]
+fn a_bead_sweep_clear_lost_with_a_stopping_runtime_is_asked_for_again() {
+    let _env = testkit::env_read();
+    asks_for_a_lost_clear_again(sweep::NAME, "sp-a", || sweep_task().registration(), sweep::BeadSweep::boot(), sweep::OBSERVE, sweep_world(&["sp-a"]), sweep_world(&[]), 60_000);
+}
+
+#[test_id(tpnk3g9)]
+#[test]
+fn a_perf_watch_clear_lost_with_a_stopping_runtime_is_asked_for_again() {
+    let _env = testkit::env_read();
+    asks_for_a_lost_clear_again(perf::INBOX_TAG, "lc-list", || perf_task().registration(), perf::WatchPerf::boot(), perf::OBSERVE, perf_world(900), perf_world(40), perf::CADENCE_MS);
+}
+
+#[test_id(tp99ins)]
+#[test]
+fn a_supersede_duty_clear_lost_with_a_stopping_runtime_is_asked_for_again() {
+    let _env = testkit::env_read();
+    asks_for_a_lost_clear_again(supersede::NAME, "sp-old", || supersede_task().registration(), supersede::SupersedeDuty::boot(), supersede::OBSERVE, supersede_world(true), supersede_world(false), 60_000);
 }
 
 /// A broker that keeps a value while this publisher cannot reach it: the publisher's path to it
