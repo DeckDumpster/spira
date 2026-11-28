@@ -627,12 +627,7 @@ fn cmd_repo_containment_check() -> ExitCode {
         .and_then(|p| spira_config::containment::read_repo_map(Path::new(&p)))
         .or_else(|| {
             let doc = spira_config::locate::locate(None).found().and_then(|p| spira_config::load(&p).ok())?;
-            Some(
-                spira_config::repos::rows_from_toml(&doc)
-                    .iter()
-                    .map(|r| format!("{} | {} | {} | {} | {} | {} | {}\n", r.name, r.path, r.land, r.base, r.format, r.gate, r.lanes))
-                    .collect::<String>(),
-            )
+            Some(spira_config::repos::render_map(&doc))
         });
     match spira_config::containment::check(&instance, &workspaces, map_text.as_deref()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -1169,7 +1164,7 @@ fn write_doc(file: &str, text: &str, verb: &str, reg: Option<&ConfRegistry>) -> 
     }
     let written = atomic_write_commit(pending)
         .map_err(|e| e.to_string())
-        .and_then(|()| mirror.map_or(Ok(()), spira_config::repos::Mirror::commit));
+        .and_then(|()| mirror.map_or(Ok(()), |m| m.commit_or_restore(path, &old)));
     match written {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

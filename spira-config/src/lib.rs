@@ -1844,7 +1844,7 @@ fn commit_edit(file: &std::path::Path, old: &str, new: &str) -> Result<(), Strin
     validate(new)?;
     let mirror = repos::stage_mirror(file, old, new, None)?;
     write_atomic(file, new).map_err(|e| format!("{}: {e}", file.display()))?;
-    mirror.map_or(Ok(()), repos::Mirror::commit)
+    mirror.map_or(Ok(()), |m| m.commit_or_restore(file, old))
 }
 
 /// Removes each `[<table>.<name>]` table (`publish.<name>`) from `file` in one write; other

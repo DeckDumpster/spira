@@ -303,6 +303,67 @@
         assert_eq!(field(&rows, "alpha", Column::Base), "origin/main");
     }
 
+    #[test_id(t8z7r8o)]
+    #[test]
+    fn the_repo_verbs_write_the_layer_that_declares_the_table() {
+        let t = testkit::TempDir::new("repos-verbs-layers");
+        let map = t.path().join("repo-map");
+        std::fs::write(&map, "").unwrap();
+        let base = crate::process::fixture_toml(t.path(), &[("SPIRA_REPO_MAP", &map.display().to_string())]);
+        let over = t.path().join("over.toml");
+        std::fs::write(&over, "[repo.alpha]\npath = \"srv/alpha\"\nmode = \"push\"\n").unwrap();
+        let spec = format!("{}:{}", base.display(), over.display());
+        let home = crate::resolve::locate_home_for_process().unwrap().display().to_string();
+        let _env = testkit::env(&[("SPIRA_TOML", Some(&spec)), ("SPIRA_HOME", Some(&home))]);
+        let targets = crate::repo_admin::Targets { map: Some(map.clone()), toml: Some(spec.clone().into()) };
+        let rows = || parse(&std::fs::read_to_string(&map).unwrap());
+        let base_before = std::fs::read_to_string(&base).unwrap();
+        crate::repo_admin::set("alpha", "lanes", "plan", &targets).unwrap();
+        assert_eq!(field(&rows(), "alpha", Column::Lanes), "plan");
+        assert_eq!(std::fs::read_to_string(&base).unwrap(), base_before);
+        crate::repo_admin::set("spira", "lanes", "plan,spike", &targets).unwrap();
+        assert_eq!(field(&rows(), "spira", Column::Lanes), "plan,spike");
+        crate::repo_admin::rm("spira", &targets).unwrap();
+        assert_eq!(names(&rows()), vec!["alpha".to_string()]);
+        let mut edited = std::fs::read_to_string(&map).unwrap();
+        edited.push_str("beta | srv/beta | push\n");
+        std::fs::write(&map, edited).unwrap();
+        crate::repo_admin::import(&targets).unwrap();
+        assert_eq!(names(&rows()), vec!["alpha".to_string(), "beta".to_string()]);
+        assert!(std::fs::read_to_string(&over).unwrap().contains("[repo.beta]"));
+    }
+
+    #[test_id(t6gm5oa)]
+    #[test]
+    fn a_copy_of_the_config_in_force_never_replaces_the_live_map() {
+        let t = testkit::TempDir::new("repos-mirror-copy");
+        let map = t.path().join("repo-map");
+        std::fs::write(&map, "spira | srv/live | push\n").unwrap();
+        let live = crate::process::fixture_toml(t.path(), &[("SPIRA_REPO_MAP", &map.display().to_string())]);
+        let copy = t.path().join("copy.toml");
+        std::fs::copy(&live, &copy).unwrap();
+        let home = crate::resolve::locate_home_for_process().unwrap().display().to_string();
+        let _env = testkit::env(&[("SPIRA_TOML", Some(live.to_str().unwrap())), ("SPIRA_HOME", Some(&home))]);
+        crate::set_paths_in_file(&copy, &[("repo.spira.base", "main")]).unwrap();
+        assert_eq!(std::fs::read_to_string(&map).unwrap(), "spira | srv/live | push\n");
+    }
+
+    #[test_id(tcq4okg)]
+    #[test]
+    fn a_map_that_cannot_follow_puts_the_config_back() {
+        let (t, map) = map_holding("");
+        let toml = declaring(t.path(), &map, TWO_REPOS);
+        let old = std::fs::read_to_string(&toml).unwrap();
+        let new = old.replace("local/main", "main");
+        let mirror = stage_mirror(&toml, &old, &new, None).unwrap().expect("the tables changed");
+        std::fs::write(&toml, &new).unwrap();
+        std::fs::remove_file(&map).unwrap();
+        std::fs::create_dir(&map).unwrap();
+        let why = mirror.commit_or_restore(&toml, &old).unwrap_err();
+        assert!(why.contains("nothing changed"), "{why}");
+        assert_eq!(std::fs::read_to_string(&toml).unwrap(), old);
+    }
+
     fn publishing_toml(dir: &Path) -> std::path::PathBuf {
         let no_map = dir.join("no-repo-map").display().to_string();
         let toml = crate::process::fixture_toml(dir, &[("SPIRA_REPO_MAP", &no_map)]);

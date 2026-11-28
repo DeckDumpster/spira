@@ -194,6 +194,12 @@ pub fn render(answers: &BTreeMap<String, String>, out: &Path, reg: &Registry<'_>
     if !no_default.is_empty() {
         return Err(format!("no registered default for typed key(s) — answer them: {}", no_default.join(", ")));
     }
+    if let Some(path) = a.get("home_repo_path").filter(|p| !p.is_empty()) {
+        let get = |k: &str, d: &str| a.get(k).filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| d.to_string());
+        let table = serde_json::json!({"path": path, "mode": get("home_repo_land", "push"), "base": get("home_repo_base", "origin/main")});
+        let name = &a["home_repo"];
+        doc = crate::set_path(&doc, &format!("repo.{name}"), &table.to_string()).map_err(|e| format!("the home repository's row: {e}"))?;
+    }
     let text = toml::to_string_pretty(&doc).map_err(|e| e.to_string())?;
     let checked = crate::validate(&text)?;
     crate::require_id_prefix(&checked)?;
@@ -203,17 +209,37 @@ pub fn render(answers: &BTreeMap<String, String>, out: &Path, reg: &Registry<'_>
     ))
 }
 
-/// The repo-map row for the home repository, when `home_repo_path` was answered.
-fn home_row(a: &BTreeMap<String, String>) -> Option<String> {
-    let path = a.get("home_repo_path").filter(|p| !p.is_empty())?;
-    let get = |k: &str, d: &str| a.get(k).filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| d.to_string());
-    Some(format!("{} | {} | {} | {} | |\n", a.get("home_repo")?, path, get("home_repo_land", "push"), get("home_repo_base", "origin/main")))
+/// Puts `doc`'s repository tables in the repo map it declares. A map that already has rows
+/// keeps them as they are, gaining only the ones it lacks: moving it is `repo import`'s job.
+fn map_home_repo(doc: &crate::SpiraToml) -> Result<(), String> {
+    if doc.repo.is_empty() {
+        return Ok(());
+    }
+    let map = PathBuf::from(crate::get_path(doc, "spira.repo_map").unwrap_or_default());
+    let have = std::fs::read_to_string(&map).unwrap_or_default();
+    let rows = crate::repos::parse(&have);
+    if rows.is_empty() {
+        if let Some(dir) = map.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        return crate::repos::sync_map(doc, &map);
+    }
+    let missing: String = crate::repos::rows_from_toml(doc)
+        .iter()
+        .filter(|r| !rows.iter().any(|h| h.name == r.name))
+        .map(|r| crate::repos::row_line(r) + "\n")
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let newline = if have.ends_with('\n') { "" } else { "\n" };
+    crate::write_atomic(&map, &format!("{have}{newline}{missing}")).map_err(|e| format!("{}: {e}", map.display()))
 }
 
 /// Make sure the config at `out` exists: validate and use one already there, else ask
 /// `ask` (a prompt, or `None` with nobody to ask) for each required input `answers` lacks,
-/// then write the file — and, when the home repository's checkout was named, its repo-map
-/// row (never a second row for a name the map already carries).
+/// then write the file — and, when the home repository's checkout was named, its
+/// `[repo.<name>]` table and the repo-map row mirroring it.
 pub fn ensure(
     out: &Path,
     mut answers: BTreeMap<String, String>,
@@ -264,21 +290,7 @@ pub fn ensure(
     if let Some(dir) = out.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    if let Some(row) = home_row(&answers) {
-        let map = crate::get_path(&crate::validate(&text)?, "spira.repo_map").unwrap_or_default();
-        let map = PathBuf::from(map);
-        let have = std::fs::read_to_string(&map).unwrap_or_default();
-        let name = answers.get("home_repo").cloned().unwrap_or_default();
-        let named = have.lines().any(|l| l.split('|').next().map(str::trim) == Some(name.as_str()));
-        if !named {
-            let mut body = have;
-            if !body.is_empty() && !body.ends_with('\n') {
-                body.push('\n');
-            }
-            body.push_str(&row);
-            crate::write_atomic(&map, &body).map_err(|e| format!("{}: {e}", map.display()))?;
-        }
-    }
+    map_home_repo(&crate::validate(&text)?)?;
     // Never overwrite: create_new refuses a file that appeared since the check above.
     use std::io::Write;
     let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(out).map_err(|e| format!("{}: {e}", out.display()))?;
@@ -476,6 +488,22 @@ mod tests {
         assert_eq!(default_out(&m(&[("XDG_CONFIG_HOME", "x"), ("HOME", "h")])).unwrap(), PathBuf::from("x/spira/spira.toml"));
         assert_eq!(default_out(&m(&[("HOME", "h")])).unwrap(), PathBuf::from("h/.config/spira/spira.toml"));
         assert_eq!(default_out(&m(&[("SPIRA_TOML", "a:/b")])).unwrap(), PathBuf::from("a:/b"));
+    }
+
+    #[test_id(thcg6pk)]
+    #[test]
+    fn a_fresh_config_naming_the_home_checkout_declares_its_table_and_a_later_repo_write_mirrors_both() {
+        let d = testkit::TempDir::new("spira-config-init-home-repo");
+        let out = d.path().join("cfg/spira.toml");
+        let mut a = full();
+        a.insert("home_repo_path".into(), "srv/scratch".into());
+        ensure(&out, a, None, &reg()).unwrap();
+        let map = d.path().join("cfg/repo-map");
+        let written = || crate::repos::parse(&std::fs::read_to_string(&map).unwrap());
+        assert_eq!(written(), crate::repos::rows_from_toml(&crate::load(&out).unwrap()));
+        assert_eq!(written()[0].name, "scratch");
+        crate::set_paths_in_file(&out, &[("repo.other", r#"{"path":"srv/other","mode":"push"}"#)]).unwrap();
+        assert_eq!(crate::repos::names(&written()), ["other", "scratch"]);
     }
 
     // covers: UC-config-store-preflight-07

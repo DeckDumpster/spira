@@ -201,8 +201,16 @@ pub struct Mirror {
 
 impl Mirror {
     pub fn commit(self) -> Result<(), String> {
-        crate::atomic_write_commit(self.pending)
-            .map_err(|e| format!("{}: {e} — the repo-map is now stale; run `{IMPORT_VERB}` after fixing it", self.map.display()))
+        crate::atomic_write_commit(self.pending).map_err(|e| format!("{}: {e}", self.map.display()))
+    }
+
+    /// [`Mirror::commit`] after the config `file` was replaced: a map that cannot follow puts
+    /// `old` back, so the two never disagree.
+    pub fn commit_or_restore(self, file: &Path, old: &str) -> Result<(), String> {
+        self.commit().map_err(|e| match crate::write_atomic(file, old) {
+            Ok(()) => format!("{e}; {} is restored, nothing changed", file.display()),
+            Err(re) => format!("{e}; restoring {} failed ({re}), restore it from its backup", file.display()),
+        })
     }
 }
 
@@ -252,7 +260,7 @@ pub fn sync_map(doc: &crate::SpiraToml, map: &Path) -> Result<(), String> {
 /// The mirror a rewrite of config file `file` from `old` to `new` owes, staged. `None` when
 /// `[repo.*]` is unchanged or no map is declared. A layer of `$SPIRA_TOML` is judged with its
 /// sibling layers and mirrored to the map the registry reads; any other file is a config of its
-/// own, mirrored to the map it declares.
+/// own, mirrored to the map it declares unless that is the map in force.
 pub fn stage_mirror(file: &Path, old: &str, new: &str, reg: Option<&crate::registry::Registry>) -> Result<Option<Mirror>, String> {
     let parse_doc = |text: &str| match reg {
         _ if text.trim().is_empty() => Ok(crate::SpiraToml::default()),
@@ -283,7 +291,18 @@ pub fn stage_mirror(file: &Path, old: &str, new: &str, reg: Option<&crate::regis
         let v = new_doc.spira.as_ref()?.0.get("repo_map")?.as_str()?;
         (!v.is_empty()).then(|| PathBuf::from(v))
     };
-    let Some(map) = layer.and_then(|_| process_map_path()).or_else(declared) else {
+    let in_force = if layers.is_empty() { None } else { process_map_path() };
+    let map = match layer {
+        Some(_) => in_force.or_else(declared),
+        None => declared().filter(|own| {
+            let live = in_force.is_some_and(|m| canon(&m) == canon(own));
+            if live {
+                eprintln!("spira-config repos: {} is not the config in force; leaving the repo-map {} alone", file.display(), own.display());
+            }
+            !live
+        }),
+    };
+    let Some(map) = map else {
         return Ok(None);
     };
     let dropped: Vec<String> = old_doc.repo.keys().filter(|n| !new_doc.repo.contains_key(*n)).cloned().collect();

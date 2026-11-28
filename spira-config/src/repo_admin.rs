@@ -67,6 +67,25 @@ pub struct Targets {
     pub toml: Option<PathBuf>,
 }
 
+fn layers(spec: &Path) -> Vec<PathBuf> {
+    spec.to_string_lossy().split(':').filter(|p| !p.is_empty()).map(PathBuf::from).collect()
+}
+
+fn declares(file: &Path, table: &str, name: &str) -> bool {
+    std::fs::read_to_string(file)
+        .ok()
+        .and_then(|t| t.parse::<toml::Value>().ok())
+        .is_some_and(|v| v.get(table).and_then(|t| t.get(name)).is_some())
+}
+
+/// The one file of a `base:override` spec a write of `[<table>.<name>]` goes to: the last layer
+/// declaring it, else the last layer, the one this installation owns.
+fn write_layer(spec: &Path, table: &str, name: &str) -> PathBuf {
+    let all = layers(spec);
+    let declaring = all.iter().rev().find(|f| declares(f, table, name));
+    declaring.or(all.last()).cloned().unwrap_or_else(|| spec.to_path_buf())
+}
+
 fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
     let out = crate::bounded::bounded("git")
         .arg("-C")
@@ -277,7 +296,7 @@ pub fn add(a: &AddArgs, t: &Targets) -> Result<Vec<String>, String> {
     if !publish_pairs.is_empty() {
         let toml = t.toml.as_ref().expect("preflight_publish required it");
         let pairs: Vec<(&str, &str)> = publish_pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-        crate::set_paths_in_file(toml, &pairs)?;
+        crate::set_paths_in_file(&write_layer(toml, "publish", &a.name), &pairs)?;
         for (k, v) in &publish_pairs {
             did.push(format!("wrote {k} = {v:?}"));
         }
@@ -347,7 +366,7 @@ fn register(a: &AddArgs, land_ref: &str, t: &Targets, did: &mut Vec<String>) -> 
     if !a.format.is_empty() {
         table["format"] = serde_json::Value::String(a.format.clone());
     }
-    crate::set_paths_in_file(toml, &[(&format!("repo.{n}"), &table.to_string())])?;
+    crate::set_paths_in_file(&write_layer(toml, "repo", n), &[(&format!("repo.{n}"), &table.to_string())])?;
     did.push(format!("wrote [repo.{n}] to {}", toml.display()));
     Ok(())
 }
@@ -451,6 +470,7 @@ pub fn set(name: &str, field: &str, value: &str, t: &Targets) -> Result<(String,
         ));
     }
     let path = format!("repo.{name}.{key}");
+    let toml = &write_layer(toml, "repo", name);
     if stored.is_empty() {
         crate::unset_paths_in_file(toml, &[&path])?;
     } else {
@@ -484,6 +504,7 @@ pub fn import(t: &Targets) -> Result<Vec<String>, String> {
         return Err(format!("repo import: cannot read the {} row: {}", r.name, warnings.0.join("; ")));
     }
     let before = crate::load(toml)?;
+    let target = layers(toml).pop().ok_or("repo import: no spira.toml located to import into")?;
     let (mut sets, mut unsets, mut did) = (Vec::new(), Vec::new(), Vec::new());
     for row in &rows {
         let n = &row.name;
@@ -510,7 +531,7 @@ pub fn import(t: &Targets) -> Result<Vec<String>, String> {
             continue;
         }
         did.push(format!("[repo.{n}]: {}", changed.join(", ")));
-        if have.is_none() {
+        if !declares(&target, "repo", n) {
             let mut table = serde_json::json!({"path": want.path, "mode": want.land, "lanes": serde_json::from_str::<serde_json::Value>(&lanes_json(&want.lanes)).expect("a JSON array")});
             for (key, value) in [("base", &want.base), ("format", &want.format)] {
                 if !value.is_empty() {
@@ -532,7 +553,7 @@ pub fn import(t: &Targets) -> Result<Vec<String>, String> {
     if !did.is_empty() {
         let sets: Vec<(&str, &str)> = sets.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         let unsets: Vec<&str> = unsets.iter().map(String::as_str).collect();
-        crate::edit_paths_in_file(toml, &sets, &unsets)?;
+        crate::edit_paths_in_file(&target, &sets, &unsets)?;
     }
     repos::sync_map(&crate::load(toml)?, map)?;
     if std::fs::read_to_string(map).map_err(|e| format!("{}: {e}", map.display()))? != text {
@@ -592,6 +613,7 @@ fn set_publish(name: &str, key: &str, value: &str, t: &Targets) -> Result<(Strin
     }
     .unwrap_or_default();
     let path = format!("publish.{name}.{key}");
+    let toml = &write_layer(toml, "publish", name);
     if value.is_empty() {
         crate::unset_paths_in_file(toml, &[&path])?;
     } else {
@@ -617,7 +639,9 @@ pub fn publish_target(name: &str, t: &Targets) -> Result<serde_json::Value, Stri
 /// Removes `[repo.<name>]` and `[publish.<name>]` in one write, returning the row it removed.
 pub fn rm(name: &str, t: &Targets) -> Result<String, String> {
     let (toml, row) = registered_table("rm", name, t)?;
-    crate::remove_named_tables_in_file(toml, &["repo", "publish"], name)?;
+    for layer in layers(toml).iter().filter(|f| declares(f, "repo", name) || declares(f, "publish", name)) {
+        crate::remove_named_tables_in_file(layer, &["repo", "publish"], name)?;
+    }
     Ok(repos::row_line(&row))
 }
 
