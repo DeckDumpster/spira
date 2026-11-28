@@ -14,9 +14,14 @@ use state_store_sqlite::{Options, SqliteBackend};
 const CLIENTS: usize = 50;
 const PINNED_NOW: &str = "1800000000";
 
-fn thread_names(pid: u32) -> Vec<String> {
+/// Each thread's id and name.
+fn threads(pid: u32) -> std::collections::BTreeMap<String, String> {
     let tasks = std::path::Path::new(system_paths::PROC).join(pid.to_string()).join("task");
-    let mut names: Vec<String> = std::fs::read_dir(tasks).expect("the server is alive").flatten().filter_map(|t| std::fs::read_to_string(t.path().join("comm")).ok()).map(|n| n.trim().to_string()).collect();
+    std::fs::read_dir(tasks).expect("the server is alive").flatten().filter_map(|t| Some((t.file_name().to_string_lossy().into_owned(), std::fs::read_to_string(t.path().join("comm")).ok()?.trim().to_string()))).collect()
+}
+
+fn sorted_names<'a>(names: impl Iterator<Item = &'a String>) -> Vec<String> {
+    let mut names: Vec<String> = names.cloned().collect();
     names.sort();
     names
 }
@@ -136,7 +141,8 @@ fn a_verb_the_loop_does_not_serve_is_answered_cannot_tell_naming_the_two_it_does
 #[test]
 fn fifty_concurrent_loop_clients_leave_the_thread_names_as_they_were_at_ready() {
     let server = with_a_bead();
-    let at_ready = thread_names(server.pid);
+    let ready_threads = threads(server.pid);
+    let at_ready = sorted_names(ready_threads.values());
     assert!(at_ready.iter().any(|n| n == "lc-loop"), "no lc-loop thread at ready: {}", at_ready.join(", "));
     std::thread::scope(|scope| {
         for c in 0..CLIENTS {
@@ -150,7 +156,11 @@ fn fifty_concurrent_loop_clients_leave_the_thread_names_as_they_were_at_ready() 
             });
         }
     });
-    let after = thread_names(server.pid);
+    let after_threads = threads(server.pid);
+    let after = sorted_names(after_threads.values());
+    // A std thread names itself once it first runs, so one spawned just before ready can still
+    // carry the binary's name then: a surviving thread is judged by the name it has settled on.
+    let at_ready = sorted_names(ready_threads.iter().map(|(tid, name)| after_threads.get(tid).unwrap_or(name)));
     // An unnamed thread takes the binary's name, and the server's one-shot helpers (dwell
     // priming, a republish push) are unnamed and may exit during the clients: those may fall, never rise.
     let split = |names: &[String]| (names.iter().filter(|n| *n != "spira-lc").cloned().collect::<Vec<_>>(), names.iter().filter(|n| *n == "spira-lc").count());
