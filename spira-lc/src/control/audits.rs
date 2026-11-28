@@ -370,4 +370,28 @@ mod tests {
         assert!(calls <= AUDIT_SCAN_KEYS / EVENTS_PER_READ, "{calls} reads of the events log");
         assert_eq!((got.audits.len(), got.next), (1, None), "the caller resumes from its last row");
     }
+
+    #[test_id(tl2dmeo)]
+    #[test]
+    fn a_capped_read_names_no_next_when_the_cap_lands_on_the_head_and_returns_its_audits_beside_next_when_it_does_not() {
+        use serde_json::json;
+        use state_store::{Object, Txn};
+        let s = store();
+        let pad = |tag: &str, count: usize| {
+            for n in 0..count {
+                s.contract().txn(&Txn::new().put("pad/k", Object::new(json!(n))), &Request::new(&format!("{tag}-{n}"), "t", "t")).unwrap();
+            }
+        };
+        pad("first", 1);
+        let start = s.contract().head().unwrap();
+        s.create("sp-b", None, Some("0123456789abcdef0123456789abcdef01234567"), 100, &Request::new("b", "t", "t")).unwrap();
+        pad("fill", AUDIT_SCAN_KEYS - 1);
+        assert_eq!(s.contract().head().unwrap(), start + AUDIT_SCAN_KEYS as u64);
+        let at_head = s.audits_after_upto(start, 100).unwrap();
+        assert_eq!((at_head.audits.len(), at_head.next), (1, None));
+
+        pad("past", 1);
+        let short = s.audits_after_upto(start, 100).unwrap();
+        assert_eq!((short.audits.len(), short.next), (1, Some(start + AUDIT_SCAN_KEYS as u64)));
+    }
 }

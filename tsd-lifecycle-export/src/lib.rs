@@ -466,6 +466,25 @@ mod tests {
         assert!(err.contains("next 2") && err.contains('3'), "{err}");
     }
 
+    #[test_id(tijpt6c)]
+    #[test]
+    fn a_page_whose_next_is_past_its_last_row_resumes_from_next() {
+        let capped = format!(r#"{{"rows":[{ROW}],"next":500}}"#);
+        let (lc, wire) = scripted(&[&capped, r#"{"rows":[]}"#]);
+        let mut saved = Vec::new();
+        let cp = drain(LifecycleCheckpoint { last_seq: 3 }, |after| lifecycle_batch(&lc, after), |_| Ok(()), |cp| { saved.push(cp.last_seq); Ok(()) }).unwrap();
+        assert_eq!((cp.last_seq, saved), (500, vec![500]));
+        assert_eq!(*wire.0.lock().unwrap(), ["audits --after 3 --limit 100", "audits --after 500 --limit 100"]);
+    }
+
+    #[test_id(t61y0p6)]
+    #[test]
+    fn a_next_that_is_not_a_revision_is_an_error_not_a_caught_up_page() {
+        let (lc, _) = scripted(&[r#"{"rows":[],"next":"500"}"#]);
+        let err = lifecycle_batch(&lc, 3).unwrap_err();
+        assert!(err.contains("next") && err.contains("not a revision"), "{err}");
+    }
+
     fn event(seq: i64) -> LifecycleEventRow {
         LifecycleEventRow {
             seq,
