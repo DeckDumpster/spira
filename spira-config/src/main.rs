@@ -636,12 +636,7 @@ fn cmd_repo_containment_check() -> ExitCode {
         .and_then(|p| spira_config::containment::read_repo_map(Path::new(&p)))
         .or_else(|| {
             let doc = spira_config::locate::locate(None).found().and_then(|p| spira_config::load(&p).ok())?;
-            Some(
-                spira_config::repos::rows_from_toml(&doc)
-                    .iter()
-                    .map(|r| format!("{} | {} | {} | {} | {} | {} | {}\n", r.name, r.path, r.land, r.base, r.format, r.gate, r.lanes))
-                    .collect::<String>(),
-            )
+            Some(spira_config::repos::render_map(&doc))
         });
     match spira_config::containment::check(&instance, &workspaces, map_text.as_deref()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -656,7 +651,7 @@ fn cmd_repo_containment_check() -> ExitCode {
 }
 
 fn cmd_repo_add(args: &[String]) -> ExitCode {
-    const USAGE: &str = "usage: spira-config repo add <name> --path P --queue local|forge [--remote URL] [--land-ref R] [--format CMD] [--gate CMD] [--publish <remote>|none [--publish-branch B] [--publish-mode pr|push]]  (--publish is required with --queue local)";
+    const USAGE: &str = "usage: spira-config repo add <name> --path P --queue local|forge [--remote URL] [--land-ref R] [--format CMD] [--publish <remote>|none [--publish-branch B] [--publish-mode pr|push]]  (--publish is required with --queue local)";
     let Some(name) = args.first().filter(|a| !a.starts_with("--")) else {
         eprintln!("{USAGE}");
         return ExitCode::FAILURE;
@@ -688,15 +683,7 @@ fn cmd_repo_add(args: &[String]) -> ExitCode {
         eprintln!("{USAGE}");
         return ExitCode::FAILURE;
     };
-    let home = spira_config::resolve::locate_home_for_process().unwrap_or_default();
-    let env_map = spira_config::repos::registry_env(env::vars().collect(), &home);
-    let targets = spira_config::repo_admin::Targets {
-        map: env_map
-            .get("SPIRA_REPO_MAP")
-            .filter(|p| !p.is_empty())
-            .map(PathBuf::from),
-        toml: spira_config::locate::locate(None).found(),
-    };
+    let targets = repo_targets();
     let a = spira_config::repo_admin::AddArgs {
         name: name.clone(),
         path,
@@ -755,20 +742,38 @@ fn contract_hint(name: &str, check_output: &str) -> Option<String> {
 }
 
 fn repo_targets() -> spira_config::repo_admin::Targets {
-    let home = spira_config::resolve::locate_home_for_process().unwrap_or_default();
-    let env_map = spira_config::repos::registry_env(env::vars().collect(), &home);
     spira_config::repo_admin::Targets {
-        map: env_map
-            .get("SPIRA_REPO_MAP")
-            .filter(|p| !p.is_empty())
-            .map(PathBuf::from),
+        map: spira_config::repos::process_map_path(),
         toml: spira_config::locate::locate(None).found(),
+    }
+}
+
+fn cmd_repo_import(args: &[String]) -> ExitCode {
+    if !args.is_empty() {
+        eprintln!("usage: spira-config repo import");
+        return ExitCode::FAILURE;
+    }
+    match spira_config::repo_admin::import(&repo_targets()) {
+        Ok(did) => {
+            for d in &did {
+                println!("repo import: {d}");
+            }
+            if did.is_empty() {
+                println!("repo import: [repo.*] and the repo-map already agree, nothing changed");
+                return ExitCode::SUCCESS;
+            }
+            repo_map_written()
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
     }
 }
 
 fn cmd_repo_set(args: &[String]) -> ExitCode {
     let [name, field, value] = args else {
-        eprintln!("usage: spira-config repo set <name> <path|queue|land|format|gate|lanes|publish-remote|publish-branch|publish-mode> <value>");
+        eprintln!("usage: spira-config repo set <name> <path|queue|land|format|lanes|publish-remote|publish-branch|publish-mode> <value>");
         return ExitCode::FAILURE;
     };
     match spira_config::repo_admin::set(name, field, value, &repo_targets()) {
@@ -890,6 +895,7 @@ fn cmd_repo(args: &[String]) -> ExitCode {
         Some("add") => cmd_repo_add(&args[1..]),
         Some("set") => cmd_repo_set(&args[1..]),
         Some("rm") => cmd_repo_rm(&args[1..]),
+        Some("import") => cmd_repo_import(&args[1..]),
         Some("publish") => cmd_repo_publish(&reg, &args[1..]),
         Some("check") => cmd_repo_check(&reg, &args[1..]),
         Some("home-repo") => {
@@ -1101,7 +1107,7 @@ fn cmd_repo(args: &[String]) -> ExitCode {
             eprintln!(
                 "usage: spira-config repo <field|names|all|home-repo|root|land|land-queued|\n\
                  \x20            gate|format|base|name-at|same|containment-check|landref|\n\
-                 \x20            ref-remote|ref-branch|qualify-base-ref|landrefs|publish-forge|publishes-nowhere|add|check> ..."
+                 \x20            ref-remote|ref-branch|qualify-base-ref|landrefs|publish-forge|publishes-nowhere|add|set|rm|import|check> ..."
             );
             ExitCode::FAILURE
         }
@@ -1156,12 +1162,24 @@ fn write_doc(file: &str, text: &str, verb: &str, reg: Option<&ConfRegistry>) -> 
         eprintln!("spira-config {verb}: {file}: refusing to write a document that fails to validate: {e}");
         return ExitCode::FAILURE;
     }
+    let old = fs::read_to_string(path).unwrap_or_default();
+    let mirror = match spira_config::repos::stage_mirror(path, &old, &out, reg) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("spira-config {verb}: {file}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     if let Err(e) = backup_existing(path) {
         eprintln!("spira-config {verb}: {file}: could not back up existing file: {e}");
         return ExitCode::FAILURE;
     }
-    match atomic_write_commit(pending) {
-        Ok(()) => ExitCode::SUCCESS,
+    let written = atomic_write_commit(pending)
+        .map_err(|e| e.to_string())
+        .and_then(|()| mirror.map_or(Ok(false), |m| m.commit_or_restore(path, &old).map(|()| true)));
+    match written {
+        Ok(true) => repo_map_written(),
+        Ok(_) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("spira-config {verb}: {file}: {e}");
             ExitCode::FAILURE

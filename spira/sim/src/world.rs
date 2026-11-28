@@ -1357,8 +1357,9 @@ pub fn probe_command(sim: &Path, world: &Path) -> String {
 /// The world's config settings, as `spira-config set` pairs. `spira-config set`
 /// validates the whole document after every write, so the repository section goes in as
 /// one JSON table: set field by field, `repo.sim.path` alone is refused (no `mode` yet).
+/// The write regenerates [`registry_rows`]' file from the section, so both name one lane list.
 pub fn config_settings(world: &Path, repos: &[RepoSpec], gh: &Path) -> Vec<(String, String)> {
-    let section = |r: &RepoSpec| (format!("repo.{}", r.name), serde_json::json!({ "path": r.work(world).display().to_string(), "mode": r.mode, "base": r.base() }).to_string());
+    let section = |r: &RepoSpec| (format!("repo.{}", r.name), serde_json::json!({ "path": r.work(world).display().to_string(), "mode": r.mode, "base": r.base(), "lanes": ["plan"] }).to_string());
     repos
         .iter()
         .map(section)

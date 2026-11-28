@@ -645,6 +645,23 @@ mod tests {
         assert_eq!(SubmittedBranch::new(&mut fake_git(&mut calls, &script)).create("co", "sp-x", TIP), Err("fatal: cannot lock".into()));
     }
 
+    #[test_id(tcj6x76)]
+    #[test]
+    fn a_lane_written_to_a_repo_table_is_admitted_by_the_lane_check() {
+        let dir = testkit::TempDir::new("bead-lane-mirror");
+        let map = dir.path().join("mirrored.rows");
+        std::fs::write(&map, "home | /srv/home | push | origin/main |  |  | plan\n").unwrap();
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_REPO_MAP", &map.to_string_lossy())]);
+        spira_config::set_paths_in_file(&toml, &[("repo.home", r#"{"path":"/srv/home","mode":"push","base":"origin/main","lanes":["plan"]}"#)]).unwrap();
+        spira_config::set_paths_in_file(&toml, &[("repo.home.lanes", r#"["plan","incident"]"#)]).unwrap();
+        let cfg = |key: &str| Ok(if key == "SPIRA_REPO_MAP" { map.display().to_string() } else { String::new() });
+        let policy = Policy::load(dir.path(), &cfg).unwrap();
+        match crate::lane_check("incident", "home", &policy.repos, false) {
+            crate::LaneCheck::Admitted => {}
+            crate::LaneCheck::Refused(why) => panic!("{why}"),
+        }
+    }
+
     fn persona(name: &str, labels: &[&str], spec: bool) -> Persona {
         Persona { name: name.into(), labels: labels.iter().map(|s| s.to_string()).collect(), requires_build_spec: spec, unresolved: None }
     }

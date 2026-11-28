@@ -169,7 +169,7 @@ fn a_world_always_has_its_own_repository_first_and_registers_every_repository_it
     assert_eq!(registry_rows(w, &named), "sim|w/work|push|origin/main|||plan\ndocs|w/repos/docs/work|pr|origin/main|||plan\n");
     let settings = config_settings(w, &only, Path::new("w/bin/gh"));
     let section = |k: &str| settings.iter().find(|(n, _)| n == k).map(|(_, v)| serde_json::from_str::<serde_json::Value>(v).unwrap());
-    assert_eq!(section("repo.docs").unwrap(), serde_json::json!({"path": "w/repos/docs/work", "mode": "hold", "base": "origin/master"}));
+    assert_eq!(section("repo.docs").unwrap(), serde_json::json!({"path": "w/repos/docs/work", "mode": "hold", "base": "origin/master", "lanes": ["plan"]}));
     assert_eq!(section("repo.sim").unwrap()["mode"], "queue.local");
 }
 

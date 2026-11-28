@@ -29,27 +29,116 @@ fn field(map: &Path, name: &str, col: &str) -> String {
         .to_string()
 }
 
-fn fixture() -> (testkit::TempDir, std::path::PathBuf) {
+/// A map and the config that declares it, holding `[repo.<name>]` for each of `names`.
+fn fixture_of(names: &[&str]) -> (testkit::TempDir, std::path::PathBuf) {
     let d = testkit::TempDir::new("repo-set-cli");
     let map = d.path().join("repo-map");
-    std::fs::write(
-        &map,
-        "fx | /srv/fx | queue.local | local/main | fmt | bash gate.sh | plan\n",
-    )
-    .unwrap();
+    let rows: String = names
+        .iter()
+        .map(|n| format!("{n} | /srv/{n} | queue.local | local/main | fmt |  | plan\n"))
+        .collect();
+    std::fs::write(&map, rows).unwrap();
+    let toml = spira_config::process::fixture_toml(d.path(), &[("SPIRA_REPO_MAP", map.to_str().unwrap())]);
+    let mut text = std::fs::read_to_string(&toml).unwrap();
+    for n in names {
+        text.push_str(&format!(
+            "\n[repo.{n}]\npath = \"/srv/{n}\"\nmode = \"queue.local\"\nbase = \"local/main\"\nformat = \"fmt\"\nlanes = [\"plan\"]\n"
+        ));
+    }
+    std::fs::write(&toml, text).unwrap();
     (d, map)
 }
 
-#[test_id(te0m3j7)]
+fn fixture() -> (testkit::TempDir, std::path::PathBuf) {
+    fixture_of(&["fx"])
+}
+
+fn config(map: &Path) -> std::path::PathBuf {
+    map.parent().unwrap().join("spira.toml")
+}
+
+fn both_files(map: &Path) -> (String, String) {
+    (std::fs::read_to_string(map).unwrap(), std::fs::read_to_string(config(map)).unwrap())
+}
+
+#[test_id(tefppb9)]
 #[test]
-fn set_gate_to_empty_reads_back_empty_through_repo_field() {
+fn a_generic_set_of_a_repo_lane_is_what_repo_field_reads() {
     let (_d, map) = fixture();
-    assert_eq!(field(&map, "fx", "gate"), "bash gate.sh");
-    let o = run(&map, &["repo", "set", "fx", "gate", ""]);
+    let toml = config(&map);
+    let o = run(&map, &["set", "repo.fx.lanes", r#"["plan","incident"]"#, toml.to_str().unwrap()]);
     assert!(o.status.success(), "{o:?}");
-    assert!(String::from_utf8_lossy(&o.stdout).contains("bash gate.sh"));
-    assert_eq!(field(&map, "fx", "gate"), "");
-    assert_eq!(field(&map, "fx", "format"), "fmt");
+    assert_eq!(field(&map, "fx", "lanes"), "plan,incident");
+}
+
+#[test_id(t2l5l67)]
+#[test]
+fn a_generic_unset_of_a_repo_key_is_what_repo_field_reads() {
+    let (_d, map) = fixture();
+    let toml = config(&map);
+    let o = run(&map, &["unset", "repo.fx.format", toml.to_str().unwrap()]);
+    assert!(o.status.success(), "{o:?}");
+    assert_eq!(field(&map, "fx", "format"), "");
+}
+
+#[test_id(tp79u9r)]
+#[test]
+fn repo_set_lanes_writes_the_typed_array_to_the_toml() {
+    let (_d, map) = fixture();
+    let o = run(&map, &["repo", "set", "fx", "lanes", "plan,spike"]);
+    assert!(o.status.success(), "{o:?}");
+    let doc = spira_config::load(&config(&map)).unwrap();
+    assert_eq!(doc.repo["fx"].lanes, [spira_config::Lane::Plan, spira_config::Lane::Spike]);
+    assert_eq!(field(&map, "fx", "lanes"), "plan,spike");
+}
+
+#[test_id(t5r4xza)]
+#[test]
+fn repo_set_gate_is_refused_as_a_retired_key() {
+    let (_d, map) = fixture();
+    let before = both_files(&map);
+    let o = run(&map, &["repo", "set", "fx", "gate", ""]);
+    assert!(!o.status.success(), "{o:?}");
+    assert!(String::from_utf8_lossy(&o.stderr).contains("[repo.*] retired the gate key"), "{o:?}");
+    assert_eq!(both_files(&map), before);
+}
+
+#[test_id(t8pgn2q)]
+#[test]
+fn a_set_the_map_cannot_mirror_is_refused_whole_until_import_then_goes_through() {
+    let (_d, map) = fixture();
+    let mut rows = std::fs::read_to_string(&map).unwrap();
+    rows.push_str("hand | srv/hand | push | origin/main | | | plan\n");
+    std::fs::write(&map, rows).unwrap();
+    let before = both_files(&map);
+    let toml = config(&map);
+    let args = ["set", "repo.fx.base", "main", toml.to_str().unwrap()];
+    let o = run(&map, &args);
+    let said = String::from_utf8_lossy(&o.stderr).into_owned();
+    assert!(!o.status.success() && said.contains("hand") && said.contains("spira-config repo import"), "{said}");
+    assert_eq!(both_files(&map), before);
+
+    let o = run(&map, &["repo", "import"]);
+    assert!(o.status.success(), "{o:?}");
+    assert_eq!(field(&map, "hand", "path"), "srv/hand");
+    assert!(run(&map, &args).status.success());
+    assert_eq!(field(&map, "fx", "base"), "main");
+}
+
+#[test_id(t4hw2lj)]
+#[test]
+fn a_hand_edited_row_is_reported_on_stderr_and_still_served() {
+    let (_d, map) = fixture();
+    assert!(run(&map, &["repo", "set", "fx", "lanes", "plan"]).status.success());
+    run(&map, &["repo", "import"]);
+    let quiet = run(&map, &["repo", "field", "fx", "lanes"]);
+    assert!(!String::from_utf8_lossy(&quiet.stderr).contains("differs"), "{quiet:?}");
+    let edited = std::fs::read_to_string(&map).unwrap().replace("| /srv/fx |", "| srv/hand |");
+    std::fs::write(&map, edited).unwrap();
+    let o = run(&map, &["repo", "field", "fx", "path"]);
+    let said = String::from_utf8_lossy(&o.stderr).into_owned();
+    assert!(said.contains("differs from [repo.*]") && said.contains("for fx;") && said.contains("spira-config repo import"), "{said}");
+    assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "srv/hand");
 }
 
 #[test_id(tcnyva3)]
@@ -58,7 +147,7 @@ fn set_with_an_unknown_field_refuses_and_changes_nothing() {
     let (_d, map) = fixture();
     let o = run(&map, &["repo", "set", "fx", "colour", "red"]);
     assert!(!o.status.success());
-    assert_eq!(field(&map, "fx", "gate"), "bash gate.sh");
+    assert_eq!(field(&map, "fx", "format"), "fmt");
 }
 
 #[test_id(t93klmq)]
@@ -77,12 +166,7 @@ fn out(o: &Output) -> String {
 #[test_id(t9woxit)]
 #[test]
 fn publish_target_round_trips_through_set_publish_clear_and_rm() {
-    let (d, map) = fixture();
-    std::fs::write(
-        &map,
-        "fx | /srv/fx | queue.local | local/main | fmt | | plan\nother | /srv/o | queue.local | local/main | | | plan\n",
-    )
-    .unwrap();
+    let (d, map) = fixture_of(&["fx", "other"]);
     let o = run(&map, &["repo", "publish", "fx"]);
     assert!(o.status.success(), "{o:?}");
     let v: serde_json::Value = serde_json::from_str(out(&o).trim()).unwrap();
@@ -142,7 +226,7 @@ fn a_lanes_change_tells_the_running_scheduler_its_repository_map_was_rewritten()
     let (d, map) = fixture();
     let sock = d.path().join("control.sock");
     let asked = scheduler(&sock);
-    spira_config::process::fixture_toml(d.path(), &[("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_RUNTIME_SOCKET", sock.to_str().unwrap())]);
+    spira_config::set_paths_in_file(&config(&map), &[("spira.runtime_socket", sock.to_str().unwrap())]).unwrap();
     let o = run(&map, &["repo", "set", "fx", "lanes", "plan,incident"]);
     assert!(o.status.success(), "{o:?}");
     assert_eq!(asked.try_recv().expect("the scheduler was told before the verb returned"), ["scheduler", "repin", "SPIRA_REPO_MAP"]);
@@ -150,4 +234,87 @@ fn a_lanes_change_tells_the_running_scheduler_its_repository_map_was_rewritten()
 
     assert!(!run(&map, &["repo", "set", "fx", "colour", "red"]).status.success());
     assert!(asked.try_recv().is_err(), "a refused write tells nobody");
+}
+
+#[test_id(tb3ep00)]
+#[test]
+fn a_generic_set_and_an_import_that_rewrite_the_map_tell_the_running_scheduler() {
+    let (d, map) = fixture();
+    let sock = d.path().join("control.sock");
+    let asked = scheduler(&sock);
+    let toml = config(&map);
+    spira_config::set_paths_in_file(&toml, &[("spira.runtime_socket", sock.to_str().unwrap())]).unwrap();
+    let repin = ["scheduler", "repin", "SPIRA_REPO_MAP"];
+    assert!(run(&map, &["set", "repo.fx.lanes", r#"["plan","incident"]"#, toml.to_str().unwrap()]).status.success());
+    assert_eq!(asked.try_recv().expect("the generic set told the scheduler"), repin);
+
+    let mut rows = std::fs::read_to_string(&map).unwrap();
+    rows.push_str("hand | srv/hand | push | origin/main | | | plan\n");
+    std::fs::write(&map, rows).unwrap();
+    assert!(run(&map, &["repo", "import"]).status.success());
+    assert_eq!(asked.try_recv().expect("import told the scheduler"), repin);
+    assert!(run(&map, &["repo", "import"]).status.success());
+    assert!(asked.try_recv().is_err(), "a no-op import tells nobody");
+}
+
+/// Runs the binary against `<fixture config>:<over>`.
+fn run_layered(map: &Path, over: &Path, args: &[&str]) -> Output {
+    Command::new(testkit::bin_exe("spira-config"))
+        .env_clear()
+        .env("SPIRA_TOML", format!("{}:{}", config(map).display(), over.display()))
+        .env("SPIRA_HOME", spira_config::resolve::locate_home_for_process().unwrap())
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+fn field_layered(map: &Path, over: &Path, name: &str, col: &str) -> String {
+    out(&run_layered(map, over, &["repo", "field", name, col])).trim().to_string()
+}
+
+#[test_id(tr27x0b)]
+#[test]
+fn a_layered_rm_the_map_refuses_leaves_every_layer_as_it_was() {
+    let (d, map) = fixture();
+    let over = d.path().join("over.toml");
+    let base = std::fs::read_to_string(config(&map)).unwrap();
+    let (rest, table) = base.split_at(base.find("\n[repo.fx]").unwrap());
+    std::fs::write(config(&map), format!("{rest}\n[publish.fx]\nremote = \"none\"\n")).unwrap();
+    std::fs::write(&over, table).unwrap();
+    let mut rows = std::fs::read_to_string(&map).unwrap();
+    rows.push_str("hand | srv/hand | push | origin/main | | | plan\n");
+    std::fs::write(&map, rows).unwrap();
+    let before = (both_files(&map), std::fs::read_to_string(&over).unwrap());
+    let o = run_layered(&map, &over, &["repo", "rm", "fx"]);
+    assert!(!o.status.success(), "{o:?}");
+    assert_eq!((both_files(&map), std::fs::read_to_string(&over).unwrap()), before);
+}
+
+#[test_id(t2ublz6)]
+#[test]
+fn clearing_a_key_in_a_layer_does_not_bring_back_the_lower_layers_value() {
+    let (d, map) = fixture();
+    let over = d.path().join("over.toml");
+    std::fs::write(&over, "[repo.fx]\npath = \"/srv/fx\"\nmode = \"queue.local\"\nformat = \"other\"\n").unwrap();
+    let o = run_layered(&map, &over, &["repo", "set", "fx", "format", ""]);
+    assert!(o.status.success(), "{o:?}");
+    assert_eq!(field_layered(&map, &over, "fx", "format"), "");
+}
+
+#[test_id(tajzu9r)]
+#[test]
+fn a_layered_import_of_an_empty_column_overrides_the_lower_layer_and_settles() {
+    let (d, map) = fixture();
+    let over = d.path().join("over.toml");
+    std::fs::write(&over, "").unwrap();
+    std::fs::write(&map, "fx | /srv/fx | queue.local |  |  |  | plan\n").unwrap();
+    let o = run_layered(&map, &over, &["repo", "import"]);
+    assert!(o.status.success(), "{o:?}");
+    assert_eq!(field_layered(&map, &over, "fx", "base"), "");
+    assert_eq!(field_layered(&map, &over, "fx", "format"), "");
+    let after = std::fs::read_to_string(&over).unwrap();
+    let again = run_layered(&map, &over, &["repo", "import"]);
+    assert!(again.status.success(), "{again:?}");
+    assert!(!out(&again).contains("[repo.fx]"), "{again:?}");
+    assert_eq!(std::fs::read_to_string(&over).unwrap(), after);
 }

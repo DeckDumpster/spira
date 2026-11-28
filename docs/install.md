@@ -135,12 +135,16 @@ would make the gate test the code already in force.
 | `[persona.<name>]` | `model`, `tools`, `labels`, `lane`, `lease`, `system_prompt`, `escalation_model` |
 | `[publish.<name>]` | `remote` (`none` = publishes nowhere), `branch`, and `mode` (`pr`, the default, opens a forge PR; `push` fast-forward-pushes the green head and calls no forge API), for `queue.local` repositories |
 
-**Repositories.** The registry is the pipe-delimited file named by `spira.repo_map` when it
-exists (`name | path | mode | base | format | gate | lanes`), else the `[repo.*]` tables.
+**Repositories.** A repository's fields have one definition, its `[repo.<name>]` table, written
+only through spira-config. The pipe-delimited file named by `spira.repo_map`
+(`name | path | mode | base | format | gate | lanes`) is what the harness reads: every
+spira-config write that changes a `[repo.*]` table regenerates it, and a write it cannot mirror
+(a row with no table, or with a gate column) is refused. `spira-config repo import` moves the rows
+of an existing map into the tables. A hand-edited row is reported on stderr.
 Register one with `spira-config repo add <name> --path P --queue local|forge [--remote URL]
-[--land-ref R] [--format CMD] [--gate CMD] [--publish <remote>|none [--publish-branch B]
+[--land-ref R] [--format CMD] [--publish <remote>|none [--publish-branch B]
 [--publish-mode pr|push]]` (`--publish` is required with `--queue local`, and refused with `forge`) and audit with `spira-config repo check
-<name>|--all`. Change a field with `spira-config repo set <name> path|queue|land|format|gate|lanes|publish-remote|publish-branch|publish-mode
+<name>|--all`. Change a field with `spira-config repo set <name> path|queue|land|format|lanes|publish-remote|publish-branch|publish-mode
 <value>` (prints old and new; `queue` is the mode, `land` the landing ref; an empty
 `publish-branch` or `publish-mode` clears it), read the publish target with `spira-config repo
 publish <name>|--all` (JSON, an unset key `null`) and unregister, publish table included, with
