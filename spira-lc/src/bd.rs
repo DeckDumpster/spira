@@ -298,6 +298,7 @@ fn failed(program: &str, secs: &str, args: &[&str], out: &std::process::Output) 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn file_child_via((program, secs): (&str, &str), title: &str, persona: &str, repo: &str, parent: Option<&str>, body: Option<&str>, contract_considered: Option<&str>, priority: Option<&str>) -> Result<String, String> {
     let mut args = vec!["file", title, "--for", persona, "--repo", repo];
     if let Some(priority) = priority {

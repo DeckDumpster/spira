@@ -600,7 +600,7 @@ pub fn with_drafts(notes: &str, text: &str) -> Option<String> {
 /// The body of the Skuld request filed for a follow-up a dwarf filed: it asks for one draft headed
 /// with the follow-up's title verbatim, or one amendment of a waiting item with the same outcome,
 /// and carries the filer's text.
-pub fn review_request_body(followup: &str, title: &str, repo: &str, filer: &str, bound: &str, filer_text: &str, priority: i64, statement: Option<&str>) -> String {
+pub fn review_request_body(followup: &str, title: &str, repo: &str, filer: &str, bound: &str, filer_text: &str, (priority, statement): (i64, Option<&str>)) -> String {
     let standing = match statement {
         Some(s) => format!("Priority: P{priority} — {}", s.split_whitespace().collect::<Vec<_>>().join(" ")),
         None => format!("Priority: P{priority} (no blocking or defect statement)"),
@@ -1472,9 +1472,9 @@ mod tests {
     #[test_id(thkmwu6)]
     #[test]
     fn review_request_body_names_the_followup_and_the_verbatim_heading() {
-        let b = review_request_body("sp-f1", "Fix the thing", "deck", "builder", "sp-b0", "## Build\nx\n", 3, None);
+        let b = review_request_body("sp-f1", "Fix the thing", "deck", "builder", "sp-b0", "## Build\nx\n", (3, None));
         assert!(b.contains("\nPriority: P3 (no blocking or defect statement)\n\n## The filer's text\n"), "{b}");
-        let stated = review_request_body("sp-f1", "Fix the thing", "deck", "builder", "sp-b0", "x", 1, Some("blocks: sp-b9\nfrom landing"));
+        let stated = review_request_body("sp-f1", "Fix the thing", "deck", "builder", "sp-b0", "x", (1, Some("blocks: sp-b9\nfrom landing")));
         assert!(stated.contains("\nPriority: P1 — blocks: sp-b9 from landing\n\n## The filer's text\n"), "{stated}");
         assert!(b.contains("sp-f1") && b.contains("sp-b0") && b.contains("builder"));
         assert!(b.contains("### Draft: Fix the thing\n\n"));

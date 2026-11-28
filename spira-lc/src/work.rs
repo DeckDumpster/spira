@@ -1450,7 +1450,7 @@ fn review_followup(
     wait: impl FnOnce(&str, &str) -> Result<(), String>,
 ) -> (i32, String) {
     let request_title = format!("Draft {followup}: {}", f.title);
-    let request_body = ::bead::review_request_body(followup, f.title, f.repo, f.actor, f.bound, f.body.unwrap_or(""), f.priority.unwrap_or(FOLLOWUP_PRIORITY), f.statement);
+    let request_body = ::bead::review_request_body(followup, f.title, f.repo, f.actor, f.bound, f.body.unwrap_or(""), (f.priority.unwrap_or(FOLLOWUP_PRIORITY), f.statement));
     let request = match file(&request_title, &request_body) {
         Ok(r) => r,
         Err(e) => return (CANNOT_TELL, format!("{followup} was filed but its Skuld review could not be filed (do not file it again; file the review and make {followup} wait on it): {e}")),
