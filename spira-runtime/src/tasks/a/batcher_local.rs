@@ -1116,8 +1116,8 @@ pub struct Landed {
     /// The round `land` left staged behind it, to promote.
     #[serde(default)]
     pub staged: Option<String>,
-    /// `round land` refused base-moved (its exit): the base it now stands on. The round is
-    /// certified again, not landed.
+    /// `round land` refused base-moved (its exit): the `base` the queue wrote on the rebuilt
+    /// round's record. The round is certified again, not landed.
     #[serde(default)]
     pub base_moved: Option<String>,
 }
@@ -2785,6 +2785,7 @@ impl Machine<'_> {
             return;
         }
         self.rc.recertified_on = Some(base.to_string());
+        self.rc.base = base.to_string();
         self.go(Trigger::LandBaseMoved);
         self.rc.run += 1;
         self.certify();
@@ -3820,6 +3821,22 @@ pub mod edge {
         Ok("{}".into())
     }
 
+    /// The base `batch`'s record names, which a base-moved refusal rebuilt the round on.
+    pub fn rebuilt_base(rounds: &[io::OpenRound], batch: &str) -> Result<String, String> {
+        rounds.iter().find(|r| r.id == batch).map(|r| r.base.clone()).filter(|b| !b.is_empty()).ok_or_else(|| no_rebuilt_base(batch))
+    }
+
+    fn no_rebuilt_base(batch: &str) -> String {
+        format!("round {batch} was refused base-moved and its record carries no base")
+    }
+
+    /// [`rebuilt_base`] of the records read now. `views` is read afresh because a watched
+    /// projection may not yet hold what `round land` has just written, and would not refuse.
+    pub fn rebuilt_record_base(views: &store_view::Projection, repo: &str, batch: &str) -> Result<String, String> {
+        let view = views.refresh_batches().and_then(|()| views.round_view(repo)).map_err(|e| format!("{}: {e}", no_rebuilt_base(batch)))?;
+        rebuilt_base(&view.value.rounds.iter().map(|r| io::open_round_of(r, 0)).collect::<Vec<_>>(), batch)
+    }
+
     /// `queue round land`, retried while another operation holds the lock; a refusal is an `Err`.
     pub fn land(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
@@ -3827,7 +3844,9 @@ pub mod edge {
         let run = io::round_land(&env, &repo, &leg.batch)?;
         if io::land_base_moved(run.code) {
             eprintln!("{} {}: queue round land refused base-moved for {} ({}) — certifying it again", super::NAME, repo.name, leg.batch, run.refusal);
-            return json(&Landed { base_moved: Some(io::resolve_base_sha(&repo)?), ..Landed::default() });
+            // A private projection: refreshing the shared watched one would drop its held bead rows.
+            let views = spira_store::lc_call::LcClient::configured().and_then(store_view::Projection::configured).map_err(|e| format!("{}: {e}", no_rebuilt_base(&leg.batch)))?;
+            return json(&Landed { base_moved: Some(rebuilt_record_base(&views, &repo.name, &leg.batch)?), ..Landed::default() });
         }
         match run.outcome {
             io::LandOutcome::Refused => Err(run.refusal),
