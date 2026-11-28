@@ -68,6 +68,7 @@ fn span_of(snapshot: &state_store::phases::Snapshot) -> opentelemetry_proto::ton
         children: snapshot.children,
         programs: &snapshot.programs,
         subverb: None,
+        turn_tasks: None,
     };
     super::record_span(Some(&sink), &call);
     let file = std::fs::read_dir(&dir).unwrap().flatten().next().unwrap();
@@ -413,4 +414,19 @@ fn a_request_logs_its_own_verb_and_caller_for_a_query_made_before_any_dispatch()
     let who = crate::slow::caller_of_pid(me);
     let fields: Vec<(String, String)> = got.lines().map(|l| (l.split('\t').nth(1).unwrap().to_string(), l.split('\t').nth(2).unwrap().to_string())).collect();
     assert_eq!(fields, [("list".to_string(), who.clone()), ("show".to_string(), who)], "{got}");
+}
+
+#[test_id(tu8xs7c)]
+#[test]
+fn a_served_journal_turns_span_names_the_tasks_of_its_rows() {
+    let _env = testkit::env_read();
+    let dir = testkit::TempDir::new("lc-serve-turn-tasks");
+    let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
+    let turn = runtime::journal::Turn { state: vec![runtime::journal::StateRow { task: "claim-count".into(), skey: "carry".into(), value: "v".into(), at: 1 }], ..Default::default() };
+    let argv = ["journal".to_string(), "turn".to_string(), serde_json::to_string(&turn).unwrap()];
+    let _ = send_spanned(&door_answering(0, None), Some(&sink), &argv.iter().map(String::as_str).collect::<Vec<_>>(), None, None);
+    let span = only_span(&dir);
+    use opentelemetry_proto::tonic::common::v1::any_value::Value;
+    assert_eq!(serve_value(&span, "spira.turn.tasks"), Value::StringValue("claim-count".into()));
+    assert_eq!(serve_value(&span, "spira.subverb"), Value::StringValue("turn".into()));
 }

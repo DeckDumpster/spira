@@ -163,13 +163,8 @@ impl Filing {
     }
 }
 
-/// Files `f` through the incident library in this process: spooled, then drained into the
-/// store, deduplicated on its reference. `Err` when it was not filed (it may stay spooled).
-pub fn file(f: &Filing) -> Result<String, String> {
-    let mut env = incident::intake::Env::load();
-    if env.db.is_none() {
-        return Err("SPIRA_DB is not set: no store to file into".into());
-    }
+/// The intake's environment for one inference filing: what its row is raised with.
+pub fn tuned(mut env: incident::intake::Env, f: &Filing) -> incident::intake::Env {
     env.labels = incident::decide::incident_labels(Some(&f.labels), None, "incident");
     env.kind = f.kind.clone();
     env.priority = f.priority.clone();
@@ -178,15 +173,22 @@ pub fn file(f: &Filing) -> Result<String, String> {
     env.repo = Some(f.repo.clone()).filter(|r| !r.is_empty());
     env.cause = incident::decide::sanitize_cause(&f.cause);
     env.express = f.express;
-    let bd = incident::real::RealBd::from_env()?;
-    let entry = incident::spool::SpoolEntry { reference: f.reference.clone(), title: f.subject.clone(), unit: env.unit.clone(), incident_path: env.path.clone(), cause: env.cause.clone(), repo: env.repo.clone(), body: f.body.clone().into_bytes() };
-    std::fs::create_dir_all(&env.spool_dir).map_err(|e| format!("{}: {e}", env.spool_dir.display()))?;
-    let path = incident::spool::entry_path(&env.spool_dir, &incident::intake::spool_stamp(), &f.reference, std::process::id());
-    incident::spool::write_entry(&path, &entry).map_err(|e| format!("{}: {e}", path.display()))?;
-    match incident::intake::drain_one(&env, &bd, &incident::real::RealMailer, &incident::real::RealClock, &path) {
-        Ok(id) => Ok(id.unwrap_or_else(|| f.reference.clone())),
-        Err(why) => Err(format!("{} not filed; it stays spooled at {}: {why}", f.reference, path.display())),
+    env.reference = Some(f.reference.clone());
+    env
+}
+
+/// Files `f` through the incident library in this process: raised onto its reference's row and
+/// filed from it, deduplicated on that reference. `Err` says why it was not filed.
+pub fn file(f: &Filing) -> Result<String, String> {
+    let env = incident::intake::Env::load();
+    if env.db.is_none() {
+        return Err("SPIRA_DB is not set: no store to file into".into());
     }
+    let env = tuned(env, f);
+    let bd = incident::real::RealBd::from_env()?;
+    incident::intake::file_event(&env, &bd, &incident::real::RealMailer, &incident::real::RealClock, &f.subject, f.body.as_bytes())
+        .map(|id| id.unwrap_or_else(|| f.reference.clone()))
+        .map_err(|why| format!("{} not filed: {why}", f.reference))
 }
 
 /// `forge batch-ci-status <repo> <branch>`'s `key: value` lines, through the forge library.
@@ -267,6 +269,16 @@ pub fn parse_iso_to_epoch(ts: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(tp5xf0n)]
+    #[test]
+    fn a_filing_is_raised_under_its_own_reference_with_its_repo_and_cause() {
+        let f = Filing { cause: "base red".into(), ..Filing::base_red("spira:a.sh", "BASE RED", "body", "spira", "spira,czar") };
+        let env = tuned(incident::intake::Env::load(), &f);
+        assert_eq!(env.repo_override_ref().as_deref(), Some("incident:base-red:spira:a.sh"));
+        assert_eq!((env.repo.as_deref(), env.cause.as_str(), env.kind.as_str(), env.priority.as_str()), (Some("spira"), "base-red", "bug", "0"));
+        assert!(env.express && env.fenrir_exempt && env.labels.split(',').any(|l| l == "czar"), "{}", env.labels);
+    }
 
     #[test_id(ttq4ir0)]
     #[test]

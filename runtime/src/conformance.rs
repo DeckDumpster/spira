@@ -291,6 +291,21 @@ pub fn handler_panic_quarantines_its_stream_only(rig: &dyn Rig) {
     assert_eq!(count_tag(&*j, "pong"), 2, "the quarantine outlives a restart");
 }
 
+pub fn one_read_lists_every_poisoned_stream_and_no_other(rig: &dyn Rig) {
+    let (j, clock, n) = (rig.journal(), VirtualClock::new(0), Counter::default());
+    assert_eq!(j.poisoned_all().unwrap(), vec![], "a fresh journal holds no poison");
+    let mut x = rig.boot(j.clone(), &clock, 1, all(&n)).unwrap();
+    for stream in ["bad", "worse"] {
+        x.submit(&format!("boom-{stream}"), stream, EventKind::new("boom", "")).unwrap();
+    }
+    ping(&mut *x, "p-ok", "ok");
+    x.run_until_idle().unwrap();
+    let mut rows = j.poisoned_all().unwrap();
+    rows.sort_by(|a, b| a.stream.cmp(&b.stream));
+    let one = |s: &str| j.poisoned(&StreamKey(s.into())).unwrap().expect("poisoned");
+    assert_eq!(rows, vec![one("bad"), one("worse")]);
+}
+
 pub fn schedule_rows_survive_restart_and_fire_once(rig: &dyn Rig) {
     let (j, clock, n) = (rig.journal(), VirtualClock::new(0), Counter::default());
     let mut x = rig.boot(j.clone(), &clock, 1, all(&n)).unwrap();
@@ -692,6 +707,7 @@ pub fn run_all(rig: &dyn Rig) {
     determinism_under_one_seed(rig);
     a_fired_schedule_row_is_not_fired_by_the_next_process(rig);
     handler_panic_quarantines_its_stream_only(rig);
+    one_read_lists_every_poisoned_stream_and_no_other(rig);
     schedule_rows_survive_restart_and_fire_once(rig);
     observe_shadows_writes_and_runs_probes(rig);
     halt_holds_writes_runs_probes_and_resume_releases_once_in_order(rig);

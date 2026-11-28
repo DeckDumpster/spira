@@ -281,6 +281,13 @@ impl<B: Backend> Store<B> {
         let _ = self.bridge.set(outbox);
     }
 
+    /// Hands the bridge the incident row at `key` as `rev` left it; `None` once deleted.
+    pub(super) fn bridge_incident(&self, rev: u64, key: &str, row: Option<&spira_store::incident::Row>) {
+        if let Some(bridge) = self.bridge.get() {
+            bridge.incident(rev, key, row);
+        }
+    }
+
     fn ship_transitions(&self, applied: &[Audit]) {
         let Some(shipper) = &self.shipper else { return };
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());

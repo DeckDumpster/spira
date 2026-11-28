@@ -91,6 +91,12 @@ impl Republish {
         self.0.push(message(topic, class, payload)?);
         Ok(())
     }
+
+    /// [`Publisher::clear`], said on this connect.
+    pub fn clear(&mut self, topic: &str) -> Result<(), PubError> {
+        self.0.push(clearing(topic)?);
+        Ok(())
+    }
 }
 
 enum Phase {

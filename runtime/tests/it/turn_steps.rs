@@ -79,6 +79,9 @@ impl Journal for HeldCommit {
     fn poisoned(&self, stream: &runtime::StreamKey) -> runtime::Result<Option<Poison>> {
         self.0.poisoned(stream)
     }
+    fn poisoned_all(&self) -> runtime::Result<Vec<Poison>> {
+        self.0.poisoned_all()
+    }
 }
 
 fn turns(sink: &MemSink, outcome: &str) -> Vec<runtime::wide::Fields> {

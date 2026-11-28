@@ -182,6 +182,9 @@ impl Journal for Overheard {
     fn poisoned(&self, stream: &runtime::StreamKey) -> runtime::Result<Option<runtime::journal::Poison>> {
         self.inner.poisoned(stream)
     }
+    fn poisoned_all(&self) -> runtime::Result<Vec<runtime::journal::Poison>> {
+        self.inner.poisoned_all()
+    }
     fn shipped(&self) -> Option<spira_otel::vlogs::ShipCounts> {
         self.inner.shipped()
     }
@@ -546,6 +549,9 @@ mod own_unit_tests {
         }
         fn poisoned(&self, _: &runtime::StreamKey) -> runtime::Result<Option<runtime::journal::Poison>> {
             Ok(None)
+        }
+        fn poisoned_all(&self) -> runtime::Result<Vec<runtime::journal::Poison>> {
+            Ok(vec![])
         }
     }
 

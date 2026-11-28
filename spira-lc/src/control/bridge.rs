@@ -1,6 +1,7 @@
 //! The store bridge: each committed transition and claim as the retained topics
-//! `bead/<id>/state` and `bead/<id>/sessions`, and every open bead's both again on each connect
-//! to the broker. A store call only hands a message to the publishing thread, because a publish
+//! `bead/<id>/state` and `bead/<id>/sessions`, each unfiled incident as `incident/<ref>`
+//! (cleared once its row goes), and every open bead's and unfiled incident's again on each
+//! connect to the broker. A store call only hands a message to the publishing thread, because a publish
 //! waits while the publisher is connecting.
 
 use std::collections::HashMap;
@@ -10,11 +11,13 @@ use std::time::{Duration, Instant};
 
 use lifecycle::bead::{BeadState, LifecycleRow};
 use serde_json::{json, Value};
+use spira_store::incident::Row as IncidentRow;
 use spira_otel::metrics::{MetricsSink, Point};
 use spira_pub::{Class, Publisher, Republish};
-use state_store::Backend;
+use state_store::{Backend, Selector};
 
-use super::records::{Audit, LifecycleRecord};
+use super::keys;
+use super::records::{decode, Audit, LifecycleRecord};
 use super::store::{Store, RECORD_CHUNK};
 use crate::ops::LIVE;
 
@@ -34,7 +37,17 @@ const REPUBLISH_SECONDS: &str = "spira_lc_republish_seconds";
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Message {
     topic: String,
+    /// Null clears the topic's retained value.
     payload: Value,
+}
+
+/// `row`'s topic with what it holds; a deleted row, keyed `key`, is cleared.
+fn incident_message(key: &str, row: Option<&IncidentRow>) -> Message {
+    let reference = row.map_or_else(|| key.replace("%2F", "/").replace("%25", "%"), |r| r.payload.reference.clone());
+    let payload = row.map_or(Value::Null, |r| {
+        json!({ "reference": r.payload.reference, "title": r.payload.title, "repo": r.payload.repo, "state": r.state.as_str(), "reason": r.reason, "events": r.events, "first_at": r.first_at, "last_at": r.last_at, "bead": r.bead })
+    });
+    Message { topic: topics::incident(&spira_pub::segment(&reference)), payload }
 }
 
 fn state_of(id: &str, state: &str, from: Option<&str>, actor: Option<&str>, at: Option<i64>) -> Message {
@@ -81,6 +94,10 @@ impl Outbox {
     pub(super) fn claim(&self, rev: u64, row: &LifecycleRow, at: Option<i64>) {
         self.send(rev, sessions_message(row, at));
     }
+
+    pub(super) fn incident(&self, rev: u64, key: &str, row: Option<&IncidentRow>) {
+        self.send(rev, incident_message(key, row));
+    }
 }
 
 /// What each topic was last given, and the oldest revision it still takes.
@@ -103,6 +120,14 @@ impl Ledger {
         true
     }
 
+    /// The incident topics last told to clear: a clear the broker never received leaves the
+    /// old value retained, so a connect says it again.
+    fn cleared(&self) -> Vec<String> {
+        let mut gone: Vec<String> = self.topics.iter().filter(|(t, (_, p))| t.starts_with(topics::INCIDENTS) && p.is_null()).map(|(t, _)| t.clone()).collect();
+        gone.sort();
+        gone
+    }
+
     /// What a connect says for `row`, read from a record last written at `rev`: what this
     /// process already said of the same facts, which carries what a row does not record.
     fn republished(&mut self, rev: u64, row: Message) -> Message {
@@ -119,7 +144,9 @@ impl Ledger {
 /// clears once it is let go.
 fn same_facts(said: &Value, row: &Value) -> bool {
     let same = |key: &str| said.get(key) == row.get(key);
-    if row.get("sessions").is_some() {
+    if row.get("events").is_some() {
+        said == row
+    } else if row.get("sessions").is_some() {
         same("sessions") && (row["holder"].is_null() || same("holder"))
     } else {
         same("state") && same("at")
@@ -178,7 +205,7 @@ fn start<B: Backend + Send + Sync + 'static>(store: &Arc<Store<B>>, publisher: P
                 // A republish can fill the publisher's queue. What a flush finds lost, and what
                 // a publish fails on, the publisher has already logged; neither is retried.
                 let _ = publisher.flush(DRAIN);
-                let _ = publisher.publish(Class::State, &m.topic, &m.payload);
+                let _ = if m.payload.is_null() { publisher.clear(&m.topic) } else { publisher.publish(Class::State, &m.topic, &m.payload) };
             }
         })
         .map_err(|e| format!("cannot start the publishing thread: {e}"))?;
@@ -197,6 +224,11 @@ fn republish<B: Backend>(store: &Weak<Store<B>>, shared: &Shared, again: &mut Re
             eprintln!("spira-lc serve: publish failed ({}): {e}", m.topic);
         }
     });
+    for topic in shared.ledger().cleared() {
+        if let Err(e) = again.clear(&topic) {
+            eprintln!("spira-lc serve: publish failed ({topic}): {e}");
+        }
+    }
     shared.set_republishing(false);
     match read {
         Ok(beads) => push_republished(metrics.clone(), beads, began.elapsed()),
@@ -214,9 +246,16 @@ fn push_republished(metrics: Arc<MetricsSink>, beads: u64, took: Duration) {
     });
 }
 
-/// Hands `emit` both messages of every open bead, each with the revision its record was last
-/// written at, read a page at a time from one revision; answers how many beads.
+/// Hands `emit` the message of every unfiled incident and both messages of every open bead,
+/// each with the revision its record was last written at, the beads read a page at a time from
+/// one revision; answers how many beads.
 fn open_messages<B: Backend>(store: &Store<B>, mut emit: impl FnMut(u64, Message)) -> state_store::Result<u64> {
+    let (incidents, _) = store.contract().list(&[keys::INCIDENTS], &Selector::Everything)?;
+    for item in incidents {
+        let Some(key) = keys::id_of(keys::INCIDENTS, &item.key) else { continue };
+        let row: IncidentRow = decode(&item.key, &item.value)?;
+        emit(item.mod_rev.main, incident_message(key, Some(&row)));
+    }
     let rev = store.contract().head()?;
     let mut after: Option<String> = None;
     let mut beads = 0;
@@ -294,6 +333,21 @@ mod tests {
 
     fn moved(to: &str, from: &str) -> Message {
         state_of("sp-a", to, Some(from), Some("dwarf-1"), Some(100))
+    }
+
+    #[test_id(tij2fxs)]
+    #[test]
+    fn a_cleared_incident_topic_is_said_again_on_connect_until_it_is_raised_again() {
+        let mut ledger = Ledger::default();
+        let row = IncidentRow { payload: spira_store::incident::Payload { reference: "incident:a".into(), ..Default::default() }, ..Default::default() };
+        let gone = incident_message("incident:a", None);
+        assert!(ledger.admits(3, &incident_message("incident:a", Some(&row))));
+        assert!(ledger.cleared().is_empty());
+        assert!(ledger.admits(4, &gone));
+        assert!(ledger.admits(4, &Message { topic: topics::state("sp-a"), payload: Value::Null }));
+        assert_eq!(ledger.cleared(), ["incident/incident:a"]);
+        assert!(ledger.admits(5, &incident_message("incident:a", Some(&row))));
+        assert!(ledger.cleared().is_empty());
     }
 
     #[test_id(td3baj6)]
