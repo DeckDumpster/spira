@@ -143,8 +143,12 @@ mod tests {
         use std::sync::{Arc, Mutex};
 
         fn rig(seed: u64, world: Arc<Mutex<Snapshot>>) -> TaskRig {
+            rig_every(60_000, seed, world)
+        }
+
+        fn rig_every(interval_ms: u64, seed: u64, world: Arc<Mutex<Snapshot>>) -> TaskRig {
             let (_, stream, kind) = Asks::boot();
-            let mut r = TaskRig::new(seed, Asks { interval_ms: 60_000 }.registration())
+            let mut r = TaskRig::new(seed, Asks { interval_ms }.registration())
                 .unwrap()
                 .double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap()))
                 .double(INBOX_APPEND, |line| Ok(line.into()));
@@ -175,7 +179,7 @@ mod tests {
         #[test_id(twgz7uv)]
         #[test]
         fn a_day_is_deterministic() {
-            assert_deterministic(|seed| rig(seed, Arc::new(Mutex::new(open(&[("sp-a", "t")])))), 1, 1);
+            assert_deterministic(|seed| rig_every(3_600_000, seed, Arc::new(Mutex::new(open(&[("sp-a", "t")])))), 1, 1);
         }
     }
 }
