@@ -85,7 +85,7 @@ pub fn retire_key(root: &Path, dotted: &str, bead: &str) -> Result<Report, Strin
     rep.changed.push(format!("{frag}: {dotted} added to removed"));
     if read(root, FIXTURE).is_ok_and(|f| f.lines().any(|l| l.starts_with(&format!("{field} =")))) {
         rep.left.push(format!(
-            "follow-up: delete the `{field}` line from {FIXTURE} once the landing ref no longer registers the key (`gate fixture-config --base` requires it until then); {FIXTURE} is untouched"
+            "the `{field}` line stays in {FIXTURE} while the active release registers the key (every key is required, and `work submit`'s reads gate refuses an early drop): file nothing for it; the first later branch that edits {FIXTURE} after the key has left the active release deletes the line as a small fix-up"
         ));
     }
     rep.left.push(format!("delete the code that reads {dotted} ({}); `spira-lint` names what still does", field.to_ascii_uppercase()));

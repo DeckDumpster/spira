@@ -22,23 +22,7 @@ use help::{refusal, R};
 pub const CANNOT_TELL: i32 = 2;
 pub const REFUSED: i32 = 3;
 
-/// `sp-<alphanumeric>`, case-insensitive: the harness's bead id shape (see any `sp-XXXXX`
-/// in this repo's own history). Deliberately loose — a false positive here just means an
-/// unrelated-looking token gets refused when it didn't need to be, which is the safe
-/// direction; a false negative would let a foreign bead id slip through unchecked.
-pub fn looks_like_bead_id(s: &str) -> bool {
-    if s.get(0..3).filter(|p| p.eq_ignore_ascii_case("sp-")).is_none() {
-        return false;
-    }
-    // `sp-<alnum>` then any number of `.<digits>` child parts (sp-oqf8c.3, sp-zs04v.3.1): a
-    // child bead must be able to bind and submit like any other (the broker's own check
-    // already allows the dot; this one refused every child bead).
-    let mut parts = s[3..].split('.');
-    let head = parts.next().unwrap_or("");
-    !head.is_empty()
-        && head.chars().all(|c| c.is_ascii_alphanumeric())
-        && parts.all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
-}
+pub use ::bead::looks_like_bead_id;
 
 /// A `[[check]]` row's command, run from the worktree root with no shell.
 pub fn done_argv(run: &str) -> Vec<String> {
@@ -317,6 +301,9 @@ pub fn foreign_bead_reference<'a>(verb: &str, bound: &str, args: &'a [String]) -
             continue;
         }
         if i > 0 && verb == "submit" && args[i - 1] == UNIT_RED_ON_BASE {
+            continue;
+        }
+        if i > 0 && verb == "file-followup" && args[i - 1] == "--blocks" {
             continue;
         }
         if i > 0 && matches!(verb, "submit" | "done") && TARGET_EXIT_FLAGS.contains(&args[i - 1].as_str()) {
@@ -1013,6 +1000,15 @@ mod tests {
         assert_eq!(foreign_bead_reference("done", "sp-3m1p9", &args), Some("sp-other1"));
         assert_eq!(foreign_bead_reference("submit", "sp-3m1p9", &["sp-other1".to_string()]), Some("sp-other1"));
         assert_eq!(unit_red_on_base(&args), Some("sp-other1"));
+    }
+
+    #[test_id(t11r8ee)]
+    #[test]
+    fn the_work_a_followup_blocks_may_be_named_as_a_bare_foreign_id() {
+        let args = ["t".to_string(), "--blocks".into(), "sp-abc".into()];
+        assert_eq!(foreign_bead_reference("file-followup", "sp-3m1p9", &args), None);
+        assert_eq!(foreign_bead_reference("note", "sp-3m1p9", &args), Some("sp-abc"));
+        assert_eq!(foreign_bead_reference("file-followup", "sp-3m1p9", &["sp-abc".to_string()]), Some("sp-abc"));
     }
 
     #[test_id(t8wn1aq)]

@@ -36,7 +36,7 @@ grading its own work, and you have no Edit or Write tool for that reason.
    defect, not something to route around.
 4. **File each defect** through the contract, one bead per defect; filing it also makes this pilgrimage wait on it:
 
-       work file-followup "<title>" --repo <name> --body-file - <<'BODY'
+       work file-followup "<title>" --repo <name> --defect "<what the walk saw broken>" --body-file - <<'BODY'
        <what you did, what you expected, what happened, with the output>
 
        ## Build

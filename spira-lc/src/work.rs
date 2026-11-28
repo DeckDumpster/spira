@@ -1321,6 +1321,10 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str) -> (i32, String) {
     if prerequisite && after_landing {
         return (REFUSED, format!("refused: work {verb}: --prerequisite and --after-landing contradict each other: --after-landing makes the new bead wait, --prerequisite makes your bead wait; pass one"));
     }
+    let rank = match followup_rank(verb, &split_reserved(args).args) {
+        Ok(r) => r,
+        Err(why) => return (REFUSED, why),
+    };
     let Some(filer) = flag(args, "--for") else {
         return (CANNOT_TELL, format!("work {verb}: --for <persona> is required"));
     };
@@ -1345,13 +1349,68 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str) -> (i32, String) {
     let actor = flag(args, "--actor").unwrap_or_default();
     let body = split_reserved(args).stdin;
     let register = |new_id: &str| crate::plane::call(&[s("create-bead"), new_id.to_string(), s("--ready"), s("--repo"), repo.clone()]);
-    let filing = Filing { verb, actor: &actor, title, persona: &persona, repo: &repo, bound: bead_id, after_landing, prerequisite, body: body.as_deref() };
-    let file = |f: &Filing, parent: Option<&str>, considered: Option<&str>| crate::bd::file_child(f.title, f.persona, f.repo, parent, f.body, considered);
-    let filed = file_and_bind(&filing, file, register, crate::bd::label_add, crate::bd::add_blocker);
+    let filing = Filing { verb, actor: &actor, title, persona: &persona, repo: &repo, bound: bead_id, after_landing, prerequisite, body: body.as_deref(), priority: rank.as_ref().map(|r| r.priority), statement: rank.as_ref().and_then(|r| r.statement.as_deref()) };
+    let file = |f: &Filing, parent: Option<&str>, considered: Option<&str>| crate::bd::file_child(f.title, f.persona, f.repo, parent, f.body, considered, f.priority.map(|p| p.to_string()).as_deref());
+    let note = |id: &str, text: &str| crate::bd::note(id, text).map(|_| ());
+    let filed = file_and_bind(&filing, file, note, register, crate::bd::label_add, crate::bd::add_blocker);
     if verb != "file-followup" || filed.0 != 0 || !lane_requires_skuld(&persona) {
         return filed;
     }
-    review_followup(&filing, &filed.1, |t, b| crate::bd::file_child(t, SKULD_PERSONA, &repo, None, Some(b), None), crate::bd::add_blocker)
+    let priority = filing.priority.map(|p| p.to_string());
+    review_followup(&filing, &filed.1, |t, b| crate::bd::file_child(t, SKULD_PERSONA, &repo, None, Some(b), None, priority.as_deref()), crate::bd::add_blocker)
+}
+
+/// What a `file-followup` files at, and the filer's reason when it names one.
+#[derive(Debug, PartialEq, Eq)]
+struct Rank {
+    priority: i64,
+    statement: Option<String>,
+}
+
+const FOLLOWUP_PRIORITY: i64 = 3;
+const STATED_PRIORITY: i64 = 2;
+
+/// `None` for any other verb: a `split` files at the store's default.
+fn followup_rank(verb: &str, args: &[String]) -> Result<Option<Rank>, String> {
+    if verb != "file-followup" {
+        return Ok(None);
+    }
+    let refuse = |why: String| Err(format!("refused: work file-followup: {why}; nothing was filed"));
+    let value = |name: &str| match args.iter().position(|a| a == name) {
+        None => Ok(None),
+        Some(i) => match args.get(i + 1).map(|v| v.trim()) {
+            Some(v) if !v.is_empty() && !v.starts_with("--") => Ok(Some(v.to_string())),
+            _ => Err(format!("refused: work file-followup: {name} needs a value; nothing was filed")),
+        },
+    };
+    let (blocks, defect) = (value("--blocks")?, value("--defect")?);
+    if let Some(b) = &blocks {
+        let names_a_bead = b.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '.')).any(|w| ::bead::looks_like_bead_id(w.trim_end_matches('.')));
+        if !names_a_bead {
+            return refuse(format!("--blocks {b:?} names no bead id; name the work it blocks"));
+        }
+    }
+    let said: Vec<String> = [("blocks", blocks), ("defect", defect)].into_iter().filter_map(|(k, v)| v.map(|v| format!("{k}: {v}"))).collect();
+    let statement = (!said.is_empty()).then(|| said.join("; "));
+    let priority = match value("--priority")? {
+        None if statement.is_some() => STATED_PRIORITY,
+        None => FOLLOWUP_PRIORITY,
+        Some(arg) => match ::bead::parse_priority_arg(&arg) {
+            Some(p) => p,
+            None => return refuse(format!("--priority takes 0..4 (or P0..P4), not {arg:?}")),
+        },
+    };
+    if priority < FOLLOWUP_PRIORITY && statement.is_none() {
+        return refuse(format!("P{priority} needs --blocks \"<the work it blocks>\" or --defect \"<what is broken for a user now>\"; without one the item files at P{FOLLOWUP_PRIORITY}"));
+    }
+    Ok(Some(Rank { priority, statement }))
+}
+
+/// Notes the filer's statement on the new item: a Skuld draft replaces the body and keeps the notes.
+fn record_statement(f: &Filing, new_id: &str, note: impl FnOnce(&str, &str) -> Result<(), String>) -> Result<(), String> {
+    let (Some(priority), Some(statement)) = (f.priority, f.statement) else { return Ok(()) };
+    let text = format!("Filed at P{priority} by {} from {}: {statement}", f.actor, f.bound);
+    note(new_id, &text).map_err(|e| format!("{new_id} was filed but its statement was not recorded (do not file it again; note it with: {text}): {e}"))
 }
 
 /// The store refuses a blocks edge onto an incident, and would do so only after the piece is filed.
@@ -1382,7 +1441,7 @@ fn review_followup(
     wait: impl FnOnce(&str, &str) -> Result<(), String>,
 ) -> (i32, String) {
     let request_title = format!("Draft {followup}: {}", f.title);
-    let request_body = ::bead::review_request_body(followup, f.title, f.repo, f.actor, f.bound, f.body.unwrap_or(""));
+    let request_body = ::bead::review_request_body(followup, f.title, f.repo, f.actor, f.bound, f.body.unwrap_or(""), (f.priority.unwrap_or(FOLLOWUP_PRIORITY), f.statement));
     let request = match file(&request_title, &request_body) {
         Ok(r) => r,
         Err(e) => return (CANNOT_TELL, format!("{followup} was filed but its Skuld review could not be filed (do not file it again; file the review and make {followup} wait on it): {e}")),
@@ -1404,6 +1463,8 @@ struct Filing<'a> {
     after_landing: bool,
     prerequisite: bool,
     body: Option<&'a str>,
+    priority: Option<i64>,
+    statement: Option<&'a str>,
 }
 
 /// A pilgrim files what its walk found; a defect against a repo that does not meet the landing
@@ -1442,17 +1503,35 @@ fn binding<'a>(f: &Filing<'a>) -> Binding<'a> {
 fn file_and_bind(
     f: &Filing,
     file: impl FnOnce(&Filing, Option<&str>, Option<&str>) -> Result<String, String>,
+    note: impl FnOnce(&str, &str) -> Result<(), String>,
     register: impl FnOnce(&str) -> (i32, String),
     label: impl FnOnce(&str, &str) -> Result<(), String>,
     block: impl FnOnce(&str, &str) -> Result<(), String>,
 ) -> (i32, String) {
-    let bead_id = f.bound;
     let tie = binding(f);
     let pilgrim = blocking_edge(f.verb, f.actor, End::Bound, End::New).is_some();
     let new_id = match file(f, tie.parent, pilgrim.then_some(PILGRIM_CONTRACT_REASON)) {
         Ok(id) => id,
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
+    let unrecorded = record_statement(f, &new_id, note).err();
+    let bound = bind_filed(f, tie, new_id, register, label, block);
+    match unrecorded {
+        None => bound,
+        Some(why) => (CANNOT_TELL, format!("{}\n{why}", bound.1)),
+    }
+}
+
+/// Registers a new item and ties it to the bound bead.
+fn bind_filed(
+    f: &Filing,
+    tie: Binding,
+    new_id: String,
+    register: impl FnOnce(&str) -> (i32, String),
+    label: impl FnOnce(&str, &str) -> Result<(), String>,
+    block: impl FnOnce(&str, &str) -> Result<(), String>,
+) -> (i32, String) {
+    let bead_id = f.bound;
     let (code, e) = register(&new_id);
     if code != 0 {
         return (CANNOT_TELL, format!("LIFECYCLE: {new_id} was filed but has NO lifecycle row and cannot be claimed (do not file it again): {e}"));
@@ -2796,7 +2875,86 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String]) -> (i32, String) {
 mod tests {
 
     fn filing<'a>() -> super::Filing<'a> {
-        super::Filing { verb: "file-followup", actor: "builder", title: "Fix x", persona: "builder", repo: "spira", bound: "sp-b0", after_landing: false, prerequisite: false, body: Some("## Build\nthe thing\n") }
+        super::Filing { verb: "file-followup", actor: "builder", title: "Fix x", persona: "builder", repo: "spira", bound: "sp-b0", after_landing: false, prerequisite: false, body: Some("## Build\nthe thing\n"), priority: Some(3), statement: None }
+    }
+
+    /// The priority the injected filer receives when `args` are filed, and the note recorded after.
+    fn filed_with(verb: &'static str, args: &[&str]) -> Result<(Option<i64>, Vec<String>), String> {
+        let args: Vec<String> = args.iter().map(|x| x.to_string()).collect();
+        let rank = super::followup_rank(verb, &args)?;
+        let f = super::Filing { verb, priority: rank.as_ref().map(|r| r.priority), statement: rank.as_ref().and_then(|r| r.statement.as_deref()), ..filing() };
+        let seen = std::cell::Cell::new(None);
+        let mut notes = vec![];
+        let (code, id) = super::file_and_bind(&f, |f, _, _| { seen.set(f.priority); Ok("sp-new".to_string()) }, |on, text| { notes.push(format!("{on}: {text}")); Ok(()) }, |_| (0, String::new()), |_, _| Ok(()), |_, _| Ok(()));
+        assert_eq!(code, 0, "{id}");
+        Ok((seen.get(), notes))
+    }
+
+    #[test_id(t44nj10)]
+    #[test]
+    fn a_followup_with_no_statement_files_at_p3_and_p4_needs_none() {
+        assert_eq!(filed_with("file-followup", &["t"]), Ok((Some(3), vec![])));
+        assert_eq!(filed_with("file-followup", &["t", "--priority", "3"]), Ok((Some(3), vec![])));
+        assert_eq!(filed_with("file-followup", &["t", "--priority", "4"]), Ok((Some(4), vec![])));
+    }
+
+    #[test_id(tlwok9q)]
+    #[test]
+    fn a_statement_without_a_priority_files_at_p2_and_is_noted_on_the_new_item() {
+        let noted = |s: &str| vec![format!("sp-new: Filed at P2 by builder from sp-b0: {s}")];
+        assert_eq!(filed_with("file-followup", &["t", "--blocks", "blocks sp-b9, from landing"]), Ok((Some(2), noted("blocks: blocks sp-b9, from landing"))));
+        assert_eq!(filed_with("file-followup", &["t", "--defect", "login fails"]), Ok((Some(2), noted("defect: login fails"))));
+    }
+
+    #[test_id(t5kv179)]
+    #[test]
+    fn a_priority_above_p3_without_a_statement_is_refused_naming_both_flags_and_the_default() {
+        for p in ["0", "1", "P2"] {
+            let why = filed_with("file-followup", &["t", "--priority", p]).unwrap_err();
+            assert!(why.contains("--blocks") && why.contains("--defect") && why.contains("files at P3") && why.contains("nothing was filed"), "{why}");
+        }
+        let (code, out) = super::cmd_file("sp-b0", &["t".to_string(), "--priority".into(), "1".into()], "file-followup");
+        assert_eq!(code, super::REFUSED, "{out}");
+    }
+
+    #[test_id(tscfq9w)]
+    #[test]
+    fn a_blocks_statement_naming_no_bead_is_refused_and_a_flag_needs_a_value() {
+        let why = filed_with("file-followup", &["t", "--blocks", "the landing pass"]).unwrap_err();
+        assert!(why.contains("names no bead id"), "{why}");
+        for args in [["t", "--defect"], ["t", "--blocks"], ["t", "--priority"]] {
+            assert!(filed_with("file-followup", &args).unwrap_err().contains("needs a value"), "{args:?}");
+        }
+        assert!(filed_with("file-followup", &["t", "--priority", "9"]).is_err());
+    }
+
+    #[test_id(tlxnxhu)]
+    #[test]
+    fn a_split_takes_no_priority_and_none_of_the_followup_rules() {
+        assert_eq!(filed_with("split", &["t"]), Ok((None, vec![])));
+        assert_eq!(filed_with("split", &["t", "--priority", "1", "--blocks", "nothing"]), Ok((None, vec![])));
+    }
+
+    #[test_id(tyb9457)]
+    #[test]
+    fn a_followup_whose_binding_fails_after_filing_still_carries_its_statement() {
+        let f = super::Filing { actor: "pilgrim", priority: Some(1), statement: Some("defect: x"), ..filing() };
+        for (registered, edge) in [((2, "down".to_string()), Ok(())), ((0, String::new()), Err("no".to_string()))] {
+            let mut notes = vec![];
+            let (code, out) = super::file_and_bind(&f, |_, _, _| Ok("sp-new".to_string()), |on, text| { notes.push(format!("{on}: {text}")); Ok(()) }, |_| registered, |_, _| Ok(()), |_, _| edge);
+            assert_eq!(code, super::CANNOT_TELL, "{out}");
+            assert_eq!(notes, ["sp-new: Filed at P1 by pilgrim from sp-b0: defect: x"], "{out}");
+        }
+    }
+
+    #[test_id(tt65k9o)]
+    #[test]
+    fn a_statement_that_cannot_be_noted_still_binds_the_item_and_says_not_to_file_again() {
+        let f = super::Filing { priority: Some(1), statement: Some("defect: x"), ..filing() };
+        let mut registered = false;
+        let (code, out) = super::file_and_bind(&f, |_, _, _| Ok("sp-new".to_string()), |_, _| Err("boom".into()), |_| { registered = true; (0, String::new()) }, |_, _| Ok(()), |_, _| Ok(()));
+        assert_eq!(code, super::CANNOT_TELL);
+        assert!(registered && out.starts_with("sp-new\n") && out.contains("do not file it again") && out.contains("boom"), "{out}");
     }
 
     #[test_id(t8eduz9)]
@@ -3314,6 +3472,7 @@ mod tests {
                 said(format!("file parent={parent:?}"));
                 Ok("sp-new".to_string())
             },
+            |_, _| Ok(()),
             |_| (0, String::new()),
             |id, label| {
                 said(format!("label {id} {label}"));
