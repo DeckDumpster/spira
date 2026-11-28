@@ -283,3 +283,153 @@ fn the_real_task_cuts_the_second_round_on_the_first_ones_head() {
     let cut = r.requested().iter().find(|q| q.name == ASSEMBLE).map(|q| serde_json::from_str::<Leg>(&q.input).unwrap()).expect("the second round is assembled");
     assert_eq!((cut.onto.as_str(), ids(&cut.members)), ("h1", ["sp-c", "sp-d"].to_vec()));
 }
+
+/// `rx`, opened by another actor above `r1`: whole, fit, and with no driver.
+fn another_actors(age_secs: u64) -> Round {
+    Round { driven: false, phase: "opened".into(), tips: vec!["tc".into(), "td".into()], ..round("rx", &["sp-c", "sp-d"], "hx", age_secs) }
+}
+
+fn beside_ours(rx: Round) -> Snapshot {
+    snap(vec![round("r1", &["sp-a", "sp-b"], "h1", 90), rx], NOW + 60_000)
+}
+
+fn ours_certifying(p: &Policy) -> Carry {
+    cut_and_open(p, &Carry::default(), &snap(vec![], NOW), "r1").0
+}
+
+fn adopts_beside_ours(max_open: usize) -> Carry {
+    let p = small(max_open);
+    let (carry, acts) = decide_with(&p, &ours_certifying(&p), &beside_ours(another_actors(30)));
+    assert!(names(&acts).contains(&CERTIFY), "{acts:?}");
+    assert_eq!(leg_of(&acts, CERTIFY).batch, "rx");
+    assert_eq!(leg_of(&acts, CERTIFY).wt, "w/rx");
+    assert!([REDRIVE, ASSEMBLE, ABANDON].iter().all(|no| !names(&acts).contains(no)), "{acts:?}");
+    let above = &carry.repos["spira"].above;
+    assert_eq!((above.len(), above[0].batch.as_deref(), above[0].state, above[0].stacked), (1, Some("rx"), State::Certifying, true));
+    assert_eq!(above[0].base, "b1");
+    carry
+}
+
+#[test_id(toi1fpr)]
+#[test]
+fn a_round_another_actor_opens_above_ours_is_adopted_and_certified() {
+    adopts_beside_ours(2);
+}
+
+#[test_id(th3jco2)]
+#[test]
+fn adopting_is_not_cutting_so_a_reached_cap_does_not_stop_it() {
+    adopts_beside_ours(1);
+}
+
+#[test_id(tw9xjz3)]
+#[test]
+fn an_adopted_stacked_round_lands_once_after_the_round_below() {
+    let carry = adopts_beside_ours(2);
+    let upper = carry.repos["spira"].above[0].leg.clone().unwrap();
+    let lower = carry.repos["spira"].leg.clone().unwrap();
+    let (carry, acts) = ran(&carry, &upper, 0, "");
+    assert!(!names(&acts).contains(&LAND), "{acts:?}");
+    assert_eq!(carry.repos["spira"].above[0].state, State::Certified);
+
+    let (carry, acts) = ran(&carry, &lower, 0, "");
+    assert_eq!(names(&acts), [LC_CERTIFY, LAND], "{acts:?}");
+    let landed = leg_of(&acts, LAND);
+    assert_eq!(landed.batch, "r1");
+    let (carry, _) = on_outcome(&carry, LAND, true, &serde_json::to_string(&Landed::default()).unwrap(), &landed, NOW + 130_000);
+
+    let green = Round { phase: "green".into(), ..another_actors(100) };
+    let (carry, acts) = decide_with(&small(2), &carry, &snap(vec![green.clone()], NOW + 140_000));
+    assert_eq!(names(&acts), [LC_CERTIFY, LAND], "{acts:?}");
+    assert_eq!(leg_of(&acts, LAND).batch, "rx");
+
+    let mut in_flight = snap(vec![green], NOW + 170_000);
+    in_flight.repos.get_mut("spira").unwrap().in_flight = Some(vec![LAND.into()]);
+    let (_, acts) = decide_with(&small(2), &carry, &in_flight);
+    assert!(!names(&acts).contains(&LAND), "{acts:?}");
+}
+
+#[test_id(tvggw9a)]
+#[test]
+fn a_round_still_within_its_openers_grace_or_unfit_is_not_adopted() {
+    let p = small(2);
+    let (_, acts) = decide_with(&p, &ours_certifying(&p), &beside_ours(another_actors(20)));
+    assert!(names(&acts).contains(&CERTIFY), "control: at the grace it is adopted: {acts:?}");
+
+    let (carry, acts) = decide_with(&p, &ours_certifying(&p), &beside_ours(another_actors(19)));
+    assert!(!names(&acts).contains(&CERTIFY), "{acts:?}");
+    assert!(carry.repos["spira"].above.is_empty());
+
+    let unfit = Round { unfit: Some("the round worktree is not at the round's head".into()), ..another_actors(30) };
+    let (carry, acts) = decide_with(&p, &ours_certifying(&p), &beside_ours(unfit));
+    assert!(!names(&acts).contains(&CERTIFY), "{acts:?}");
+    assert_eq!(names(&acts).iter().filter(|n| **n == ABANDON).count(), 1, "the orphan path ends it, naming why: {acts:?}");
+    assert_eq!(leg_of(&acts, ABANDON).batch, "rx");
+    assert!(carry.repos["spira"].above.is_empty());
+}
+
+#[test_id(tatqj8u)]
+#[test]
+fn a_stopped_or_hand_landing_repo_adopts_nothing() {
+    let p = small(2);
+    adopts_beside_ours(2);
+    for hold in [|r: &mut Repo| r.stopped = true, |r: &mut Repo| r.cut_hold = Some("concierge (hand landing)".into())] {
+        let mut world = beside_ours(another_actors(30));
+        hold(world.repos.get_mut("spira").unwrap());
+        let (carry, acts) = decide_with(&p, &ours_certifying(&p), &world);
+        assert!(!names(&acts).contains(&CERTIFY), "{acts:?}");
+        assert!(carry.repos["spira"].above.is_empty());
+    }
+}
+
+#[test_id(tejifnt)]
+#[test]
+fn no_round_is_adopted_while_one_of_ours_is_unnamed_or_being_abandoned() {
+    let p = small(2);
+    let (carry, _) = decide_with(&p, &Carry::default(), &snap(vec![], NOW));
+    assert_eq!(carry.repos["spira"].state, State::Assembling);
+    let (_, acts) = decide_with(&p, &carry, &snap(vec![another_actors(30)], NOW + 30_000));
+    assert!(!names(&acts).contains(&CERTIFY), "{acts:?}");
+
+    let (_, acts) = decide_with(&p, &Carry::default(), &snap(vec![another_actors(30)], NOW));
+    assert_eq!(names(&acts), [CERTIFY], "control: with nothing pending it is adopted: {acts:?}");
+
+    let mut closing = snap(vec![another_actors(30)], NOW);
+    closing.repos.get_mut("spira").unwrap().in_flight = Some(vec![ABANDON.into()]);
+    let (_, acts) = decide_with(&p, &Carry::default(), &closing);
+    assert!(!names(&acts).contains(&CERTIFY), "{acts:?}");
+}
+
+#[test_id(t5dsg38)]
+#[test]
+fn a_round_adopted_once_and_let_go_still_opened_is_not_adopted_again() {
+    let p = small(1);
+    let world = |t| snap(vec![another_actors(30)], t);
+    let (carry, acts) = decide_with(&p, &Carry::default(), &world(NOW));
+    assert_eq!(names(&acts), [CERTIFY], "{acts:?}");
+    let leg = carry.repos["spira"].leg.clone().unwrap();
+    let signalled = UnitRan { handle: UnitHandle::of(NAME, &leg).unwrap(), exit: Exit::Signal(15), duration_ms: 1 };
+    let (carry, _) = on_ran_with(&carry, &signalled, &RanOutput::default(), NOW).expect("its own leg");
+    assert!(carry.repos.get("spira").is_none_or(|rc| rc.batch.is_none()), "the round is let go");
+    let (_, acts) = decide_with(&p, &carry, &world(NOW + 30_000));
+    assert!(!names(&acts).contains(&CERTIFY), "{acts:?}");
+}
+
+#[test_id(tnpitow)]
+#[test]
+fn a_stacked_foreign_round_that_is_not_adopted_is_left_alone_until_it_is_first() {
+    let p = small(2);
+    let far = NOW + (Policy::default().orphan_wait_s + 600) * 1000;
+    for (phase, tips) in [("attributing", vec!["tc".to_string(), "td".to_string()]), ("certifying", vec![]), ("opened", vec![])] {
+        let rx = Round { phase: phase.into(), tips, ..another_actors(1_400) };
+        let (mut carry, mut all) = (ours_certifying(&p), vec![]);
+        for t in [NOW + 60_000, far] {
+            let mut world = beside_ours(rx.clone());
+            world.now_ms = t;
+            let (next, acts) = decide_with(&p, &carry, &world);
+            carry = next;
+            all.extend(acts.iter().map(|a| a.effect.clone()));
+        }
+        assert!([REDRIVE, ABANDON].iter().all(|no| !all.iter().any(|a| a == no)), "{phase}: {all:?}");
+    }
+}
