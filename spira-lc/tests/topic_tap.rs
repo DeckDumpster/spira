@@ -285,4 +285,6 @@ fn a_watch_with_nothing_to_report_is_held_for_its_whole_wait() {
 
     let (code, out) = server.call(&["watch", "topics/", "--from-rev", &head, "--wait-ms", "6000"]);
     assert_eq!(code, 0, "{out}");
+    // Only a watch that ran out its wait answers this; a write would have woken it early.
+    assert!(serde_json::from_str::<Value>(&out).unwrap()["progress_rev"].is_u64(), "{out}");
 }
