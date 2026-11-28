@@ -35,7 +35,8 @@ impl World {
         let dir = TempDir::new("sub");
         let control = dir.join("c").display().to_string();
         let declare = [("SPIRA_BROKER_SOCKET", broker.to_str().unwrap()), ("SPIRA_SUB_CONTROL_DIR", control.as_str())];
-        let env = spira_config::process::fixture_metrics_env(&dir, metrics, &declare);
+        let mut env = spira_config::process::fixture_metrics_env(&dir, metrics, &declare);
+        env.push(("SPIRA_LC_BIN", stand_in_store(&dir)));
         World { dir, env }
     }
 
@@ -81,6 +82,15 @@ impl World {
         follow.noted("following");
         follow
     }
+}
+
+/// A `spira-lc` whose `topics` answers these families.
+fn stand_in_store(dir: &Path) -> String {
+    let families = [("bead/+/state", "lc-serve"), ("gate/r/+", ""), ("progress/+", ""), ("release/active", ""), ("round/r/+", "")];
+    let rows: Vec<Value> = families.iter().map(|(family, resident)| json!({"family": family, "resident": resident.split_whitespace().collect::<Vec<_>>()})).collect();
+    let bin = dir.join("spira-lc");
+    testkit::write_exe(&bin, &format!("#!/bin/sh\nprintf '%s\\n' '{}'\n", json!({"topics": rows, "next": null})));
+    bin.display().to_string()
 }
 
 fn pipe(from: impl std::io::Read + Send + 'static) -> Receiver<String> {
@@ -189,16 +199,55 @@ fn a_subscription_made_after_a_state_publish_is_handed_the_retained_value_at_onc
 
 #[test_id(t0fjsoq)]
 #[test]
-fn a_filter_matching_no_family_and_an_unknown_id_are_refused_with_exit_2() {
+fn a_malformed_filter_and_an_unknown_id_are_refused_with_exit_2() {
     let broker = Broker::up();
     let world = World::new(broker.socket());
-    let (code, _, err) = world.call(&["add", "nosuch/#"]);
-    assert!(code == Some(2) && err.contains("nosuch/#"), "{code:?} {err}");
+    let (code, _, err) = world.call(&["add", "bead/#/state"]);
+    assert!(code == Some(2) && err.contains("bead/#/state"), "{code:?} {err}");
     let (code, _, err) = world.call(&["list"]);
     assert!(code == Some(1) && err.contains("spira-sub run"), "{code:?} {err}");
     let _run = world.run(broker.socket());
     let (code, _, err) = world.call(&["drop", "s9"]);
     assert!(code == Some(2) && err.contains("s9"), "{code:?} {err}");
+}
+
+#[test_id(tqj1h9h)]
+#[test]
+fn a_filter_no_published_topic_matches_is_subscribed_with_a_warning() {
+    let broker = Broker::up();
+    let world = World::new(broker.socket());
+    let _run = world.run(broker.socket());
+    let follow = world.follow();
+
+    let (code, out, err) = world.call(&["add", "nosuch/#"]);
+
+    assert_eq!((code, out.as_str()), (Some(0), "s1"), "{err}");
+    assert_eq!(err, r#"spira-sub: filter "nosuch/#" matches no topic ever published; subscribed anyway"#);
+    publish(&publisher("t", broker.socket()), "nosuch/thing", json!({"n": 1}));
+    assert_eq!(follow.next(), "[sub:s1] nosuch/thing n=1");
+}
+
+#[test_id(tmkr6bi)]
+#[test]
+fn the_publishers_class_decides_whether_an_equal_value_is_printed_again() {
+    let broker = Broker::up();
+    let world = World::new(broker.socket());
+    let _run = world.run(broker.socket());
+    let follow = world.follow();
+    let (code, _, err) = world.call(&["add", "unlisted/+"]);
+    assert_eq!(code, Some(0), "{err}");
+    let p = publisher("t", broker.socket());
+
+    for (topic, class) in [("unlisted/state", spira_pub::Class::State), ("unlisted/chatter", spira_pub::Class::Chatter)] {
+        for _ in 0..2 {
+            p.publish(class, topic, &json!({"n": 1})).unwrap();
+            p.flush(FAILSAFE).unwrap();
+        }
+    }
+    publish(&p, "unlisted/end", json!({"n": 2}));
+
+    let seen: Vec<String> = std::iter::repeat_with(|| follow.next()).take_while(|l| !l.contains("unlisted/end")).collect();
+    assert_eq!(seen, ["[sub:s1] unlisted/state n=1", "[sub:s1] unlisted/chatter n=1", "[sub:s1] unlisted/chatter n=1"]);
 }
 
 #[test_id(tezmsxw)]
@@ -494,7 +543,7 @@ fn overlapping_filters_each_deliver_a_chatter_message_once() {
     world.ok(&["add", "release/active"]);
     let p = publisher("t", broker.socket());
 
-    publish(&p, "progress/sp-a", json!({"note": "compiling"}));
+    p.publish(spira_pub::Class::Chatter, "progress/sp-a", &json!({"note": "compiling"})).unwrap();
     publish(&p, "release/active", json!({"release": "r1"}));
 
     let seen: Vec<String> = std::iter::repeat_with(|| follow.next()).take_while(|l| !l.contains("release/active")).collect();

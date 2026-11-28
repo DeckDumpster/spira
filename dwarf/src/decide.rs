@@ -152,7 +152,7 @@ pub enum Mark {
     Lingering,
 }
 
-/// The ages `spira/topics.toml` declares under `session/<bead>/age/`.
+/// The dwarf's own ages, each published under `session/<bead>/age/`.
 const SESSION_AGES_MIN: [i64; 3] = [15, 30, 60];
 
 /// The marks a session has reached by `now` and not yet `published`.

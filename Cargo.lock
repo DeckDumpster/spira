@@ -2548,7 +2548,6 @@ dependencies = [
  "spira-otel",
  "spira-test-id",
  "testkit",
- "toml",
 ]
 
 [[package]]
@@ -2694,6 +2693,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-pub",
+ "spira-store",
  "spira-test-id",
  "spira-world",
  "strand",

@@ -21,7 +21,7 @@ path = "tests/broker.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["ports/integration", "spira-config/integration", "spira-otel/integration", "spira-pub/integration", "spira-world/integration", "strand/integration", "testkit/integration", "spira-test-id/integration"]
+integration = ["ports/integration", "spira-config/integration", "spira-otel/integration", "spira-pub/integration", "spira-store/integration", "spira-world/integration", "strand/integration", "testkit/integration", "spira-test-id/integration"]
 
 [dependencies]
 # TLS off: the broker is a Unix socket.
@@ -33,6 +33,7 @@ sha2 = "0.10"
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
 spira-pub = { path = "../spira-pub" }
+spira-store = { path = "../spira-store" }
 spira-world = { path = "../spira-world" }
 strand = { path = "../strand" }
 

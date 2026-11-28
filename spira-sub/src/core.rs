@@ -8,7 +8,7 @@ use ports::Clock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use spira_pub::topics::{self, Class};
+use spira_pub::topics;
 
 use crate::render;
 
@@ -45,11 +45,21 @@ pub struct Saved {
 pub(crate) struct Sub {
     pub(crate) entry: Entry,
     pub(crate) last_fired_ms: Option<u64>,
-    /// What the next batch holds: the latest value per topic.
-    pub(crate) pending: BTreeMap<String, Value>,
+    /// What the next batch holds: per topic, the latest value and whether it is state.
+    pub(crate) pending: BTreeMap<String, (Value, bool)>,
     /// When the first of `pending` arrived, and when the batch is due. Set while it holds any.
     since_ms: u64,
     due_ms: Option<u64>,
+}
+
+/// What the store's topic record says of one family that has been published.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TopicRow {
+    /// An MQTT filter: `+` stands for any one level.
+    pub family: String,
+    /// The publisher names that live as long as what they publish: one going is news to this
+    /// family's subscribers.
+    pub resident: Vec<String>,
 }
 
 /// What one step owes the outside.
@@ -61,6 +71,8 @@ pub struct Out {
     pub unsubscribe: Vec<String>,
     /// The set changed and must be written.
     pub changed: bool,
+    /// What the caller of an add should know about the filter it gave.
+    pub warning: Option<String>,
 }
 
 pub struct Core {
@@ -75,19 +87,24 @@ pub struct Core {
     heard: BTreeSet<String>,
     /// The current value of every `publisher/<name>`.
     pub(crate) publishers: BTreeMap<String, Value>,
-}
-
-fn is_state(topic: &str) -> bool {
-    topics::family_of(topic).is_some_and(|f| f.class == Class::State)
+    /// The topic record as last read.
+    pub(crate) topics: Vec<TopicRow>,
+    /// Whether the latest read of the record succeeded.
+    record_read: bool,
 }
 
 fn is_gone(value: &Value) -> bool {
     value.get("state").and_then(Value::as_str) == Some("gone")
 }
 
-/// Whether `filter` watches a family that `publisher` keeps alive.
-fn depends_on(filter: &str, publisher: &str) -> bool {
-    topics::families_matching(filter).any(|f| f.resident.iter().any(|r| r == publisher))
+/// Whether `filter` watches a recorded family that `publisher` keeps alive.
+fn depends_on(record: &[TopicRow], filter: &str, publisher: &str) -> bool {
+    record.iter().any(|row| row.resident.iter().any(|r| r == publisher) && topics::filter_meets_family(filter, &row.family))
+}
+
+/// Why `filter` is refused.
+pub fn malformed(filter: &str) -> String {
+    format!("filter {filter:?} is not an MQTT topic filter: `+` and `#` are each a whole level, and `#` is the last")
 }
 
 /// `value` with its keys in order: a build may unify serde_json's `preserve_order` in.
@@ -141,12 +158,12 @@ impl Sub {
         Some(render::line(&self.entry.id, topic, value, &self.entry.note))
     }
 
-    fn hold(&mut self, topic: &str, value: &Value, batch_s: u64, now: u64) {
+    fn hold(&mut self, topic: &str, value: &Value, state: bool, batch_s: u64, now: u64) {
         if self.due_ms.is_none() {
             self.since_ms = now;
             self.due_ms = Some(boundary(now, batch_s));
         }
-        self.pending.insert(topic.to_string(), value.clone());
+        self.pending.insert(topic.to_string(), (value.clone(), state));
     }
 
     /// The topic holds no value any more: there is none to batch, and its next one is news.
@@ -158,8 +175,19 @@ impl Sub {
         out.changed |= self.entry.delivered.remove(topic).is_some();
     }
 
+    /// A line for each gone publisher the filter depends on but does not itself select.
+    fn notify_gone(&mut self, publishers: &BTreeMap<String, Value>, record: &[TopicRow], now: u64, out: &mut Out) {
+        let Some(filter) = self.entry.filter.clone() else { return };
+        for (topic, value) in publishers {
+            if is_gone(value) && !topics::filter_selects(&filter, topic) && depends_on(record, &filter, topic.trim_start_matches("publisher/")) {
+                let line = self.deliver(topic, value, true, now, out);
+                out.lines.extend(line);
+            }
+        }
+    }
+
     /// Ends the batch being gathered and returns what it held.
-    fn take_pending(&mut self) -> BTreeMap<String, Value> {
+    fn take_pending(&mut self) -> BTreeMap<String, (Value, bool)> {
         self.due_ms = None;
         std::mem::take(&mut self.pending)
     }
@@ -168,7 +196,7 @@ impl Sub {
 impl Core {
     pub fn new(clock: Arc<dyn Clock>, saved: Saved) -> Core {
         let subs = saved.subs.into_iter().map(Sub::new).collect();
-        Core { clock, next: saved.next.max(1), subs, current: BTreeMap::new(), heard: BTreeSet::new(), publishers: BTreeMap::new(), echoes: Default::default() }
+        Core { clock, next: saved.next.max(1), subs, current: BTreeMap::new(), heard: BTreeSet::new(), publishers: BTreeMap::new(), echoes: Default::default(), topics: Vec::new(), record_read: false }
     }
 
     pub fn saved(&self) -> Saved {
@@ -187,6 +215,27 @@ impl Core {
         self.clock.now_ms()
     }
 
+    /// The topic record, just read.
+    pub fn set_topics(&mut self, rows: Vec<TopicRow>) {
+        self.topics = rows;
+        self.record_read = true;
+    }
+
+    /// The latest read of the record failed: what it last said still names the residents.
+    pub fn topics_unread(&mut self) {
+        self.record_read = false;
+    }
+
+    /// Tells each subscription of the gone publishers it depends on and has not been told of.
+    pub fn gone_notices(&mut self) -> Out {
+        let mut out = Out::default();
+        let now = self.now_ms();
+        for sub in &mut self.subs {
+            sub.notify_gone(&self.publishers, &self.topics, now, &mut out);
+        }
+        out
+    }
+
     /// A new connection: who is up is unknown until the broker says, since a restarted one
     /// holds nothing about a publisher that does not come back.
     pub fn reconnected(&mut self) {
@@ -200,7 +249,7 @@ impl Core {
     pub fn synced(&mut self) -> Out {
         let mut out = Out::default();
         for sub in &mut self.subs {
-            let pending = sub.pending.keys().filter(|t| is_state(t));
+            let pending = sub.pending.iter().filter(|(_, (_, state))| *state).map(|(t, _)| t);
             let unheard: BTreeSet<String> = sub.entry.delivered.keys().chain(pending).filter(|t| !self.heard.contains(*t)).cloned().collect();
             for topic in unheard {
                 sub.clear(&topic, &mut out);
@@ -234,20 +283,22 @@ impl Core {
         if once && batch_s.is_some() {
             return Err("--batch conflicts with --once: a --once subscription delivers at once".to_string());
         }
-        if !topics::filter_matches_any(filter) {
-            return Err(format!("filter {filter:?} matches no topic family declared in spira/topics.toml"));
+        if !topics::filter_is_well_formed(filter) {
+            return Err(malformed(filter));
         }
+        let warning = if !self.record_read {
+            Some("cannot check the filter against the record; subscribed anyway".to_string())
+        } else if !self.topics.iter().any(|row| topics::filter_meets_family(filter, &row.family)) {
+            Some(format!("filter \"{filter}\" matches no topic ever published; subscribed anyway"))
+        } else {
+            None
+        };
         let id = self.push(Some(filter.to_string()), None, note, once);
-        let mut out = Out { changed: true, ..Out::default() };
+        let mut out = Out { changed: true, warning, ..Out::default() };
         if listening {
             let now = self.now_ms();
             let sub = self.subs.last_mut().expect("just pushed");
-            for (topic, value) in &self.publishers {
-                if is_gone(value) && depends_on(filter, topic.trim_start_matches("publisher/")) {
-                    let line = sub.deliver(topic, value, true, now, &mut out);
-                    out.lines.extend(line);
-                }
-            }
+            sub.notify_gone(&self.publishers, &self.topics, now, &mut out);
         }
         self.subs.last_mut().expect("just pushed").entry.batch_s = batch_s;
         Ok((id, out))
@@ -279,13 +330,13 @@ impl Core {
         match batch_s {
             Some(batch_s) => sub.due_ms = sub.due_ms.map(|_| boundary(now, batch_s)),
             None if listening => {
-                for (topic, value) in sub.take_pending() {
-                    let line = sub.deliver(&topic, &value, is_state(&topic), now, &mut out);
+                for (topic, (value, state)) in sub.take_pending() {
+                    let line = sub.deliver(&topic, &value, state, now, &mut out);
                     out.lines.extend(line);
                 }
             }
             None => {
-                sub.pending.retain(|topic, _| !is_state(topic));
+                sub.pending.retain(|_, (_, state)| !*state);
                 sub.due_ms = (!sub.pending.is_empty()).then_some(now);
             }
         }
@@ -332,10 +383,11 @@ impl Core {
         false
     }
 
-    /// A message from the broker. With nobody `listening` nothing counts as delivered, so a
+    /// A message from the broker, `retained` being the publisher's retain flag: set, the value
+    /// is state. With nobody `listening` nothing counts as delivered, so a
     /// `--once` subscription waits for a reader; the value is kept for its replay, and a
     /// batched subscription's in its pending batch.
-    pub fn message(&mut self, topic: &str, payload: &[u8], listening: bool) -> Out {
+    pub fn message(&mut self, topic: &str, payload: &[u8], retained: bool, listening: bool) -> Out {
         let mut out = Out::default();
         let liveness = topic.starts_with("publisher/");
         if payload.is_empty() {
@@ -346,7 +398,7 @@ impl Core {
             return out;
         }
         let value = serde_json::from_slice(payload).unwrap_or_else(|_| Value::String(String::from_utf8_lossy(payload).into_owned()));
-        let state = is_state(topic);
+        let state = retained;
         if !state && self.echo(topic, payload) {
             return out;
         }
@@ -364,14 +416,14 @@ impl Core {
         for (at, sub) in self.subs.iter_mut().enumerate() {
             let Some(filter) = sub.entry.filter.clone() else { continue };
             let direct = topics::filter_selects(&filter, topic);
-            let notice = !direct && liveness && depends_on(&filter, topic.trim_start_matches("publisher/"));
+            let notice = !direct && liveness && depends_on(&self.topics, &filter, topic.trim_start_matches("publisher/"));
             if notice && !is_gone(&value) {
                 // Back up: its next going is news again.
                 sub.clear(topic, &mut out);
                 continue;
             }
             if let Some(batch_s) = sub.entry.batch_s.filter(|_| direct) {
-                sub.hold(topic, &value, batch_s, now);
+                sub.hold(topic, &value, state, batch_s, now);
                 continue;
             }
             if !listening || !(direct || notice) {
@@ -395,17 +447,12 @@ impl Core {
         let mut spent = Vec::new();
         for (at, sub) in self.subs.iter_mut().enumerate() {
             let Some(filter) = sub.entry.filter.clone() else { continue };
-            for (topic, value) in &self.publishers {
-                if !topics::filter_selects(&filter, topic) && is_gone(value) && depends_on(&filter, topic.trim_start_matches("publisher/")) {
-                    let line = sub.deliver(topic, value, true, now, &mut out);
-                    out.lines.extend(line);
-                }
-            }
+            sub.notify_gone(&self.publishers, &self.topics, now, &mut out);
             for (topic, value) in self.current.iter().filter(|(t, _)| topics::filter_selects(&filter, t)) {
                 if let Some(batch_s) = sub.entry.batch_s {
                     // Unheard while it was delivered at once, so no batch holds it yet.
                     if !sub.already_given(topic, value) {
-                        sub.hold(topic, value, batch_s, now);
+                        sub.hold(topic, value, true, batch_s, now);
                     }
                     continue;
                 }
@@ -443,8 +490,8 @@ impl Core {
         let mut block = Vec::new();
         let mut since = u64::MAX;
         for sub in self.subs.iter_mut().filter(|s| s.due_ms.is_some_and(|due| due <= now)) {
-            for (topic, value) in sub.take_pending() {
-                let Some(line) = sub.deliver(&topic, &value, is_state(&topic), now, &mut out) else { continue };
+            for (topic, (value, state)) in sub.take_pending() {
+                let Some(line) = sub.deliver(&topic, &value, state, now, &mut out) else { continue };
                 if sub.entry.batch_s.is_none() {
                     out.lines.push(line);
                     continue;
@@ -491,23 +538,93 @@ mod tests {
     use ports::VirtualClock;
     use serde_json::json;
 
+    fn row(family: &str, resident: &[&str]) -> TopicRow {
+        TopicRow { family: family.to_string(), resident: resident.iter().map(|r| r.to_string()).collect() }
+    }
+
+    fn record() -> Vec<TopicRow> {
+        vec![
+            row("bead/+/state", &["lc-serve"]),
+            row("gate/+/+", &[]),
+            row("host/pressure", &["watchtower"]),
+            row("progress/+", &[]),
+            row("publisher/+", &["lc-serve", "watchtower"]),
+            row("release/active", &[]),
+            row("round/+/+", &[]),
+            row("session/+/age/+", &[]),
+        ]
+    }
+
+    fn recorded(clock: &VirtualClock, saved: Saved) -> Core {
+        let mut c = Core::new(Arc::new(clock.clone()), saved);
+        c.set_topics(record());
+        c
+    }
+
     fn core() -> (Core, VirtualClock) {
         let clock = VirtualClock::new(1_000_000);
-        (Core::new(Arc::new(clock.clone()), Saved::default()), clock)
+        (recorded(&clock, Saved::default()), clock)
     }
 
+    /// A state publish: retained.
     fn say(c: &mut Core, topic: &str, value: Value) -> Out {
-        c.message(topic, value.to_string().as_bytes(), true)
+        c.message(topic, value.to_string().as_bytes(), true, true)
     }
 
-    #[test_id(tlo5svu)]
+    fn chat(c: &mut Core, topic: &str, value: Value) -> Out {
+        c.message(topic, value.to_string().as_bytes(), false, true)
+    }
+
+    #[test_id(t8oxs9z)]
     #[test]
-    fn an_add_whose_filter_matches_no_family_is_refused_and_changes_nothing() {
+    fn a_malformed_filter_is_refused_and_one_matching_nothing_published_is_taken_with_a_warning() {
         let (mut c, _) = core();
-        let why = c.add("nosuch/#", "", false, true).unwrap_err();
-        assert!(why.contains("nosuch/#"), "{why}");
+        for bad in ["a/#/b", ""] {
+            let why = c.add(bad, "", false, true).unwrap_err();
+            assert!(why.contains(&format!("{bad:?}")), "{why}");
+        }
         assert!(c.is_empty());
-        assert!(c.add("round/#", "", false, true).is_ok(), "positive control");
+        let (_, out) = c.add("nosuch/#", "", false, true).unwrap();
+        assert_eq!(out.warning.as_deref(), Some(r#"filter "nosuch/#" matches no topic ever published; subscribed anyway"#));
+        assert_eq!(c.add("round/#", "", false, true).unwrap().1.warning, None, "positive control");
+        c.topics_unread();
+        let warning = c.add("round/#", "", false, true).unwrap().1.warning.unwrap();
+        assert!(warning.contains("cannot check the filter against the record"), "{warning}");
+    }
+
+    #[test_id(t82299p)]
+    #[test]
+    fn the_delivered_retain_flag_alone_says_whether_an_equal_value_is_news() {
+        let (mut c, _) = core();
+        c.add("unlisted/x", "", false, true).unwrap();
+        assert_eq!(say(&mut c, "unlisted/x", json!({"n": 1})).lines.len(), 1);
+        assert!(say(&mut c, "unlisted/x", json!({"n": 1})).lines.is_empty(), "retained: state");
+        for _ in 0..2 {
+            assert_eq!(chat(&mut c, "unlisted/x", json!({"n": 1})).lines, ["[sub:s1] unlisted/x n=1"], "not retained: chatter");
+        }
+    }
+
+    #[test_id(t97s1d6)]
+    #[test]
+    fn a_resident_named_by_the_record_going_follows_its_familys_last_value() {
+        let clock = VirtualClock::new(1_000_000);
+        let mut c = Core::new(Arc::new(clock), Saved::default());
+        c.add("bead/+/state", "", false, true).unwrap();
+        assert_eq!(say(&mut c, "bead/sp-a/state", json!({"state": "WORKING"})).lines, ["[sub:s1] bead/sp-a/state state=WORKING"]);
+        assert!(say(&mut c, "publisher/lc-serve", json!({"state": "gone"})).lines.is_empty(), "no record, no resident");
+        c.set_topics(vec![row("bead/+/state", &["lc-serve"])]);
+        assert_eq!(c.gone_notices().lines, ["[sub:s1] publisher/lc-serve state=gone"]);
+        assert!(c.gone_notices().lines.is_empty(), "told once");
+    }
+
+    #[test_id(ts3ekw7)]
+    #[test]
+    fn fields_print_in_the_payloads_key_order_with_nulls_left_out() {
+        let (mut c, _) = core();
+        c.add("bead/+/state", "", false, true).unwrap();
+        // Neither sorted nor any declared order, so only the bytes can have given it.
+        let said = br#"{"from":"READY","state":"WORKING","actor":null,"at":100}"#;
+        assert_eq!(c.message("bead/sp-a/state", said, true, true).lines, ["[sub:s1] bead/sp-a/state from=READY state=WORKING at=100"]);
     }
 
     #[test_id(tfa7rf1)]
@@ -527,7 +644,7 @@ mod tests {
     fn once_waits_for_a_reader_and_is_spent_by_the_replay() {
         let (mut c, _) = core();
         c.add("bead/sp-a/state", "", true, false).unwrap();
-        let unheard = c.message("bead/sp-a/state", br#"{"state":"LANDED"}"#, false);
+        let unheard = c.message("bead/sp-a/state", br#"{"state":"LANDED"}"#, true, false);
         assert!(unheard.lines.is_empty() && c.len() == 1, "{unheard:?}");
         assert_eq!(c.attach().lines, ["[sub:s1] bead/sp-a/state state=LANDED"]);
         assert!(c.is_empty());
@@ -585,7 +702,7 @@ mod tests {
         let (mut c, _) = core();
         c.add("progress/+", "", false, true).unwrap();
         for _ in 0..2 {
-            assert_eq!(say(&mut c, "progress/sp-a", json!({"note": "still compiling"})).lines, [r#"[sub:s1] progress/sp-a note="still compiling""#]);
+            assert_eq!(chat(&mut c, "progress/sp-a", json!({"note": "still compiling"})).lines, [r#"[sub:s1] progress/sp-a note="still compiling""#]);
         }
         assert!(c.attach().lines.is_empty(), "chatter is not retained");
     }
@@ -598,8 +715,8 @@ mod tests {
         c.add("progress/#", "", false, true).unwrap();
         let said = json!({"note": "n"});
         for publish in 0..2 {
-            assert_eq!(say(&mut c, "progress/sp-a", said.clone()).lines.len(), 2, "publish {publish}: one line each");
-            assert!(say(&mut c, "progress/sp-a", said.clone()).lines.is_empty(), "publish {publish}: the broker's second copy");
+            assert_eq!(chat(&mut c, "progress/sp-a", said.clone()).lines.len(), 2, "publish {publish}: one line each");
+            assert!(chat(&mut c, "progress/sp-a", said.clone()).lines.is_empty(), "publish {publish}: the broker's second copy");
         }
     }
 
@@ -659,7 +776,7 @@ mod tests {
         c.remove("s2").unwrap();
         let text = serde_json::to_string(&c.saved()).unwrap();
         assert!(!text.contains("SECRET"), "the set file holds no message: {text}");
-        let mut again = Core::new(Arc::new(clock), serde_json::from_str(&text).unwrap());
+        let mut again = recorded(&clock, serde_json::from_str(&text).unwrap());
         assert_eq!(again.filters().into_iter().collect::<Vec<_>>(), ["round/#"]);
         assert_eq!(again.add("gate/#", "", false, true).unwrap().0, "s3");
     }
@@ -726,10 +843,10 @@ mod tests {
     fn an_unheard_batch_keeps_gathering_and_is_given_to_the_next_reader() {
         let (mut c, clock) = core();
         batched(&mut c, "progress/+");
-        c.message("progress/sp-a", br#"{"note":"one"}"#, false);
+        c.message("progress/sp-a", br#"{"note":"one"}"#, false, false);
         clock.advance(3_600_000);
         assert_eq!(c.flush_due(false), Out::default());
-        c.message("progress/sp-a", br#"{"note":"two"}"#, false);
+        c.message("progress/sp-a", br#"{"note":"two"}"#, false, false);
         assert_eq!(c.attach().lines, ["[batch] n=1 since 1970-01-01T00:16:40Z\n[sub:s1] progress/sp-a note=two"]);
     }
 
@@ -739,8 +856,8 @@ mod tests {
         let (mut c, _) = core();
         batched(&mut c, "progress/+");
         batched(&mut c, "release/active");
-        c.message("progress/sp-a", br#"{"note":"held"}"#, false);
-        c.message("release/active", br#"{"release":"r1"}"#, false);
+        c.message("progress/sp-a", br#"{"note":"held"}"#, false, false);
+        c.message("release/active", br#"{"release":"r1"}"#, true, false);
         assert!(c.set_class("s1", None, false).unwrap().lines.is_empty());
         assert!(c.set_class("s2", None, false).unwrap().lines.is_empty());
         assert_eq!(c.attach().lines, ["[sub:s2] release/active release=r1", "[sub:s1] progress/sp-a note=held"]);
@@ -752,8 +869,8 @@ mod tests {
     fn a_state_value_republished_with_its_keys_reordered_is_not_news() {
         let (mut c, _) = core();
         c.add("release/active", "", false, true).unwrap();
-        assert_eq!(c.message("release/active", br#"{"a":1,"b":{"c":2,"d":3}}"#, true).lines.len(), 1);
-        assert!(c.message("release/active", br#"{"b":{"d":3,"c":2},"a":1}"#, true).lines.is_empty());
+        assert_eq!(c.message("release/active", br#"{"a":1,"b":{"c":2,"d":3}}"#, true, true).lines.len(), 1);
+        assert!(c.message("release/active", br#"{"b":{"d":3,"c":2},"a":1}"#, true, true).lines.is_empty());
     }
 
     #[test_id(tqfvk56)]
@@ -761,7 +878,7 @@ mod tests {
     fn a_value_that_arrived_unheard_before_batching_still_reaches_a_batch() {
         let (mut c, clock) = core();
         c.add("release/active", "", false, false).unwrap();
-        c.message("release/active", br#"{"release":"r1"}"#, false);
+        c.message("release/active", br#"{"release":"r1"}"#, true, false);
         c.set_class("s1", TEN_MINUTES, false).unwrap();
         assert!(c.attach().lines.is_empty(), "it waits for its batch");
         assert_eq!(at_due(&mut c, &clock).lines.len(), 1);
@@ -773,11 +890,11 @@ mod tests {
         let (mut c, clock) = core();
         batched(&mut c, "release/active");
         say(&mut c, "release/active", json!({"release": "r1"}));
-        assert!(!c.message("release/active", b"", true).changed);
+        assert!(!c.message("release/active", b"", true, true).changed);
         assert_eq!(c.next_due_ms(), None);
         say(&mut c, "release/active", json!({"release": "r1"}));
         assert_eq!(at_due(&mut c, &clock).lines.len(), 1);
-        assert!(c.message("release/active", b"", true).changed, "what was given is forgotten on disk too");
+        assert!(c.message("release/active", b"", true, true).changed, "what was given is forgotten on disk too");
         assert!(c.saved().subs[0].delivered.is_empty());
     }
 
@@ -817,7 +934,7 @@ mod tests {
         let text = serde_json::to_string(&c.saved()).unwrap();
         assert!(!text.contains("SECRET"), "{text}");
         let mut again = Core::new(Arc::new(clock), serde_json::from_str(&text).unwrap());
-        assert!(again.message("release/active", br#"{"release":"SECRET"}"#, false).lines.is_empty());
+        assert!(again.message("release/active", br#"{"release":"SECRET"}"#, true, false).lines.is_empty());
         assert!(again.attach().lines.is_empty());
         assert_eq!(say(&mut again, "release/active", json!({"release": "r2"})).lines.len(), 1);
     }
@@ -907,7 +1024,7 @@ mod tests {
         assert_eq!(c.next_due_ms(), None);
 
         batched(&mut c, "progress/+");
-        say(&mut c, "progress/sp-a", json!({"note": "n"}));
+        chat(&mut c, "progress/sp-a", json!({"note": "n"}));
         c.reconnected();
         c.synced();
         assert_eq!(at_due(&mut c, &clock).lines.len(), 1, "chatter is not retained, so not being resent says nothing");
@@ -918,8 +1035,8 @@ mod tests {
     fn a_topic_cleared_after_it_was_heard_is_not_counted_as_heard() {
         let (mut c, _) = core();
         c.add("release/active", "", false, false).unwrap();
-        c.message("release/active", br#"{"release":"r1"}"#, false);
-        c.message("release/active", b"", false);
+        c.message("release/active", br#"{"release":"r1"}"#, true, false);
+        c.message("release/active", b"", true, false);
         c.synced();
         assert!(c.attach().lines.is_empty());
         assert!(c.heard.is_empty());

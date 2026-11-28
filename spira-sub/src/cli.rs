@@ -24,8 +24,8 @@ verbs
 
 arguments
   <filter>, --filter <filter>
-                     an MQTT topic filter (`+` one level, a final `#` the rest) that matches a
-                     family declared in spira/topics.toml
+                     any MQTT topic filter (`+` one level, a final `#` the rest); one that no
+                     published topic has matched is subscribed with a warning
   <id>, --id <id>    the id `add` printed, such as s12
   --as <name>        the subscriber's name: one topic segment (default: concierge; run
                      requires it)
@@ -51,7 +51,7 @@ are in the directory SPIRA_SUB_CONTROL_DIR names.
 exit codes:
   0  done
   1  failed: `run` is not up, or could not keep running
-  2  refused, nothing changed: usage, a filter matching no family, an unknown id or
+  2  refused, nothing changed: usage, a malformed filter, an unknown id or
      configuration
 ";
 
