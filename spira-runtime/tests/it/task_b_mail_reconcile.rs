@@ -135,7 +135,7 @@ fn unread_mail_is_set_once_and_cleared_when_read_and_a_failed_publish_is_said_ag
 #[test]
 fn a_publish_the_engine_saw_fail_is_asked_for_again_by_the_next_pass() {
     let m1 = BTreeMap::from([("concierge".to_string(), BTreeMap::from([("m1".to_string(), json!({"from": "a"}))]))]);
-    let answers = vec![json(&Snapshot { unread: m1, ..Default::default() }), json(&Snapshot::default()), json(&Snapshot::default())];
+    let answers = [json(&Snapshot { unread: m1, ..Default::default() }), json(&Snapshot::default()), json(&Snapshot::default())];
     let asked = Arc::new(Mutex::new(Vec::<Value>::new()));
     let seen = asked.clone();
     let passes = AtomicUsize::new(0);
