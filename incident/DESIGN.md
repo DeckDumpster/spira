@@ -11,9 +11,9 @@ Turn a production event — a crashed systemd unit, a suite's flake finding, a b
 a reconciler gap — into a bead Ops (or, for a code defect, the builder partition) can claim,
 with an identity that survives across recurrences. Three properties are load-bearing:
 
-1. **Write-ahead, then file.** The payload is spooled to disk *before* the database is
-   touched, and the spool entry is removed only once the bead exists. A production event
-   arrives exactly once and cannot be re-asked for.
+1. **A row, then file.** The payload is raised onto its reference's row on the control store
+   *before* the content store is touched, and the row is deleted only once the bead exists.
+   No file is written: an idle system costs nothing.
 2. **Dedupe on `external_ref`, not on wording.** A flapping unit is one incident, not one
    bead per failure. A second filing of the same ref bumps a recurrence on the existing bead
    (reopening it first if it had been handed on) rather than filing a duplicate — unless
@@ -30,12 +30,12 @@ incident systemd <unit>           file an incident for a failed systemd user uni
 incident file <title> [-|<file>]  file one from an arbitrary payload
 incident alarm <title> [-]        note a detector's condition in the Concierge inbox: one line per
                                   reference, one reminder per day, never a bead
-incident drain                    one pass over the spool, one filing per reference
-incident list                     open incidents
+incident retry [<reference>]      make refused and unread rows pending again
+incident list                     open incidents, then the unfiled rows
 ```
 
 Environment (unchanged names from the bash): `SPIRA_DB` (required — refuses if unset, never
-falls through to bd's own auto-discovery), `SPIRA_RUN`, `SPIRA_SPOOL`, `SPIRA_INCIDENT_LOG`,
+falls through to bd's own auto-discovery), `SPIRA_RUN`,
 `SPIRA_FENRIR_AT` (5), `SPIRA_FENRIR_EXEMPT`, `SPIRA_INCIDENT_DEDUP_LOOKBACK` (7 days),
 `SPIRA_WATCHER_INTERVAL_S` (1800), `SPIRA_INCIDENT_CAUSE`, `SPIRA_INCIDENT_UNIT`,
 `SPIRA_INCIDENT_PATH`, `SPIRA_INCIDENT_LABELS` (default `spira,$SPIRA_INCIDENT_LABEL`),
@@ -44,31 +44,36 @@ falls through to bd's own auto-discovery), `SPIRA_RUN`, `SPIRA_SPOOL`, `SPIRA_IN
 `SPIRA_INCIDENT_REF`, `SPIRA_ASK_LABEL` (needs-ryan), `SPIRA_HOME_REPO`, `SPIRA_REPO_MAP`,
 `BD_TIMEOUT`, `SPIRA_BDQ_CONN_RETRIES`; the store is reached through `bdq`.
 
-Stdout contract unchanged: `systemd`/`file`/`drain` print the filed/bumped bead id on the
-last non-empty line (callers already grep for this — batcher-cut, sentinel, landing-pass);
-`drain` also prints `drained N, still spooled M`, always both numbers: N counts every entry the
-pass settled, M every entry it left, held back or stuck.
+`file` prints `{"id": …}`, the filed or bumped bead, or `null` for activation skew
+(callers deserialise it). Exit codes: `0` filed or deduped; `1` the event was not filed —
+stderr names the row's state and reason, or the store's error when it could not be raised.
 
-Exit codes unchanged: `0` filed or deduped; `1` the database is unreachable, the guards
-refused the filing, or (for `drain`) at least one entry is still stuck (a reference only held
-back by the batch is not).
+## The rows
 
-## Draining
+One row per bounded reference, `incidents/<reference>` (`spira-lc incidents`). Its rules are
+`spira_store::incident`, which the store verb and the unit tests' fake both apply. A raise
+upserts it: the newest payload (body capped at 16 KiB) and an event count; it keeps the row's
+state, so a repeat of a refused event adds no attempt. The raiser then claims the row, files it
+and records the end on it, because its caller needs the bead id at once. A filed row is
+deleted, unless a newer event arrived under the claim: then it is pending again and files as a
+recurrence.
 
-`drain_spool` is the one drain: the CLI, `persona.ops` and the `incident.drain` task (every
-`SPIRA_RUNTIME_INCIDENT_DRAIN_SECS`) all call it. It groups entries by bounded reference, oldest
-group first, and files at most `SPIRA_INCIDENT_DRAIN_BATCH` groups, each once, from its newest
-event, whose body then opens with the group's count and stamp range. That filing settles the whole
-group: an outage's backlog is one item per cause, not a recurrence per event. A failed group keeps
-every entry and uses one of the batch's slots, except a lane-refused reference, which uses no
-slot. The store is asked about a lane-refused destination (the repo and lane `decide::route`
-names, not the declared repo) once per pass; later groups bound there are reported stuck with the same reason, uncalled. Every filer looks for the entry, files
-it and removes what the filing settles under one hold of the incident lock, so concurrent drains
-file it once. Entries are renamed into place (`spool::write_entry`), so a drain never reads a
-half-written one; a partial older than five minutes lost its writer and is drained as it stands. A
-scheduler halt holds the task's drain, a store write, until the resume. The task notes an entry
-stuck for more than two cadences as `incident:spool-stuck` through `alarm::note`: one inbox line a
-day, with no store needed. A lane-refused entry stays by design and so is such a condition.
+A failure waits for its cause. A lane refusal records the lanes the repository admitted, and is
+tried again only when they differ. A filing the content store could not answer is tried again
+after 60 s, doubling to 1 h. `incident retry` lifts either.
+
+`file_pending` files what a raiser left: pending rows, lapsed claims, and refused or unread
+rows whose cause moved, at most `SPIRA_INCIDENT_DRAIN_BATCH` a pass, saying what it held back.
+The runtime task `incident.file` runs it when a row changes, and nothing polls. The store bridge
+holds each unfiled row as the retained topic `incident/<reference>`, with its event count, and
+clears it once the row is deleted.
+
+A raise the control store cannot take is lost to its caller, which is told on stderr; there is
+no file to fall back to. The store's own down alarm covers the outage, and a detector that
+still sees its condition raises again.
+
+`incident alarm` is a different path: it notes in the Concierge inbox, keeping
+`incident-alarms.tsv` under the incident lock.
 
 ## Retired (rule one: retire rather than port)
 
@@ -105,9 +110,7 @@ day, with no store needed. A lane-refused entry stays by design and so is such a
   (`bdq`'s remaining behaviour — the czar-fence gate, the `SPIRA_BDJSON_FIXTURE` seam, the
   connection-retry loop — is either inapplicable to this crate's writes or already
   reimplemented in `real.rs::RealBd::run`.)
-- Everything else the bash's `file_one`/`drain_one`/`spool_write`/`_dedup_incident` did:
-  the write-ahead spool (byte-identical on-disk format, so a spool directory populated by
-  the bash mid-cutover still drains under the new binary), the two-pass label-keyed-then-
+- Everything else the bash's `file_one`/`_dedup_incident` did: the two-pass label-keyed-then-
   fallback dedupe, the reopen-vs-recurrence classification, the payload-hash dedup on the
   recurrence note body, the Fenrir escalation mail, the `delivers:`
   label decision.
@@ -124,14 +127,12 @@ day, with no store needed. A lane-refused entry stays by design and so is such a
   top of `Bd::sql`.
 - `real.rs` — the host implementation: shells to `bd` (with the same connection-retry-on-
   "invalid connection" `bdq` does) and `mail.sh`.
-- `spool.rs` — the write-ahead spool file format (byte-identical to the bash's
-  `spool_write`/`spool_field`/`spool_body`).
+- `intake.rs` — raise, claim, file, record, and `file_pending`.
 - `run.rs` — orchestration (`file_one`, the four-pass dedupe scan) matching the bash's
   control flow, with a fake `Bd`/`Mailer`/`Clock` harness for its own unit tests.
 - `main.rs` — CLI dispatch: reads the environment once, builds a `run::FileConfig`, and
-  implements `systemd`/`file`/`drain`/`list` directly (the spool read/write and the
-  `SPIRA_DB`-unset refusal live here, since they are this binary's own IO, not a port any
-  fake needs to stand in for).
+  implements `retry`/`list` and the `SPIRA_DB`-unset refusal, since they are this binary's
+  own IO.
 
 ## Non-goals (out of scope for this bead)
 
@@ -152,7 +153,7 @@ day, with no store needed. A lane-refused entry stays by design and so is such a
 
 ## Parity
 
-- 38 unit tests in `decide.rs`/`run.rs`/`spool.rs` cover every decision the bash's
+- Unit tests in `decide.rs`/`run.rs` cover every decision the bash's
   `file_one`/`_dedup_incident`/`_recur_note_body`/`_reopen_cause`/the three `bdq` guards made,
   against hand-built fixtures plus the real `bd` schema fields verified in this session
   (`created_at`, `closed_at`, `external_ref`, `labels`) against a live throwaway `bd init`
@@ -182,7 +183,7 @@ day, with no store needed. A lane-refused entry stays by design and so is such a
   the builder) — and `real.rs` takes each bead's state from one `spira-lc list`, with bd
   supplying only content (labels, `external_ref`, and `closed_at` for the lookback window).
   A bead with no row is in neither pass. A pass that cannot read bd **or** the machine is
-  not "nothing found": the event stays spooled (law-a-control-that-cannot-check-must-refuse),
+  not "nothing found": the event stays on its row (law-a-control-that-cannot-check-must-refuse),
   where the bash skipped a failed pass and filed a fresh bead. The log line names the pass
   and the store's error. The two `ref:`-less fallback passes read by `external_ref`, so no
   pass asks for every bead closed in the lookback.

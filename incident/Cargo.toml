@@ -3,7 +3,7 @@ name = "incident"
 version = "1.0.0"
 edition = "2021"
 autotests = false
-description = "incident — turn a production event into a bead Ops can claim, deduplicated on external_ref, with a write-ahead spool so an event that arrives while the store is down is never lost. Rust port of spira/incident.sh (sp-0ekp7); contract, scar and scope: DESIGN.md."
+description = "incident — turn a production event into a bead Ops can claim, deduplicated on external_ref, through one control-store row per unfiled reference. Rust port of spira/incident.sh (sp-0ekp7); contract, scar and scope: DESIGN.md."
 
 [[test]]
 name = "no_fork_edges"

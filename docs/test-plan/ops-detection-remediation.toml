@@ -9,7 +9,7 @@ statement = "N filings of one ref leave exactly one open bead and log N-1 recurr
 [[use_case]]
 id = "UC-ops-detection-remediation-02"
 tier = "T2"
-statement = "Two concurrent filers of one ref create exactly one bead; `drain_one` holds a flock around the check-and-create, proven with a deterministic barrier rather than timing."
+statement = "Two concurrent filers of one ref create exactly one bead; the filer holds its reference's row claim around the check-and-create, so of two claims one is refused."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-03"
@@ -49,7 +49,7 @@ statement = "Every filing site that sets `SPIRA_INCIDENT_REF` also declares `SPI
 [[use_case]]
 id = "UC-ops-detection-remediation-10"
 tier = "T2"
-statement = "When bd is unreachable a filing stays in the spool (exit 1); `incident.sh drain` later files it, reports both \"drained N, still spooled M\", moves a REF-less entry to `.bad`, and drains a pre-CAUSE entry as `unrecorded`."
+statement = "When the content store is unreachable a filing stays on its control-store row (exit 1) and is retried on a doubling delay; once it answers, the row is filed once and deleted."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-11"

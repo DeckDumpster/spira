@@ -555,10 +555,11 @@ impl<B: Backend> Store<B> {
     }
 
     pub fn journal_poisoned(&self, stream: &str) -> Result<Option<PoisonRow>> {
-        Ok(self.contract().get(&keys::runtime(POISON, &[stream]))?.map(|i| {
-            let v = &i.value.data;
-            PoisonRow { stream: text(v, "stream"), event: text(v, "event"), handler: text(v, "handler"), message: text(v, "message") }
-        }))
+        Ok(self.contract().get(&keys::runtime(POISON, &[stream]))?.map(|i| poison_row(&i.value.data)))
+    }
+
+    pub fn journal_poisons(&self) -> Result<Vec<PoisonRow>> {
+        Ok(self.table(POISON)?.iter().map(|(_, v)| poison_row(v)).collect())
     }
 
     /// Every key under the table with the row it holds.
@@ -571,6 +572,10 @@ impl<B: Backend> Store<B> {
     fn markers(&self, table: &str) -> Result<std::collections::BTreeSet<String>> {
         Ok(self.table(table)?.into_iter().map(|(k, _)| k).collect())
     }
+}
+
+fn poison_row(v: &Value) -> PoisonRow {
+    PoisonRow { stream: text(v, "stream"), event: text(v, "event"), handler: text(v, "handler"), message: text(v, "message") }
 }
 
 /// The planned txns folded into as few as [`CHUNK`] allows, never folding past one that carries

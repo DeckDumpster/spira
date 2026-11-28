@@ -179,6 +179,17 @@ pub fn turn_of(turn: &Value) -> Result<Turn, String> {
     Ok(out)
 }
 
+/// The tasks whose rows a `journal turn` request carries, comma-joined, for its span.
+pub(crate) fn turn_tasks(argv: &[String]) -> Option<String> {
+    let [journal, op, body, ..] = argv else { return None };
+    if journal != "journal" || op != "turn" {
+        return None;
+    }
+    let turn: runtime::journal::Turn = serde_json::from_str(body).ok()?;
+    let names = turn.task_names();
+    (!names.is_empty()).then(|| names.into_iter().collect::<Vec<_>>().join(","))
+}
+
 fn failed(op: &str, what: impl std::fmt::Display) -> String {
     format!("journal {op}: {what}")
 }
@@ -248,10 +259,14 @@ pub(crate) fn run<B: state_store::Backend>(args: &[String], store: &crate::contr
         }
         "poisoned" => {
             let stream = text_arg(a(1), "stream")?;
+            let of = |r: PoisonRow| json!({ "stream": r.stream, "event": r.event, "handler": r.handler, "message": r.message });
+            if stream == "--all" {
+                return Ok(Value::Array(store.journal_poisons().map_err(cannot)?.into_iter().map(of).collect()).to_string());
+            }
             let row = store.journal_poisoned(stream).map_err(cannot)?;
-            Ok(row.map_or("null".into(), |r| json!({ "stream": r.stream, "event": r.event, "handler": r.handler, "message": r.message }).to_string()))
+            Ok(row.map_or("null".into(), |r| of(r).to_string()))
         }
-        _ => Err(format!("journal: unknown op {op:?} (turn|state|open-effects|due|done|has-done|poison|poisoned|sweep)")),
+        _ => Err(format!("journal: unknown op {op:?} (turn|state|open-effects|due|done|has-done|poison|poisoned [--all]|sweep)")),
     }
 }
 
@@ -503,6 +518,37 @@ mod tests {
         let sent = serde_json::to_value(runtime::journal::Turn { cleared: vec![("t".into(), "k".into())], ..Default::default() }).unwrap();
         assert_eq!(turn_of(&sent).unwrap().cleared, vec![("t".to_string(), "k".to_string())], "a cleared key the runtime sends is read as sent");
         assert_eq!(turn_of(&json!({})).unwrap(), Turn::default(), "an empty turn writes nothing");
+    }
+
+    #[test_id(tpqdds6)]
+    #[test]
+    fn a_turns_span_names_the_task_of_each_row_it_carries_once() {
+        let argv = |turn: &Value| vec!["journal".to_string(), "turn".to_string(), turn.to_string()];
+        let state = json!({"state": [{"task": "claim-count", "skey": "carry", "value": "v", "at": 1}]});
+        assert_eq!(turn_tasks(&argv(&state)).as_deref(), Some("claim-count"));
+        let sent = runtime::journal::Turn { cleared: vec![("c".into(), "k".into())], fired: vec!["r1".into()], tasks: ["b".to_string()].into(), ..Default::default() };
+        let mut body = serde_json::to_value(sent).unwrap();
+        body["effects"] = json!([effect(), effect()]);
+        body["state"] = json!([{"task": "c", "skey": "carry", "value": "v", "at": 1}]);
+        assert_eq!(turn_tasks(&argv(&body)).as_deref(), Some("b,c,t"), "state, cleared, effect and the rows that name no task of their own");
+        assert!(turn_of(&body).is_ok(), "the body the runtime sends is accepted");
+        for other in [vec!["journal".to_string(), "poisoned".into(), "--all".into()], argv(&json!({})), vec!["journal".to_string(), "turn".into(), "not json".into()], vec!["show".to_string()]] {
+            assert_eq!(turn_tasks(&other), None, "{other:?}");
+        }
+    }
+
+    #[test_id(tvp6bm9)]
+    #[test]
+    fn poisoned_all_answers_every_poisoned_stream_in_one_call() {
+        let s = store();
+        assert_eq!(call(&s, &["poisoned", "--all"]), (0, "[]".into()));
+        for stream in ["a", "b"] {
+            let p = json!({"stream": stream, "event": "e", "handler": "h", "message": "m"});
+            assert_eq!(call(&s, &["poison", &p.to_string()]).0, 0);
+        }
+        let all = parsed(&s, &["poisoned", "--all"]);
+        assert_eq!(all, json!([parsed(&s, &["poisoned", "a"]), parsed(&s, &["poisoned", "b"])]));
+        assert!(call(&s, &["no-such-op"]).1.contains("poisoned [--all]"));
     }
 
     #[test_id(thpzk1e)]

@@ -10,6 +10,8 @@ pub const MENDS: &str = "mends/";
 /// Each GitHub bead's pending issue closeout, `gh-closeout/<bead>`: written in the txn that
 /// moves the bead to LANDED, SUPERSEDED or DROPPED, deleted once the issue is settled.
 pub const GH_CLOSEOUTS: &str = "gh-closeout/";
+/// Each incident raised and not yet filed, `incidents/<component of the bounded reference>`.
+pub const INCIDENTS: &str = "incidents/";
 pub const BATCHES: &str = "batches/";
 /// Each round's id, naming the repo it was cut in: a round id is unique across repos.
 pub const BATCH_IDS: &str = "batch-ids/";
@@ -58,10 +60,7 @@ pub fn fact(bead: &str, request: &str) -> String {
     format!("{}{request}", facts_of(bead))
 }
 
-/// A natural key as one key component: `%` and `/` are escaped, so the component never splits.
-pub fn component(raw: &str) -> String {
-    raw.replace('%', "%25").replace('/', "%2F")
-}
+pub use spira_store::incident::component;
 
 pub fn runtime(table: &str, natural: &[&str]) -> String {
     let parts: Vec<String> = natural.iter().map(|p| component(p)).collect();
