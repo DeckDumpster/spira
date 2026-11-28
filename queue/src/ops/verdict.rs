@@ -2118,7 +2118,6 @@ fn eject_red_members(
     let (name, pr) = (b.name, &b.pr);
     let batch_id = b.kv.get("batch_id").unwrap_or("").to_string();
     let mut failed = false;
-    call_forge_mender(w, c, b, faulty, step);
     for (m, lines) in faulty {
         let why = format!("batch PR {pr} red at {}: {}", m.tip, lines.join(" | "));
         if let Err(e) = super::round::record_batch_red(c, &m.id, &m.tip) {
@@ -2153,6 +2152,8 @@ fn eject_red_members(
             lines.join(" | ")
         ));
     }
+    // After the ejects: its Failed event leaves a forge row running, where Eject is refused.
+    call_forge_mender(w, c, b, faulty, step);
     lc_requeue(
         w,
         c,

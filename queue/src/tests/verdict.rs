@@ -1935,6 +1935,27 @@ fn a_single_member_setup_red_whose_rerun_the_forge_refuses_is_ejected_in_that_pa
     assert_eq!(reruns, 1);
 }
 
+#[test_id(tnmvhuy)]
+#[test]
+fn a_forge_red_member_is_ejected_before_its_mender_opens_the_pass() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta\nopened=500\nbranch=spira/queue/x\nowner=batcher\nbatch_id=spira-1\nversion=3\n");
+    t.git.set("origin/main", "b0");
+    refused_setup_red(&t);
+    t.lc.eject_refused_while_running.set(true);
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(!t.err().contains("eject-member refused"), "{}", t.err());
+    let calls = t.lc.calls.borrow();
+    let eject = calls.iter().position(|c| c.starts_with("eject-member spira-1 sp-a"));
+    let failed = calls
+        .iter()
+        .position(|c| c.starts_with("event batch spira-1 ") && c.contains("{\"Failed\""));
+    assert!(
+        matches!((eject, failed), (Some(e), Some(f)) if e < f),
+        "{calls:?}"
+    );
+}
+
 #[test_id(tb7o3wj)]
 #[test]
 fn a_multi_member_setup_red_whose_rerun_the_forge_refuses_is_abandoned_in_that_pass() {
