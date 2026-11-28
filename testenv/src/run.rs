@@ -2560,7 +2560,8 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         )
         .collect::<Vec<_>>(),
     );
-    if let Some(id) = &s.round_batch_id {
+    // A prebuilt run builds nothing, so it has no build phase to record.
+    if let Some(id) = s.round_batch_id.as_ref().filter(|_| prebuilt.is_none()) {
         let batch_wall = t_batch.elapsed().as_secs();
         let reds = records.values().filter(|r| r.status.blocking()).count() as u64;
         let row = RoundPhaseRow {
@@ -2826,6 +2827,11 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     } else {
         deps.log("every suite that finished before the deadline passed");
     }
+    if ran > 0 {
+        if let Err(e) = write_results_jsonl(&results, &suite_dir) {
+            deps.log(&format!("results.jsonl not written: {e}"));
+        }
+    }
     if let Some(gt) = deps.which("gate-timing.sh") {
         let _ = helper(&gt, &[&results_s, "green"], &run_env, None);
     }
@@ -2834,6 +2840,28 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         skipped: 0,
         ..Finish::green(ran)
     }
+}
+
+/// The `results.jsonl` of a green run, with the rows gate-diag writes for a red one.
+fn write_results_jsonl(results: &Path, suite_dir: &Path) -> std::io::Result<()> {
+    let mut files: Vec<PathBuf> = fs::read_dir(results)?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "result"))
+        .collect();
+    files.sort();
+    // gate-diag reads each of these with its trailing newlines trimmed.
+    let read = |p: &Path| fs::read_to_string(p).ok().map(|t| t.trim_end_matches('\n').to_string());
+    let mut rows = String::new();
+    for path in files {
+        let Some(suite) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+        let record = read(&path).and_then(|t| ResultRecord::parse(&t));
+        let (status, secs) = record.map_or(("red", 0), |r| (r.status.as_str(), r.secs));
+        let source = read(&suite_dir.join(suite)).unwrap_or_default();
+        let out = read(&path.with_extension("out"));
+        rows.push_str(&crate::tap::jsonl_rows(suite, &source, out.as_deref(), status, &secs.to_string()));
+    }
+    fs::write(results.join("results.jsonl"), rows)
 }
 
 /// A green, undeferred run whose selection is every suite in the tree is the full-suite round

@@ -441,6 +441,79 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert_eq!(left.get(), Some((false, true)), "the copy is removed once read, from a tree still there: {lines:?}");
     }
 
+    /// Runs two suites, `test-a.sh` and `test-b.sh`, with `b_rc` the second's exit code; the
+    /// run's last line and the `results.jsonl` it left, if any.
+    fn two_suite_run(b_rc: i32) -> (String, Option<String>) {
+        let root_seen = std::sync::Mutex::new(PathBuf::new());
+        let setup = |rt: &FakeRuntime, root: &Path| {
+            *root_seen.lock().unwrap() = root.to_path_buf();
+            rt.suite("test-a.sh", 0, "TAP version 14\n1..1\nok 1 - one\n");
+            rt.suite("test-b.sh", b_rc, "TAP version 14\n1..2\nok 1 - two\nok 2 - three\n");
+        };
+        let left = std::cell::RefCell::new(None);
+        let after = || *left.borrow_mut() = find_file(&root_seen.lock().unwrap().join("run"), "results.jsonl").map(|p| fs::read_to_string(p).unwrap());
+        let csv = "test-a.sh,test-b.sh";
+        let (last, ..) = run_flags_rt("none", csv, None, None, &["--suites", csv], "", &[], &setup, &after);
+        (last, left.into_inner())
+    }
+
+    /// Whether a run of one green suite, marked as a round's, left a `round` row; `prebuilt`
+    /// hands it `--artifacts`.
+    fn round_run_leaves_a_round_row(prebuilt: bool) -> bool {
+        let bins = testkit::TempDir::new("testenv-prebuilt");
+        for name in crate::prebuilt::FLOOR {
+            testkit::write_exe(bins.join(name), "#!/bin/sh\n");
+        }
+        let dir = bins.path().display().to_string();
+        let mut flags = vec!["--suites", "test-a.sh"];
+        if prebuilt {
+            flags.extend(["--artifacts", dir.as_str()]);
+        }
+        let root_seen = std::sync::Mutex::new(PathBuf::new());
+        let setup = |rt: &FakeRuntime, root: &Path| {
+            *root_seen.lock().unwrap() = root.to_path_buf();
+            rt.suite("test-a.sh", 0, "TAP version 14\n1..1\nok 1 - one\n");
+        };
+        let row = std::cell::Cell::new(false);
+        let after = || row.set(find_file(&root_seen.lock().unwrap().join("run"), "round.jsonl").is_some());
+        let (last, _, _, lines) = run_flags_rt("none", "test-a.sh", None, None, &flags, "", &[("SPIRA_ROUND_BATCH_ID", "round-9")], &setup, &after);
+        assert!(last.starts_with("VERDICT GREEN ran=1"), "{lines:#?}");
+        row.get()
+    }
+
+    #[test_id(th5bhz5)]
+    #[test]
+    fn a_rounds_prebuilt_run_records_no_build_phase() {
+        assert!(round_run_leaves_a_round_row(false), "positive control: a round's run that builds records its build");
+        assert!(!round_run_leaves_a_round_row(true));
+    }
+
+    #[test_id(taqqm5l)]
+    #[test]
+    fn a_green_run_leaves_results_jsonl_with_every_suites_cases() {
+        let (last, jsonl) = two_suite_run(0);
+        assert!(last.starts_with("VERDICT GREEN ran=2"), "{last}");
+        let jsonl = jsonl.expect("a green run leaves results.jsonl");
+        let rows: Vec<(String, String, String)> = jsonl
+            .lines()
+            .map(|l| {
+                let v: serde_json::Value = serde_json::from_str(l).unwrap();
+                let f = |k: &str| v[k].as_str().unwrap().to_string();
+                (f("suite"), f("case"), f("status"))
+            })
+            .collect();
+        let want = [("test-a.sh", "one"), ("test-b.sh", "two"), ("test-b.sh", "three")];
+        assert_eq!(rows, want.map(|(s, c)| (s.to_string(), c.to_string(), "pass".to_string())), "{jsonl}");
+    }
+
+    #[test_id(timr1qi)]
+    #[test]
+    fn a_red_run_leaves_results_jsonl_to_gate_diag() {
+        let (last, jsonl) = two_suite_run(1);
+        assert!(last.starts_with("VERDICT RED"), "{last}");
+        assert_eq!(jsonl, None, "no gate-diag runs here, so testenv itself wrote none");
+    }
+
     fn deadline_run(bead: &str, flags: &[&str]) -> (Vec<String>, Vec<String>) {
         let mut env = vec![("SPIRA_TESTENV_SUITE_CAP", "600")];
         if !bead.is_empty() {

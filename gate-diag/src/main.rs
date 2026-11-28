@@ -118,20 +118,16 @@ impl Caller {
     }
 }
 
-/// One `test.result` per case of this run's `results.jsonl`; a `(verdict)` row is the retry
-/// classifier's, not a test. A suite reads the whole tree, so the tree is its input hash. Best
-/// effort: what cannot be sent is counted on stderr.
+/// One `test.result` per case of this run's `results.jsonl`; a round's are the host's to send.
+/// A suite reads the whole tree, so the tree is its input hash. Best effort: what cannot be sent
+/// is counted on stderr.
 fn send_test_results(root: &std::path::Path, endpoint: &str, at: &Caller) {
-    use spira_otel::testresult::{self, Outcome, Tier};
-    if endpoint.trim().is_empty() {
+    use spira_otel::testresult::{self, Tier};
+    if at.source == "round" || endpoint.trim().is_empty() {
         return;
     }
     let Ok(jsonl) = std::fs::read_to_string(root.join("results.jsonl")) else { return };
-    let cases: Vec<serde_json::Value> = jsonl
-        .lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .filter(|v| ["suite", "case"].iter().all(|k| v[*k].as_str().is_some_and(|s| !s.is_empty())) && v["case"] != "(verdict)")
-        .collect();
+    let cases = testresult::suite_results(&jsonl);
     if cases.is_empty() {
         return;
     }
@@ -139,20 +135,15 @@ fn send_test_results(root: &std::path::Path, endpoint: &str, at: &Caller) {
     let runner = tsd::default_host();
     let load1 = gate::real::load1();
     let sink = spira_otel::logs::LogPush::new(endpoint, "spira-gate-diag", SEND_DEADLINE, cases.len());
-    for row in &cases {
-        let text = |k: &str| row[k].as_str().unwrap_or_default();
+    for case in cases {
         let record = testresult::Result {
-            test_id: format!("{}::{}", text("suite"), text("case")),
-            name: text("case").to_string(),
+            test_id: case.test_id,
+            name: case.name,
             crate_name: String::new(),
             tier: Tier::Suite,
             input_hash: tree.clone(),
-            outcome: match text("status") {
-                "pass" => Outcome::Pass,
-                "skip" | "unreached" | "bail" => Outcome::Skipped,
-                _ => Outcome::Fail,
-            },
-            duration_ms: (row["seconds"].as_f64().unwrap_or(0.0) * 1000.0).round() as u64,
+            outcome: case.outcome,
+            duration_ms: case.duration_ms,
             runner: runner.clone(),
             load1,
             source: at.source,
@@ -337,8 +328,8 @@ mod test_result_tests {
         .unwrap();
         std::fs::write(d.join("batch.meta"), "key=k\ntree=abc123\n").unwrap();
         let fake = spira_otel::fixture::Collector::start();
-        let round = Caller::read(|k| (k == "SPIRA_ROUND_BATCH_ID").then(|| "round-7".to_string()));
-        send_test_results(&d, fake.addr(), &round);
+        let gate = Caller::read(|k| (k == "SPIRA_GATE_BRANCH").then(|| "spira/sp-a".to_string()));
+        send_test_results(&d, fake.addr(), &gate);
         let got = fake.events();
         let field = |e: &spira_otel::fixture::Event, k: &str| match e.attr(k) {
             Some(Attr::Str(s)) => s.clone(),
@@ -350,9 +341,23 @@ mod test_result_tests {
         assert_eq!(seen, want.map(|r| r.map(String::from)));
         for e in &got {
             assert_eq!(e.body, spira_otel::testresult::EVENT);
-            assert_eq!(["source", "round", "tree", "input_hash"].map(|k| field(e, k)), ["round", "round-7", "abc123", "abc123"]);
+            assert_eq!(["source", "tree", "input_hash"].map(|k| field(e, k)), ["gate", "abc123", "abc123"]);
             assert!(matches!(e.attr("load1"), Some(Attr::Float(_))), "{:?}", e.attrs);
         }
+    }
+
+    #[test_id(tcr96g3)]
+    #[test]
+    fn a_rounds_run_sends_no_test_result_because_the_host_sends_the_rounds() {
+        let tmp = testkit::TempDir::new("gate-diag-round");
+        let d = tmp.path().to_path_buf();
+        std::fs::write(d.join("results.jsonl"), "{\"suite\":\"a.sh\",\"case\":\"x\",\"status\":\"pass\",\"seconds\":1}\n").unwrap();
+        let fake = spira_otel::fixture::Collector::start();
+        let round = Caller::read(|k| (k == "SPIRA_ROUND_BATCH_ID").then(|| "round-7".to_string()));
+        send_test_results(&d, fake.addr(), &round);
+        assert!(fake.events().is_empty(), "{:?}", fake.events());
+        send_test_results(&d, fake.addr(), &Caller::read(|_| None));
+        assert_eq!(fake.events().len(), 1, "positive control: the same results are sent outside a round");
     }
 
     #[test_id(txls862)]
