@@ -12,6 +12,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 lifecycle = { path = "../lifecycle" }
 ports = { path = "../ports" }
+sha2 = "0.10"
 
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
