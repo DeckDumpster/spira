@@ -5,10 +5,10 @@
 #[macro_use]
 extern crate spira_test_id;
 
-use std::io::{BufRead, Write};
-use std::path::{Path, PathBuf};
+use std::io::{BufRead, Lines, Write};
+use std::path::Path;
+use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
 
 use serde_json::{json, Value};
 use spira_sub::client;
@@ -69,34 +69,42 @@ impl<W: Write> Write for Channel<W> {
     }
 }
 
-/// Follows on its own thread, so neither it nor the client's stdin waits for the other.
-fn follow_aside(socket: PathBuf, out: Out<impl Write + Send + 'static>) -> Result<JoinHandle<Result<(), String>>, String> {
-    std::thread::Builder::new()
-        .name("channel-spike-follow".into())
-        .spawn(move || {
-            let mut note = |what: &str| eprintln!("channel-spike: {what}");
-            client::follow(&socket, &mut Channel { out, seq: 0 }, &mut note).inspect_err(|why| eprintln!("channel-spike: {why}"))
-        })
-        .map_err(|e| format!("cannot start the follow thread: {e}"))
-}
-
-/// Serves the MCP client until it closes its end. Deliveries of the `spira-sub run` on `socket`
-/// start once the client has sent `initialize`; the follow thread outlives the call.
-pub fn relay(socket: &Path, from_client: impl BufRead, to_client: impl Write + Send + 'static) -> Result<(), String> {
-    let out = Arc::new(Mutex::new(to_client));
-    let mut following = None;
-    for line in from_client.lines() {
+/// Answers the client's lines. Returns true after answering `initialize` when `until_initialize`,
+/// and false once the client has closed its end.
+fn serve(lines: &mut Lines<impl BufRead>, out: &Out<impl Write>, until_initialize: bool) -> Result<bool, String> {
+    for line in lines {
         let line = line.map_err(|e| format!("cannot read from the client: {e}"))?;
         let Some((reply, initialized)) = answer(&line) else { continue };
-        send(&out, &reply).map_err(|e| format!("cannot write to the client: {e}"))?;
-        if initialized && following.is_none() {
-            following = Some(follow_aside(socket.to_path_buf(), out.clone())?);
+        send(out, &reply).map_err(|e| format!("cannot write to the client: {e}"))?;
+        if initialized && until_initialize {
+            return Ok(true);
         }
     }
-    match following.filter(JoinHandle::is_finished) {
-        Some(ended) => ended.join().map_err(|_| "the follow thread panicked".to_string())?,
-        None => Ok(()),
+    Ok(false)
+}
+
+fn aside(name: &str, body: impl FnOnce() + Send + 'static) -> Result<(), String> {
+    std::thread::Builder::new().name(name.into()).spawn(body).map(drop).map_err(|e| format!("cannot start {name}: {e}"))
+}
+
+/// Serves the MCP client until it closes its end or `follow` ends, whichever is first; a server
+/// left up with nothing to follow would look healthy. Deliveries of the `spira-sub run` on
+/// `socket` start once the client has sent `initialize`. Neither thread can be interrupted, so
+/// the one that did not end outlives the call.
+pub fn relay(socket: &Path, from_client: impl BufRead + Send + 'static, to_client: impl Write + Send + 'static) -> Result<(), String> {
+    let out = Arc::new(Mutex::new(to_client));
+    let mut lines = from_client.lines();
+    if !serve(&mut lines, &out, true)? {
+        return Ok(());
     }
+    let (ended, first) = channel();
+    let (socket, deliveries, followed) = (socket.to_path_buf(), out.clone(), ended.clone());
+    aside("channel-spike-follow", move || {
+        let mut note = |what: &str| eprintln!("channel-spike: {what}");
+        drop(followed.send(client::follow(&socket, &mut Channel { out: deliveries, seq: 0 }, &mut note)));
+    })?;
+    aside("channel-spike-client", move || drop(ended.send(serve(&mut lines, &out, false).map(drop))))?;
+    first.recv().map_err(|_| "both threads ended without a verdict".to_string())?
 }
 
 #[cfg(test)]
@@ -130,7 +138,7 @@ mod tests {
         .join("\n");
         let stdout = Stdout::default();
 
-        relay(Path::new("never-followed.sock"), client.as_bytes(), stdout.clone()).unwrap();
+        relay(Path::new("never-followed.sock"), std::io::Cursor::new(client), stdout.clone()).unwrap();
 
         let written = String::from_utf8(stdout.0.lock().unwrap().clone()).unwrap();
         let replies: Vec<Value> = written.lines().map(|l| serde_json::from_str(l).unwrap()).collect();

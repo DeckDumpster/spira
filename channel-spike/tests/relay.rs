@@ -74,13 +74,17 @@ impl World {
     fn readers(&self, want: usize, relay_gone: impl Fn() -> bool + Send + 'static) {
         let (socket, want) = (self.socket(), format!("readers {want}"));
         let (counted, count) = channel();
-        std::thread::spawn(move || loop {
+        let waiting = Arc::new(());
+        let asked = Arc::downgrade(&waiting);
+        // No pipe says the relay's reader has attached; only `run`'s reader count does.
+        std::thread::spawn(move || while asked.strong_count() > 0 {
             let screen = match spira_sub::client::call(&socket, &Request::List) {
                 Ok(Reply::Done { out, .. }) => out,
                 other => panic!("list: {other:?}"),
             };
             if screen.contains(&want) || relay_gone() {
-                return counted.send(());
+                let _ = counted.send(());
+                return;
             }
             std::thread::yield_now();
         });
@@ -147,4 +151,31 @@ fn a_delivery_reaches_the_mcp_client_as_one_channel_notification_with_the_follow
     for key in notification["params"]["meta"].as_object().unwrap().keys() {
         assert!(!key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'), "meta key {key:?}");
     }
+
+    world.ok(&["add", "release/active", "--batch", "1s"]);
+    publisher.publish(Class::State, "release/active", &json!({"release": "r1"})).unwrap();
+    publisher.flush(FAILSAFE).unwrap();
+
+    let batched = next();
+    let printed = [(); 2].map(|()| followed.recv_timeout(FAILSAFE).expect("the plain follow printed no batch")).join("\n");
+    assert!(printed.starts_with("[batch] n=1 "), "positive control: {printed}");
+    assert_eq!(batched["params"]["content"], printed.as_str(), "{batched}");
+    assert_eq!(batched["params"]["meta"], json!({"seq": "2"}), "{batched}");
+}
+
+#[test_id(ttinbg9)]
+#[test]
+fn a_follow_that_cannot_run_ends_the_relay_while_the_client_is_still_there() {
+    let dir = TempDir::new("chan-nofollow");
+    std::fs::write(dir.join("file"), "").unwrap();
+    let socket = dir.join("file/c/wake-spike.sock");
+    let (relay_in, mut client_out) = std::io::pipe().unwrap();
+    let (ended, end) = channel();
+    std::thread::spawn(move || ended.send(channel_spike::relay(&socket, BufReader::new(relay_in), std::io::sink())));
+
+    writeln!(client_out, "{}", json!({"jsonrpc": "2.0", "id": 0, "method": "initialize"})).unwrap();
+
+    let why = end.recv_timeout(FAILSAFE).expect("the relay stayed up with nothing to follow").unwrap_err();
+    assert!(why.contains("cannot create"), "{why}");
+    drop(client_out);
 }

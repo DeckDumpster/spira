@@ -96,18 +96,21 @@ being judged.
 `--channels` takes a list, so another flag must follow it. `--debug-file` is that flag, and
 its log says whether the channel was registered or why it was skipped.
 
+A pane keeps the history limit in force when it is **created**, and the no-keystroke check
+reads that history, so the limit is set first, on a tmux server of the run's own:
+
 ```sh
-tmux new-session -d -s channel-wake -x 200 -y 50 -c "$SPIKE/project" \
+tmux -L channel-wake start-server \; set-option -g history-limit 100000 \; set-option -g remain-on-exit on \; \
+  new-session -d -s channel-wake -x 200 -y 50 -c "$SPIKE/project" \
   env -u CLAUDECODE CHANNEL_SPIKE_BIN="$SPIKE/target/debug/channel-spike" CHANNEL_SPIKE_CONTROL_DIR="$SPIKE/control" \
   claude --remote-control --channels plugin:spira-sub@spira --debug-file "$SPIKE/claude-debug.log"
-tmux set-option -t channel-wake history-limit 100000
-tmux set-option -t channel-wake remain-on-exit on
+tmux -L channel-wake display-message -p -t channel-wake '#{history_limit}'   # must print 100000
 ```
 
 Look at the pane **without attaching**, so that no key can reach it:
 
 ```sh
-tmux capture-pane -p -t channel-wake -S - | tee "$SPIKE/pane-launch.txt"
+tmux -L channel-wake capture-pane -p -t channel-wake -S - | tee "$SPIKE/pane-launch.txt"
 SPIRA_TOML="$SPIKE_TOML" spira-sub list --as wake-spike   # must say: readers 1
 grep -i channel "$SPIKE/claude-debug.log"
 ```
@@ -129,7 +132,7 @@ Send nothing to the session, from the pane or the phone, until after `$AT1`. A f
 after it:
 
 ```sh
-tmux capture-pane -p -t channel-wake -S - | tee "$SPIKE/pane-event1.txt"
+tmux -L channel-wake capture-pane -p -t channel-wake -S - | tee "$SPIKE/pane-event1.txt"
 ```
 
 Then the operator opens the session on the phone and screenshots how the event is drawn. Save
@@ -143,8 +146,8 @@ here** and take the screenshot to the operator.
 `/compact` is typed (it is not a delivery):
 
 ```sh
-tmux send-keys -t channel-wake /compact Enter
-tmux capture-pane -p -t channel-wake -S -        # repeat until compaction has finished
+tmux -L channel-wake send-keys -t channel-wake /compact Enter
+tmux -L channel-wake capture-pane -p -t channel-wake -S -        # repeat until compaction has finished
 ```
 
 Once it has finished, schedule event 2:
@@ -157,7 +160,7 @@ SPIRA_TOML="$SPIKE_TOML" spira-sub add --at "$AT2" --note "wake test 2" --as wak
 Send nothing more. A few minutes after `$AT2`:
 
 ```sh
-tmux capture-pane -p -t channel-wake -S - | tee "$SPIKE/pane-event2.txt"
+tmux -L channel-wake capture-pane -p -t channel-wake -S - | tee "$SPIKE/pane-event2.txt"
 ```
 
 The only input in the pane history since launch must be `/compact`: nothing was typed to
@@ -197,7 +200,7 @@ file is the fixture for the channel verb's transcript check.
 Stop the `spira-sub run` shell, then:
 
 ```sh
-tmux kill-session -t channel-wake
+tmux -L channel-wake kill-server
 cd "$SPIKE/project" && claude plugin uninstall spira-sub@spira --scope local && claude plugin marketplace remove spira; cd "$REPO"
 ```
 
