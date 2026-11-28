@@ -175,6 +175,18 @@ fn comes_back_after_a_broker_restart(row: &Row, broker: &mut Broker, subjects: u
     assert_eq!(after, before);
 }
 
+/// The store's record of who is resident is all a subscriber has to hear of this one going.
+#[test_id(tkc2bft)]
+#[test]
+fn the_watch_publisher_says_it_is_resident() {
+    let _env = testkit::env_read();
+    let broker = Broker::up();
+    let mut watching = Subscriber::to_v5(broker.socket(), &["watch/#"]);
+    ami_row(service(&broker)).pass(&stale());
+    let said = watching.recv().user_properties;
+    assert!(said.contains(&("spira-resident".to_string(), "true".to_string())), "{said:?}");
+}
+
 #[test_id(tlhr7s6)]
 #[test]
 fn a_restarted_broker_is_given_the_stale_image_again() {
