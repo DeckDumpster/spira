@@ -61,9 +61,12 @@
 //! | Observing | the flip rerun's check ([`Flip::VerdictPass`]) | Waiting | `queue.step.reconcile` (`queue verdict`), anew each tick |
 //! | Pushing | `effect.succeeded` | Landing | `queue.step.land` |
 //! | Pushing | `effect.failed` | Idle | `queue.step.notify` (ff refused, `:301-311`) |
+//! | Pushing | `effect.timed_out`, lost at a restart | Pushing | `queue.step.push`, the same input |
 //! | Landing | `effect.succeeded` | Cutting | `queue.step.close_bead`, `queue.step.cut_wanted` |
+//! | Landing | `effect.timed_out`, lost at a restart | Landing | `queue.step.land`, the same input |
 //! | Judging | `unit.ran{ok, id=}` | Cutting | `queue.step.record` (judgement id, `:2167`) |
 //! | Judging | `unit.ran{fail}` / deadline | Idle | `queue.step.notify` |
+//! | Judging | `queue.step.judgement` lost at a restart | Judging | — (`unit.facts` or the cap ends the leg) |
 //! | Settling | outcome | Cutting | — |
 //! | Cutting | emitted | Publishing (`queue.local`) / Idle | `queue.step.publish_wanted` |
 //! | Publishing | emitted | Idle | — |
@@ -674,7 +677,11 @@ impl Machine<'_> {
     }
 
     fn outcome(&mut self, effect: &str, ok: bool, body: &str, s: &Step) {
+        let lost = !ok && body == runtime::engine::LOST_AT_RESTART;
         match (self.rc.state, effect) {
+            // Whether it ran is unknown, so it is no refusal. Both are safe to repeat.
+            (State::Pushing, PUSH) | (State::Landing, LAND) if lost => self.acts.push(s.act(effect)),
+            (State::Judging, JUDGEMENT) if lost => {}
             (State::Pushing, PUSH) if ok => {
                 self.go(Trigger::EffectSucceeded);
                 self.acts.push(Step { key: format!("{}/{}", s.batch, s.version), ..s.clone() }.act(LAND));
@@ -970,11 +977,19 @@ pub mod edge {
         Ok("{}".into())
     }
 
-    /// The batch's LANDED on the store, refused unless it is GREEN at that version.
+    /// The batch's LANDED on the store, refused unless it is GREEN at that version or already
+    /// LANDED, so a land asked again succeeds.
     pub fn land(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
-        let s = step(spec)?;
-        let lc = queue::real::RealLc { bin: None, client: Some(lc(e)) };
-        lc.land_batch(&s.batch, &s.version.to_string(), ACTOR, &s.head).map_err(|(rc, why)| format!("spira-lc land refused for {} (rc={rc}): {why}", s.batch))?;
+        land_on(&queue::real::RealLc { bin: None, client: Some(lc(e)) }, &step(spec)?)
+    }
+
+    /// [`land`] through the given store.
+    pub fn land_on(lc: &queue::real::RealLc, s: &Step) -> Result<String, String> {
+        if let Err((rc, why)) = lc.land_batch(&s.batch, &s.version.to_string(), ACTOR, &s.head) {
+            if !lc.batch_state(&s.batch).is_some_and(|(state, _)| state == "LANDED") {
+                return Err(format!("spira-lc land refused for {} (rc={rc}): {why}", s.batch));
+            }
+        }
         Ok("{}".into())
     }
 

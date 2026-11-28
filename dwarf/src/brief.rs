@@ -970,6 +970,21 @@ mod tests {
         assert!(!p.contains("exactly what the landing"));
     }
 
+    // The prompt names the verb and the allow-list admits it; either alone is a denied or unmade call.
+    #[test_id(tpmj8d4)]
+    #[test]
+    fn skuld_reads_what_is_waiting_before_it_drafts() {
+        let runes = include_str!("../../spira/runes/skuld.md");
+        let t = Tokens { single: vec![("REPO_NAME", "spira".into()), ("BEAD_ID", "sp-a".into()), ("WIKI_DIR", "wiki".into())], ..Default::default() };
+        let p = render_prompt(runes, &t, None);
+        assert!(p.contains("\n    work open-items --repo spira --exclude sp-a\n"), "{p}");
+        assert!(p.contains("Open: close this as a duplicate of"), "{p}");
+        assert!(!p.contains("{{"), "{p}");
+        let rune = include_str!("../../spira/runes/skuld.rune");
+        let tools = rune.lines().find(|l| l.starts_with("RUNE_TOOLS=")).unwrap_or_default();
+        assert!(tools.contains("Bash(work open-items*)"), "{tools}");
+    }
+
     // {{FINISH}} is the `work` verbs (sp-wmcvb).
     #[test_id(tef2apb)]
     #[test]

@@ -61,8 +61,8 @@ group first, and files at most `SPIRA_INCIDENT_DRAIN_BATCH` groups, each once, f
 event, whose body then opens with the group's count and stamp range. That filing settles the whole
 group: an outage's backlog is one item per cause, not a recurrence per event. A failed group keeps
 every entry and uses one of the batch's slots, except a lane-refused reference, which uses no
-slot. The store is asked about a lane-refused declared repo once per pass; that repo's later
-groups are reported stuck with the same reason, uncalled. Every filer looks for the entry, files
+slot. The store is asked about a lane-refused destination (the repo and lane `decide::route`
+names, not the declared repo) once per pass; later groups bound there are reported stuck with the same reason, uncalled. Every filer looks for the entry, files
 it and removes what the filing settles under one hold of the incident lock, so concurrent drains
 file it once. Entries are renamed into place (`spool::write_entry`), so a drain never reads a
 half-written one; a partial older than five minutes lost its writer and is drained as it stands. A
@@ -86,8 +86,7 @@ day, with no store needed. A lane-refused entry stays by design and so is such a
   `test-counter-events-sentinel.sh` (all three `. "$HERE/incident.sh"` to call `file_one`/
   `_dedup_incident` directly) and `test-incident-migrations.sh` (drove the retired
   subcommands). A shim has nothing to source; their coverage moves to this crate's unit
-  tests (`decide::tests::dedup_scan_*`, `recur_note_body_*`, `fenrir_thresholds`, `reopen_cause_*`,
-  `invalid_repo_label_*`). Removed from `spira/config-fence-allow` and
+  tests (`decide::tests::dedup_scan_*`, `recur_note_body_*`, `fenrir_thresholds`, `reopen_cause_*`). Removed from `spira/config-fence-allow` and
   `spira/tier-budget-allowlist` in the same change (both are shrink-only lists).
 - **The bash's age-in-hours clause in the Fenrir ask** silently never fired: it grepped bd's
   `--json` for a literal `"created"` key, but real bd's schema names the field
@@ -98,14 +97,11 @@ day, with no store needed. A lane-refused entry stays by design and so is such a
 
 ## Kept and ported faithfully
 
-- **The `bd create` guards `bdq` applies underneath every filing** —
-  `_bdq_check_repo_label`, `_bdq_check_schema_delete` — are ported
-  to `decide::invalid_repo_label`/`contains_schema_delete` and enforced
-  in `run::file_new` before calling `Bd::create`. `real.rs` shells to `bd` directly (not
-  through `bdq`/lib.sh), so without this port these safety fences would silently stop
-  applying to every incident filing — a real regression, not a simplification. They are
-  small, self-contained, and change rarely; lib.sh's own rewrite wave can delete these three
-  functions here once `bdq`'s fences live in a shared crate this one can depend on instead.
+- **The schema-delete `bd create` guard `bdq` applies underneath every filing** is
+  `decide::contains_schema_delete`, enforced in `run::file_new` before `Bd::create`.
+  `real.rs` shells to `bd` directly (not through `bdq`/lib.sh), so without it the fence would
+  silently stop applying to incident filings. `decide::route` only ever names the home repo
+  or a mapped one, so filings need no repo-label guard of their own.
   (`bdq`'s remaining behaviour — the czar-fence gate, the `SPIRA_BDJSON_FIXTURE` seam, the
   connection-retry loop — is either inapplicable to this crate's writes or already
   reimplemented in `real.rs::RealBd::run`.)
@@ -113,14 +109,14 @@ day, with no store needed. A lane-refused entry stays by design and so is such a
   the write-ahead spool (byte-identical on-disk format, so a spool directory populated by
   the bash mid-cutover still drains under the new binary), the two-pass label-keyed-then-
   fallback dedupe, the reopen-vs-recurrence classification, the payload-hash dedup on the
-  recurrence note body, the Fenrir escalation mail, the undeclared-repo ask, the `delivers:`
+  recurrence note body, the Fenrir escalation mail, the `delivers:`
   label decision.
 
 ## Schema / architecture
 
 - `decide.rs` — pure decision logic, no IO: ref hashing, cause sanitisation, the dedupe scan,
   reopen-cause classification, the recurrence-note payload-hash dedupe, the Fenrir threshold,
-  the three `bd create` guards, plus the small pure helpers (`home_repo`, `repo_names`,
+  the schema-delete guard, the filing route, plus the small pure helpers (`home_repo`, `repo_names`,
   `provenance`, `unit_from_cgroup_line`) `main.rs` composes at the edges. Every function is a
   table-driven unit test.
 - `ports.rs` — the `Bd`/`Mailer`/`Clock` traits: the seam between decision logic and
@@ -173,11 +169,10 @@ day, with no store needed. A lane-refused entry stays by design and so is such a
   stays as a permanent two-line shim rather than being deleted, specifically so
   `watchtower.sh`'s `command -v incident.sh` (four call sites, owned by the concurrent
   sp-lnmbq rewrite) keeps resolving without editing a file this bead does not own.
-- **`bd create`'s three safety guards are ported, not dropped**, despite calling `bd`
-  directly instead of through `bdq` — see "Kept and ported faithfully" above. Rejected the
-  alternative (skip them, since `incident.sh` "never enforced them itself, only ever called
-  bdq") as a real regression: `bdq` applies them to every `bd create` incident.sh has ever
-  made, so a Rust port that calls `bd` directly and skips them would let an invalid `repo:` label through where the bash never did.
+- **The schema-delete guard is ported, not dropped**, despite calling `bd` directly instead
+  of through `bdq` — see "Kept and ported faithfully" above. Rejected the alternative (skip
+  it, since `incident.sh` "never enforced it itself, only ever called bdq") as a real
+  regression.
 - **The age-in-hours clause in the Fenrir ask now actually fires** (see "Retired" above) —
   reads `created_at`, the real bd field, instead of the bash's dead `"created"` grep.
 - **Delivered at P1** (bead priority).
