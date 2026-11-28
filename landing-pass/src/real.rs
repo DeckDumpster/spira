@@ -851,6 +851,13 @@ fn git_out(c: std::process::Command) -> Option<String> {
     if rc == 0 { Some(String::from_utf8_lossy(&so).trim_end_matches('\n').to_string()) } else { None }
 }
 
+/// Only the branches directly under `spira/`, as the `refs/heads/spira/*` glob listed them: a nested
+/// name (`spira/queue/<stamp>`, `spira/batcher-attr/...`) is never a bead, and asked of the bead store
+/// it fails the whole read, blinding the pass to the repository (sp-veeeum, regressed by sp-07ykrd).
+fn direct_spira_children(tips: Vec<(String, String)>) -> Vec<(String, String)> {
+    tips.into_iter().filter(|(name, _)| name.strip_prefix("spira/").is_some_and(|rest| !rest.is_empty() && !rest.contains('/'))).collect()
+}
+
 impl Git for RealGit {
     fn spira_refs(&self, repo: &Path) -> Vec<(String, String)> {
         if let Some(tips) = git_refs::branch_tips(repo, "refs/heads/spira/") {
@@ -1381,6 +1388,20 @@ mod ref_read_tests {
         assert_eq!(branch_in_files(t.path(), "spira/sp-b"), Some(false), "absence needs no git");
         assert_eq!(branch_in_files(t.path(), "spira/sp"), Some(false), "a prefix of a branch is not that branch");
         assert_eq!(RealGit.rev_parse(t.path(), "refs/remotes/origin/main"), Some(base));
+    }
+
+    #[test_id(tr8ufri)]
+    #[test]
+    fn nested_spira_refs_are_not_listed_as_beads() {
+        let t = testkit::TempDir::new("landing-pass-nested-refs");
+        let tip = "a".repeat(40);
+        let dotgit = t.path().join(".git");
+        for name in ["refs/heads/spira/sp-a", "refs/heads/spira/queue/20261013T075150Z", "refs/heads/spira/batcher-attr/x/y"] {
+            fs::create_dir_all(dotgit.join(name).parent().unwrap()).unwrap();
+            fs::write(dotgit.join(name), format!("{tip}\n")).unwrap();
+        }
+        fs::write(dotgit.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        assert_eq!(RealGit.spira_refs(t.path()), vec![("spira/sp-a".to_string(), tip)], "only direct children of spira/ are bead branches");
     }
 }
 
