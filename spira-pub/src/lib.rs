@@ -19,6 +19,12 @@ pub use publisher::{check_topic, configured_seed, configured_socket, Log, Option
 pub use socket_watch::SocketWatch;
 pub use topics::Class;
 
+/// The MQTT 5 user property naming the publisher of a message.
+pub const PUBLISHER_PROPERTY: &str = "spira-publisher";
+/// The MQTT 5 user property saying, `true` or `false`, whether that publisher lives as long as
+/// what it publishes.
+pub const RESIDENT_PROPERTY: &str = "spira-resident";
+
 /// `raw` as one topic segment: `/`, `+` and `#`, which would split it or make it a filter,
 /// become `-`.
 pub fn segment(raw: &str) -> String {

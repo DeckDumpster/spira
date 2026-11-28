@@ -6,12 +6,14 @@
 extern crate spira_test_id;
 
 use std::cell::RefCell;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
+use std::sync::Arc;
 use std::time::Duration;
 
+use ports::{SeededRng, VirtualClock};
 use serde_json::{json, Value};
 use state_store_sqlite::{Options, SqliteBackend};
 use testkit::broker::Broker;
@@ -287,4 +289,58 @@ fn a_watch_with_nothing_to_report_is_held_for_its_whole_wait() {
     assert_eq!(code, 0, "{out}");
     // Only a watch that ran out its wait answers this; a write would have woken it early.
     assert!(serde_json::from_str::<Value>(&out).unwrap()["progress_rev"].is_u64(), "{out}");
+}
+
+#[test_id(tkamqvf)]
+#[test]
+fn a_librarys_resident_publisher_and_the_cli_are_listed_by_name_and_only_the_first_as_resident() {
+    let broker = Broker::up();
+    let home = Home::new();
+    let server = Server::start(&home, &broker, PINNED_NOW);
+    server.wait_said(SUBSCRIBED, 1);
+
+    let options = spira_pub::Options::new(broker.socket(), Arc::new(VirtualClock::new(0)), Box::new(SeededRng::new(1)));
+    let t = spira_pub::Publisher::with("t", options).unwrap();
+    t.resident();
+    t.publish(spira_pub::Class::State, "nosuch/sp-a", &json!({})).unwrap();
+    t.flush(FAILSAFE).unwrap();
+    let dir: &Path = &home.0.join("cli");
+    std::fs::create_dir_all(dir).unwrap();
+    let env = spira_config::process::fixture_metrics_env(dir, "", &[("SPIRA_BROKER_SOCKET", broker.socket().to_str().unwrap())]);
+    let mut cli = Command::new(testkit::bin_exe("spira-pub"))
+        .args(["--as", "cli", "--topic", "nosuch/sp-b", "--class", "state"])
+        .env_clear()
+        .envs(env)
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    cli.stdin.take().unwrap().write_all(b"{}").unwrap();
+    let out = cli.wait_with_output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+
+    // The broker took both before this one, so the write that lists it covers them.
+    publish(&broker, &[("marker/sp-z", false)]);
+    let rows = server.listed(|r| row(r, "marker/+").is_some());
+    let got = row(&rows, "nosuch/+").unwrap();
+    assert_eq!((&got["publishers"], &got["resident"]), (&json!(["cli", "t"]), &json!(["t"])), "{got}");
+}
+
+#[test_id(t14yb45)]
+#[test]
+fn the_store_bridge_is_listed_as_the_resident_publisher_of_bead_topics() {
+    let broker = Broker::up();
+    let home = Home::new();
+    let server = Server::start(&home, &broker, PINNED_NOW);
+    server.wait_said(SUBSCRIBED, 1);
+
+    let (code, out) = server.call(&["create-bead", "sp-tap", "--ready"]);
+    assert_eq!(code, 0, "{out}");
+    let claim = json!({"Claim": {"holder": "dwarf-1", "lease_until": PINNED_NOW + 3_600, "persona": "builder"}}).to_string();
+    let (code, out) = server.call(&["event", "bead", "sp-tap", "--expect", "READY", "--version", "0", "--actor", "dwarf-1", "--kind", &claim]);
+    assert_eq!(code, 0, "{out}");
+
+    let rows = server.listed(|r| row(r, "bead/+/state").is_some());
+    let got = row(&rows, "bead/+/state").unwrap();
+    assert_eq!((&got["publishers"], &got["resident"]), (&json!(["lc-serve"]), &json!(["lc-serve"])), "{got}");
 }

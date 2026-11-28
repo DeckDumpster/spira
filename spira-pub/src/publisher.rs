@@ -10,7 +10,10 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use ports::{Clock, Rng, SeededRng, VirtualClock, WallClock};
-use rumqttc::{Client, Connection, Event, Outgoing, Packet, QoS};
+use rumqttc::v5::mqttbytes::v5::{Packet, PublishProperties};
+use rumqttc::v5::mqttbytes::QoS;
+use rumqttc::v5::{Client, Connection, Event};
+use rumqttc::Outgoing;
 use serde_json::{json, Value};
 use spira_otel::metrics::MetricsSink;
 
@@ -18,7 +21,7 @@ use crate::link::{gone, sleep_until_readable, Dial};
 use crate::socket_watch::SocketWatch;
 use crate::telemetry::{Sample, Telemetry};
 use crate::topics::Class;
-use crate::PubError;
+use crate::{PubError, PUBLISHER_PROPERTY, RESIDENT_PROPERTY};
 
 /// The most a publish waits for a connection.
 pub const CONNECT_DEADLINE: Duration = Duration::from_secs(1);
@@ -107,6 +110,7 @@ enum Phase {
 
 struct Shared {
     phase: Phase,
+    resident: bool,
     /// A connection has been asked for, so a broker that comes back is connected to.
     wanted: bool,
     requested: bool,
@@ -205,6 +209,7 @@ impl Publisher {
             log: options.log,
             shared: Mutex::new(Shared {
                 phase: Phase::Down,
+                resident: false,
                 wanted: false,
                 requested: false,
                 closing: false,
@@ -225,6 +230,13 @@ impl Publisher {
         let on_thread = inner.clone();
         let worker = std::thread::Builder::new().name("spira-pub".into()).spawn(move || on_thread.run(woken)).map_err(start)?;
         Ok(Publisher { inner, wake, worker: Some(worker) })
+    }
+
+    /// Declares that this publisher lives as long as what it publishes, and says so on every
+    /// later message. Call it before the first publish: a connection's last will is fixed
+    /// when it is made.
+    pub fn resident(&self) {
+        lock(&self.inner.shared).resident = true;
     }
 
     /// Runs `hook` on every connect, so this publisher's current state survives a broker that
@@ -259,7 +271,7 @@ impl Publisher {
             if shared.pending >= self.inner.queue {
                 return Err(PubError::QueueFull { topic: m.topic });
             }
-            enqueue(&mut shared, m)?;
+            self.inner.enqueue(&mut shared, m)?;
             Ok(shared.pending)
         });
         match sent {
@@ -326,7 +338,7 @@ impl Drop for Publisher {
         let goodbye = {
             let mut shared = lock(&self.inner.shared);
             // A clean DISCONNECT discards the will, so this says what it would have.
-            shared.up().then(|| message(&topic, Class::State, &gone()).and_then(|m| enqueue(&mut shared, m)))
+            shared.up().then(|| message(&topic, Class::State, &gone()).and_then(|m| self.inner.enqueue(&mut shared, m)))
         };
         if goodbye.is_some() {
             if let Err(e) = self.flush(FLUSH_DEADLINE) {
@@ -355,17 +367,9 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Hands `m` to the client without blocking. The lock is held, so the order of these calls is
-/// the order the broker sees.
-fn enqueue(shared: &mut Shared, m: Message) -> Result<(), PubError> {
-    let Phase::Up(client) = &shared.phase else {
-        return Err(PubError::Unreachable { why: shared.failure.clone() });
-    };
-    let (qos, retain) = delivery(m.class);
-    let topic = m.topic.clone();
-    client.try_publish(m.topic, qos, retain, m.payload).map_err(|_| PubError::QueueFull { topic })?;
-    shared.pending += 1;
-    Ok(())
+/// The user properties every message and the last will carry.
+fn stamp(name: &str, resident: bool) -> Vec<(String, String)> {
+    vec![(PUBLISHER_PROPERTY.to_string(), name.to_string()), (RESIDENT_PROPERTY.to_string(), resident.to_string())]
 }
 
 /// A state message is acknowledged by the broker; chatter is sent once and forgotten.
@@ -379,6 +383,20 @@ fn delivery(class: Class) -> (QoS, bool) {
 impl Inner {
     fn wait<'a>(&self, shared: MutexGuard<'a, Shared>, deadline: Duration, mut still: impl FnMut(&Shared) -> bool) -> MutexGuard<'a, Shared> {
         self.changed.wait_timeout_while(shared, deadline, |s| still(s)).unwrap_or_else(|e| e.into_inner()).0
+    }
+
+    /// Hands `m` to the client without blocking. The lock is held, so the order of these calls
+    /// is the order the broker sees.
+    fn enqueue(&self, shared: &mut Shared, m: Message) -> Result<(), PubError> {
+        let Phase::Up(client) = &shared.phase else {
+            return Err(PubError::Unreachable { why: shared.failure.clone() });
+        };
+        let (qos, retain) = delivery(m.class);
+        let topic = m.topic.clone();
+        let properties = PublishProperties { user_properties: stamp(&self.name, shared.resident), ..PublishProperties::default() };
+        client.try_publish_with_properties(m.topic, qos, retain, m.payload, properties).map_err(|_| PubError::QueueFull { topic })?;
+        shared.pending += 1;
+        Ok(())
     }
 
     fn say(&self, line: &str) {
@@ -425,7 +443,8 @@ impl Inner {
         }
         watch.drain();
         let dial = Dial { client_id: &self.client_id, socket: &self.socket, will_topic: format!("publisher/{}", self.name), capacity: CHANNEL };
-        let (client, mut connection) = match dial.connect(announced) {
+        let will_properties = stamp(&self.name, lock(&self.shared).resident);
+        let (client, mut connection) = match dial.connect_v5(announced, &will_properties) {
             Ok(open) => open,
             Err(lost) => {
                 if announced {
@@ -449,7 +468,7 @@ impl Inner {
             }
             s.phase = Phase::Up(client);
             for m in greeting {
-                if let Err(e) = enqueue(&mut s, m) {
+                if let Err(e) = self.enqueue(&mut s, m) {
                     self.failed(&e, "on connect");
                 }
             }

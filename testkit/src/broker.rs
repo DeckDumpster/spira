@@ -58,9 +58,14 @@ impl Process {
 
 /// A subscriber that owes nothing to the library that publishes.
 pub struct Subscriber {
-    client: rumqttc::Client,
-    connection: rumqttc::Connection,
+    link: Link,
     early: VecDeque<Delivered>,
+}
+
+enum Link {
+    V3(rumqttc::Client, Box<rumqttc::Connection>),
+    /// The client is held because dropping it ends the connection.
+    V5(#[allow(dead_code)] rumqttc::v5::Client, Box<rumqttc::v5::Connection>),
 }
 
 /// One delivered message.
@@ -69,22 +74,35 @@ pub struct Delivered {
     pub topic: String,
     pub payload: Vec<u8>,
     pub retain: bool,
+    /// Empty over MQTT 3.1.1, which has none.
+    pub user_properties: Vec<(String, String)>,
 }
 
 impl From<rumqttc::Publish> for Delivered {
     fn from(p: rumqttc::Publish) -> Delivered {
-        Delivered { topic: p.topic, payload: p.payload.to_vec(), retain: p.retain }
+        Delivered { topic: p.topic, payload: p.payload.to_vec(), retain: p.retain, user_properties: Vec::new() }
     }
 }
 
+impl From<rumqttc::v5::mqttbytes::v5::Publish> for Delivered {
+    fn from(p: rumqttc::v5::mqttbytes::v5::Publish) -> Delivered {
+        let topic = String::from_utf8_lossy(&p.topic).into_owned();
+        let user_properties = p.properties.map(|p| p.user_properties).unwrap_or_default();
+        Delivered { topic, payload: p.payload.to_vec(), retain: p.retain, user_properties }
+    }
+}
+
+fn client_id() -> String {
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    format!("sub-{}", N.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
 impl Subscriber {
-    /// Subscribes to `filters` and returns once the broker has acknowledged them all, so
-    /// nothing published afterwards is missed.
+    /// Subscribes to `filters` over MQTT 3.1.1 and returns once the broker has acknowledged
+    /// them all, so nothing published afterwards is missed.
     pub fn to(socket: &Path, filters: &[&str]) -> Subscriber {
         use rumqttc::{Client, Event, MqttOptions, Packet, QoS, Transport};
-        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let id = format!("sub-{}", N.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-        let mut options = MqttOptions::new(id, socket.to_str().expect("a UTF-8 socket path"), 0);
+        let mut options = MqttOptions::new(client_id(), socket.to_str().expect("a UTF-8 socket path"), 0);
         options.set_transport(Transport::Unix);
         options.set_keep_alive(Duration::ZERO);
         let (client, mut connection) = Client::new(options, 64);
@@ -101,20 +119,53 @@ impl Subscriber {
                 other => panic!("the broker never acknowledged the subscription: {other:?}"),
             }
         }
-        Subscriber { client, connection, early }
+        Subscriber { link: Link::V3(client, Box::new(connection)), early }
+    }
+
+    /// [`to`](Subscriber::to) over MQTT 5, so each message arrives with its user properties.
+    pub fn to_v5(socket: &Path, filters: &[&str]) -> Subscriber {
+        use rumqttc::v5::mqttbytes::v5::Packet;
+        use rumqttc::v5::mqttbytes::QoS;
+        use rumqttc::v5::{Client, Event, MqttOptions};
+        let mut options = MqttOptions::new(client_id(), socket.to_str().expect("a UTF-8 socket path"), 0);
+        options.set_transport(rumqttc::Transport::Unix);
+        let (client, mut connection) = Client::new(options, 64);
+        for f in filters {
+            client.subscribe(*f, QoS::AtLeastOnce).expect("queue the subscription");
+        }
+        let mut acked = 0;
+        let mut early = VecDeque::new();
+        while acked < filters.len() {
+            match connection.recv_timeout(FAILSAFE) {
+                Ok(Ok(Event::Incoming(Packet::SubAck(_)))) => acked += 1,
+                Ok(Ok(Event::Incoming(Packet::Publish(p)))) => early.push_back(p.into()),
+                Ok(Ok(_)) => {}
+                other => panic!("the broker never acknowledged the subscription: {other:?}"),
+            }
+        }
+        Subscriber { link: Link::V5(client, Box::new(connection)), early }
     }
 
     /// The next message; panics when none arrives.
     pub fn recv(&mut self) -> Delivered {
+        use rumqttc::v5::mqttbytes::v5::Packet as Packet5;
+        use rumqttc::v5::Event as Event5;
         use rumqttc::{Event, Packet};
         if let Some(delivered) = self.early.pop_front() {
             return delivered;
         }
         loop {
-            match self.connection.recv_timeout(FAILSAFE) {
-                Ok(Ok(Event::Incoming(Packet::Publish(p)))) => return p.into(),
-                Ok(Ok(_)) => {}
-                other => panic!("no message arrived: {other:?}"),
+            match &mut self.link {
+                Link::V3(_, connection) => match connection.recv_timeout(FAILSAFE) {
+                    Ok(Ok(Event::Incoming(Packet::Publish(p)))) => return p.into(),
+                    Ok(Ok(_)) => {}
+                    other => panic!("no message arrived: {other:?}"),
+                },
+                Link::V5(_, connection) => match connection.recv_timeout(FAILSAFE) {
+                    Ok(Ok(Event5::Incoming(Packet5::Publish(p)))) => return p.into(),
+                    Ok(Ok(_)) => {}
+                    other => panic!("no message arrived: {other:?}"),
+                },
             }
         }
     }
@@ -148,10 +199,11 @@ impl Broker {
     pub fn retained(&self, filter: &str) -> Vec<(String, String)> {
         use rumqttc::QoS;
         let mut subscriber = Subscriber::to(&self.socket, &[filter]);
+        let Link::V3(client, _) = &subscriber.link else { unreachable!("Subscriber::to speaks 3.1.1") };
         // The broker works through one connection in order, so what `filter` holds is sent
         // ahead of a marker published and subscribed to after its acknowledgement.
-        subscriber.client.publish(END_TOPIC, QoS::AtLeastOnce, true, "end").expect("queue the end marker");
-        subscriber.client.subscribe(END_TOPIC, QoS::AtLeastOnce).expect("queue the end subscription");
+        client.publish(END_TOPIC, QoS::AtLeastOnce, true, "end").expect("queue the end marker");
+        client.subscribe(END_TOPIC, QoS::AtLeastOnce).expect("queue the end subscription");
         let mut held = Vec::new();
         loop {
             let got = subscriber.recv();
