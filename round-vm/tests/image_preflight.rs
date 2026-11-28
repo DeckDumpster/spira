@@ -185,9 +185,10 @@ fn a_branch_touching_no_recipe_skips_without_staging_the_config() {
 #[test]
 fn a_recipe_branch_refused_staging_names_the_rebase() {
     let marker = testkit::TempDir::new("preflight-refused-marker");
-    let stub = refusing_release(&marker.path().join("release-ran"));
-    let (rc, out, err) = Stubbed::new("preflight-refused-staging", &stub, "plan=full\\nnpaths=9\\n").run();
+    let ran = marker.path().join("release-ran");
+    let (rc, out, err) = Stubbed::new("preflight-refused-staging", &refusing_release(&ran), "plan=full\\nnpaths=9\\n").run();
     assert_eq!(rc, Some(75), "{out}{err}");
+    assert!(ran.exists(), "the stub release leaves its marker when staging calls it: {err}");
     assert!(err.contains(REFUSAL), "{err}");
     assert!(err.contains("round-image-preflight: cannot stage the tree config delta; rebase onto HEAD and rerun"), "{err}");
 }
