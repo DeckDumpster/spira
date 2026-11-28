@@ -129,7 +129,7 @@ impl Stubbed {
         std::fs::write(spira.join("round-image-preflight.sh"), HOST).unwrap();
         std::fs::write(spira.join("conf.sh"), "[ -f \"$SPIRA_TOML\" ] && echo \"conf.sh read $SPIRA_TOML\"\n").unwrap();
         // Only these are linked in, so a host podman is never on the script's PATH.
-        for tool in ["dirname", "mktemp", "rm"] {
+        for tool in ["bash", "dirname", "mktemp", "rm"] {
             let real = std::env::split_paths(&std::env::var_os("PATH").unwrap()).map(|d| d.join(tool)).find(|p| p.is_file()).expect(tool);
             std::os::unix::fs::symlink(real, bin.join(tool)).unwrap();
         }
@@ -139,7 +139,7 @@ impl Stubbed {
     }
 
     fn run(&self) -> (Option<i32>, String, String) {
-        let o = std::process::Command::new("/bin/bash")
+        let o = std::process::Command::new("bash")
             .arg(self.tmp.path().join("tree/spira/round-image-preflight.sh"))
             .args(["--base", "HEAD"])
             .env_clear()
