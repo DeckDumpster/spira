@@ -1,0 +1,39 @@
+[package]
+name = "channel-spike"
+version = "0.1.0"
+edition = "2021"
+publish = false
+autotests = false
+description = "channel-spike — throwaway: an MCP channel server that relays spira-sub deliveries, for the live wake proof."
+
+[lib]
+name = "channel_spike"
+path = "src/lib.rs"
+
+[[bin]]
+name = "channel-spike"
+path = "src/main.rs"
+test = false
+
+[[test]]
+name = "relay"
+path = "tests/relay.rs"
+required-features = ["integration"]
+
+[features]
+integration = ["spira-sub/integration", "spira-otel/integration", "ports/integration", "spira-config/integration", "spira-pub/integration", "testkit/integration", "spira-test-id/integration"]
+
+[dependencies]
+serde_json = "1"
+spira-otel = { path = "../spira-otel" }
+spira-sub = { path = "../spira-sub" }
+
+[dev-dependencies]
+ports = { path = "../ports" }
+spira-config = { path = "../spira-config" }
+spira-pub = { path = "../spira-pub" }
+spira-test-id = { path = "../spira-test-id" }
+testkit = { path = "../testkit" }
+
+[package.metadata.spira]
+test-bins = ["spira-sub"]
