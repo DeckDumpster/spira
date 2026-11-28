@@ -98,3 +98,53 @@ fn a_binary_that_lost_its_dep_info_is_relinked_so_cargo_writes_it_again() {
     assert!(String::from_utf8_lossy(&out.stdout).trim().ends_with(".d"), "the dep-info was not rewritten: {err}");
     assert!(err.contains("without dep-info"), "{err}");
 }
+
+/// testkit's own staleness check over what real cargo and the round's prune leave: hyphenated
+/// names, no `.d` beside the binary, and the `.rmeta` dep-info of a test-mode check.
+#[test_id(tg92fy6)]
+#[test]
+fn after_the_prune_testkit_refuses_the_plain_binary_only_for_a_file_cargo_compiled_into_it() {
+    let (tmp, dir) = tiny_round_work();
+    let write = |rel: &str, body: &str| {
+        std::fs::create_dir_all(dir.join(rel).parent().unwrap()).unwrap();
+        std::fs::write(dir.join(rel), body).unwrap();
+    };
+    let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+    write("Cargo.toml", &format!("{manifest}[dependencies]\ntiny-dep = {{ path = \"tiny-dep\" }}\n[workspace]\nmembers = [\".\", \"tiny-dep\"]\n"));
+    write("tiny-dep/Cargo.toml", "[package]\nname = \"tiny-dep\"\nversion = \"0.1.0\"\nedition = \"2021\"\n");
+    write("tiny-dep/src/lib.rs", "pub fn m() -> u32 { 2 }\n#[cfg(test)]\nmod only_tests;\n");
+    write("tiny-dep/src/only_tests.rs", "");
+    write("src/bin/tiny-tool/main.rs", "#[cfg(test)]\nmod only_tests;\nfn main() { println!(\"{}\", tiny_dep::m()); }\n");
+    write("src/bin/tiny-tool/only_tests.rs", "");
+    let out = in_round(
+        tmp.path(),
+        &["prune_superseded_unit"],
+        "unit_cargo >&2 || exit 90\nprune_superseded_unit\nunit_env check --offline --profile unittest --workspace --all-targets >&2 || exit 91\n[ ! -e target/unittest/tiny-tool.d ] || exit 92\n",
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let bin = dir.join("target/unittest/tiny-tool");
+    let built = std::fs::metadata(&bin).unwrap().modified().unwrap();
+    let newer = |rel: &str| {
+        let file = std::fs::File::options().write(true).open(dir.join(rel)).unwrap();
+        file.set_modified(built + std::time::Duration::from_secs(60)).unwrap();
+    };
+    // The verdict is kept per path for the process, so each judgement names the binary afresh.
+    let judge = |rel: &str| {
+        newer(rel);
+        let name = format!("judged-after-{}", rel.replace(['/', '.'], "-"));
+        let profile = dir.join(name).join("..").join("target/unittest");
+        std::panic::catch_unwind(|| testkit::built_beside(&dir, &profile.join("deps/x-1"), "tiny-tool"))
+            .map_err(|why| why.downcast_ref::<String>().cloned().unwrap_or_default())
+    };
+    for rel in ["src/bin/tiny-tool/only_tests.rs", "tiny-dep/src/only_tests.rs", "tiny-dep/Cargo.toml"] {
+        std::fs::create_dir_all(dir.join(format!("judged-after-{}", rel.replace(['/', '.'], "-")))).unwrap();
+        let verdict = judge(rel);
+        assert!(verdict.is_ok(), "{rel}: {verdict:?}");
+    }
+    for rel in ["tiny-dep/src/lib.rs", "src/bin/tiny-tool/main.rs"] {
+        std::fs::create_dir_all(dir.join(format!("judged-after-{}", rel.replace(['/', '.'], "-")))).unwrap();
+        let why = judge(rel).expect_err(rel);
+        assert!(why.contains("changed after it") && why.contains("rebuild it with `cargo build -p tiny --bins`"), "{rel}: {why}");
+        std::fs::File::options().write(true).open(dir.join(rel)).unwrap().set_modified(built).unwrap();
+    }
+}

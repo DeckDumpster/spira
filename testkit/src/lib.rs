@@ -374,7 +374,8 @@ fn declared_bin(manifest_dir: &Path, name: &str) -> Result<(), String> {
     }
 }
 
-fn built_beside(manifest_dir: &Path, test_exe: &Path, name: &str) -> PathBuf {
+/// [`bin_exe`] with the crate and the test executable named, and without the declaration check.
+pub fn built_beside(manifest_dir: &Path, test_exe: &Path, name: &str) -> PathBuf {
     let bin = bin_beside(test_exe, name);
     assert!(
         bin.is_file(),

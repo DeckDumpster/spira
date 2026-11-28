@@ -81,7 +81,12 @@ among the crates, every `deps/<lib>-<hash>.d` that names a `lib<lib>-<hash>.rlib
 artifact: a test harness shares the crate name and lists `cfg(test)` files, and so does a
 test-mode `cargo check`, which writes only `.rmeta`. A newer file of a crate with no
 dep-info is refused as unjudgeable, naming the `cargo clean` that makes cargo write it again: a
-pass would run the binary unchecked. Rounds keep the dep-info (round-vm DESIGN.md). The verdict
+pass would run the binary unchecked. A `<name>.d` that names no file of these crates was written
+for another tree and says nothing about this binary, so `deps/` is read then too. Which library
+build the binary linked is recorded only in cargo's private fingerprint format, so every linkable
+build counts, as does every `path =` dependency, enabled or not: a target holding other feature
+sets can refuse for a file this binary did not take. Rounds keep one generation, built with
+`integration`, and keep its dep-info (round-vm DESIGN.md). The verdict
 is computed once per binary per process. Where it cannot judge (no workspace, no member that
 builds the binary, an unreadable manifest) it panics rather than pass.
 

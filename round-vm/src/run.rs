@@ -4633,18 +4633,6 @@ mod tests {
         assert!(String::from_utf8_lossy(&out.stderr).contains("removed 3 superseded files, 30 bytes"), "{}", String::from_utf8_lossy(&out.stderr));
     }
 
-    #[test_id(ta4b4u3)]
-    #[test]
-    fn pruning_keeps_the_dep_info_of_a_binary_cargo_lists_only_by_its_uplifted_name() {
-        let bin = format!("tool-{H2}");
-        let listing = "{\"reason\":\"compiler-artifact\",\"filenames\":[\"{T}/tool\"],\"executable\":\"{T}/tool\"}\n";
-        let files = [bin.clone(), format!("{bin}.d"), format!("tool-{H1}"), format!("tool-{H1}.d")];
-        let refs: Vec<&str> = files.iter().map(String::as_str).collect();
-        let (out, left) = prune_unit_fixture(listing, &refs, &[(&bin, "tool")]);
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        assert_eq!(left, [bin.clone(), format!("{bin}.d")]);
-    }
-
     #[test_id(t94rm6f)]
     #[test]
     fn pruning_the_superseded_unit_artifacts_deletes_nothing_when_the_list_is_empty_or_cargo_fails() {
