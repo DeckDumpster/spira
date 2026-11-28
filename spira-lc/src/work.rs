@@ -1508,7 +1508,6 @@ fn file_and_bind(
     label: impl FnOnce(&str, &str) -> Result<(), String>,
     block: impl FnOnce(&str, &str) -> Result<(), String>,
 ) -> (i32, String) {
-    let bead_id = f.bound;
     let tie = binding(f);
     let pilgrim = blocking_edge(f.verb, f.actor, End::Bound, End::New).is_some();
     let new_id = match file(f, tie.parent, pilgrim.then_some(PILGRIM_CONTRACT_REASON)) {
