@@ -28,6 +28,11 @@ path = "tests/sources_on_the_loop.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "task_f_incident_file_runners"
+path = "tests/task_f_incident_file_runners.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "task_d_broker_exec"
 path = "tests/task_d_broker_exec.rs"
 required-features = ["integration"]

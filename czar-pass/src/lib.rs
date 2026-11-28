@@ -163,13 +163,8 @@ impl Filing {
     }
 }
 
-/// Files `f` through the incident library in this process: raised onto its reference's row and
-/// filed from it, deduplicated on that reference. `Err` says why it was not filed.
-pub fn file(f: &Filing) -> Result<String, String> {
-    let mut env = incident::intake::Env::load();
-    if env.db.is_none() {
-        return Err("SPIRA_DB is not set: no store to file into".into());
-    }
+/// The intake's environment for one inference filing: what its row is raised with.
+pub fn tuned(mut env: incident::intake::Env, f: &Filing) -> incident::intake::Env {
     env.labels = incident::decide::incident_labels(Some(&f.labels), None, "incident");
     env.kind = f.kind.clone();
     env.priority = f.priority.clone();
@@ -179,6 +174,17 @@ pub fn file(f: &Filing) -> Result<String, String> {
     env.cause = incident::decide::sanitize_cause(&f.cause);
     env.express = f.express;
     env.reference = Some(f.reference.clone());
+    env
+}
+
+/// Files `f` through the incident library in this process: raised onto its reference's row and
+/// filed from it, deduplicated on that reference. `Err` says why it was not filed.
+pub fn file(f: &Filing) -> Result<String, String> {
+    let env = incident::intake::Env::load();
+    if env.db.is_none() {
+        return Err("SPIRA_DB is not set: no store to file into".into());
+    }
+    let env = tuned(env, f);
     let bd = incident::real::RealBd::from_env()?;
     incident::intake::file_event(&env, &bd, &incident::real::RealMailer, &incident::real::RealClock, &f.subject, f.body.as_bytes())
         .map(|id| id.unwrap_or_else(|| f.reference.clone()))
@@ -263,6 +269,16 @@ pub fn parse_iso_to_epoch(ts: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(tp5xf0n)]
+    #[test]
+    fn a_filing_is_raised_under_its_own_reference_with_its_repo_and_cause() {
+        let f = Filing { cause: "base red".into(), ..Filing::base_red("spira:a.sh", "BASE RED", "body", "spira", "spira,czar") };
+        let env = tuned(incident::intake::Env::load(), &f);
+        assert_eq!(env.repo_override_ref().as_deref(), Some("incident:base-red:spira:a.sh"));
+        assert_eq!((env.repo.as_deref(), env.cause.as_str(), env.kind.as_str(), env.priority.as_str()), (Some("spira"), "base-red", "bug", "0"));
+        assert!(env.express && env.fenrir_exempt && env.labels.split(',').any(|l| l == "czar"), "{}", env.labels);
+    }
 
     #[test_id(ttq4ir0)]
     #[test]

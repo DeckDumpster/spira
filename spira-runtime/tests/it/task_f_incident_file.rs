@@ -143,12 +143,46 @@ fn another_look_follows_a_pass_only_when_it_moved_a_row_or_the_store_refused_it(
 
 #[test_id(tynvz57)]
 #[test]
-fn a_re_pin_wakes_the_task_to_judge_the_lanes_again() {
+fn a_repository_map_told_unchanged_or_a_re_pinned_batch_wakes_the_task_to_look_again() {
+    use spira_runtime::repin::Repin;
+    use spira_runtime::status::Control;
     let idle = Snapshot::default();
     let mut rig = Rig::booted(idle.clone());
+    let batch = Arc::new(std::sync::Mutex::new(None::<String>));
+    let base = spira_runtime::fixture::lookup("7");
+    let held = base(intake_batch_key()).unwrap();
+    let lookup = Arc::new(spira_runtime::fixture::lookup("7"));
+    let file = batch.clone();
+    let fresh = Arc::new(move |keys: &[String]| Ok(keys.iter().map(|k| (k.clone(), file.lock().unwrap().clone().filter(|_| k == intake_batch_key()).unwrap_or_else(|| base(k).unwrap()))).collect()));
+    let settings = spira_runtime::Settings::from_lookup(&spira_runtime::fixture::lookup("7")).unwrap();
+    let repin = Arc::new(Repin::new(settings, fresh, lookup));
+    let submitted = Arc::new(std::sync::Mutex::new(0));
+    let count = submitted.clone();
+    let submit: spira_runtime::status::SubmitFn = Arc::new(move |_: &str, _: &str, _: runtime::EventKind| {
+        *count.lock().unwrap() += 1;
+        Ok(())
+    });
+    let control = Control::new(Arc::default(), submit, Arc::new(rig.clock.clone())).with_repin(repin.clone());
+    let told = |key: &str| control.respond(&["scheduler", "repin", key].map(String::from)).unwrap();
+
+    repin.apply(&mut rig.engine);
+    assert_eq!(rig.settle(&idle), 0, "nothing told, nothing woken");
+
     rig.clock.advance(5_000);
-    rig.engine.wake(NAME);
+    assert!(told(MAP_KEY).contains("unchanged"));
+    assert_eq!(*submitted.lock().unwrap(), 1, "the host is given a turn to act on it");
+    repin.apply(&mut rig.engine);
     assert_eq!(rig.settle(&idle), 1);
+
+    rig.clock.advance(5_000);
+    *batch.lock().unwrap() = Some(format!("{held}1"));
+    assert!(told(intake_batch_key()).contains("pending"));
+    repin.apply(&mut rig.engine);
+    assert_eq!(rig.settle(&idle), 1);
+}
+
+fn intake_batch_key() -> &'static str {
+    incident::intake::BATCH_KEY
 }
 
 #[test_id(tjz5nxp)]

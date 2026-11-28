@@ -1,6 +1,6 @@
 TYPE=u64
 GROUP=runtime
-DOC=References one pass over the incident spool files at most; the rest wait for the next pass.
+DOC=Unfiled incident rows one filing pass takes at most; the rest wait for the next pass.
 SCHEMA=REQUIRED: Unfiled incident rows one incident.file pass files at most; a positive number.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # One filing per reference, so this bounds the beads one pass can create; the rest are logged as held back.

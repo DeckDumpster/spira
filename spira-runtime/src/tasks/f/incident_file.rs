@@ -3,7 +3,8 @@
 //! # Tick
 //!
 //! At boot, when the store reports a change under `incidents/`, on a re-pin of a key it
-//! declares (how a repository's lanes change reaches it), and at the earliest retry time or
+//! declares, and when such a key is told again unchanged (`spira-config repo set` tells
+//! `SPIRA_REPO_MAP` after rewriting the map's file: how a lanes change reaches it), and at the earliest retry time or
 //! claim lapse the last look saw (`Due`). It does not poll. `incident.file.observe` lists the
 //! rows from the in-process store view; when [`intake::file_pending`] would file none, the
 //! tick ends. Otherwise `incident.file.run` runs it over at most `SPIRA_INCIDENT_DRAIN_BATCH`
@@ -114,7 +115,7 @@ fn env_of(config: &BTreeMap<String, String>) -> Env {
 /// `incident.file.observe`: the unfiled rows, from the store view.
 pub fn run_observe(e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
     let env = env_of(&config_of(s)?);
-    let lc = LcClient::socket(&e.world.lc_socket).within(std::time::Duration::from_millis(OBSERVE_DEADLINE_MS));
+    let lc = LcClient::socket(&e.world.lc_socket);
     let reply = store_view::call_held(&lc, &["incidents", "list"])?;
     if reply.code != 0 {
         return Err(format!("incidents list: {}", reply.why()));

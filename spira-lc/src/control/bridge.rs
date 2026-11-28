@@ -335,6 +335,21 @@ mod tests {
         state_of("sp-a", to, Some(from), Some("dwarf-1"), Some(100))
     }
 
+    #[test_id(tij2fxs)]
+    #[test]
+    fn a_cleared_incident_topic_is_said_again_on_connect_until_it_is_raised_again() {
+        let mut ledger = Ledger::default();
+        let row = IncidentRow { payload: spira_store::incident::Payload { reference: "incident:a".into(), ..Default::default() }, ..Default::default() };
+        let gone = incident_message("incident:a", None);
+        assert!(ledger.admits(3, &incident_message("incident:a", Some(&row))));
+        assert!(ledger.cleared().is_empty());
+        assert!(ledger.admits(4, &gone));
+        assert!(ledger.admits(4, &Message { topic: topics::state("sp-a"), payload: Value::Null }));
+        assert_eq!(ledger.cleared(), ["incident/incident:a"]);
+        assert!(ledger.admits(5, &incident_message("incident:a", Some(&row))));
+        assert!(ledger.cleared().is_empty());
+    }
+
     #[test_id(td3baj6)]
     #[test]
     fn a_commit_handed_over_after_a_later_one_of_the_same_topic_is_not_published() {
