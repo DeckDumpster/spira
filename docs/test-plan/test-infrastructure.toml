@@ -357,7 +357,7 @@ tier = "T1"
 statement = "The round image preflight script routes each plan to podman: a skip never runs it, a failing install exits 1 with the RED block, and each non-package-list diff shape reaches the full setup."
 
 [use_case.uncovered]
-reason = "the plan decision is round-vm's preflight_plan (UC-test-infrastructure-44) and the verb is run against a throwaway repo in round-vm/tests/image_preflight.rs; the script's text pins and the retired preflight-root suite covered the package-list and full-setup argv. The skip, RED-exit and per-shape podman routing are no longer driven end to end"
+reason = "the plan decision is round-vm's preflight_plan (UC-test-infrastructure-44) and the verb is run against a throwaway repo in round-vm/tests/image_preflight.rs; the script's text pins and the retired preflight-root suite covered the package-list and full-setup argv. The skip path is run end to end there with round-vm stubbed; the RED-exit and per-shape podman routing are not driven end to end"
 date = "2026-11-20"
 bead = "sp-ek5ale"
 

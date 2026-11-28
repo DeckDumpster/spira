@@ -113,31 +113,95 @@ fn a_comment_only_containerfile_edit_plans_a_skip_and_a_run_edit_plans_the_full_
     assert!(plan("HEAD~2", "HEAD").contains("plan=full\n"));
 }
 
+/// A copied script beside a stub conf.sh, plus a PATH dir for stub `release` and `round-vm`.
+/// It runs under bash because the shell script's own step order is what is under test.
+struct Stubbed {
+    tmp: testkit::TempDir,
+}
+
+impl Stubbed {
+    fn new(name: &str, release: &str, plan: &str) -> Self {
+        let tmp = testkit::TempDir::new(name);
+        let spira = tmp.path().join("tree/spira");
+        let bin = tmp.path().join("bin");
+        for d in [&spira, &bin] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(spira.join("round-image-preflight.sh"), HOST).unwrap();
+        std::fs::write(spira.join("conf.sh"), "[ -f \"$SPIRA_TOML\" ] && echo \"conf.sh read $SPIRA_TOML\"\n").unwrap();
+        // Only these are linked in, so a host podman is never on the script's PATH.
+        for tool in ["bash", "dirname", "mktemp", "rm"] {
+            let real = std::env::split_paths(&std::env::var_os("PATH").unwrap()).map(|d| d.join(tool)).find(|p| p.is_file()).expect(tool);
+            std::os::unix::fs::symlink(real, bin.join(tool)).unwrap();
+        }
+        testkit::write_exe(bin.join("release"), release);
+        testkit::write_exe(bin.join("round-vm"), &format!("#!/bin/bash\nprintf '{plan}\\n'\n"));
+        Stubbed { tmp }
+    }
+
+    fn run(&self, args: &[&str]) -> (Option<i32>, String, String) {
+        let o = std::process::Command::new("bash")
+            .arg(self.tmp.path().join("tree/spira/round-image-preflight.sh"))
+            .args(args)
+            .env_clear()
+            .env("PATH", self.tmp.path().join("bin"))
+            .env("SPIRA_TOML", "box.toml")
+            .output()
+            .unwrap();
+        (o.status.code(), String::from_utf8_lossy(&o.stdout).into_owned(), String::from_utf8_lossy(&o.stderr).into_owned())
+    }
+}
+
+const REFUSAL: &str = "release: spira.task_modes names incident.file=act, which this release does not register";
+
+fn refusing_release(marker: &std::path::Path) -> String {
+    format!("#!/bin/bash\n: > '{}'\necho '{REFUSAL}' >&2\nexit 1\n", marker.display())
+}
+
 #[test_id(tzccjyz)]
 #[test]
 fn the_config_is_read_with_the_trees_delta_staged_and_the_layers_are_removed() {
-    let tmp = testkit::TempDir::new("preflight-staged-config");
-    let spira = tmp.path().join("tree/spira");
-    let bin = tmp.path().join("bin");
-    for d in [&spira, &bin] {
-        std::fs::create_dir_all(d).unwrap();
-    }
-    std::fs::write(spira.join("round-image-preflight.sh"), HOST).unwrap();
-    std::fs::write(spira.join("conf.sh"), "[ -f \"$SPIRA_TOML\" ] && echo \"conf.sh read $SPIRA_TOML\"\n").unwrap();
-    let stage = format!("#!/bin/bash\n[ \"$1\" = config-stage ] && [ \"$SPIRA_TOML\" = box.toml ] && [ \"$2\" -ef '{}' ] && : > \"$TMPDIR/staged.toml\" && echo \"$TMPDIR/staged.toml\"\n", spira.parent().unwrap().display());
-    testkit::write_exe(bin.join("release"), &stage);
-    testkit::write_exe(bin.join("round-vm"), "#!/bin/bash\nprintf 'plan=skip\\nnpaths=1\\n'\n");
-    let o = std::process::Command::new("bash")
-        .arg(spira.join("round-image-preflight.sh"))
-        .args(["--base", "HEAD"])
-        .env_clear()
-        .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
-        .env("SPIRA_TOML", "box.toml")
-        .output()
-        .unwrap();
-    let out = String::from_utf8_lossy(&o.stdout);
-    assert!(o.status.success(), "{out}{}", String::from_utf8_lossy(&o.stderr));
+    let staging = "#!/bin/bash\n[ \"$1\" = config-stage ] && [ \"$SPIRA_TOML\" = box.toml ] && [ \"$2\" -ef \"${0%/*}/../tree\" ] && : > \"$TMPDIR/staged.toml\" && echo \"$TMPDIR/staged.toml\"\n";
+    let (rc, out, err) = Stubbed::new("preflight-staged-config", staging, "plan=full\\nnpaths=1\\n").run(&["--base", "HEAD"]);
+    assert_eq!(rc, Some(75), "no podman: {out}{err}");
+    assert!(err.contains("podman is not on PATH"), "{err}");
     let read = out.lines().find_map(|l| l.strip_prefix("conf.sh read ")).expect("conf.sh read the staged config");
     assert!(read.ends_with("/staged.toml"), "{out}");
     assert!(!std::path::Path::new(read).parent().unwrap().exists(), "the staged scratch is removed");
+}
+
+#[test_id(touzna2)]
+#[test]
+fn a_branch_touching_no_recipe_skips_without_staging_the_config() {
+    let marker = testkit::TempDir::new("preflight-skip-marker");
+    let ran = marker.path().join("release-ran");
+    let (rc, out, err) = Stubbed::new("preflight-skip-unstaged", &refusing_release(&ran), "plan=skip\\nnpaths=9\\n").run(&["--base", "HEAD"]);
+    assert_eq!(rc, Some(0), "{out}{err}");
+    assert!(out.contains("fence: round-image-preflight checked 9 recipe paths against the diff (0 touched, setup not run)\n"), "{out}");
+    assert!(!out.contains("conf.sh read"), "{out}");
+    assert!(!ran.exists(), "release ran on a skip: {err}");
+}
+
+#[test_id(tfpcd1m)]
+#[test]
+fn a_recipe_branch_refused_staging_names_the_rebase() {
+    let marker = testkit::TempDir::new("preflight-refused-marker");
+    let ran = marker.path().join("release-ran");
+    let (rc, out, err) = Stubbed::new("preflight-refused-staging", &refusing_release(&ran), "plan=full\\nnpaths=9\\n").run(&["--base", "HEAD"]);
+    assert_eq!(rc, Some(75), "{out}{err}");
+    assert!(ran.exists(), "the stub release leaves its marker when staging calls it: {err}");
+    assert!(err.contains(REFUSAL), "{err}");
+    assert!(err.contains("round-image-preflight: cannot stage the tree config delta; rebase onto HEAD and rerun"), "{err}");
+}
+
+#[test_id(tehyz42)]
+#[test]
+fn a_forced_run_refused_staging_names_no_rebase() {
+    let marker = testkit::TempDir::new("preflight-forced-marker");
+    let ran = marker.path().join("release-ran");
+    let (rc, out, err) = Stubbed::new("preflight-forced-staging", &refusing_release(&ran), "plan=full\\nnpaths=9\\n").run(&["--force"]);
+    assert_eq!(rc, Some(75), "{out}{err}");
+    assert!(err.contains(REFUSAL), "{err}");
+    assert!(err.contains("round-image-preflight: cannot stage the tree config delta\n"), "{err}");
+    assert!(!err.contains("rebase onto"), "{err}");
 }
