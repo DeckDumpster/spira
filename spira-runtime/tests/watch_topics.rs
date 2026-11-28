@@ -196,6 +196,15 @@ fn a_restarted_broker_is_given_every_held_claim_and_no_cleared_one() {
     comes_back_after_a_broker_restart(&row, &mut broker, 2);
 }
 
+/// Drops the runner `row` has been publishing through, publisher and held values with it, and
+/// puts a new one in its place: only that one can say anything afterwards.
+fn replace_the_process(row: &Row, broker: &Broker) -> Arc<Effects> {
+    let fx = service(broker);
+    let old = std::mem::replace(&mut *row.fx.lock().unwrap(), fx.clone());
+    assert_eq!(Arc::strong_count(&old), 1, "something else still holds the old process");
+    fx
+}
+
 /// A new process holds nothing until an observe hands it what each row last published.
 #[test_id(t21q195)]
 #[test]
@@ -208,8 +217,8 @@ fn a_restarted_runtime_says_its_carried_claims_again_to_a_broker_that_kept_nothi
     let before = broker.retained(&row.filter());
     assert_eq!(before.len(), 1, "{before:?}");
 
+    let fx = replace_the_process(&row, &broker);
     broker.restart();
-    let fx = service(&broker);
     let mut watching = Subscriber::to(broker.socket(), &["watch/#"]);
     row.rig.reopen(claims::ClaimCount { interval_ms: 60_000, every: 4 }.registration()).unwrap();
     let mark = row.rig.requested().len();
@@ -238,8 +247,8 @@ fn a_restarted_runtime_says_the_carried_stale_image_again_to_a_broker_that_kept_
     let before = broker.retained(&row.filter());
     assert_eq!(before.len(), 1, "{before:?}");
 
+    let fx = replace_the_process(&row, &broker);
     broker.restart();
-    let fx = service(&broker);
     let mut watching = Subscriber::to(broker.socket(), &["watch/#"]);
     let mark = row.rig.requested().len();
     row.rig.advance(ami::CADENCE_MS).unwrap();
