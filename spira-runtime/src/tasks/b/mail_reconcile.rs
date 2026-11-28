@@ -10,8 +10,9 @@
 //! - Also woken by `mail.arrived` (the S9 source replacing mail-deliver): a delivery observes
 //!   the unread mail at once, leaving the cadence as it was. Replies are read only on the
 //!   cadence, which is what [`MAX_ATTEMPTS`] counts.
-//! - Single-flight: one observe in flight; a tick that lands while one is outstanding is dropped
-//!   (the next tick repeats the whole pass anyway, `reconcile.rs:195`).
+//! - Single-flight on the cadence: a tick that lands while an observe is outstanding is dropped
+//!   (the next tick repeats the whole pass anyway, `reconcile.rs:195`). A wake's observe is
+//!   outside it.
 //!
 //! ## Observe
 //!
@@ -54,8 +55,10 @@
 //!
 //! The replies carry no state in the scheduler (the ledger is the state). The one carry is
 //! `published`, what is retained on `mail/<mailbox>/<id>`: a mailbox whose unread set differs
-//! from it gets one `publish`. A failed or lost publish leaves its ids unknown (null), so the
-//! next pass sets or clears each again. Fixtures: the eight tests at
+//! from it gets a `publish`, split to fit the journal. Publishes pending together run in no
+//! order, so each carries its pass's sequence and a topic told a later one is left alone. A
+//! failed or lost publish leaves its ids unknown (null), so the next pass sets or clears each
+//! again. Fixtures: the eight tests at
 //! `reconcile.rs:290-410` (close+lift+answer; second pass silent; duplicate Message-ID once;
 //! store down then up; refused close → one note + one inbox row; routed question; notice;
 //! empty body).
@@ -213,8 +216,25 @@ pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Carry {
-    /// A null payload is a publish not known to have landed.
-    pub published: Mailboxes,
+    /// `<mailbox>/<id>` → the payload, one row a message so a backlog fits the store. A null
+    /// payload is a publish not known to have landed.
+    pub published: BTreeMap<String, Value>,
+    /// The latest [`Change::seq`] asked: the time of its pass, never going back.
+    pub seq: u64,
+}
+
+fn by_mailbox(published: &BTreeMap<String, Value>) -> Mailboxes {
+    let mut out = Mailboxes::new();
+    for (key, value) in published {
+        if let Some((mailbox, id)) = key.split_once('/') {
+            out.entry(mailbox.to_string()).or_default().insert(id.to_string(), value.clone());
+        }
+    }
+    out
+}
+
+fn flat(unread: &Mailboxes) -> BTreeMap<String, Value> {
+    unread.iter().flat_map(|(mailbox, ids)| ids.iter().map(move |(id, v)| (format!("{mailbox}/{id}"), v.clone()))).collect()
 }
 
 pub struct MailReconcile {
@@ -259,24 +279,28 @@ fn mail_prefix(mailbox: &str) -> String {
     format!("mail/{mailbox}")
 }
 
-/// One publish per mailbox whose unread mail differs from what is retained for it.
-fn publication(published: &Mailboxes, unread: &Mailboxes, now_ms: u64) -> Vec<Act> {
+/// The publishes of each mailbox whose unread mail differs from what is retained for it.
+fn publication(published: &Mailboxes, unread: &Mailboxes, seq: u64, now_ms: u64) -> Vec<Act> {
     let none = BTreeMap::new();
     let mailboxes: BTreeSet<&String> = published.keys().chain(unread.keys()).collect();
     mailboxes
         .into_iter()
-        .filter_map(|mailbox| {
+        .flat_map(|mailbox| {
             let (was, is) = (published.get(mailbox).unwrap_or(&none), unread.get(mailbox).unwrap_or(&none));
             let change = Change::<Value> {
                 prefix: mail_prefix(mailbox),
                 set: is.iter().filter(|(id, v)| was.get(*id) != Some(*v)).map(|(id, v)| (id.clone(), v.clone())).collect(),
                 clear: was.keys().filter(|id| !is.contains_key(*id)).cloned().collect(),
+                seq,
             };
             if change.set.is_empty() && change.clear.is_empty() {
-                return None;
+                return vec![];
             }
-            let input = serde_json::to_string(&change).unwrap_or_default();
-            Some(Act { name: PUBLISH.into(), key: watch_topics::key(&change.prefix, &input, now_ms), input, deadline_ms: PUBLISH_MS, probe: false })
+            watch_topics::split(change)
+        })
+        .map(|part| {
+            let input = serde_json::to_string(&part).unwrap_or_default();
+            Act { name: PUBLISH.into(), key: watch_topics::key(&part.prefix, &input, now_ms), input, deadline_ms: PUBLISH_MS, probe: false }
         })
         .collect()
 }
@@ -287,7 +311,7 @@ fn unknown(carry: &Carry, input: &str) -> Carry {
     let Ok(change) = serde_json::from_str::<Change<Value>>(input) else { return next };
     let Some(mailbox) = change.prefix.strip_prefix("mail/") else { return next };
     let ids = change.set.into_keys().chain(change.clear);
-    next.published.entry(mailbox.to_string()).or_default().extend(ids.map(|id| (id, Value::Null)));
+    next.published.extend(ids.map(|id| (format!("{mailbox}/{id}"), Value::Null)));
     next
 }
 
@@ -297,8 +321,9 @@ fn failure(request: &EffectSpec, body: &str) -> String {
 }
 
 fn probe_input(cfg: &Cfg, carry: &Carry, mail_only: bool) -> String {
-    let mut published = carry.published.clone();
-    published.values_mut().for_each(|ids| ids.retain(|_, v| !v.is_null()));
+    let mut known = carry.published.clone();
+    known.retain(|_, v| !v.is_null());
+    let published = by_mailbox(&known);
     serde_json::to_string(&ObserveIn { mail_only, readers: cfg.get(READERS_KEY).cloned().unwrap_or_default(), published }).unwrap_or_default()
 }
 
@@ -370,10 +395,13 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
     match input {
         Input::Fire => Ok((carry.clone(), vec![])),
         Input::Observed(s) => {
-            let mut acts = publication(&carry.published, &s.unread, now_ms);
+            let seq = now_ms.max(carry.seq + 1);
+            let mut acts = publication(&by_mailbox(&carry.published), &s.unread, seq, now_ms);
             let mut next = carry.clone();
-            next.published = s.unread.clone();
-            next.published.retain(|_, ids| !ids.is_empty());
+            next.published = flat(&s.unread);
+            if !acts.is_empty() {
+                next.seq = seq;
+            }
             if cfg.get("SPIRA_DB").is_some_and(|d| d.is_empty()) {
                 return Ok((next, acts));
             }
@@ -475,7 +503,7 @@ pub fn run(e: &crate::Effects, spec: &runtime::EffectSpec) -> Result<String, Str
     out.map(|_| if refused { format!("{}/close:refused", j.key) } else { tag.clone() }).map_err(|why| format!("{tag}: {why}"))
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "published", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "published", drop: &[] }, runtime::rows::Part::Field("seq")];
 
 super::hosted!(MailReconcile, extra = {
     const HEARS: &'static [EventKindTag] = &[ARRIVED, WOKE];

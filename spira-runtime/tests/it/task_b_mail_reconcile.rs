@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use runtime::taskrig::TaskRig;
 
 use serde_json::{json, Value};
-use spira_runtime::tasks::b::kit::{names, testing as t, Input};
+use spira_runtime::tasks::b::kit::{names, testing as t, Input, Stub};
 use spira_runtime::tasks::b::mail_reconcile::{self as task, Carry, MailReconcile as H, Orig, Reply, Snapshot};
 
 const SET: &[(&str, &str)] = &[(task::CADENCE_KEY, "60")];
@@ -116,13 +116,13 @@ fn unread_mail_is_set_once_and_cleared_when_read_and_a_failed_publish_is_said_ag
     };
 
     let (carry, acts) = task::decide(&h.cfg, &Carry::default(), &unread(&["m1"]), MIN).unwrap();
-    assert_eq!(change(&acts), json!({"prefix": "mail/concierge", "set": {"m1": one}, "clear": []}));
+    assert_eq!(change(&acts), json!({"prefix": "mail/concierge", "set": {"m1": one}, "clear": [], "seq": MIN}));
     let (same, quiet) = task::decide(&h.cfg, &carry, &unread(&["m1"]), 2 * MIN).unwrap();
     assert!(quiet.is_empty() && same == carry, "{quiet:?}");
 
     let (read, acts) = task::decide(&h.cfg, &carry, &unread(&[]), 3 * MIN).unwrap();
-    assert_eq!(change(&acts), json!({"prefix": "mail/concierge", "set": {}, "clear": ["m1"]}));
-    assert_eq!(read, Carry::default());
+    assert_eq!(change(&acts), json!({"prefix": "mail/concierge", "set": {}, "clear": ["m1"], "seq": 3 * MIN}));
+    assert!(read.published.is_empty(), "{read:?}");
 
     let failed = Input::Outcome { effect: task::PUBLISH.into(), ok: false, body: acts[0].input.clone() };
     let (owed, quiet) = task::decide(&h.cfg, &read, &failed, 4 * MIN).unwrap();
@@ -156,4 +156,25 @@ fn a_publish_the_engine_saw_fail_is_asked_for_again_by_the_next_pass() {
     t::assert_ported(&rig, task::STREAM);
     let clears: Vec<Value> = asked.lock().unwrap().iter().skip(1).map(|c| c["clear"].clone()).collect();
     assert_eq!(clears, [json!(["m1"]), json!(["m1"])]);
+}
+
+#[test_id(t29cm94)]
+#[test]
+fn a_backlog_is_published_and_carried_in_pieces_the_store_takes() {
+    const STORE_COLUMN: usize = 65_535;
+    let h = t::handler::<H>(SET);
+    let ids: BTreeSet<String> = (0..1000).map(|n| format!("100.{n:04}.1")).collect();
+    let message = json!({"from": "a", "subject": "s".repeat(120), "kind": "note", "at": 1});
+    let unread = BTreeMap::from([("concierge".to_string(), ids.iter().map(|id| (id.clone(), message.clone())).collect())]);
+    let (carry, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { unread, ..Default::default() }), MIN).unwrap();
+
+    assert!(acts.iter().all(|a| a.input.len() < STORE_COLUMN), "{:?}", acts.iter().map(|a| a.input.len()).collect::<Vec<_>>());
+    assert_eq!(acts.iter().map(|a| &a.key).collect::<BTreeSet<_>>().len(), acts.len());
+    let set: BTreeSet<String> = acts.iter().flat_map(|a| serde_json::from_str::<Value>(&a.input).unwrap()["set"].as_object().unwrap().keys().cloned().collect::<Vec<_>>()).collect();
+    assert_eq!(set, ids);
+
+    let rows = runtime::rows::split(&serde_json::to_string(&carry).unwrap(), <H as Stub>::ROWS);
+    assert!(rows.values().all(|row| row.len() < STORE_COLUMN), "{:?}", rows.values().map(String::len).max());
+    let joined: Carry = serde_json::from_str(&runtime::rows::join(&rows, <H as Stub>::ROWS)).unwrap();
+    assert_eq!(joined, carry);
 }

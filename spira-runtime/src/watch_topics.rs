@@ -94,6 +94,14 @@ pub struct Change<V = Condition> {
     pub prefix: String,
     pub set: BTreeMap<String, V>,
     pub clear: Vec<String>,
+    /// The order the change was decided in: a topic already told a later one is left alone.
+    /// Zero is unordered.
+    #[serde(default, skip_serializing_if = "unordered")]
+    pub seq: u64,
+}
+
+fn unordered(seq: &u64) -> bool {
+    *seq == 0
 }
 
 /// A [`Change`] as a journal may hold it: one asked before topics took a prefix names its
@@ -105,11 +113,13 @@ struct Journaled<V> {
     row: Option<String>,
     set: BTreeMap<String, V>,
     clear: Vec<String>,
+    #[serde(default)]
+    seq: u64,
 }
 
 impl<V> From<Journaled<V>> for Change<V> {
     fn from(j: Journaled<V>) -> Change<V> {
-        Change { prefix: j.row.map_or(j.prefix, |row| prefix(&row)), set: j.set, clear: j.clear }
+        Change { prefix: j.row.map_or(j.prefix, |row| prefix(&row)), set: j.set, clear: j.clear, seq: j.seq }
     }
 }
 
@@ -137,7 +147,7 @@ pub fn settle(row: &str, published: &Published, conditions: BTreeMap<String, Str
 /// (level, line).
 pub fn settle_levelled(row: &str, published: &Published, conditions: BTreeMap<String, (String, String)>, now_ms: u64) -> (Published, Option<Change>) {
     let now = now_ms / 1000;
-    let (mut next, mut change) = (Published::new(), Change { prefix: prefix(row), set: Published::new(), clear: Vec::new() });
+    let (mut next, mut change) = (Published::new(), Change { prefix: prefix(row), set: Published::new(), clear: Vec::new(), seq: 0 });
     for (subject, (level, text)) in conditions {
         let held = published.get(&subject);
         let value = match held {
@@ -167,27 +177,35 @@ pub fn key(prefix: &str, input: &str, now_ms: u64) -> String {
     format!("{prefix}/{now_ms}/{:016x}", fnv1a(input))
 }
 
-/// `change` as effects whose inputs each fit [`CHANGE_BYTES`]; one value past it goes alone.
-pub fn effects(change: Change, now_ms: u64) -> Vec<EffectSpec> {
-    let bytes = |v: &serde_json::Value| v.to_string().len() + 1;
-    let (mut out, mut part, mut spent) = (vec![], Change { prefix: change.prefix.clone(), set: Published::new(), clear: vec![] }, 0);
-    let mut room_for = |part: &mut Change, cost: usize| {
+/// `change` as changes whose inputs each fit [`CHANGE_BYTES`]; one value past it goes alone.
+pub fn split<V: Serialize>(change: Change<V>) -> Vec<Change<V>> {
+    fn bytes(v: &impl Serialize) -> usize {
+        serde_json::to_string(v).map_or(0, |s| s.len()) + 1
+    }
+    let empty = || Change { prefix: change.prefix.clone(), set: BTreeMap::new(), clear: vec![], seq: change.seq };
+    let (mut out, mut part, mut spent) = (vec![], empty(), 0);
+    let mut room_for = |part: &mut Change<V>, cost: usize| {
         if spent > 0 && spent + cost > CHANGE_BYTES {
-            out.push(effect(part, now_ms));
-            (part.set, part.clear, spent) = (Published::new(), vec![], 0);
+            out.push(std::mem::replace(part, empty()));
+            spent = 0;
         }
         spent += cost;
     };
     for (subject, value) in change.set {
-        room_for(&mut part, bytes(&json!(subject)) + bytes(&json!(value)));
+        room_for(&mut part, bytes(&subject) + bytes(&value));
         part.set.insert(subject, value);
     }
     for subject in change.clear {
-        room_for(&mut part, bytes(&json!(subject)));
+        room_for(&mut part, bytes(&subject));
         part.clear.push(subject);
     }
-    out.push(effect(&part, now_ms));
+    out.push(part);
     out
+}
+
+/// [`effect`] for each part of `change`'s [`split`].
+pub fn effects(change: Change, now_ms: u64) -> Vec<EffectSpec> {
+    split(change).iter().map(|part| effect(part, now_ms)).collect()
 }
 
 /// The effect again when `ev` says a `watch.publish` was lost with a stopping process, less
@@ -240,9 +258,9 @@ fn topic(prefix: &str, subject: &str) -> String {
 struct State {
     /// Prefix → subject → the retained value.
     held: BTreeMap<String, BTreeMap<String, Value>>,
-    /// Every topic this process has set or cleared. A carry says nothing new about one: it may
-    /// be older than the clear.
-    touched: BTreeSet<String>,
+    /// Every topic this process has set or cleared, with the latest [`Change::seq`] it was told.
+    /// A carry says nothing new about one: it may be older than the clear.
+    touched: BTreeMap<String, u64>,
     /// Topics cleared here that the broker has not been seen to take.
     uncleared: BTreeSet<String>,
 }
@@ -286,7 +304,7 @@ impl WatchTopics {
         let _turn = self.turn();
         let unsaid: Vec<(String, Value)> = {
             let state = lock(&self.state);
-            published.into_iter().filter(|(s, _)| !state.touched.contains(&topic(&prefix, s))).collect()
+            published.into_iter().filter(|(s, _)| !state.touched.contains_key(&topic(&prefix, s))).collect()
         };
         if !unsaid.is_empty() && !self.asked_to_connect.swap(true, Ordering::SeqCst) {
             // A failure is logged by the publisher, which connects when the broker appears.
@@ -297,7 +315,9 @@ impl WatchTopics {
         }
         // Held only after the publishes: the connect hook takes this lock while they wait.
         let mut state = lock(&self.state);
-        state.touched.extend(unsaid.iter().map(|(s, _)| topic(&prefix, s)));
+        for (subject, _) in &unsaid {
+            state.touched.entry(topic(&prefix, subject)).or_default();
+        }
         state.held.entry(prefix).or_default().extend(unsaid);
         drop(state);
         self.send_clears();
@@ -310,12 +330,18 @@ impl WatchTopics {
     /// Publishes the [`Change`] in `input`. A broker that cannot be reached is logged by the
     /// publisher and is not the effect's failure: the state goes out on reconnect.
     pub fn publish(&self, input: &str) -> Result<String, String> {
-        let Change { prefix, set, clear } = serde_json::from_str::<Change<Value>>(input).map_err(|e| e.to_string())?;
+        let Change { prefix, mut set, mut clear, seq } = serde_json::from_str::<Change<Value>>(input).map_err(|e| e.to_string())?;
         let _turn = self.turn();
         {
             // A clear is recorded before anything is sent, so a connect on the way cannot put
             // the old value back.
             let mut state = lock(&self.state);
+            if seq != 0 {
+                // Effects pending together run in no order, so a late one must undo nothing.
+                let current = |s: &String| state.touched.get(&topic(&prefix, s)).is_none_or(|told| *told <= seq);
+                set.retain(|s, _| current(s));
+                clear.retain(|s| current(s));
+            }
             for subject in &clear {
                 state.uncleared.insert(topic(&prefix, subject));
                 if let Some(published) = state.held.get_mut(&prefix) {
@@ -325,7 +351,7 @@ impl WatchTopics {
             for subject in set.keys() {
                 state.uncleared.remove(&topic(&prefix, subject));
             }
-            state.touched.extend(set.keys().chain(&clear).map(|s| topic(&prefix, s)));
+            state.touched.extend(set.keys().chain(&clear).map(|s| (topic(&prefix, s), seq)));
         }
         let sent = set.iter().filter(|(s, v)| self.publisher.publish(Class::State, &topic(&prefix, s), v).is_ok()).count();
         let said = format!("published {sent} of {} value(s), {} clear(s)", set.len(), clear.len());
@@ -369,7 +395,7 @@ mod tests {
         assert!(specs.len() > 1 && specs.iter().all(|s| s.input.len() <= CHANGE_BYTES + 100), "{}", specs.len());
         let keys: BTreeSet<&str> = specs.iter().map(|s| s.key.as_str()).collect();
         assert_eq!(keys.len(), specs.len());
-        let mut back = Change { prefix: whole.prefix.clone(), set: Published::new(), clear: vec![] };
+        let mut back = Change { prefix: whole.prefix.clone(), set: Published::new(), clear: vec![], seq: 0 };
         for s in &specs {
             let part: Change = serde_json::from_str(&s.input).unwrap();
             back.set.extend(part.set);

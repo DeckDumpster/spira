@@ -15,7 +15,7 @@ use runtime::ports::{SeededRng, VirtualClock};
 use runtime::taskrig::TaskRig;
 use serde_json::{json, Value};
 use spira_pub::{Options, Publisher};
-use spira_runtime::tasks::b::kit::testing as t;
+use spira_runtime::tasks::b::kit::{testing as t, Input};
 use spira_runtime::tasks::b::mail_reconcile::{self as task, MailReconcile};
 use spira_runtime::tasks::g::mail_arrived::{stream, Arrived};
 use spira_runtime::watch_topics::WatchTopics;
@@ -42,6 +42,8 @@ struct Fixture {
     rig: TaskRig,
     fx: Arc<Mutex<Arc<Effects>>>,
     dir: TempDir,
+    /// What each observe since the last look answered.
+    observed: Arc<Mutex<Vec<String>>>,
 }
 
 impl Fixture {
@@ -52,10 +54,18 @@ impl Fixture {
             let fx = fx.clone();
             move |input: &str| fx.lock().unwrap().run("k", &EffectSpec::keyed(name, "k", input, 10_000))
         };
-        let mut rig = TaskRig::new(1, t::handler::<MailReconcile>(SET).registration()).unwrap().double(task::OBSERVE, runner(task::OBSERVE)).double(PUBLISH, runner(PUBLISH));
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let (seen, observe) = (observed.clone(), runner(task::OBSERVE));
+        let observe = move |input: &str| observe(input).inspect(|answer| seen.lock().unwrap().push(answer.clone()));
+        let mut rig = TaskRig::new(1, t::handler::<MailReconcile>(SET).registration()).unwrap().double(task::OBSERVE, observe).double(PUBLISH, runner(PUBLISH));
         let (_, boot_stream, kind) = MailReconcile::boot();
         rig.tick(boot_stream, kind).unwrap();
-        Fixture { rig, fx, dir }
+        Fixture { rig, fx, dir, observed }
+    }
+
+    fn replies_read(&self) -> Vec<usize> {
+        let answers = std::mem::take(&mut *self.observed.lock().unwrap());
+        answers.iter().map(|a| serde_json::from_str::<task::Snapshot>(a).unwrap().replies.len()).collect()
     }
 
     fn mailbox(&self, name: &str) -> PathBuf {
@@ -210,4 +220,45 @@ fn operator_mail_and_muted_mail_are_never_published() {
     f.arrived("concierge");
     f.tick();
     assert_eq!(topics(&held(&broker, "mail/#")), ["mail/concierge/100.3.1"]);
+}
+
+#[test_id(tpboimr)]
+#[test]
+fn a_set_that_runs_after_its_later_clear_does_not_bring_the_message_back() {
+    let _env = testkit::env_read();
+    let broker = Broker::up();
+    let dir = TempDir::new("mail-topics-order");
+    let fx = service(dir.path(), &broker);
+    let h = t::handler::<MailReconcile>(SET);
+    let message = json!({"from": "a", "subject": "s", "kind": "note", "at": 1});
+    let observed = |ids: &[&str]| {
+        let unread = BTreeMap::from([("concierge".to_string(), ids.iter().map(|id| (id.to_string(), message.clone())).collect())]);
+        Input::Observed(task::Snapshot { unread, ..Default::default() })
+    };
+    let (carry, set) = task::decide(&h.cfg, &task::Carry::default(), &observed(&["m1", "m2"]), 1_000).unwrap();
+    let (_, clear) = task::decide(&h.cfg, &carry, &observed(&["m2"]), 2_000).unwrap();
+    // Both were pending at once and the pool ran them the other way round.
+    for act in [&clear[0], &set[0]] {
+        fx.run("k", &EffectSpec::keyed(PUBLISH, "k", act.input.clone(), 10_000)).unwrap();
+    }
+    fx.watch_topics.get().unwrap().as_ref().unwrap().flush(FAILSAFE).unwrap();
+    assert_eq!(topics(&held(&broker, "mail/#")), ["mail/concierge/m2"]);
+}
+
+/// A wake must not read replies: each reading spends one of a failing step's attempts.
+#[test_id(tisj1e0)]
+#[test]
+fn an_arrival_reads_unread_mail_alone_and_the_cadence_reads_replies() {
+    let _env = testkit::env_read();
+    let broker = Broker::up();
+    let mut f = Fixture::up(&broker);
+    let dir = f.mailbox("operator");
+    mail::maildir::mail_ensure(&dir).unwrap();
+    std::fs::write(dir.join("tmp/200.1.1"), "From: ryan\nMessage-ID: <r1@spira>\nIn-Reply-To: <o1@spira>\nSubject: Re: x\n\nyes\n").unwrap();
+    mail::maildir::mail_deliver(&dir, "200.1.1", false).unwrap();
+    f.replies_read();
+    f.arrived("concierge");
+    assert_eq!(f.replies_read(), [0]);
+    f.tick();
+    assert_eq!(f.replies_read(), [1]);
 }
