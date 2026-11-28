@@ -34,7 +34,7 @@ pub struct PassPaths {
     pub inbox: PathBuf,
     /// How far the inbox has been read.
     pub inbox_cursor: PathBuf,
-    /// Where a page is announced as `concierge/inbox`.
+    /// The broker for `alarm/<key>` and for a page's `concierge/inbox`.
     pub inbox_bus: inbox_rules::Bus,
 }
 
@@ -171,11 +171,18 @@ pub fn run(inp: &PassInput, ops: &dyn Conditions, state: &mut State, paths: &Pas
         fallback::remove(&paths.fallback);
     }
 
+    // After the fallback, so a slow broker cannot delay it.
+    let previous = std::fs::read_to_string(&paths.heartbeat).unwrap_or_default();
+    let (alarm_line, delivered) = crate::alarm::publish(&previous, &rep.firing, &paths.inbox_bus, now);
+    if let Err(e) = delivered {
+        err.push(util::log_line(now, &format!("HEIMDALL could not publish the alarm topics: {e}")));
+    }
+
     let db_read = heartbeat::db_read_status(db_reachable, rep.db_saturated);
     let db_write = heartbeat::db_write_status(rep.probe.write_ok, rep.db_saturated);
     let keys: Vec<String> = firing_keys.into_iter().collect();
     let hb = Heartbeat { at: now, firing_keys: &keys, db_read, db_write, db_saturated: rep.db_saturated, fallback_written: fallback_needed, acted };
-    let _ = heartbeat::write(&paths.heartbeat, &hb.render());
+    let _ = heartbeat::write(&paths.heartbeat, &(hb.render() + &alarm_line));
     out.push(util::log_line(now, &format!("heimdall: {} firing [{}], {} change(s), db_read={} db_write={}", keys.len(), keys.join(","), acted, DbStatus::as_str(&db_read), DbStatus::as_str(&db_write))));
 
     rep.acted = acted;

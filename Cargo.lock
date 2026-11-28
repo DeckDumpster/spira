@@ -854,6 +854,7 @@ name = "heimdall"
 version = "1.0.0"
 dependencies = [
  "inbox-rules",
+ "ports",
  "regex",
  "runtime",
  "serde",
@@ -862,6 +863,7 @@ dependencies = [
  "spira-otel",
  "spira-pub",
  "spira-store",
+ "spira-sub",
  "spira-test-id",
  "testkit",
 ]
@@ -3424,6 +3426,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-pub",
  "spira-test-id",
  "system-paths",
  "testkit",
