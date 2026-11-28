@@ -1,8 +1,12 @@
+use std::sync::{Arc, Mutex};
+
 use runtime::event::EventKind;
 use runtime::taskrig::TaskRig;
+
+use super::published;
 use spira_runtime::tasks::a::kit;
 use spira_runtime::watchers::supersede_duty::*;
-use spira_runtime::watchers::INBOX_APPEND;
+use spira_runtime::watchers::{INBOX_APPEND, WATCH_PUBLISH};
 
 fn registration() -> runtime::Registration {
     SupersedeDuty { interval_ms: 60_000 }.registration()
@@ -58,4 +62,57 @@ fn two_writes_failing_in_one_batch_are_both_remembered_as_failed() {
     rig.run_until_idle().unwrap();
     let failed: Vec<String> = rig.journaled().iter().filter(|e| e.kind.tag == FAILED).map(|e| e.kind.body.clone()).collect();
     assert_eq!(failed.len(), 2, "{failed:?}");
+}
+
+fn watched(world: Arc<Mutex<String>>, act: Result<&'static str, &'static str>) -> TaskRig {
+    let mut r = TaskRig::new(1, registration())
+        .unwrap()
+        .double(OBSERVE, move |_| Ok(world.lock().unwrap().clone()))
+        .double(ACT, move |_| act.map(String::from).map_err(String::from))
+        .double(INBOX_APPEND, |l| Ok(l.into()))
+        .double(WATCH_PUBLISH, |l| Ok(l.into()));
+    let (_, stream, boot) = SupersedeDuty::boot();
+    r.tick(stream, boot).unwrap();
+    r
+}
+
+fn request() -> String {
+    held(Reading::Request { succ: "sp-new".into(), own: "HELD".into(), succ_state: "LANDED".into() })
+}
+
+#[test_id(tx6z6ke)]
+#[test]
+fn a_request_held_across_three_passes_is_set_once_and_cleared_once_when_it_leaves() {
+    let world = Arc::new(Mutex::new(request()));
+    let mut r = watched(world.clone(), Ok(""));
+    r.advance(60_000).unwrap();
+    r.advance(60_000).unwrap();
+    let held = published(&r);
+    let [set] = held.as_slice() else { panic!("one set: {held:?}") };
+    assert_eq!((set.prefix.clone(), set.set.keys().map(String::as_str).collect::<Vec<_>>(), set.clear.len()), (format!("watch/{NAME}"), vec!["sp-old"], 0));
+    assert_eq!(set.set["sp-old"].text, "SUPERSEDE REQUEST sp-old: successor sp-new");
+
+    *world.lock().unwrap() = serde_json::to_string(&Snapshot::default()).unwrap();
+    r.advance(60_000).unwrap();
+    r.advance(60_000).unwrap();
+    let all = published(&r);
+    assert_eq!(all.len(), 2, "{all:?}");
+    assert_eq!((all[1].set.len(), all[1].clear.clone()), (0, vec!["sp-old".to_string()]));
+}
+
+#[test_id(t2lwnpv)]
+#[test]
+fn a_failing_write_changes_the_value_once_and_an_unreadable_pass_leaves_it_held() {
+    let world = Arc::new(Mutex::new(request()));
+    let mut r = watched(world.clone(), Err("lifecycle refused"));
+    for _ in 0..3 {
+        r.advance(60_000).unwrap();
+    }
+    *world.lock().unwrap() = held(Reading::Unreadable);
+    r.advance(60_000).unwrap();
+    let texts: Vec<String> = published(&r).iter().map(|c| {
+        assert!(c.clear.is_empty(), "{c:?}");
+        c.set["sp-old"].text.clone()
+    }).collect();
+    assert_eq!(texts, ["SUPERSEDE REQUEST sp-old: successor sp-new", "SUPERSEDE REQUEST sp-old: supersede failed — will retry"]);
 }

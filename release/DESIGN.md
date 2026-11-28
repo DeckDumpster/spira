@@ -269,12 +269,16 @@ make every change below; its `--help` points here.
 | --- | --- | --- |
 | The registry no longer declares the key | `config-delta` lint | deletes `spira/conf.d/<KEY>` (or `conf.toml.d`) |
 | The delta names it | `config-delta` lint, activation | adds it to `removed` in `spira/config-delta.d/<bead>.toml` (`--bead <id>`) |
-| The landing ref still requires the fixture line | `gate fixture-config --base` | leaves the line in `spira/testlib/complete.toml`; delete it in a follow-up once the retirement has landed |
+| The active release still registers the key | `gate fixture-config --base`, `work submit` | leaves the line in `spira/testlib/complete.toml`; a later branch deletes it |
 | A retired task is named | activation | drops it from the `SPIRA_TASK_MODES` default and adds it to `removed_tasks` in `spira/config-delta.d/<bead>.toml` |
 
 What retire cannot do is delete the code that reads the key or registers the task; it prints
-that as left to the builder. Fixture lines are removed only after the landing ref no longer
-registers the key, never in the same change.
+that as left to the builder. That code, the registry file, the delta entry and the task drop land
+in the one change. The fixture line is the only part that waits: while the active release
+registers the key, every key is required (`spira-config/src/resolve.rs`), and `work submit`'s
+reads gate refuses an early drop. No follow-up item is filed for it. The first later branch that
+edits `spira/testlib/complete.toml` after the key has left the active release deletes the line as
+a small fix-up.
 
 ### Hotfix: activate an unlanded commit
 

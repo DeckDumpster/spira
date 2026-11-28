@@ -12,6 +12,12 @@
 
 #[macro_use]
 extern crate spira_test_id;
+
+/// The `watch.publish` inputs a rig's row has asked for, in order.
+fn published(r: &runtime::taskrig::TaskRig) -> Vec<spira_runtime::watch_topics::Change> {
+    r.requested().iter().filter(|q| q.name == spira_runtime::watchers::WATCH_PUBLISH).map(|q| serde_json::from_str(&q.input).unwrap()).collect()
+}
+
 mod boot_stagger;
 mod check_config;
 mod concierge_wake_one_try;
@@ -116,6 +122,7 @@ mod world_inbox_announce;
 mod world_claim_count;
 mod world_supersede;
 mod watcher_asks;
+mod watcher_bead_sweep;
 mod watcher_brain_dirty;
 mod watcher_design_asks;
 mod watcher_overrides;

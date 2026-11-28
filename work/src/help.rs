@@ -210,10 +210,10 @@ pub static ENTRIES: &[Entry] = &[
     Entry {
         verb: "file-followup",
         group: Group::Followups,
-        does: "Files a bead for work that follows from yours, parented to it.",
-        when: "You found work you must not do now. A builder child needs a body with a `## Build` section naming the artifact and where.",
-        args: &["\"<title>\"", "--repo <name>   (required: where the child's work lives)", "--body-file -   (body on stdin)"],
-        checks: &["the parent is your bead", "the child never carries your `branch:` label"],
+        does: "Files a bead for work that cannot ride your branch, parented to your bead, at P3.",
+        when: "The work is in another subsystem, needs its own round or design, or is a defect whose fix is not small. A small fix-up (in the crates or files your bead already touches, or their tests and fixtures; no round or design of its own; your acceptance unchanged) is not filed: do it now, in its own commit that says what it is, and name it in your note before submit (a mender: in its outcome diagnosis). A second, unrelated defect still gets its own bead (`law-a-second-defect-gets-its-own-bead`); a small fix-up in the same area does not. A builder child needs a body with a `## Build` section naming the artifact and where.",
+        args: &["\"<title>\"", "--repo <name>   (required: where the child's work lives)", "--body-file -   (body on stdin)", "--priority <0..4>   (default P3)", "--blocks \"<the work it blocks, naming its bead id>\"", "--defect \"<what is broken for a user now>\""],
+        checks: &["the parent is your bead", "the child never carries your `branch:` label", "with no statement it files at P3; with --blocks or --defect and no --priority it files at P2", "--priority 0, 1 or 2 without --blocks or --defect is refused and nothing is filed", "--blocks must name a bead id", "the statement is noted on the new bead and shown to its Skuld review"],
         refusals: &[Refusal { id: R::ForFlag, text: "--for is the client's to send (it files as your own persona)", fix: "drop --for" }],
     },
     Entry {

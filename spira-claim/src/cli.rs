@@ -418,17 +418,33 @@ fn read_ready(a: &Args, env: &mut Env) -> Result<Vec<ReadyRow>, Outcome> {
     rank::parse_ready(&text).map_err(Outcome::cannot_tell)
 }
 
+/// Zero bytes on stdin is a caller that piped nothing, not an empty queue (which is `[]`).
+fn read_select_ready(a: &Args, env: &mut Env) -> Result<Vec<ReadyRow>, Outcome> {
+    if a.has("--ready") {
+        return read_ready(a, env);
+    }
+    let text = read_source("-", env.stdin).map_err(Outcome::cannot_tell)?;
+    if text.trim().is_empty() {
+        return Err(Outcome::cannot_tell("select: no ready set on stdin — pipe the rows of `spira-claim rune-ready <rune> --json`, or pass --ready F"));
+    }
+    rank::parse_ready(&text).map_err(Outcome::cannot_tell)
+}
+
 fn fetch_lookup(a: &Args, rows: &[ReadyRow], known: Option<&HashMap<String, LifecycleRow>>) -> Result<EpicLookup, Outcome> {
-    let parents = rank::parents(rows);
-    if parents.is_empty() {
+    if rank::parents(rows).is_empty() {
         return Ok(EpicLookup::default());
     }
-    let s = store(a).map_err(Outcome::usage)?;
+    fetch_lookup_over(&store(a).map_err(Outcome::usage)?, rows, known)
+}
+
+fn fetch_lookup_over(s: &Store, rows: &[ReadyRow], known: Option<&HashMap<String, LifecycleRow>>) -> Result<EpicLookup, Outcome> {
+    let parents = rank::parents(rows);
     let machine = |e: String| Outcome::cannot_tell(format!("epic lookup: {e} (the machine must answer)"));
-    let epics = s.items_by_ids(&parents).map_err(machine)?;
-    let prio = epics.iter().map(|e| (e.id.clone(), e.priority.unwrap_or(99))).collect();
+    let mut epics = s.items_by_ids(&parents).map_err(machine)?;
+    epics.retain(|e| e.issue_type.as_deref() == Some("epic"));
+    let prio: BTreeMap<String, i64> = epics.iter().map(|e| (e.id.clone(), e.prio())).collect();
     let mut kids_of = Vec::new();
-    for p in &parents {
+    for p in prio.keys() {
         kids_of.push((p.clone(), s.children(p).map_err(machine)?));
     }
     // A child's progress is its lifecycle row (never bd's status); a machine that cannot
@@ -479,7 +495,7 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
     if let Err(e) = a.num("--stack-max-depth", env.config.stack_max_depth) {
         return Outcome::usage(e);
     }
-    let mut rows = match read_ready(a, env) {
+    let mut rows = match read_select_ready(a, env) {
         Ok(r) => r,
         Err(o) => return o,
     };

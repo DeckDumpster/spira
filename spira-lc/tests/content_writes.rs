@@ -1525,7 +1525,16 @@ fn admin_create_beads_makes_a_store_the_content_verbs_work_on_and_a_second_run_c
     let shown = lc.shows(&a);
     assert!(shown.contains("a note on the new store") && shown.contains(&b), "{shown}");
     lc.children_of("close", &["close", &b, "--reason", "done"], None);
-    assert!(lc.shows(&b).contains("closed"), "{}", lc.shows(&b));
+    // A bead with its lifecycle row has its store close written by the settler after the reply.
+    let mut last = String::new();
+    for _ in 0..600 {
+        last = lc.run(&["content", "show", &b, "--json"], None).1;
+        if last.contains("\"status\":\"closed\"") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50)); // clock-safe: polls the store, the signal waited on
+    }
+    assert!(last.contains("\"status\":\"closed\""), "{last}");
     lc.children_of("content", &["content", "remember", "--key", "a-key"], Some("what is remembered"));
     let kept = lc.children_of("content", &["content", "memories", "--json"], None).0;
     assert!(kept.contains("what is remembered"), "{kept}");
@@ -1592,6 +1601,69 @@ fn filing_through_the_real_bead(lc: &Lc) {
     }
     let shim = format!("#!/bin/sh\nexec {} --home {} \"$@\"\n", testkit::bin_exe("bead").display(), lc.home.display());
     testkit::write_exe(lc.dir.join("release/bin/bead.sh"), &shim);
+}
+
+#[test_id(t7up6y3)]
+#[test]
+fn a_followup_files_at_p3_and_goes_higher_only_with_a_statement_its_review_reads() {
+    let Some(store) = Store::up() else { return };
+    let writer = store.dir.join("rank.writer");
+    let map = spira_config::process::fixture_filing_repo_map(&store.dir, &["spira"]).display().to_string();
+    let mut lc = Lc::with_keys(&store, "rank", &writer.display().to_string(), &[("SPIRA_REPO_MAP", &map)]);
+    provision(&lc);
+    lc.admin("admin-provision-writer");
+    filing_through_the_real_bead(&lc);
+    lc.serve();
+    let sent = |args: &[&str]| {
+        let (rc, out) = lc.settled(args, None);
+        lc.finished(rc, out)
+    };
+    let ok = |args: &[&str]| {
+        let (rc, out) = sent(args);
+        assert_eq!(rc, 0, "{args:?}: {out}");
+        out
+    };
+    let bound = first_line(&ok(&["content", "create", "a builder's own bead", "--silent", "--labels", "repo:spira"]));
+    ok(&["create-bead", &bound, "--ready", "--repo", "spira"]);
+    let request = |title: &'static str, flags: &[&str]| -> Vec<String> {
+        let mut args = vec!["work", &bound, "file-followup", title, "--for", "builder", "--repo", "spira"];
+        args.extend_from_slice(flags);
+        args.extend(["--body-file", "-", "--stdin", "## Build\nthe artifact, in spira-lc\n", "--actor", "builder"]);
+        args.iter().map(|a| a.to_string()).collect()
+    };
+    let file = |title: &'static str, flags: &[&str]| {
+        let args = request(title, flags);
+        let out = ok(&args.iter().map(String::as_str).collect::<Vec<_>>());
+        let review = out.lines().nth(1).and_then(|l| l.split_whitespace().next()).unwrap_or_else(|| panic!("no review filed: {out}")).to_string();
+        (first_line(&out), review)
+    };
+    let shown = |id: &str| {
+        let shown: serde_json::Value = serde_json::from_str(&lc.shows(id)).unwrap();
+        shown.as_array().map_or_else(|| shown.clone(), |a| a[0].clone())
+    };
+
+    let (plain, plain_review) = file("A tidy of x", &[]);
+    assert_eq!((shown(&plain)["priority"].as_i64(), shown(&plain_review)["priority"].as_i64()), (Some(3), Some(3)));
+
+    let blocks = format!("blocks {plain} from landing");
+    let (urgent, urgent_review) = file("Fix y", &["--priority", "1", "--blocks", &blocks]);
+    let item = shown(&urgent);
+    assert_eq!((item["priority"].as_i64(), shown(&urgent_review)["priority"].as_i64()), (Some(1), Some(1)), "{item}");
+    let notes = item["notes"].as_str().unwrap_or_default();
+    assert!(notes.contains(&format!("Filed at P1 by builder from {bound}: blocks: {blocks}")), "{notes}");
+    let asked = shown(&urgent_review)["description"].as_str().unwrap_or_default().to_string();
+    assert!(asked.contains(&format!("\nPriority: P1 — blocks: {blocks}\n")), "{asked}");
+
+    let waiting = || {
+        let listed = ok(&["work", "-", "open-items", "--repo", "spira", "--json", "--actor", "skuld"]);
+        serde_json::from_str::<Vec<serde_json::Value>>(&listed).unwrap().len()
+    };
+    let before = waiting();
+    let args = request("Fix z", &["--priority", "1"]);
+    let (rc, out) = sent(&args.iter().map(String::as_str).collect::<Vec<_>>());
+    assert_ne!(rc, 0, "{out}");
+    assert!(out.contains("--blocks") && out.contains("--defect"), "{out}");
+    assert_eq!(waiting(), before, "a refusal files nothing");
 }
 
 #[test_id(t3xplmr)]

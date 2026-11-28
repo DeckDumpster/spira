@@ -1,16 +1,19 @@
 //! SUSPECT lines for the Concierge inbox: every live bead is classified (OK, BLOCKED, HELD, ASK,
 //! SUSPECT) and each SUSPECT class is announced the pass it first appears, again only after it
 //! cleared and came back. The world supplies one snapshot per pass; `decide` does no IO.
-//! An open bead with no lifecycle row is repaired between observing and deciding.
+//! An open bead with no lifecycle row is repaired between observing and deciding. Each item's
+//! standing SUSPECT lines are also held on `watch/bead-sweep/<id>`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use runtime::event::*;
+use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use spira_config::nonwork::{is_open, Kind};
 
 use super::{iso8601, INBOX_APPEND};
+use crate::watch_topics::{self, Change, Published};
 
 pub const STREAM: &str = "watch.bead-sweep";
 pub const TICK: EventKindTag = "bead-sweep.tick";
@@ -144,19 +147,28 @@ pub struct Repaired {
     pub claimed: Vec<String>,
 }
 
-/// Carried between passes: the SUSPECT lines already announced and not yet cleared.
+/// Carried between passes: the SUSPECT lines already announced and not yet cleared, and what is
+/// held on the broker.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Carry {
     pub seen: BTreeSet<String>,
+    pub published: Published,
 }
+
+const PUBLISHED_PARTS: &[Part] = &[Part::Map { name: "published", drop: &[] }];
 
 fn split(body: &str) -> std::collections::BTreeMap<String, String> {
     let carry: Carry = serde_json::from_str(body).unwrap_or_default();
-    carry.seen.into_iter().map(|l| (runtime::rows::entry_key("seen", &l), l)).collect()
+    let mut rows = runtime::rows::split(body, PUBLISHED_PARTS);
+    rows.extend(carry.seen.into_iter().map(|l| (runtime::rows::entry_key("seen", &l), l)));
+    rows
 }
 
 fn join(rows: &std::collections::BTreeMap<String, String>) -> String {
-    serde_json::to_string(&Carry { seen: rows.values().cloned().collect() }).unwrap_or_default()
+    let mut carry: Carry = serde_json::from_str(&runtime::rows::join(rows, PUBLISHED_PARTS)).unwrap_or_default();
+    carry.seen = rows.iter().filter(|(k, _)| k.starts_with("seen/")).map(|(_, l)| l.clone()).collect();
+    serde_json::to_string(&carry).unwrap_or_default()
 }
 
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
@@ -441,7 +453,54 @@ fn unclaimed_rework(p: &BeadSweep, r: &Row, room: Option<&Room>, why: &str, now:
     stale(r.since.unwrap_or(now).max(since)).then(|| format!("{head} ({why})"))
 }
 
+/// The item a SUSPECT line or its carry key names; `all` when it names none.
+fn subject(line: &str) -> &str {
+    let mut words = line.split_whitespace().skip(1);
+    match words.next() {
+        Some("-") => match (words.next(), words.next(), words.next()) {
+            (Some("SCOPED"), Some("reservation"), Some(id)) => id,
+            _ => "all",
+        },
+        Some(id) => id,
+        None => "all",
+    }
+}
+
+/// A finding's own priority: the word after its state, which only a wait for a builder has.
+/// Later words can be the priorities of other items.
+fn own_priority(line: &str) -> Option<&str> {
+    line.split_whitespace().nth(3).filter(|w| matches!(*w, "P0" | "P1" | "P2" | "P3"))
+}
+
+/// The pass's topics: a finding's condition holds while the pass still finds it, said or not.
+/// A subject whose findings have the keys they had keeps its first text, so the ages and judged
+/// times its lines carry change nothing.
+fn topics(carry: &Carry, found: &[Suspect], now_ms: u64) -> (Published, Option<Change>) {
+    let mut now: BTreeMap<&str, (BTreeSet<&str>, Vec<&str>)> = BTreeMap::new();
+    for s in found {
+        let (keys, lines) = now.entry(subject(&s.line)).or_default();
+        keys.insert(&s.key);
+        lines.push(&s.line);
+    }
+    let mut before: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for key in &carry.seen {
+        before.entry(subject(key)).or_default().insert(key);
+    }
+    let conditions = now.into_iter().map(|(subject, (keys, lines))| {
+        let held = carry.published.get(subject).filter(|_| before.get(subject) == Some(&keys));
+        let level = lines.iter().filter_map(|l| own_priority(l)).min().unwrap_or("P2");
+        (subject.to_string(), (level.to_string(), held.map_or_else(|| lines.join("; "), |h| h.text.clone())))
+    });
+    watch_topics::settle_levelled(NAME, &carry.published, conditions.collect(), now_ms)
+}
+
 pub fn decide(p: &BeadSweep, carry: &Carry, snap: &Snapshot, room: Option<&Room>, repaired: &Repaired, now: f64) -> (Carry, Vec<String>) {
+    let (next, say, _) = pass(p, carry, snap, room, repaired, now);
+    (next, say)
+}
+
+/// [`decide`], with the change that takes the broker to the next carry.
+fn pass(p: &BeadSweep, carry: &Carry, snap: &Snapshot, room: Option<&Room>, repaired: &Repaired, now: f64) -> (Carry, Vec<String>, Option<Change>) {
     let mut say = vec![];
     for id in &repaired.claimed {
         if let Some(r) = snap.rows.iter().find(|r| &r.id == id) {
@@ -455,14 +514,15 @@ pub fn decide(p: &BeadSweep, carry: &Carry, snap: &Snapshot, room: Option<&Room>
         }
     }
     let now_set: Vec<Suspect> = suspects(p, snap, room, &repaired.claimed, now).into_iter().filter(|s| !repaired.ids.iter().any(|id| s.line.starts_with(&format!("SUSPECT {id} ROWLESS")))).collect();
-    let mut next = Carry::default();
+    let (published, change) = topics(carry, &now_set, (now * 1000.0) as u64);
+    let mut next = Carry { published, ..Carry::default() };
     for s in now_set {
         if !carry.seen.contains(&s.key) {
             say.push(s.line);
         }
         next.seen.insert(s.key);
     }
-    (next, say)
+    (next, say, change)
 }
 
 impl BeadSweep {
@@ -482,11 +542,14 @@ impl BeadSweep {
         let now = ev.at as f64 / 1000.0;
         let called: crate::tasks::a::sentinel_call::Carry = crate::tasks::a::kit::carry(&crate::tasks::a::sentinel_call::SHAPE, view);
         let room = called.room_at_ms.map(|at_ms| Room { since_ms: called.room_since_ms, at_ms, limit: called.task_limit.clone() });
-        let (next, say) = decide(self, &Self::carry(view, &ev.stream), snap, room.as_ref(), repaired, now);
+        let (next, say, change) = pass(self, &Self::carry(view, &ev.stream), snap, room.as_ref(), repaired, now);
         ctx.event().set("bead-sweep.said", say.len() as u64);
         let mut cmds = vec![Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default()))];
         for m in say {
             cmds.push(Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{}:{:016x}", ev.at / 1000, runtime::event::fnv1a(&m)), format!("{} [watch:{NAME}] {m}", iso8601(ev.at / 1000)), DEADLINE_MS)));
+        }
+        if let Some(change) = change {
+            cmds.extend(watch_topics::effects(change, ev.at).into_iter().map(Command::Effect));
         }
         cmds
     }
@@ -494,7 +557,7 @@ impl BeadSweep {
 
 impl Handler for BeadSweep {
     fn interests(&self) -> &[EventKindTag] {
-        &[TICK, EFFECT_SUCCEEDED]
+        &[TICK, EFFECT_SUCCEEDED, EFFECT_TIMED_OUT]
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
@@ -502,17 +565,21 @@ impl Handler for BeadSweep {
             return vec![];
         }
         if ev.kind.tag == TICK {
+            let held = watch_topics::carried(NAME, &Self::carry(view, &ev.stream).published);
             return vec![
-                Command::Probe(EffectSpec::probe(OBSERVE, String::new(), DEADLINE_MS)),
+                Command::Probe(EffectSpec::probe(OBSERVE, held, DEADLINE_MS)),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
+        }
+        if ev.kind.tag == EFFECT_TIMED_OUT {
+            return watch_topics::again(view, ev, &Self::carry(view, &ev.stream).published).map(Command::Effect).into_iter().collect();
         }
         match super::answered_effect(view, ev).as_deref() {
             Some(OBSERVE) => {
                 let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body) else { return vec![] };
-                let repaired = super::answered_spec(view, ev).map(|s| s.input).filter(|i| !i.is_empty());
-                if let Some(ids) = repaired {
-                    return self.finish(ctx, view, ev, &snap, &serde_json::from_str::<Repaired>(&ids).unwrap_or_default());
+                let repaired = super::answered_spec(view, ev).and_then(|s| serde_json::from_str::<Repaired>(&s.input).ok());
+                if let Some(repaired) = repaired {
+                    return self.finish(ctx, view, ev, &snap, &repaired);
                 }
                 let mut spent = "{\"ids\":[]}".len();
                 let ids: Vec<String> = repairable(&self.ask_label, &snap).into_iter().take(REPAIR_BATCH).map(|r| r.id).take_while(|id| {
@@ -593,6 +660,20 @@ mod tests {
     #[test]
     fn a_p0_ready_bead_behind_a_full_pool_is_announced_with_the_working_beads() {
         assert_eq!(said(&pool(ready("sp-p"), 0), full()), [format!("SUSPECT sp-p READY P0 WAITING over 20m for a builder slot: pool full {HOLDERS}")]);
+    }
+
+    /// The holders a pool wait names carry their own priorities, which are not the finding's.
+    #[test_id(tyuyccy)]
+    #[test]
+    fn a_held_finding_takes_its_own_priority_and_not_one_its_line_names_for_another_item() {
+        let row = Row { id: "sp-x".into(), state: "REWORK".into(), express: true, ..Row::default() };
+        let mut snap = pool(row, 2);
+        // The last holder named: the one priority in the line with no comma after it.
+        snap.content.last_mut().unwrap().priority = 0;
+        let (next, ..) = pass(&sweep(), &Carry::default(), &snap, full().as_ref(), &Repaired::default(), NOW);
+        assert_eq!(next.published["sp-x"].level, "P2", "{next:?}");
+        let (next, ..) = pass(&sweep(), &Carry::default(), &pool(ready("sp-p"), 0), full().as_ref(), &Repaired::default(), NOW);
+        assert_eq!(next.published["sp-p"].level, "P0", "{next:?}");
     }
 
     #[test_id(tzjm3hm)]
@@ -732,7 +813,8 @@ mod tests {
             let [Command::Probe(observe), _] = &p.handle(&ctx, view, &tick)[..] else { panic!("one look and the next tick") };
             let req = at(view, "r", 3_600_000, EventKind::new(EFFECT_REQUESTED, &serde_json::json!({ "spec": observe, "deadline_at": 2 }).to_string()), Some("t"));
             let seen = at(view, "o", 3_600_001, EventKind::new(EFFECT_SUCCEEDED, &serde_json::to_string(&snap).unwrap()), Some(&req.id.0));
-            p.handle(&ctx, view, &seen).len()
+            let said_and_kept = |c: &Command| !matches!(c, Command::Effect(s) if s.name == crate::watchers::WATCH_PUBLISH);
+            p.handle(&ctx, view, &seen).into_iter().filter(said_and_kept).count()
         };
         assert_eq!(ask(&mut view), 2, "the state, and the one row: the scheduler has not judged");
         let mut view = Projection::default();

@@ -697,8 +697,63 @@ mod claim_view_read {
         json!({ "bead_id": id, "state": state, "holds": [], "tip": null })
     }
 
+    fn plan_row(id: &str, issue_type: &str, priority: i64) -> Value {
+        json!({ "id": id, "title": id, "priority": priority, "issue_type": issue_type, "labels": ["repo:spira"], "dependencies": [] })
+    }
+
     fn item(id: &str) -> Value {
-        json!({ "id": id, "title": id, "priority": 2, "issue_type": "task", "labels": ["repo:spira"], "dependencies": [] })
+        plan_row(id, "task", 2)
+    }
+
+    fn fresh(id: &str, priority: i64, parent: Option<&str>, repo: &str, created: &str) -> rank::ReadyRow {
+        rank::ReadyRow {
+            id: id.into(),
+            priority: Some(priority),
+            parent: parent.map(str::to_string),
+            created_at: Some(created.into()),
+            issue_type: Some("task".into()),
+            labels: vec![format!("repo:{repo}")],
+            ..Default::default()
+        }
+    }
+
+    fn looked_up(st: &Store, rows: &[rank::ReadyRow]) -> rank::EpicLookup {
+        fetch_lookup_over(st, rows, None).unwrap_or_else(|o| panic!("{}", o.err))
+    }
+
+    fn ranked(rows: &[rank::ReadyRow], lookup: &rank::EpicLookup) -> Vec<String> {
+        rank::rank(rows, lookup, &Default::default(), &Default::default()).into_iter().map(|k| k.id).collect()
+    }
+
+    #[test_id(tag6yey)]
+    #[test]
+    fn a_p3_follow_up_of_a_p0_task_ranks_below_a_standalone_p2() {
+        let (_, st) = setup(0);
+        let rows = [fresh("sp-follow", 3, Some("sp-task"), "spira", "2026-01-01"), fresh("sp-solo", 2, None, "spira", "2026-01-02")];
+        let lookup = looked_up(&st, &rows);
+        assert_eq!(ranked(&rows, &lookup), ["sp-solo", "sp-follow"]);
+        assert!(!lookup.prio.contains_key("sp-task"), "{lookup:?}");
+    }
+
+    #[test_id(t7y6dqe)]
+    #[test]
+    fn an_older_p2_ranks_ahead_of_a_newer_follow_up_whose_task_parent_has_a_working_sibling() {
+        let (_, st) = setup(0);
+        let rows = [fresh("sp-follow", 2, Some("sp-task"), "spira", "2026-01-02"), fresh("sp-older", 2, None, "dumpstar", "2026-01-01")];
+        let lookup = looked_up(&st, &rows);
+        assert_eq!(ranked(&rows, &lookup), ["sp-older", "sp-follow"]);
+        assert_eq!(lookup, rank::EpicLookup::default());
+    }
+
+    #[test_id(ttmnshx)]
+    #[test]
+    fn the_lookup_asks_children_only_of_epic_parents() {
+        let (svc, st) = setup(0);
+        let rows = [fresh("sp-follow", 2, Some("sp-task"), "spira", "2026-01-01"), fresh("sp-kid", 2, Some("sp-epic"), "spira", "2026-01-01")];
+        let lookup = looked_up(&st, &rows);
+        let children: Vec<String> = seen(&svc).into_iter().filter(|c| c.starts_with("plan children")).collect();
+        assert_eq!(children, ["plan children --ids sp-epic"]);
+        assert_eq!((lookup.prio, lookup.started), ([("sp-epic".to_string(), 1)].into(), vec!["sp-epic".to_string()]));
     }
 
     /// A store whose claim view says `sp-a` is claimable for `builder` and `sp-b` is blocked, and
@@ -735,8 +790,16 @@ mod claim_view_read {
                 ["list", "--state", ..] => (0, json!([row("sp-a", "READY"), row("sp-b", "READY")]).to_string(), String::new()),
                 ["plan", "items", "--ids", ids] => {
                     let wanted: Vec<&str> = ids.split(',').collect();
-                    let items: Vec<Value> = [item("sp-a"), item("sp-b")].into_iter().filter(|i| wanted.contains(&i["id"].as_str().unwrap())).collect();
+                    let items: Vec<Value> = [item("sp-a"), item("sp-b"), plan_row("sp-task", "task", 0), plan_row("sp-epic", "epic", 1)]
+                        .into_iter()
+                        .filter(|i| wanted.contains(&i["id"].as_str().unwrap()))
+                        .collect();
                     (0, json!({ "watermark": 7, "items": items }).to_string(), String::new())
+                }
+                ["plan", "children", "--ids", parent] => (0, json!({ "watermark": 7, "items": [item(&format!("{parent}-sib"))] }).to_string(), String::new()),
+                ["list", "--ids", ids] => {
+                    let working: Vec<Value> = ids.split(',').filter(|i| i.ends_with("-sib")).map(|i| row(i, "WORKING")).collect();
+                    (0, json!(working).to_string(), String::new())
                 }
                 ["plan", "watermark"] => (0, r#"{"watermark":7}"#.into(), String::new()),
                 _ => (0, String::new(), String::new()),
@@ -1001,6 +1064,44 @@ fn claim_retry_is_no_longer_a_verb() {
     let out = crate::cli::dispatch_in(&raw, &mut std::io::empty(), &|_| None);
     assert_eq!(out.code, crate::cli::USAGE);
     assert!(out.err.contains("unknown verb claim-retry"), "{}", out.err);
+}
+
+// ---- select with no ready set ------------------------------------------------------------
+
+fn select_over(mut stdin: &[u8]) -> Outcome {
+    let none = |_: &str| None;
+    let mut env = Env { stdin: &mut stdin, config: Config::default(), lookup: &none };
+    cmd_select(&Args::parse(&["--rune".to_string(), "builder".into()]).unwrap(), &mut env)
+}
+
+#[test_id(tff4b22)]
+#[test]
+fn select_with_nothing_on_stdin_cannot_tell_and_names_how_to_pass_a_ready_set() {
+    for empty in [&b""[..], b" \n"] {
+        let o = select_over(empty);
+        assert_eq!((o.code, o.out.as_str()), (CANNOT_TELL, ""), "{}", o.err);
+        assert!(o.err.contains("select: no ready set on stdin — pipe the rows of `spira-claim rune-ready <rune> --json`, or pass --ready F"), "{}", o.err);
+    }
+}
+
+#[test_id(tvpxd7x)]
+#[test]
+fn select_of_an_empty_ready_array_answers_nothing_and_succeeds() {
+    let o = select_over(b"[]");
+    assert_eq!((o.code, o.out.as_str()), (0, ""), "{}", o.err);
+}
+
+#[test_id(tpcn8bt)]
+#[test]
+fn select_of_a_ready_file_that_is_empty_answers_nothing_and_succeeds() {
+    let t = testkit::TempDir::new("select-empty-ready");
+    let ready = t.join("ready.json");
+    std::fs::write(&ready, "").unwrap();
+    let none = |_: &str| None;
+    let mut env = Env { stdin: &mut std::io::empty(), config: Config::default(), lookup: &none };
+    let args = ["--rune", "builder", "--ready", &ready.display().to_string()].map(String::from);
+    let o = cmd_select(&Args::parse(&args).unwrap(), &mut env);
+    assert_eq!((o.code, o.out.as_str()), (0, ""), "{}", o.err);
 }
 
 // ---- a Skuld request waits for its blocker to land and never stacks on it ----------------

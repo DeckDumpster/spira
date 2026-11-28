@@ -18,7 +18,7 @@ the bead store, the lifecycle machine, git and a handful of files under `$SPIRA_
 1. **Decides whether to work at all** — capacity, `world.halted`, `world.draining`, the
    account's capacity pause. Declining is a healthy outcome (exit 0, `awake <f> <reason>`).
 2. **Selects and claims one bead** — `spira-claim rune-ready` supplies the lifecycle
-   machine's ready set and ranks it epic-first; a CAS Claim event on the lifecycle row is the
+   machine's ready set and ranks it priority-first; a CAS Claim event on the lifecycle row is the
    claim. There is no bd claim and no off mode (`lifecycle_enforce` is retired, sp-v62vn).
 3. **Builds one workspace** — one bead, one worktree, under the sanctioned root
    `$SPIRA_RUN/worktree/<bead>`; never adopts a tree another bead holds; never deletes a
@@ -49,7 +49,7 @@ ledger, the session — no claim, no worktree, no verdict.
 
 ### What it deliberately is not
 
-- **Not the ranker.** Claim order is `spira-claim select` (epic-first rank, the ready set on
+- **Not the ranker.** Claim order is `spira-claim select` (priority-first rank, the ready set on
   **stdin**, never argv — the 2026-09-28 claim outage was argv E2BIG, sp-o4trx). This
   program only checks resumability (git) for the top tier, which `spira-claim` by design
   leaves to its caller.

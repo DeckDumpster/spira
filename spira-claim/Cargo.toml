@@ -3,7 +3,7 @@ name = "spira-claim"
 version = "1.0.0"
 edition = "2021"
 autotests = false
-description = "spira-claim — bead attempt accounting, the CHECK 4 poison decision, and epic-first claim selection (stacked-dependents aware), and `unpoison` — the one verb that writes (DESIGN.md §8)."
+description = "spira-claim — bead attempt accounting, the CHECK 4 poison decision, and claim selection (stacked-dependents aware), and `unpoison` — the one verb that writes (DESIGN.md §8)."
 
 [lib]
 name = "spira_claim"

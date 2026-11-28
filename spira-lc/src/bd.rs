@@ -281,8 +281,8 @@ pub fn note(bead_id: &str, text: &str) -> Result<String, String> {
 /// enforce), with `--parent` set by this layer, never the caller — see bead.sh's own
 /// `--parent` doc for why an inherited `branch:` label made `groomer split-piece` a
 /// two-step dance that this avoids by filing with the right labels from the start.
-pub fn file_child(title: &str, persona: &str, repo: &str, parent: Option<&str>, body: Option<&str>, contract_considered: Option<&str>) -> Result<String, String> {
-    file_child_via(("bead.sh", FILING_SECS), title, persona, repo, parent, body, contract_considered)
+pub fn file_child(title: &str, persona: &str, repo: &str, parent: Option<&str>, body: Option<&str>, contract_considered: Option<&str>, priority: Option<&str>) -> Result<String, String> {
+    file_child_via(("bead.sh", FILING_SECS), title, persona, repo, parent, body, contract_considered, priority)
 }
 
 /// A filing is a store write that queues behind a loaded host's other writes; five seconds
@@ -298,8 +298,12 @@ fn failed(program: &str, secs: &str, args: &[&str], out: &std::process::Output) 
     }
 }
 
-fn file_child_via((program, secs): (&str, &str), title: &str, persona: &str, repo: &str, parent: Option<&str>, body: Option<&str>, contract_considered: Option<&str>) -> Result<String, String> {
+#[allow(clippy::too_many_arguments)]
+fn file_child_via((program, secs): (&str, &str), title: &str, persona: &str, repo: &str, parent: Option<&str>, body: Option<&str>, contract_considered: Option<&str>, priority: Option<&str>) -> Result<String, String> {
     let mut args = vec!["file", title, "--for", persona, "--repo", repo];
+    if let Some(priority) = priority {
+        args.extend(["--priority", priority]);
+    }
     if let Some(parent) = parent {
         args.extend(["--parent", parent]);
     }
@@ -686,7 +690,7 @@ mod filing_tests {
     fn a_filing_that_outlives_its_deadline_names_the_call_that_timed_out() {
         let dir = testkit::TempDir::new("filing");
         let prog = slow_bead_sh(dir.path());
-        let err = file_child_via((&prog, "0.2"), "t", "builder", "r", Some("sp-x"), None, None).unwrap_err();
+        let err = file_child_via((&prog, "0.2"), "t", "builder", "r", Some("sp-x"), None, None, None).unwrap_err();
         assert!(err.contains("bead.sh file") && err.contains("timed out"), "reason names the call: {err:?}");
     }
 
@@ -698,9 +702,9 @@ mod filing_tests {
         let p = dir.path().join("bead.sh");
         testkit::write_exe(&p, "#!/bin/sh\necho \"[${BEAD_CONTRACT_CONSIDERED-unset}]\"\n");
         let prog = p.to_string_lossy().into_owned();
-        let said = file_child_via((&prog, "5"), "t", "builder", "r", None, None, Some("a defect against an unready repo")).unwrap();
+        let said = file_child_via((&prog, "5"), "t", "builder", "r", None, None, Some("a defect against an unready repo"), None).unwrap();
         assert_eq!(said, "[a defect against an unready repo]");
-        assert_eq!(file_child_via((&prog, "5"), "t", "builder", "r", None, None, None).unwrap(), "[unset]");
+        assert_eq!(file_child_via((&prog, "5"), "t", "builder", "r", None, None, None, None).unwrap(), "[unset]");
     }
 
     #[test_id(tuq9r4u)]

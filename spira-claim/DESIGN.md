@@ -18,7 +18,7 @@ the same way every time:
    none — a pure function of the counts, thresholds and dedup state. Deterministic and
    instant, so its tests are unit tests and not six-minute sentinel passes (sp-ytbma).
 3. **Which bead should this persona claim next?** The ranked claimable candidates for a
-   rune (epic-first rank, sp-ns46j), with the stacked-dependents claim rule (a `blocks`
+   rune (the claim rank, §3), with the stacked-dependents claim rule (a `blocks`
    edge onto a same-repository work bead is satisfied at CERTIFIED) when the lifecycle
    machine is the source (sp-f0qhr).
 
@@ -74,7 +74,8 @@ Diagnostics go to stderr, one line, prefixed `spira-claim:`.
 - **Ready set** — bd `ready`/`list --json` rows, from `--ready FILE` or stdin. Never argv
   (law-payloads-go-on-stdin; sp-o4trx's E2BIG outage at 142 beads).
 - **Epic lookup** — `{"prio":{epic:prio}, "started":[epic,...]}`, from `--epics FILE` or
-  fetched (one `plan items --ids` per ≤100 distinct epics, one `plan children` per distinct epic,
+  fetched (one `plan items --ids` per ≤100 distinct parents, one `plan children` per distinct
+  parent whose `issue_type` is `epic` — no other parent enters the lookup,
   and the lifecycle rows a child's progress is read from — machine-mode `select`'s snapshot,
   else one `spira-lc list`; see "Epic started" below).
 - **Lifecycle snapshot** (machine mode only) — `spira-lc list` rows, from `--lifecycle FILE`
@@ -116,7 +117,7 @@ spira-claim select --rune NAME [--ready F] [--epics F] [--resumable F]
     -> default: TSV, best first, epic_rank_rows's 7 columns:
        epic_priority  epic_started(0|1)  bead_priority  resumable(0|1)  created_at  id  epic_id
        --top-tier: dwarf.sh's band lines "id|branch|repo|eprio|estarted|bprio" for the
-                   candidates in the best (eprio, estarted, bprio) tier only.
+                   candidates in the best tier (§3 "The rank") only.
        --count:    the number of claimable candidates (ready_count parity: counts and
                    claims come from the same function over the same rows).
        --json:     [{"id","epic_id","epic_priority","epic_started","bead_priority",
@@ -127,6 +128,10 @@ spira-claim select --rune NAME [--ready F] [--epics F] [--resumable F]
 forget which predicate built the ready set); the predicate itself (labels, exclusions,
 `-u`, `--exclude-type epic,event`, scope, no-loop) is applied by the caller's bd query,
 exactly as `READY_ARGS` does today. Rows of type epic/event are dropped defensively anyway.
+
+`select` without `--ready` reads stdin, and zero bytes there (after trimming) is cannot-tell,
+naming how to pass a ready set: an empty queue is `[]`. `--ready F` naming an empty file is
+zero rows.
 
 **`--blockers bd`** (default): the input is `bd ready` output — bd already applied its
 blocker rule; nothing is re-filtered. This is today's behaviour, bit for bit.
@@ -231,6 +236,22 @@ struct LifecycleRow { bead_id: String, state: String /* lifecycle::bead::BeadSta
 struct Ranked { epic_priority: i64, epic_started: u8 /* 0 = started */, bead_priority: i64,
                 resumable: u8 /* 0 = resumable */, age: String, id: String, epic_id: String }
 ```
+
+### The rank
+
+Best first:
+
+1. **Express**, ahead of everything below.
+2. **REWORK** (an unheld REWORK bead with a tip), by bead priority.
+3. **Fresh work**, by the bead's own priority. It is a floor (law-a-beads-priority-is-a-floor):
+   among equal bead priority only, the lower `epic_priority` (min of the epic's and the
+   bead's) goes first, then a started epic.
+
+Within a tier: resumable, then oldest, then id.
+
+Only a parent whose `issue_type` is `epic` groups. A parent absent from the lookup (any
+other type, such as the work item a follow-up is filed under) is no parent: the bead's
+`epic_priority` is its own, `epic_started` is 1 and `epic_id` is its own id.
 
 ### The attempt fold (sp-j1q6o's rule, exact)
 

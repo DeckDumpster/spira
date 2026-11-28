@@ -600,7 +600,11 @@ pub fn with_drafts(notes: &str, text: &str) -> Option<String> {
 /// The body of the Skuld request filed for a follow-up a dwarf filed: it asks for one draft headed
 /// with the follow-up's title verbatim, or one amendment of a waiting item with the same outcome,
 /// and carries the filer's text.
-pub fn review_request_body(followup: &str, title: &str, repo: &str, filer: &str, bound: &str, filer_text: &str) -> String {
+pub fn review_request_body(followup: &str, title: &str, repo: &str, filer: &str, bound: &str, filer_text: &str, (priority, statement): (i64, Option<&str>)) -> String {
+    let standing = match statement {
+        Some(s) => format!("Priority: P{priority} — {}", s.split_whitespace().collect::<Vec<_>>().join(" ")),
+        None => format!("Priority: P{priority} (no blocking or defect statement)"),
+    };
     format!(
         "Review {followup} (\"{title}\"){REVIEW_OF}{filer} filed from {bound}{REVIEW_WAITS}\n\n\
          First read the items already waiting:\n\n    work open-items --repo {repo} --exclude {followup}\n\n\
@@ -609,6 +613,7 @@ pub fn review_request_body(followup: &str, title: &str, repo: &str, filer: &str,
          ### Amend <survivor-id>: {title}\n\n\
          Otherwise draft the item; on `work done` it replaces {followup}'s body:\n\n\
          ### Draft: {title}\n\n\
+         {standing}\n\n\
          ## The filer's text\n{}\n",
         filer_text.trim()
     )
@@ -865,6 +870,24 @@ pub fn replaced_body_summary(old: &str) -> String {
 /// The old body with `addition` kept beneath a dated separator.
 pub fn appended_body(old: &str, addition: &str, date: &str) -> String {
     format!("{}\n\n--- appended {date} ---\n\n{}\n", old.trim_end(), addition.trim_end())
+}
+
+/// `sp-<alphanumeric>`, case-insensitive: the harness's bead id shape (see any `sp-XXXXX`
+/// in this repo's own history). Deliberately loose — a false positive here just means an
+/// unrelated-looking token gets refused when it didn't need to be, which is the safe
+/// direction; a false negative would let a foreign bead id slip through unchecked.
+pub fn looks_like_bead_id(s: &str) -> bool {
+    if s.get(0..3).filter(|p| p.eq_ignore_ascii_case("sp-")).is_none() {
+        return false;
+    }
+    // `sp-<alnum>` then any number of `.<digits>` child parts (sp-oqf8c.3, sp-zs04v.3.1): a
+    // child bead must be able to bind and submit like any other (the broker's own check
+    // already allows the dot; this one refused every child bead).
+    let mut parts = s[3..].split('.');
+    let head = parts.next().unwrap_or("");
+    !head.is_empty()
+        && head.chars().all(|c| c.is_ascii_alphanumeric())
+        && parts.all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// A priority argument: 0..=4, optionally written `P1`.
@@ -1449,7 +1472,10 @@ mod tests {
     #[test_id(thkmwu6)]
     #[test]
     fn review_request_body_names_the_followup_and_the_verbatim_heading() {
-        let b = review_request_body("sp-f1", "Fix the thing", "deck", "builder", "sp-b0", "## Build\nx\n");
+        let b = review_request_body("sp-f1", "Fix the thing", "deck", "builder", "sp-b0", "## Build\nx\n", (3, None));
+        assert!(b.contains("\nPriority: P3 (no blocking or defect statement)\n\n## The filer's text\n"), "{b}");
+        let stated = review_request_body("sp-f1", "Fix the thing", "deck", "builder", "sp-b0", "x", (1, Some("blocks: sp-b9\nfrom landing")));
+        assert!(stated.contains("\nPriority: P1 — blocks: sp-b9 from landing\n\n## The filer's text\n"), "{stated}");
         assert!(b.contains("sp-f1") && b.contains("sp-b0") && b.contains("builder"));
         assert!(b.contains("### Draft: Fix the thing\n\n"));
         assert!(b.contains("## The filer's text\n## Build\nx"));

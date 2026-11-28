@@ -2,7 +2,7 @@
 //! successor LANDED supersedes the bead, any other successor state lifts the hold. Each tick asks
 //! the world what every manual hold reads as; the decision over that is `decide`, which does no
 //! IO. The writes it calls for leave as `supersede-duty.act` effects, whose outcomes come back
-//! here to be reported.
+//! here to be reported. Each standing request is also held on `watch/supersede-duty/<id>`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -11,6 +11,7 @@ use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
 use super::{iso8601, INBOX_APPEND};
+use crate::watch_topics::{self, Change, Published};
 
 pub const STREAM: &str = "watch.supersede-duty";
 pub const TICK: EventKindTag = "supersede-duty.tick";
@@ -20,7 +21,7 @@ pub const OBSERVE: &str = "supersede-duty.observe";
 pub const ACT: &str = "supersede-duty.act";
 pub const NAME: &str = "supersede-duty";
 pub const ACTOR: &str = "supersede-duty";
-const ROW_PARTS: &[Part] = &[Part::Map { name: "not_a_request", drop: &[] }, Part::Field("failed")];
+const ROW_PARTS: &[Part] = &[Part::Map { name: "not_a_request", drop: &[] }, Part::Field("failed"), Part::Map { name: "published", drop: &[] }];
 /// What an act effect answers when the bead became terminal under it: nothing to report.
 pub const SETTLED: &str = "terminal";
 /// What an act effect answers when the write took but the evidence note did not.
@@ -63,13 +64,22 @@ pub struct Snapshot {
 }
 
 /// Carried between ticks, as the body of the latest `supersede-duty.state`: the version at which a
-/// bead was read as holding something other than a request, and the beads whose failure was
-/// already reported.
+/// bead was read as holding something other than a request, the beads whose failure was
+/// already reported, and what is held on the broker.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Carry {
     pub not_a_request: BTreeMap<String, String>,
     pub failed: BTreeSet<String>,
+    pub published: Published,
+}
+
+/// What the observe is asked: the versions it need not read again, and the carried topics.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Asked {
+    pub known: BTreeMap<String, String>,
+    pub watch: String,
 }
 
 /// A state body is the whole carry; the bare map of versions is how it was written before.
@@ -204,6 +214,32 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Out>) {
     (c, out)
 }
 
+fn will_retry(id: &str, fail: &str) -> String {
+    format!("SUPERSEDE REQUEST {id}: {fail} — will retry")
+}
+
+/// The pass's topics over `decide`'s writes: a request's condition holds while the observe still
+/// finds it, which is while `decide` calls for its write. It reads as the successor line, or as
+/// the failure once one is carried. A hold that could not be read this pass is not a request gone.
+pub fn topics(carry: &Carry, snap: &Snapshot, out: &[Out], now_ms: u64) -> (Published, Option<Change>) {
+    let acts = out.iter().filter_map(|o| match o {
+        Out::Act(a) => Some(a),
+        Out::Say(_) => None,
+    });
+    let mut conditions: BTreeMap<String, String> = acts
+        .map(|a| {
+            let line = if carry.failed.contains(&a.id) { will_retry(&a.id, &a.fail) } else { format!("SUPERSEDE REQUEST {}: successor {}", a.id, a.succ) };
+            (a.id.clone(), line)
+        })
+        .collect();
+    for h in snap.held.iter().filter(|h| h.reading == Reading::Unreadable) {
+        if let Some(held) = carry.published.get(&h.id) {
+            conditions.insert(h.id.clone(), held.text.clone());
+        }
+    }
+    watch_topics::settle(NAME, &carry.published, conditions, now_ms)
+}
+
 /// The lines an act's outcome calls for, and whether it is the bead's first reported failure.
 pub fn settle(carry: &Carry, act: &Act, outcome: Result<&str, ()>) -> (bool, Vec<String>) {
     match outcome {
@@ -221,13 +257,7 @@ pub fn settle(carry: &Carry, act: &Act, outcome: Result<&str, ()>) -> (bool, Vec
             (false, say)
         }
         Err(()) if carry.failed.contains(&act.id) => (false, vec![]),
-        Err(()) => (
-            true,
-            vec![format!(
-                "SUPERSEDE REQUEST {}: {} — will retry",
-                act.id, act.fail
-            )],
-        ),
+        Err(()) => (true, vec![will_retry(&act.id, &act.fail)]),
     }
 }
 
@@ -253,7 +283,7 @@ mod stored_tests {
     #[test_id(t4imqt1)]
     #[test]
     fn a_whole_state_row_reads_as_written() {
-        let whole = Carry { not_a_request: BTreeMap::from([("a".into(), "1".into())]), failed: BTreeSet::from(["b".into()]) };
+        let whole = Carry { not_a_request: BTreeMap::from([("a".into(), "1".into())]), failed: BTreeSet::from(["b".into()]), ..Carry::default() };
         assert_eq!(stored(&serde_json::to_string(&whole).unwrap()), Some(whole));
     }
 }
@@ -309,7 +339,8 @@ impl Handler for SupersedeDuty {
         }
         let carry = Self::carry(view, &ev.stream);
         if ev.kind.tag == TICK {
-            let input = serde_json::to_string(&carry.not_a_request).unwrap_or_default();
+            let asked = Asked { known: carry.not_a_request.clone(), watch: watch_topics::carried(NAME, &carry.published) };
+            let input = serde_json::to_string(&asked).unwrap_or_default();
             return vec![
                 Command::Probe(EffectSpec::probe(OBSERVE, input, OBSERVE_DEADLINE_MS)),
                 Command::Timer {
@@ -317,6 +348,11 @@ impl Handler for SupersedeDuty {
                     kind: EventKind::new(TICK, ""),
                 },
             ];
+        }
+        if ev.kind.tag == EFFECT_TIMED_OUT {
+            if let Some(again) = watch_topics::again(view, ev, &carry.published) {
+                return vec![Command::Effect(again)];
+            }
         }
         let Some((name, input)) = Self::request_of(view, ev) else {
             return vec![];
@@ -327,11 +363,13 @@ impl Handler for SupersedeDuty {
                 let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body) else {
                     return vec![];
                 };
-                let (next, out) = decide(&carry, &snap);
+                let (mut next, out) = decide(&carry, &snap);
+                let (published, change) = topics(&carry, &snap, &out, ev.at);
+                next.published = published;
                 ctx.event()
                     .set("supersede_duty.held", snap.held.len() as u64);
                 let mut cmds = vec![];
-                if next.not_a_request != carry.not_a_request {
+                if next != carry {
                     cmds.push(Self::state(&next));
                 }
                 for o in out {
@@ -342,6 +380,9 @@ impl Handler for SupersedeDuty {
                             Command::Effect(EffectSpec::keyed(ACT, format!("{NAME}:act:{:016x}", runtime::event::fnv1a(&input)), input, ACT_DEADLINE_MS))
                         }
                     });
+                }
+                if let Some(change) = change {
+                    cmds.extend(watch_topics::effects(change, ev.at).into_iter().map(Command::Effect));
                 }
                 cmds
             }
