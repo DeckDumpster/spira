@@ -887,7 +887,6 @@ fn withhold_full(view: &mut Viewed, rune: &str, full: &[String]) {
 }
 
 /// The shared and per-rune exclusions that decide which rune a bead belongs to.
-
 fn partition_exclude(env: &Env, home: &std::path::Path, me: &str, own: &str) -> String {
     let shared = ready::shared_exclude(&queue_wait_label(env), &open_children_label(env));
     ready::rune_exclude(me, own, &roster(home, &env.config.runes), &shared)
