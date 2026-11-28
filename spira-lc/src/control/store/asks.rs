@@ -53,7 +53,13 @@ impl<B: Backend> Store<B> {
             .contract()
             .create(&keys::ask(id), Object::new(encode(&rec)?), &sub)
         {
-            Ok(_) | Err(Error::Conflict { .. }) => Ok(()),
+            Ok(c) => {
+                if let (false, Some(bridge)) = (c.existed, self.bridge.get()) {
+                    bridge.ask_opened(c.mod_rev.main, &rec);
+                }
+                Ok(())
+            }
+            Err(Error::Conflict { .. }) => Ok(()),
             Err(e) => Err(e),
         }
     }
@@ -90,15 +96,20 @@ impl<B: Backend> Store<B> {
         req: &Request,
     ) -> Result<AskClose> {
         match self.plan_close_ask(id, kind, actor, message_id, at, req)? {
-            Ok(c) => self.commit_close(c, req),
+            Ok(c) => self.commit_close(id, c, req),
             Err(done) => Ok(done),
         }
     }
 
     /// Commits a planned close: `LostRace` when the ask or its work bead moved since its read.
-    fn commit_close(&self, c: Cascade, req: &Request) -> Result<AskClose> {
+    fn commit_close(&self, id: &str, c: Cascade, req: &Request) -> Result<AskClose> {
         Ok(match self.commit(c, req, "close-ask")? {
-            Ran::Done { applied, .. } if applied.iter().all(|a| *a) => AskClose::Closed,
+            Ran::Done { rev, applied } if applied.iter().all(|a| *a) => {
+                if let Some(bridge) = self.bridge.get() {
+                    bridge.ask_closed(rev, id);
+                }
+                AskClose::Closed
+            }
             _ => AskClose::LostRace,
         })
     }
