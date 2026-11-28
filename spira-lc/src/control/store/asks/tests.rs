@@ -7,6 +7,7 @@ use state_store::{Config, Contract, MemBackend, Ports, Request};
 
 use super::{AskClose, Store};
 use crate::callers::{self, Machine};
+use crate::control::bridge::Outbox;
 use crate::control::state::{self, Call};
 
 const AT: i64 = 1_767_225_600;
@@ -121,4 +122,43 @@ fn a_closed_ask_is_refused_and_an_existing_ask_is_left_as_it_is() {
         (ask.row.state, ask.row.work_bead.as_deref()),
         (AskState::Answered, Some("sp-w"))
     );
+}
+
+#[test_id(t04ugtt)]
+#[test]
+fn a_close_that_loses_the_race_publishes_nothing_of_the_ask() {
+    let r = Rig::new();
+    r.asked();
+    let (outbox, published) = Outbox::captured();
+    r.s.set_bridge(outbox);
+    let req = r.req();
+    let kind = answer();
+    let planned = r.s.plan_close_ask("sp-q", kind, "test", "m-1", AT, &req).unwrap();
+    let Ok(cascade) = planned else { panic!("the close is planned") };
+    let mut m = &r;
+    let moved = callers::run("hold", &["sp-w", "wait", "moved", "test"].map(String::from), &mut m);
+    assert_eq!(moved.code, 0, "{moved:?}");
+    published();
+
+    let closed = r.s.commit_close("sp-q", cascade, &req);
+
+    assert_eq!(closed.unwrap(), AskClose::LostRace);
+    assert_eq!(published(), []);
+    assert_eq!(r.s.ask("sp-q").unwrap().unwrap().row.state, AskState::Open);
+}
+
+#[test_id(thux3yw)]
+#[test]
+fn a_replayed_create_of_a_since_closed_ask_publishes_nothing() {
+    let r = Rig::new();
+    let req = r.req();
+    r.s.create_ask("sp-q", None, AT, &req).unwrap();
+    let closed = r.s.close_ask("sp-q", answer(), "test", "m-1", AT, &r.req());
+    assert_eq!(closed.unwrap(), AskClose::Closed);
+    let (outbox, published) = Outbox::captured();
+    r.s.set_bridge(outbox);
+
+    r.s.create_ask("sp-q", None, AT, &req).unwrap();
+
+    assert_eq!(published(), []);
 }

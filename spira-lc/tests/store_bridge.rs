@@ -1,4 +1,4 @@
-// covers: spira-lc/src/control/bridge.rs spira-lc/src/control/store.rs spira-lc/src/serve.rs
+// covers: spira-lc/src/control/bridge.rs spira-lc/src/control/store.rs spira-lc/src/control/store/asks.rs spira-lc/src/serve.rs
 //! `spira-lc serve`'s store bridge against a real broker. A running server, because what is
 //! under test is the process's own publisher, its reconnect and its stderr.
 
@@ -303,4 +303,106 @@ fn an_unfiled_incident_is_a_retained_topic_until_it_is_filed_and_survives_a_brok
         }
     }
     assert_eq!(again.keys().collect::<Vec<_>>(), ["incident/incident:last", "incident/incident:one", "incident/incident:two"]);
+}
+
+fn ask_words<'a>(id: &'a str, exit: &'a str) -> Vec<&'a str> {
+    let mut words = vec!["close-ask", id, "--exit", exit, "--quote", "q", "--actor", "operator"];
+    if exit == "answered" {
+        words.extend(["--channel", "pane"]);
+    }
+    words
+}
+
+fn open_ask(work_bead: Value) -> Value {
+    json!({"state": "OPEN", "subject": null, "class": null, "work_bead": work_bead, "default": null, "at": PINNED_NOW})
+}
+
+fn ask_is_retained_until_closed_by(exit: &str) {
+    let broker = Broker::up();
+    let server = bridged(&broker);
+    let mut watching = Subscriber::to(broker.socket(), &["ask/#"]);
+    let (code, out) = server.call(&["create-ask", "sp-a", "--work-bead", "sp-w"]);
+    assert_eq!(code, 0, "{out}");
+
+    assert_eq!(next(&mut watching), ("ask/sp-a".into(), open_ask(json!("sp-w"))));
+    let mut late = Subscriber::to(broker.socket(), &["ask/sp-a"]);
+    assert_eq!(next(&mut late).1, open_ask(json!("sp-w")), "retained for a later subscriber");
+
+    let (code, out) = server.call(&ask_words("sp-a", exit));
+    assert_eq!(code, 0, "{out}");
+    let cleared = watching.recv();
+    assert_eq!((cleared.topic.as_str(), cleared.payload.len()), ("ask/sp-a", 0));
+
+    assert_eq!(broker.retained("ask/#"), []);
+}
+
+#[test_id(t9uj1zf)]
+#[test]
+fn an_answered_ask_is_no_longer_a_retained_topic() {
+    ask_is_retained_until_closed_by("answered");
+}
+
+#[test_id(tzur80c)]
+#[test]
+fn an_ask_closed_by_its_default_is_no_longer_a_retained_topic() {
+    ask_is_retained_until_closed_by("default");
+}
+
+#[test_id(t4ni4n0)]
+#[test]
+fn a_withdrawn_ask_is_no_longer_a_retained_topic() {
+    ask_is_retained_until_closed_by("withdrawn");
+}
+
+#[test_id(t4xjxbu)]
+#[test]
+fn a_restarted_broker_is_handed_every_open_ask_again_and_no_closed_one() {
+    let mut broker = Broker::up();
+    let server = bridged(&broker);
+    for id in ["sp-aone", "sp-atwo", "sp-agone"] {
+        let (code, out) = server.call(&["create-ask", id]);
+        assert_eq!(code, 0, "{out}");
+    }
+    let (code, out) = server.call(&ask_words("sp-agone", "withdrawn"));
+    assert_eq!(code, 0, "{out}");
+    // The clear is the last thing published before the restart.
+    let mut before = Subscriber::to(broker.socket(), &["ask/#", "bead/sp-amark/state"]);
+    server.create("sp-amark");
+    server.claim("sp-amark");
+    while before.recv().topic != "bead/sp-amark/state" {}
+
+    broker.restart();
+    wait_up(&broker);
+    let mut after = Subscriber::to(broker.socket(), &["ask/#"]);
+    // A later ask is published behind the whole republish, so it marks its end.
+    let (code, out) = server.call(&["create-ask", "sp-alast"]);
+    assert_eq!(code, 0, "{out}");
+    let mut again = BTreeMap::new();
+    while !again.contains_key("ask/sp-alast") {
+        let d = after.recv();
+        if !d.payload.is_empty() {
+            again.insert(d.topic, serde_json::from_slice::<Value>(&d.payload).unwrap());
+        }
+    }
+    assert_eq!(again.keys().collect::<Vec<_>>(), ["ask/sp-alast", "ask/sp-aone", "ask/sp-atwo"]);
+    assert_eq!(again["ask/sp-aone"], open_ask(Value::Null));
+}
+
+#[test_id(tmi8gx3)]
+#[test]
+fn a_refused_close_ask_publishes_nothing() {
+    let broker = Broker::up();
+    let server = bridged(&broker);
+    let mut watching = Subscriber::to(broker.socket(), &["ask/#"]);
+    let (code, out) = server.call(&["create-ask", "sp-a"]);
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(next(&mut watching).0, "ask/sp-a");
+
+    let (code, out) = server.call(&ask_words("sp-wrong", "answered"));
+    assert_eq!(code, 1, "the close is refused: {out}");
+
+    // One thread publishes in commit order, so anything of the refusal would come first.
+    let (code, out) = server.call(&["create-ask", "sp-b"]);
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(next(&mut watching).0, "ask/sp-b");
 }

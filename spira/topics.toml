@@ -29,6 +29,13 @@ fields = ["reference", "title", "repo", "state", "reason", "events", "first_at",
 resident = ["lc-serve"]
 
 [[topic]]
+family = "ask/<id>"
+class = "state"
+publisher = "lc-serve"
+fields = ["state", "subject", "class", "work_bead", "default", "at"]
+resident = ["lc-serve"]
+
+[[topic]]
 family = "round/<repo>/<batch>"
 class = "state"
 publisher = "queue"

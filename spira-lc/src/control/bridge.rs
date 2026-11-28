@@ -1,14 +1,16 @@
 //! The store bridge: each committed transition and claim as the retained topics
 //! `bead/<id>/state` and `bead/<id>/sessions`, each unfiled incident as `incident/<ref>`
-//! (cleared once its row goes), and every open bead's and unfiled incident's again on each
-//! connect to the broker. A store call only hands a message to the publishing thread, because a publish
-//! waits while the publisher is connecting.
+//! (cleared once its row goes), each open ask as `ask/<id>` (cleared once it closes), and
+//! every open bead's, unfiled incident's and open ask's again on each connect to the broker. A
+//! store call only hands a message to the publishing thread, because a publish waits while the
+//! publisher is connecting.
 
 use std::collections::HashMap;
 use std::sync::mpsc::{sync_channel, SyncSender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
 
+use lifecycle::ask::AskState;
 use lifecycle::bead::{BeadState, LifecycleRow};
 use serde_json::{json, Value};
 use spira_store::incident::Row as IncidentRow;
@@ -18,7 +20,7 @@ use state_store::{Backend, Selector};
 
 use super::keys;
 use super::records::{decode, Audit, LifecycleRecord};
-use super::store::{Store, RECORD_CHUNK};
+use super::store::{AskRecord, Store, RECORD_CHUNK};
 use crate::ops::LIVE;
 
 mod topics;
@@ -48,6 +50,14 @@ fn incident_message(key: &str, row: Option<&IncidentRow>) -> Message {
         json!({ "reference": r.payload.reference, "title": r.payload.title, "repo": r.payload.repo, "state": r.state.as_str(), "reason": r.reason, "events": r.events, "first_at": r.first_at, "last_at": r.last_at, "bead": r.bead })
     });
     Message { topic: topics::incident(&spira_pub::segment(&reference)), payload }
+}
+
+/// The store's ask row holds no subject, class or default: they are its bead's, so each is null.
+fn ask_message(a: &AskRecord) -> Message {
+    Message {
+        topic: topics::ask(&a.row.ask_id),
+        payload: json!({ "state": a.row.state.as_str(), "subject": null, "class": null, "work_bead": a.row.work_bead, "default": null, "at": a.opened_at }),
+    }
 }
 
 fn state_of(id: &str, state: &str, from: Option<&str>, actor: Option<&str>, at: Option<i64>) -> Message {
@@ -80,6 +90,13 @@ fn row_messages(r: &LifecycleRecord) -> Option<[Message; 2]> {
 pub(crate) struct Outbox(SyncSender<(u64, Message)>);
 
 impl Outbox {
+    /// An outbox and every topic handed to it, with whether the message clears it.
+    #[cfg(test)]
+    pub(crate) fn captured() -> (Outbox, impl Fn() -> Vec<(String, bool)>) {
+        let (tx, rx) = sync_channel(BACKLOG);
+        (Outbox(tx), move || rx.try_iter().map(|(_, m)| (m.topic, m.payload.is_null())).collect())
+    }
+
     fn send(&self, rev: u64, m: Message) {
         if let Err(e) = self.0.try_send((rev, m)) {
             let (std::sync::mpsc::TrySendError::Full((_, m)) | std::sync::mpsc::TrySendError::Disconnected((_, m))) = e;
@@ -97,6 +114,14 @@ impl Outbox {
 
     pub(super) fn incident(&self, rev: u64, key: &str, row: Option<&IncidentRow>) {
         self.send(rev, incident_message(key, row));
+    }
+
+    pub(super) fn ask_opened(&self, rev: u64, ask: &AskRecord) {
+        self.send(rev, ask_message(ask));
+    }
+
+    pub(super) fn ask_closed(&self, rev: u64, id: &str) {
+        self.send(rev, Message { topic: topics::ask(id), payload: Value::Null });
     }
 }
 
@@ -120,10 +145,10 @@ impl Ledger {
         true
     }
 
-    /// The incident topics last told to clear: a clear the broker never received leaves the
+    /// The incident and ask topics last told to clear: a clear the broker never received leaves the
     /// old value retained, so a connect says it again.
     fn cleared(&self) -> Vec<String> {
-        let mut gone: Vec<String> = self.topics.iter().filter(|(t, (_, p))| t.starts_with(topics::INCIDENTS) && p.is_null()).map(|(t, _)| t.clone()).collect();
+        let mut gone: Vec<String> = self.topics.iter().filter(|(t, (_, p))| [topics::INCIDENTS, topics::ASKS].iter().any(|f| t.starts_with(f)) && p.is_null()).map(|(t, _)| t.clone()).collect();
         gone.sort();
         gone
     }
@@ -247,8 +272,8 @@ fn push_republished(metrics: Arc<MetricsSink>, beads: u64, took: Duration) {
     });
 }
 
-/// Hands `emit` the message of every unfiled incident and both messages of every open bead,
-/// each with the revision its record was last written at, the beads read a page at a time from
+/// Hands `emit` the message of every unfiled incident and open ask and both messages of every
+/// open bead, each with the revision its record was last written at, the beads read a page at a time from
 /// one revision; answers how many beads.
 fn open_messages<B: Backend>(store: &Store<B>, mut emit: impl FnMut(u64, Message)) -> state_store::Result<u64> {
     let (incidents, _) = store.contract().list(&[keys::INCIDENTS], &Selector::Everything)?;
@@ -256,6 +281,11 @@ fn open_messages<B: Backend>(store: &Store<B>, mut emit: impl FnMut(u64, Message
         let Some(key) = keys::id_of(keys::INCIDENTS, &item.key) else { continue };
         let row: IncidentRow = decode(&item.key, &item.value)?;
         emit(item.mod_rev.main, incident_message(key, Some(&row)));
+    }
+    // Read before the list, so a commit the list missed is newer than what is said of it.
+    let rev = store.contract().head()?;
+    for ask in store.asks_in(AskState::Open)? {
+        emit(rev, ask_message(&ask));
     }
     let rev = store.contract().head()?;
     let mut after: Option<String> = None;
@@ -349,6 +379,16 @@ mod tests {
         assert_eq!(ledger.cleared(), ["incident/incident:a"]);
         assert!(ledger.admits(5, &incident_message("incident:a", Some(&row))));
         assert!(ledger.cleared().is_empty());
+    }
+
+    #[test_id(tnovinb)]
+    #[test]
+    fn a_cleared_ask_topic_is_said_again_on_connect_and_an_older_open_one_does_not_replace_it() {
+        let mut ledger = Ledger::default();
+        let ask = AskRecord { row: lifecycle::ask::AskRow::open("sp-a", None), opened_at: 100, closed_at: None };
+        assert!(ledger.admits(4, &Message { topic: topics::ask("sp-a"), payload: Value::Null }));
+        assert!(!ledger.admits(3, &ask_message(&ask)));
+        assert_eq!(ledger.cleared(), ["ask/sp-a"]);
     }
 
     #[test_id(td3baj6)]
