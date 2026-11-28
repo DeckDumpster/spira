@@ -24,9 +24,13 @@ pub fn watch(cfg: &Config, d: &Deps, alarm: Option<&Publisher>) -> Result<Outcom
 
 fn announce(cfg: &Config, outcome: &Outcome, p: &Publisher) {
     let queued = match outcome {
-        Outcome::Down { since_ms, reason, .. } => {
+        Outcome::Down { since_ms, .. } => {
             // The opening verdict: a later one counts a growing age, and the value must not move.
-            let text = load(&cfg.incident).ok().flatten().map_or_else(|| reason.clone(), |i| i.reason);
+            let text = match load(&cfg.incident) {
+                Ok(Some(i)) => i.reason,
+                Ok(None) => return eprintln!("spira-watchdog: {TOPIC} not published: the incident file is gone"),
+                Err(e) => return eprintln!("spira-watchdog: {TOPIC} not published: {e}"),
+            };
             let since = secs(*since_ms);
             p.publish(Class::State, TOPIC, &json!({ "text": text, "since": since, "at": since }))
         }

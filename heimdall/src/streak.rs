@@ -19,6 +19,11 @@ fn field<'a>(row: &'a Value, k: &str) -> &'a str {
     row.get(k).and_then(Value::as_str).unwrap_or("")
 }
 
+/// Whether `key` is one the gate rows decide, so unread rows say nothing about it.
+pub fn is_streak(key: &str) -> bool {
+    key.starts_with(KEY_PREFIX) || key.starts_with(NOVERDICT_PREFIX)
+}
+
 /// `rows` newest first. A streak is `n` consecutive rows, since the repo's last PASS, that are
 /// all branch-red FAILs on `n` different beads at one unit and one line: a NO_VERDICT or a
 /// different red arriving after it does not end it, only a PASS does.
@@ -101,7 +106,7 @@ pub fn firing_noverdict(repo: &str, s: &NoVerdictStreak) -> Firing {
 /// With the gate rows unreadable, a streak already raised is neither confirmed nor ended: keep
 /// it firing rather than clear it on a read that failed.
 pub fn hold(raised: &[String], firing: &mut Vec<Firing>) {
-    for key in raised.iter().filter(|k| k.starts_with(KEY_PREFIX) || k.starts_with(NOVERDICT_PREFIX)) {
+    for key in raised.iter().filter(|k| is_streak(k)) {
         if !firing.iter().any(|f| &f.key == key) {
             let what = if key.starts_with(NOVERDICT_PREFIX) { "the gate has passed nothing" } else { "landing is stopped by a red shared across branches" };
             firing.push(Firing { key: key.clone(), title: format!("{key}: {what} (the gate rows are unreadable; holding)"), evidence: "The Gate section could not be read; this holds until a PASS is seen.".into() });

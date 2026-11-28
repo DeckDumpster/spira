@@ -42,11 +42,12 @@ struct Rig {
     /// A restart loop's delta, which is part of its title.
     restarts: Option<i64>,
     gate: Vec<Value>,
+    gate_unread: bool,
 }
 
 impl Rig {
     fn new(broker: &Broker) -> Rig {
-        Rig { dir: testkit::TempDir::new("heimdall-alarm"), bus: Bus::At(broker.socket().to_path_buf()), state: State::default(), now: T0, restarts: None, gate: Vec::new() }
+        Rig { dir: testkit::TempDir::new("heimdall-alarm"), bus: Bus::At(broker.socket().to_path_buf()), state: State::default(), now: T0, restarts: None, gate: Vec::new(), gate_unread: false }
     }
 
     fn pass(&mut self) -> PassReport {
@@ -58,7 +59,8 @@ impl Rig {
             strands: json!({}),
             restart_alerts,
             thresholds: Thresholds { pass_stale: 1_000_000, starve_passes: 5, mirror_stale: 90_000, ghost_stale: 1800, restart_threshold: 3, restart_window: 3600, red_streak: 4, noverdict_streak: 4 },
-            gate_runs: vec![("spira".into(), self.gate.clone())],
+            gate_runs: if self.gate_unread { Vec::new() } else { vec![("spira".into(), self.gate.clone())] },
+            gate_runs_unread: self.gate_unread,
             ..Observation::default()
         };
         let inp = PassInput { obs, confirm: 2, clear_n: 2, refresh: 3600, tz: "UTC".into(), render_time: |e, _| format!("@{e}"), report_only: false };
@@ -176,4 +178,25 @@ fn a_clear_the_broker_never_took_is_sent_again() {
 
     let got = raw.recv();
     assert_eq!((got.topic.as_str(), got.payload.len()), (RESTARTS, 0));
+}
+
+#[test_id(tcq7hgp)]
+#[test]
+fn unread_gate_rows_do_not_clear_a_streak_alarm_even_before_it_is_raised() {
+    let broker = Broker::up();
+    let mut r = Rig::new(&broker);
+    r.gate = gate_rows("FAIL", "branch-red");
+    r.pass();
+    let raised = alarms(&broker);
+    assert_eq!(raised.len(), 1, "{raised:?}");
+
+    r.gate_unread = true;
+    r.pass();
+    r.pass();
+    assert_eq!(alarms(&broker), raised);
+
+    r.gate_unread = false;
+    r.gate = gate_rows("PASS", "");
+    r.pass();
+    assert_eq!(alarms(&broker), vec![]);
 }
