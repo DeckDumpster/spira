@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::io::Write;
 use std::ops::Deref;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -374,7 +374,8 @@ fn declared_bin(manifest_dir: &Path, name: &str) -> Result<(), String> {
     }
 }
 
-fn built_beside(manifest_dir: &Path, test_exe: &Path, name: &str) -> PathBuf {
+/// [`bin_exe`] with the crate and the test executable named, and without the declaration check.
+pub fn built_beside(manifest_dir: &Path, test_exe: &Path, name: &str) -> PathBuf {
     let bin = bin_beside(test_exe, name);
     assert!(
         bin.is_file(),
@@ -400,31 +401,123 @@ fn staleness(manifest_dir: &Path, bin: &Path, name: &str) -> Option<String> {
     verdict
 }
 
-/// Why `bin` is older than what it is built from; None when it is not. Reads file metadata only,
-/// and panics where it cannot tell, since a pass would run the binary unchecked.
+/// Why `bin` is older than what it is built from; None when it is not. Reads files only, and
+/// panics or refuses where it cannot tell, since a pass would run the binary unchecked.
 fn stale_why(manifest_dir: &Path, bin: &Path, name: &str) -> Option<String> {
-    let (package, dir) = building_member(manifest_dir, name);
+    let (root, package, dir) = building_member(manifest_dir, name);
     let built = modified(bin).unwrap_or_else(|| panic!("binary {name}: cannot read the build time of {}", bin.display()));
-    let mut files = build_inputs(&dir, name);
+    let crates = build_inputs(&dir, name);
+    let newer: Vec<(SystemTime, usize, &PathBuf)> = crates
+        .iter()
+        .enumerate()
+        .flat_map(|(i, c)| c.files.iter().map(move |f| (i, f)))
+        .filter_map(|(i, f)| Some((modified(f)?, i, f)))
+        .filter(|(changed, ..)| *changed > built)
+        .collect();
+    if newer.is_empty() {
+        return None;
+    }
     // cargo does not relink for a file it left out of the binary (a cfg(test) module, a manifest
-    // edit), so where its dep-info describes this tree, only the files listed there can be stale:
-    // otherwise the rebuild this refusal names would never clear it.
+    // edit), so only what its dep-info lists can make the binary stale.
+    let (compiled, unknown) = compiled_inputs(&root, bin, name, &crates);
+    let head = |changed: SystemTime, file: &Path| {
+        format!("binary {name} at {} was built {} and {} changed after it ({})", bin.display(), utc(built), file.display(), utc(changed))
+    };
+    if let Some((changed, _, file)) = newer.iter().filter(|(.., f)| compiled.contains(*f)).max() {
+        return Some(format!("{}: rebuild it with `cargo build -p {package} --bins`", head(*changed, file)));
+    }
+    let (changed, _, file) = newer.iter().filter(|(_, i, _)| unknown.contains(i)).max()?;
+    let missing: Vec<&str> = unknown.iter().map(|i| crates[*i].package.as_str()).collect();
+    let profile = match bin.parent().and_then(Path::file_name).and_then(OsStr::to_str) {
+        Some("debug") | None => "dev",
+        Some(profile) => profile,
+    };
+    // A rebuild alone relinks nothing here, so cargo never rewrites the lost dep-info.
+    let clean: String = missing.iter().map(|p| format!(" -p {p}")).collect();
+    Some(format!(
+        "{}, and cargo left no dep-info for {} to say whether it is compiled in, so the binary cannot be judged: \
+         run `cargo clean --profile {profile}{clean}`, then `cargo build -p {package} --bins` under that profile",
+        head(*changed, file),
+        missing.join(", ")
+    ))
+}
+
+/// The files cargo's dep-info says `bin` is compiled from, and the indices into `crates` of
+/// those it says nothing about. cargo writes `<bin>.d` beside the binary only when the build
+/// asked for that binary; otherwise rustc's own `deps/<crate>-<hash>.d` holds the binary's
+/// sources, and one more for each library it links.
+fn compiled_inputs(root: &Path, bin: &Path, name: &str, crates: &[CrateInputs]) -> (BTreeSet<PathBuf>, BTreeSet<usize>) {
+    let describes = |inputs: &BTreeSet<PathBuf>, i: usize| crates[i].files.iter().any(|f| inputs.contains(f));
     if let Ok(text) = std::fs::read_to_string(bin.with_extension("d")) {
-        let compiled = dep_info_inputs(&text);
-        if files.iter().any(|f| compiled.contains(f)) {
-            files.retain(|f| compiled.contains(f));
+        let inputs = dep_info_inputs(root, &text);
+        if (0..crates.len()).any(|i| describes(&inputs, i)) {
+            return (inputs, BTreeSet::new());
         }
     }
-    let (changed, file) = files.into_iter().filter_map(|f| Some((modified(&f)?, f))).max()?;
-    (changed > built).then(|| {
-        format!(
-            "binary {name} at {} was built {} and {} changed after it ({}): rebuild it with `cargo build -p {package} --bins`",
-            bin.display(),
-            utc(built),
-            file.display(),
-            utc(changed)
-        )
-    })
+    let deps = DepsDir::read(bin);
+    let (mut compiled, mut unknown) = (BTreeSet::new(), BTreeSet::new());
+    for (i, c) in crates.iter().enumerate() {
+        let own = (i == 0).then(|| deps.of_binary(root, bin, name));
+        let lib = c.lib.as_deref().map(|lib| deps.of_library(root, lib));
+        for inputs in own.into_iter().chain(lib) {
+            if !describes(&inputs, i) {
+                unknown.insert(i);
+            }
+            compiled.extend(inputs);
+        }
+    }
+    (compiled, unknown)
+}
+
+/// `<profile>/deps` beside a binary.
+struct DepsDir {
+    dir: PathBuf,
+    names: Vec<String>,
+}
+
+impl DepsDir {
+    fn read(bin: &Path) -> DepsDir {
+        let dir = bin.with_file_name("deps");
+        let names = std::fs::read_dir(&dir).into_iter().flatten().flatten().filter_map(|e| e.file_name().into_string().ok()).collect();
+        DepsDir { dir, names }
+    }
+
+    /// Each `<krate>-<16 hex>` that has a dep-info file.
+    fn units<'a>(&'a self, krate: &'a str) -> impl Iterator<Item = &'a str> {
+        self.names.iter().filter_map(move |n| {
+            let stem = n.strip_suffix(".d")?;
+            let hash = stem.strip_prefix(krate)?.strip_prefix('-')?;
+            (hash.len() == 16 && hash.bytes().all(|b| b.is_ascii_hexdigit())).then_some(stem)
+        })
+    }
+
+    fn dep_info(&self, unit: &str) -> String {
+        std::fs::read_to_string(self.dir.join(format!("{unit}.d"))).unwrap_or_default()
+    }
+
+    /// The unit `bin` is a hard link to: its own sources, whatever else shares its crate name.
+    fn of_binary(&self, root: &Path, bin: &Path, name: &str) -> BTreeSet<PathBuf> {
+        let id = |p: &Path| std::fs::metadata(p).ok().map(|m| (m.dev(), m.ino()));
+        let uplifted = id(bin);
+        let krate = name.replace('-', "_");
+        let found = self.units(&krate).find(|unit| id(&self.dir.join(unit)) == uplifted);
+        found.map(|unit| dep_info_inputs(root, &self.dep_info(unit))).unwrap_or_default()
+    }
+
+    /// Every linkable build of `lib`. A test harness shares the crate name and lists cfg(test)
+    /// files, and so does a test-mode check, which writes only `.rmeta`.
+    fn of_library(&self, root: &Path, lib: &str) -> BTreeSet<PathBuf> {
+        let mut inputs = BTreeSet::new();
+        for unit in self.units(lib) {
+            let text = self.dep_info(unit);
+            let linkable = [format!("lib{unit}.rlib"), format!("lib{unit}.so")];
+            let mut targets = text.lines().filter_map(|l| l.split_once(": ")).filter_map(|(target, _)| Path::new(target).file_name()?.to_str());
+            if targets.any(|t| linkable.iter().any(|a| a == t)) {
+                inputs.extend(dep_info_inputs(root, &text));
+            }
+        }
+        inputs
+    }
 }
 
 fn modified(path: &Path) -> Option<SystemTime> {
@@ -435,8 +528,8 @@ fn manifest_of(dir: &Path, name: &str) -> toml::Value {
     read_manifest(dir, name).unwrap_or_else(|why| panic!("{why}"))
 }
 
-/// The package name and directory of the workspace member that builds the binary `name`.
-fn building_member(manifest_dir: &Path, name: &str) -> (String, PathBuf) {
+/// The workspace root, and the package name and directory of the member that builds the binary `name`.
+fn building_member(manifest_dir: &Path, name: &str) -> (PathBuf, String, PathBuf) {
     let (root, members) = manifest_dir
         .ancestors()
         .filter(|dir| dir.join("Cargo.toml").is_file())
@@ -459,14 +552,21 @@ fn building_member(manifest_dir: &Path, name: &str) -> (String, PathBuf) {
         .iter()
         .find(|(dir, doc)| names_bin_target(dir, doc, name))
         .or_else(|| crates.iter().find(|(dir, doc)| package_name(doc) == Some(name) && dir.join("src/main.rs").is_file()))
-        .and_then(|(dir, doc)| Some((package_name(doc)?.to_string(), dir.clone())))
+        .and_then(|(dir, doc)| Some((root.clone(), package_name(doc)?.to_string(), normal(dir))))
         .unwrap_or_else(|| panic!("binary {name}: no member of {} builds it, so its age cannot be judged", root.display()))
 }
 
-/// `Cargo.toml` and `src/**` of the crate at `dir` and of every crate it reaches through
+struct CrateInputs {
+    package: String,
+    /// The crate name of its library target.
+    lib: Option<String>,
+    files: Vec<PathBuf>,
+}
+
+/// `Cargo.toml` and `src/**` of the crate at `dir`, first, and of every crate it reaches through
 /// non-dev `path =` dependencies.
-fn build_inputs(dir: &Path, name: &str) -> Vec<PathBuf> {
-    let mut files = Vec::new();
+fn build_inputs(dir: &Path, name: &str) -> Vec<CrateInputs> {
+    let mut found = Vec::new();
     let mut seen = BTreeSet::new();
     let mut crates = vec![dir.to_path_buf()];
     while let Some(dir) = crates.pop() {
@@ -474,8 +574,13 @@ fn build_inputs(dir: &Path, name: &str) -> Vec<PathBuf> {
             continue;
         }
         let doc = manifest_of(&dir, name);
-        files.push(dir.join("Cargo.toml"));
+        let package = package_name(&doc).unwrap_or_else(|| panic!("binary {name}: {} names no package", dir.join("Cargo.toml").display())).to_string();
+        let lib_table = doc.get("lib");
+        let lib = (lib_table.is_some() || dir.join("src/lib.rs").is_file())
+            .then(|| lib_table.and_then(|l| l.get("name")).and_then(|n| n.as_str()).map_or_else(|| package.replace('-', "_"), str::to_string));
+        let mut files = vec![dir.join("Cargo.toml")];
         files_under(&dir.join("src"), &mut files);
+        found.push(CrateInputs { package, lib, files });
         let targets = doc.get("target").and_then(|t| t.as_table()).into_iter().flat_map(|t| t.values());
         for scope in std::iter::once(&doc).chain(targets) {
             for kind in ["dependencies", "build-dependencies"] {
@@ -484,7 +589,7 @@ fn build_inputs(dir: &Path, name: &str) -> Vec<PathBuf> {
             }
         }
     }
-    files
+    found
 }
 
 fn files_under(dir: &Path, into: &mut Vec<PathBuf>) {
@@ -512,11 +617,13 @@ fn normal(path: &Path) -> PathBuf {
     out
 }
 
-/// The inputs of a `<target>: <input> <input>` dep-info file; a space in a path is `\ `.
-fn dep_info_inputs(text: &str) -> BTreeSet<PathBuf> {
-    let inputs = text.lines().filter_map(|l| l.split_once(": ")).map(|(_, inputs)| inputs.replace("\\ ", "\0"));
-    inputs
-        .flat_map(|l| l.split_whitespace().map(|p| PathBuf::from(p.replace('\0', " "))).collect::<Vec<_>>())
+/// The inputs of a `<target>: <input> <input>` dep-info file; a space in a path is `\ `, and
+/// rustc writes a workspace member's paths relative to the workspace `root`.
+fn dep_info_inputs(root: &Path, text: &str) -> BTreeSet<PathBuf> {
+    let rules = text.lines().filter(|l| !l.starts_with('#')).filter_map(|l| l.split_once(": "));
+    rules
+        .map(|(_, inputs)| inputs.replace("\\ ", "\0"))
+        .flat_map(|l| l.split_whitespace().map(|p| normal(&root.join(p.replace('\0', " ")))).collect::<Vec<_>>())
         .collect()
 }
 
@@ -767,6 +874,95 @@ mod tests {
         assert!(refusal(&t).contains("dep/src/lib.rs"));
     }
 
+    const BIN_HASH: &str = "0123456789abcdef";
+    const LIB_HASH: &str = "aaaaaaaaaaaaaaaa";
+    const HARNESS_HASH: &str = "bbbbbbbbbbbbbbbb";
+    const CHECK_HASH: &str = "cccccccccccccccc";
+
+    /// [`built_workspace`] laid out as a round leaves its target: `tool` hard-linked into
+    /// `target/unittest/deps`, no `tool.d` beside it, and rustc's dep-info under `deps/` with
+    /// workspace-relative paths, for the binary, the `dep` library and a test harness of each.
+    fn round_workspace() -> TempDir {
+        let t = built_workspace();
+        let deps = t.join("target/unittest/deps");
+        std::fs::create_dir_all(&deps).unwrap();
+        for rel in ["me/src/only_tests.rs", "dep/src/only_tests.rs"] {
+            std::fs::write(t.join(rel), "").unwrap();
+            age(&t.join(rel), 100);
+        }
+        let exe = deps.join(format!("tool-{BIN_HASH}"));
+        std::fs::write(&exe, "").unwrap();
+        age(&exe, 200);
+        std::fs::hard_link(&exe, t.join("target/unittest/tool")).unwrap();
+        let info = |stem: String, target: String, inputs: &str| {
+            let d = deps.display();
+            let phony: String = inputs.split(' ').map(|i| format!("{i}:\n")).collect();
+            let text = format!("{d}/{stem}.d: {inputs}\n\n{d}/{target}: {inputs}\n\n{phony}\n# env-dep:X=a: b\n");
+            std::fs::write(deps.join(format!("{stem}.d")), text).unwrap();
+        };
+        info(format!("tool-{BIN_HASH}"), format!("tool-{BIN_HASH}"), "me/src/main.rs");
+        info(format!("tool-{HARNESS_HASH}"), format!("tool-{HARNESS_HASH}"), "me/src/main.rs me/src/only_tests.rs");
+        info(format!("dep-{LIB_HASH}"), format!("libdep-{LIB_HASH}.rlib"), "dep/src/lib.rs");
+        info(format!("dep-{HARNESS_HASH}"), format!("dep-{HARNESS_HASH}"), "dep/src/lib.rs dep/src/only_tests.rs");
+        // `cargo check --all-targets` names its test-mode check like a library.
+        info(format!("dep-{CHECK_HASH}"), format!("libdep-{CHECK_HASH}.rmeta"), "dep/src/lib.rs dep/src/only_tests.rs");
+        t
+    }
+
+    fn round_tool(t: &Path) -> PathBuf {
+        built_beside(&t.join("me"), &t.join("target/unittest/deps/x-1"), "tool")
+    }
+
+    fn round_refusal(t: &Path) -> String {
+        let why = std::panic::catch_unwind(|| round_tool(t)).expect_err("the binary is refused");
+        why.downcast_ref::<String>().expect("a formatted panic").clone()
+    }
+
+    #[test_id(typatts)]
+    #[test]
+    fn with_no_dep_info_beside_the_binary_a_newer_file_cargo_did_not_compile_into_it_does_not_make_it_stale() {
+        let t = round_workspace();
+        for rel in ["me/src/only_tests.rs", "dep/src/only_tests.rs", "me/Cargo.toml", "dep/Cargo.toml"] {
+            age(&t.join(rel), 300);
+        }
+        assert_eq!(round_tool(&t), t.join("target/unittest/tool"));
+    }
+
+    #[test_id(tokbjkd)]
+    #[test]
+    fn dep_info_under_deps_keeps_a_newer_file_of_the_binary_or_its_library_refused() {
+        for changed in ["me/src/main.rs", "dep/src/lib.rs"] {
+            let t = round_workspace();
+            age(&t.join(changed), 300);
+            age(&t.join("me/src/only_tests.rs"), 400);
+            let why = round_refusal(&t);
+            let needle = format!("{} changed after it (1970-01-01T00:05:00Z): rebuild it with `cargo build -p me --bins`", t.join(changed).display());
+            assert!(why.contains(&needle), "{needle:?} missing from {why}");
+        }
+    }
+
+    #[test_id(tpwpo6o)]
+    #[test]
+    fn a_newer_file_of_a_crate_with_no_dep_info_is_refused_as_unjudgeable_naming_a_command_that_clears_it() {
+        for (removed, package, changed) in [
+            (format!("tool-{BIN_HASH}.d"), "me", "me/src/only_tests.rs"),
+            (format!("dep-{LIB_HASH}.d"), "dep", "dep/src/only_tests.rs"),
+        ] {
+            let t = round_workspace();
+            std::fs::remove_file(t.join("target/unittest/deps").join(removed)).unwrap();
+            age(&t.join(changed), 300);
+            let why = round_refusal(&t);
+            for needle in [
+                format!("{} changed after it", t.join(changed).display()),
+                format!("no dep-info for {package} "),
+                "cannot be judged".to_string(),
+                format!("`cargo clean --profile unittest -p {package}`, then `cargo build -p me --bins` under that profile"),
+            ] {
+                assert!(why.contains(&needle), "{needle:?} missing from {why}");
+            }
+        }
+    }
+
     #[test_id(trmua45)]
     #[test]
     fn a_build_or_target_specific_path_dependency_makes_the_binary_stale() {
@@ -817,8 +1013,9 @@ mod tests {
     #[test_id(td932ft)]
     #[test]
     fn dep_info_paths_may_hold_spaces() {
-        let inputs = dep_info_inputs("t/a b: s/with\\ space.rs s/c.rs\n");
-        assert_eq!(inputs, BTreeSet::from([PathBuf::from("s/with space.rs"), PathBuf::from("s/c.rs")]));
+        let abs = TempDir::new("testkit-dep-info").join("c.rs");
+        let inputs = dep_info_inputs(Path::new("w"), &format!("t/a b: s/with\\ space.rs {}\n", abs.display()));
+        assert_eq!(inputs, BTreeSet::from([PathBuf::from("w/s/with space.rs"), abs]));
     }
 
     #[test_id(thx7uke)]

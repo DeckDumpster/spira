@@ -75,10 +75,22 @@ returns once every PUBACK has arrived.
 `testkit::bin_exe(name)` returns the built binary beside the test executable. It builds and
 runs nothing. It panics when the binary is undeclared, not built, or older than what builds it:
 `cargo test -p <crate>` does not rebuild another crate's binary, and a stale one fails a test
-later with a wrong cause. The inputs are `Cargo.toml` and `src/**` of the crate that builds the
-binary and of its non-dev `path =` dependencies. Where cargo's `<name>.d` beside the binary
-lists any of them, only the listed ones count: cargo does not relink for a file it left out
-(a `cfg(test)` module, a manifest edit), so no rebuild could clear such a refusal. The verdict
+later with a wrong cause. The candidates are `Cargo.toml` and `src/**` of the crate that builds
+the binary and of its non-dev `path =` dependencies. A candidate newer than the binary counts only
+if cargo's dep-info says it was compiled in: cargo does not relink for a file it left out (a
+`cfg(test)` module, a manifest edit), so no rebuild could clear such a refusal. The dep-info is
+`<name>.d` beside the binary, which cargo writes only for a binary the build asked for; otherwise
+rustc's `deps/<name>-<hash>.d` for the unit the binary is a hard link to, plus, for each library
+among the crates, every `deps/<lib>-<hash>.d` that names a `lib<lib>-<hash>.rlib` (or `.so`)
+artifact: a test harness shares the crate name and lists `cfg(test)` files, and so does a
+test-mode `cargo check`, which writes only `.rmeta`. A newer file of a crate with no
+dep-info is refused as unjudgeable, naming the `cargo clean` that makes cargo write it again: a
+pass would run the binary unchecked. A `<name>.d` that names no file of these crates was written
+for another tree and says nothing about this binary, so `deps/` is read then too. Which library
+build the binary linked is recorded only in cargo's private fingerprint format, so every linkable
+build counts, as does every `path =` dependency, enabled or not: a target holding other feature
+sets can refuse for a file this binary did not take. Rounds keep one generation, built with
+`integration`, and keep its dep-info (round-vm DESIGN.md). The verdict
 is computed once per binary per process. Where it cannot judge (no workspace, no member that
 builds the binary, an unreadable manifest) it panics rather than pass.
 
