@@ -5,10 +5,10 @@
 #   round-image-preflight.sh [--tree DIR] [--base REF] [--head REF] [--force] [--sysfs DIR]
 #
 # Runs only when the diff base...head touches a recipe input; every other branch pays one
-# git diff. A diff that only edits the apt-get install line of ami-setup.sh installs that
-# line alone. Which check runs is decided by `round-vm preflight-plan`, from the same list the image hash is
-# computed from. A red prints the failing setup line and the last
-# 40 lines of output.
+# git diff. The plan is decided first, and only a setup-bound run stages and reads the config.
+# A diff that only edits the apt-get install line of ami-setup.sh installs that line alone.
+# Which check runs is decided by `round-vm preflight-plan`, from the same list the image hash
+# is computed from. A red prints the failing setup line and the last 40 lines of output.
 #
 # Under SPIRA_PREFLIGHT_CACHE_ROOT it keeps cache/, storage/ (podman's graphroot), run/ (podman's
 # runroot, so its layer-mount records never share a file with other containers') and tmp/.
@@ -28,35 +28,10 @@ while [ $# -gt 0 ]; do
     esac
 done
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-# conf.sh resolves this tree's keys, and the box declares a new one only once activation applies the tree's delta.
-# Staging gets a scratch of its own, so cleanup cannot remove layers the caller staged.
-log="" list="" stage="$(mktemp -d)" || exit 75
-trap 'rm -rf "$stage"; rm -f ${log:+"$log"} ${list:+"$list"}' EXIT
-_t="$(TMPDIR="$stage" release config-stage "$HERE/..")" || { echo 'round-image-preflight: cannot stage the tree config delta' >&2; exit 75; }
-export SPIRA_TOML="$_t"
-. "$HERE/conf.sh"
+log="" list="" stage=""
+trap 'rm -rf ${stage:+"$stage"}; rm -f ${log:+"$log"} ${list:+"$list"}' EXIT
 IMAGE="${SPIRA_PREFLIGHT_BASE_IMAGE:-docker.io/library/ubuntu:26.04}"
 LIMIT="${SPIRA_PREFLIGHT_TIMEOUT:-1500}"
-
-_disk_leaves() {   # _disk_leaves <sysfs-device-dir> -> "<disk> <rotational>" per backing disk; 2 when one cannot be read
-    local dir="$1" slave rc=0
-    if [ -d "$dir/slaves" ] && [ -n "$(ls -A "$dir/slaves" 2>/dev/null)" ]; then
-        for slave in "$dir"/slaves/*; do _disk_leaves "$(readlink -f "$slave")" || rc=2; done
-        return "$rc"
-    fi
-    [ -f "$dir/partition" ] && dir="$(dirname "$dir")"
-    [ -f "$dir/queue/rotational" ] || return 2
-    echo "$(basename "$dir") $(cat "$dir/queue/rotational")"
-}
-
-rotational_device() {   # rotational_device <sysfs-root> <path>: prints each rotational disk under <path>'s filesystem and returns 0; 1 when none is; 2 when a disk cannot be resolved
-    local majmin leaves rc=0
-    majmin="$(findmnt -n -o MAJ:MIN -T "$2" 2>/dev/null | head -n 1 | tr -d ' ')"
-    [ -n "$majmin" ] && [ -e "$1/dev/block/$majmin" ] || return 2
-    leaves="$(_disk_leaves "$(readlink -f "$1/dev/block/$majmin")")" || rc=2
-    [ "$rc" -eq 0 ] || return 2
-    printf '%s\n' "$leaves" | awk '$2 == 1 { print $1; found = 1 } END { exit !found }'
-}
 
 plan="" npaths="" hit="" apt_line=""
 if [ "$FORCE" = 1 ]; then
@@ -78,6 +53,36 @@ if [ "$plan" = skip ]; then
     exit 0
 fi
 [ "$FORCE" = 1 ] || echo "round-image-preflight: recipe inputs touched: $hit"
+
+# Below the skip exit: staging is refused on a tree the box's live config is ahead of.
+# conf.sh resolves this tree's keys, and the box declares a new one only once activation applies the tree's delta.
+# Staging gets a scratch of its own, so cleanup cannot remove layers the caller staged.
+stage="$(mktemp -d)" || exit 75
+refused='round-image-preflight: cannot stage the tree config delta'
+[ "$FORCE" = 1 ] || refused="$refused; rebase onto $BASE and rerun"
+_t="$(TMPDIR="$stage" release config-stage "$HERE/..")" || { echo "$refused" >&2; exit 75; }
+export SPIRA_TOML="$_t"
+. "$HERE/conf.sh"
+
+_disk_leaves() {   # _disk_leaves <sysfs-device-dir> -> "<disk> <rotational>" per backing disk; 2 when one cannot be read
+    local dir="$1" slave rc=0
+    if [ -d "$dir/slaves" ] && [ -n "$(ls -A "$dir/slaves" 2>/dev/null)" ]; then
+        for slave in "$dir"/slaves/*; do _disk_leaves "$(readlink -f "$slave")" || rc=2; done
+        return "$rc"
+    fi
+    [ -f "$dir/partition" ] && dir="$(dirname "$dir")"
+    [ -f "$dir/queue/rotational" ] || return 2
+    echo "$(basename "$dir") $(cat "$dir/queue/rotational")"
+}
+
+rotational_device() {   # rotational_device <sysfs-root> <path>: prints each rotational disk under <path>'s filesystem and returns 0; 1 when none is; 2 when a disk cannot be resolved
+    local majmin leaves rc=0
+    majmin="$(findmnt -n -o MAJ:MIN -T "$2" 2>/dev/null | head -n 1 | tr -d ' ')"
+    [ -n "$majmin" ] && [ -e "$1/dev/block/$majmin" ] || return 2
+    leaves="$(_disk_leaves "$(readlink -f "$1/dev/block/$majmin")")" || rc=2
+    [ "$rc" -eq 0 ] || return 2
+    printf '%s\n' "$leaves" | awk '$2 == 1 { print $1; found = 1 } END { exit !found }'
+}
 
 command -v podman >/dev/null 2>&1 || { echo "round-image-preflight: podman is not on PATH" >&2; exit 75; }
 
