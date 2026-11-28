@@ -1,17 +1,10 @@
 use crate::{Open, Site, World, LABEL};
-use spira_config::bounded::{bounded, bounded_for};
-use std::cell::RefCell;
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-
-const TERMINAL: [&str; 4] = ["LANDED", "SUPERSEDED", "DROPPED", "DONE"];
+use spira_config::bounded::bounded;
+use std::path::Path;
 
 pub struct Real {
-    pub registry: String,
     pub crate_name: String,
-    pub state: PathBuf,
     pub persona: String,
-    bumps: RefCell<BTreeMap<String, (String, String)>>,
     lc: spira_store::lc_call::LcClient,
 }
 
@@ -31,17 +24,6 @@ pub fn index_path(name: &str) -> String {
         1 | 2 => format!("{}/{n}", n.len()),
         3 => format!("3/{}/{n}", &n[..1]),
         _ => format!("{}/{}/{n}", &n[..2], &n[2..4]),
-    }
-}
-
-/// The index text of a curl reply ending in a `\n<status>` line; `None` for a 404 (nothing published).
-/// `file://` replies carry status 000 and are read as the body they are.
-pub fn index_body<'a>(reply: &'a str, url: &str) -> Result<Option<&'a str>, String> {
-    let (body, status) = reply.rsplit_once('\n').ok_or_else(|| format!("{url}: reply has no status line"))?;
-    match status.trim() {
-        "200" | "000" => Ok(Some(body)),
-        "404" | "410" => Ok(None),
-        s => Err(format!("{url} answered HTTP {s}")),
     }
 }
 
@@ -67,7 +49,7 @@ pub fn fetch_release(registry: &str, crate_name: &str) -> Result<Option<String>,
     crate::newest_release(&index).map(Some).ok_or_else(|| format!("no release of `{crate_name}` in {url}"))
 }
 
-/// A site's checkout and base ref from the repo map, as `install::kit_bump` renders them.
+/// A site's checkout and base ref from the repo map.
 pub fn resolve_site(reg: &spira_config::repos::Registry, name: &str, file: &str) -> Result<Site, String> {
     use spira_config::repos::Column;
     let path = reg.field(name, Column::Path).unwrap_or_default();
@@ -95,23 +77,8 @@ fn show(site: &Site, file: &str) -> Result<String, String> {
 }
 
 impl Real {
-    pub fn new(registry: String, crate_name: String, state: PathBuf, persona: String, lc: spira_store::lc_call::LcClient) -> Real {
-        let bumps = std::fs::read_to_string(&state)
-            .unwrap_or_default()
-            .lines()
-            .filter_map(|l| {
-                let mut f = l.split('\t');
-                Some((f.next()?.to_string(), (f.next()?.to_string(), f.next()?.to_string())))
-            })
-            .collect();
-        Real { registry, crate_name, state, persona, bumps: RefCell::new(bumps), lc }
-    }
-
-    fn record(&self, site: &Site, id: &str, target: &str) -> Result<(), String> {
-        let mut m = self.bumps.borrow_mut();
-        m.insert(site.name.clone(), (id.to_string(), target.to_string()));
-        let text = m.iter().fold(String::new(), |out, (s, (i, t))| out + &format!("{s}\t{i}\t{t}\n"));
-        std::fs::write(&self.state, text).map_err(|e| format!("cannot record {id} in {}: {e}", self.state.display()))
+    pub fn new(crate_name: String, persona: String, lc: spira_store::lc_call::LcClient) -> Real {
+        Real { crate_name, persona, lc }
     }
 
     fn body(body: &str) -> String {
@@ -120,17 +87,6 @@ impl Real {
 }
 
 impl World for Real {
-    fn latest_release(&self) -> Result<Option<String>, String> {
-        let url = format!("{}/{}", self.registry.trim_end_matches('/'), index_path(&self.crate_name));
-        let mut c = bounded_for("curl", "30");
-        c.args(["-sS", "--max-time", "25", "-w", "\n%{http_code}", &url]);
-        let reply = run(c)?;
-        let Some(index) = index_body(&reply, &url)? else {
-            return Ok(None);
-        };
-        crate::newest_release(index).map(Some).ok_or_else(|| format!("no release of `{}` in {url}", self.crate_name))
-    }
-
     fn site_requirement(&self, site: &Site) -> Result<String, String> {
         let manifest = show(site, &site.file)?;
         crate::parse_requirement(&manifest, &self.crate_name)
@@ -144,30 +100,14 @@ impl World for Real {
             .ok_or_else(|| format!("no `{}` in the lockfile beside {}:{}", self.crate_name, site.git_ref, site.file))
     }
 
-    fn open_bump(&self, site: &Site) -> Result<Option<Open>, String> {
-        let Some((id, target)) = self.bumps.borrow().get(&site.name).cloned() else { return Ok(None) };
-        let out = self.lc.call(&["show", &id]).map_err(String::from)?;
-        match out.code {
-            1 => Ok(None),
-            0 => {
-                let doc: serde_json::Value = serde_json::from_str(&out.out).map_err(|e| format!("{id}: not JSON: {e}"))?;
-                let state = doc["bead"]["state"].as_str().ok_or_else(|| format!("{id}: no state"))?;
-                Ok((!TERMINAL.contains(&state)).then_some(Open { id, target }))
-            }
-            _ => Err(format!("cannot tell whether {id} is open: {}", out.out.trim())),
-        }
-    }
-
-    fn file_bump(&self, site: &Site, title: &str, body: &str, target: &str) -> Result<String, String> {
+    fn file_bump(&self, site: &Site, title: &str, body: &str) -> Result<String, String> {
         let id = bead::door::file_work(&self.lc, &self.persona, &site.name, title, &Self::body(body))?;
-        self.record(site, &id, target)?;
         let _ = bead::door::label_add(&self.lc, &id, LABEL);
         Ok(id)
     }
 
-    fn amend_bump(&self, site: &Site, open: &Open, body: &str, target: &str) -> Result<(), String> {
-        bead::door::amend(&self.lc, &open.id, bead::door::Change::Replace(&Self::body(body)), &format!("kit-bump: target moved to {target}"))?;
-        self.record(site, &open.id, target)
+    fn amend_bump(&self, open: &Open, body: &str, target: &str) -> Result<(), String> {
+        bead::door::amend(&self.lc, &open.id, bead::door::Change::Replace(&Self::body(body)), &format!("kit-bump: target moved to {target}"))
     }
 }
 
@@ -177,7 +117,7 @@ mod store_client_tests {
     use spira_store::lc_call::{LcClient, Reply, Transport};
     use std::sync::{Arc, Mutex};
 
-    /// `show` answered as the store answers it: a row with its state, or exit 1 for none.
+    /// A content door that files `sp-new1` and refuses every other verb.
     pub struct Scripted(pub Mutex<Vec<String>>);
 
     impl Transport for Scripted {
@@ -185,9 +125,7 @@ mod store_client_tests {
             self.0.lock().unwrap().push(argv.join(" "));
             let reply = |code, out: &str| Ok(Reply { code, out: out.into(), err: String::new(), read_ended: false });
             match argv.get(1).map(String::as_str) {
-                Some("sp-open") => reply(0, r#"{"bead":{"state":"READY"}}"#),
-                Some("sp-done") => reply(0, r#"{"bead":{"state":"LANDED"}}"#),
-                Some("sp-gone") => reply(1, "{}"),
+                Some("create") => reply(0, "sp-new1\n"),
                 _ => reply(2, "cannot tell: down"),
             }
         }
@@ -198,22 +136,26 @@ mod store_client_tests {
         (LcClient::over(t.clone(), true), t)
     }
 
-    #[test_id(t0d3vgj)]
+    #[test_id(t40bq55)]
     #[test]
-    fn an_open_bump_is_read_through_the_store_client() {
-        let dir = testkit::TempDir::new("kit-bump-open");
-        let state = dir.path().join("bumps");
-        std::fs::write(&state, "a\tsp-open\t1.2\nb\tsp-done\t1.3\nc\tsp-gone\t1.4\nd\tsp-down\t1.5\n").unwrap();
+    fn filing_a_bump_answers_the_filed_id_and_writes_no_file() {
+        let config = testkit::TempDir::new("kit-bump-filing-config");
+        let runes = spira_config::process::fixture_home().join("runes").display().to_string();
+        let toml = spira_config::process::fixture_toml(config.path(), &[("SPIRA_RUNES_DIR", &runes)]).display().to_string();
+        let _env = testkit::env(&[("SPIRA_TOML", Some(&toml))]);
+        let dir = testkit::TempDir::new("kit-bump-no-file");
         let (lc, t) = client();
-        let real = Real::new("r".into(), "k".into(), state, "builder".into(), lc);
-        let site = |n: &str| Site { name: n.into(), path: String::new(), git_ref: String::new(), file: String::new() };
-        let open = real.open_bump(&site("a")).unwrap().unwrap();
-        assert_eq!((open.id.as_str(), open.target.as_str()), ("sp-open", "1.2"));
-        assert!(real.open_bump(&site("b")).unwrap().is_none());
-        assert!(real.open_bump(&site("c")).unwrap().is_none());
-        assert!(real.open_bump(&site("d")).is_err());
-        assert_eq!(t.0.lock().unwrap().len(), 4);
+        let real = Real::new("k".into(), "builder".into(), lc);
+        let site = Site { name: "app".into(), path: String::new(), git_ref: String::new(), file: String::new() };
+        let before = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let filed = real.file_bump(&site, "update k lockfile to 1.2.0 in app", "text");
+        std::env::set_current_dir(before).unwrap();
+        assert!(t.0.lock().unwrap().iter().any(|c| c.starts_with("content create ")), "the door was not asked to file: {filed:?}");
+        assert_eq!(filed, Ok("sp-new1".to_string()));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
+
 }
 
 #[cfg(test)]

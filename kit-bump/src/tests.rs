@@ -1,46 +1,4 @@
 use super::*;
-use std::cell::RefCell;
-use std::collections::BTreeMap;
-
-fn site(n: &str) -> Site {
-    Site { name: n.into(), path: format!("s/{n}"), git_ref: "main".into(), file: "Cargo.toml".into() }
-}
-
-#[derive(Default)]
-struct Fake {
-    release: String,
-    reqs: BTreeMap<String, String>,
-    locked: BTreeMap<String, String>,
-    open: RefCell<BTreeMap<String, Open>>,
-    filed: RefCell<Vec<(String, String)>>,
-    amended: RefCell<Vec<(String, String)>>,
-}
-
-impl World for Fake {
-    fn latest_release(&self) -> Result<Option<String>, String> {
-        Ok((!self.release.is_empty()).then(|| self.release.clone()))
-    }
-    fn site_requirement(&self, s: &Site) -> Result<String, String> {
-        self.reqs.get(&s.name).cloned().ok_or_else(|| "no requirement".into())
-    }
-    fn site_locked(&self, s: &Site) -> Result<String, String> {
-        self.locked.get(&s.name).cloned().ok_or_else(|| "no lock".into())
-    }
-    fn open_bump(&self, s: &Site) -> Result<Option<Open>, String> {
-        Ok(self.open.borrow().get(&s.name).cloned())
-    }
-    fn file_bump(&self, s: &Site, t: &str, body: &str, target: &str) -> Result<String, String> {
-        let id = format!("sp-bump{}", self.filed.borrow().len());
-        self.filed.borrow_mut().push((t.into(), body.into()));
-        self.open.borrow_mut().insert(s.name.clone(), Open { id: id.clone(), target: target.into() });
-        Ok(id)
-    }
-    fn amend_bump(&self, s: &Site, o: &Open, body: &str, target: &str) -> Result<(), String> {
-        self.amended.borrow_mut().push((o.id.clone(), body.into()));
-        self.open.borrow_mut().insert(s.name.clone(), Open { id: o.id.clone(), target: target.into() });
-        Ok(())
-    }
-}
 
 #[test_id(t4oa2rs)]
 #[test]
@@ -87,7 +45,6 @@ fn the_newest_release_ignores_yanked_and_pre_release_versions() {
 }
 
 mod registry {
-    use super::*;
     use crate::real::index_path;
 
     #[test_id(tpxt7gr)]
@@ -97,23 +54,5 @@ mod registry {
         assert_eq!(index_path("ab"), "2/ab");
         assert_eq!(index_path("abc"), "3/a/abc");
         assert_eq!(index_path("Dumpster-Kit"), "du/mp/dumpster-kit");
-    }
-
-    #[test_id(tbg1nll)]
-    #[test]
-    fn a_404_index_is_no_release_yet_and_other_failures_are_errors() {
-        use crate::real::index_body;
-        assert_eq!(index_body("{\"vers\":\"0.1.0\"}\n200", "u").unwrap(), Some("{\"vers\":\"0.1.0\"}"));
-        assert_eq!(index_body("not found\n404", "u").unwrap(), None);
-        assert!(index_body("oops\n500", "u").is_err());
-        assert!(index_body("", "u").is_err());
-    }
-
-    #[test_id(tfob8f1)]
-    #[test]
-    fn a_pass_over_an_unpublished_crate_files_nothing_and_says_so() {
-        let o = pass(&Fake::default(), &[site("dumpstar")], "dumpster-kit").unwrap();
-        assert!(o.unreleased);
-        assert_eq!(o, Outcome { unreleased: true, ..Outcome::default() });
     }
 }

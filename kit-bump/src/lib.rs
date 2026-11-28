@@ -23,20 +23,15 @@ pub struct Site {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Open {
     pub id: String,
-    pub target: String,
 }
 
 pub trait World {
-    /// The newest non-yanked, non-pre-release version the registry holds for the kit crate;
-    /// `None` when the registry has no entry for it yet.
-    fn latest_release(&self) -> Result<Option<String>, String>;
     /// The version requirement the site's manifest states for the kit crate.
     fn site_requirement(&self, site: &Site) -> Result<String, String>;
     /// The version the site's lockfile resolves the kit crate to.
     fn site_locked(&self, site: &Site) -> Result<String, String>;
-    fn open_bump(&self, site: &Site) -> Result<Option<Open>, String>;
-    fn file_bump(&self, site: &Site, title: &str, body: &str, target: &str) -> Result<String, String>;
-    fn amend_bump(&self, site: &Site, open: &Open, body: &str, target: &str) -> Result<(), String>;
+    fn file_bump(&self, site: &Site, title: &str, body: &str) -> Result<String, String>;
+    fn amend_bump(&self, open: &Open, body: &str, target: &str) -> Result<(), String>;
 }
 
 fn dependency_line<'a>(manifest: &'a str, crate_name: &str) -> Option<&'a str> {
@@ -121,51 +116,4 @@ pub fn body(site: &Site, crate_name: &str, req: &str, locked: &str, release: &st
     }
     b.push_str("\nThis bead is kept current by kit-bump: a later release moves its target instead of filing another. Work that needs the bump in force depends on this bead.\n");
     b
-}
-
-#[derive(Debug, Default, PartialEq)]
-pub struct Outcome {
-    pub filed: Vec<String>,
-    pub amended: Vec<String>,
-    pub current: Vec<String>,
-    pub failed: Vec<String>,
-    pub unreleased: bool,
-}
-
-pub fn pass(w: &dyn World, sites: &[Site], crate_name: &str) -> Result<Outcome, String> {
-    let Some(release) = w.latest_release()? else {
-        return Ok(Outcome { unreleased: true, ..Outcome::default() });
-    };
-    let latest = semver::parse_version(&release).ok_or_else(|| format!("registry version {release:?} is not semver"))?;
-    let mut o = Outcome::default();
-    for site in sites {
-        if let Err(e) = site_pass(w, site, crate_name, &release, latest, &mut o) {
-            o.failed.push(format!("{}: {e}", site.name));
-        }
-    }
-    Ok(o)
-}
-
-fn site_pass(w: &dyn World, site: &Site, crate_name: &str, release: &str, latest: semver::Version, o: &mut Outcome) -> Result<(), String> {
-    let locked = w.site_locked(site)?;
-    let locked_v = semver::parse_version(&locked).ok_or_else(|| format!("locked version {locked:?} is not semver"))?;
-    if locked_v >= latest {
-        o.current.push(site.name.clone());
-        return Ok(());
-    }
-    let req = w.site_requirement(site)?;
-    let breaking = !semver::admits(&req, release).ok_or_else(|| format!("requirement {req:?} is not readable"))?;
-    let text = body(site, crate_name, &req, &locked, release, breaking);
-    match w.open_bump(site)? {
-        Some(op) if op.target == release => o.current.push(site.name.clone()),
-        Some(op) => {
-            w.amend_bump(site, &op, &text, release)?;
-            o.amended.push(site.name.clone());
-        }
-        None => {
-            w.file_bump(site, &title(site, crate_name, release, breaking), &text, release)?;
-            o.filed.push(site.name.clone());
-        }
-    }
-    Ok(())
 }
