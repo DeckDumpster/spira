@@ -98,7 +98,7 @@ mod tests {
     #[test_id(tnbvpsc)]
     #[test]
     fn a_write_to_a_bead_an_edge_or_a_label_is_a_planning_write_and_a_read_is_not() {
-        for w in [&["create", "t"][..], &["update", "sp-a", "--status", "open"], &["close", "sp-a"], &["note", "sp-a", "x"], &["dep", "add", "a", "b"], &["dep", "relate", "a", "b"], &["label", "add", "a", "l"], &["comments", "add", "a", "x"], &["supersede", "a", "--with", "b"], &["remember", "--key", "k", "v"], &["set-state", "a", "k=v"], &["gate", "resolve", "g"], &["dolt", "pull"], &["sync"]] {
+        for w in [&["create", "t"][..], &["update", "sp-a", "--status", "open"], &["close", "sp-a"], &["note", "sp-a", "x"], &["dep", "add", "a", "b"], &["dep", "relate", "a", "b"], &["label", "add", "a", "l"], &["comments", "add", "a", "x"], &["supersede", "a", "--with", "b"], &["remember", "--key", "k", "v"], &["set-state", "a", "k=v"], &["gate", "resolve", "g"], &["forget", "k"], &["gate", "check", "--type", "gh:run"], &["dolt", "pull"], &["sync"]] {
             assert!(is_planning_write(w), "{w:?}");
         }
         for r in [&["show", "sp-a", "--json"][..], &["list", "--all"], &["dep", "list", "a"], &["label", "list", "a"], &["comments", "a"], &["children", "e"], &["sql", "select 1"], &["kv", "set", "k", "1"], &["config", "set", "x", "y"], &["migrate", "schema"], &["gate", "list"], &["--json"], &[]] {
