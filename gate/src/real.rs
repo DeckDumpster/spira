@@ -1491,6 +1491,7 @@ mod tests {
         let _ = &p.t;
     }
 
+    // Exception to the no-binary unit rule: only a real lease from `pool()`, which runs git, can show what its report reads.
     #[test_id(tdnkade)]
     #[test]
     fn a_first_build_a_gate_notes_is_in_the_leased_folders_report_and_not_in_the_next_leases() {
@@ -1512,11 +1513,15 @@ mod tests {
     #[test]
     fn a_first_build_noted_without_a_lease_stays_in_the_trees_own_directory() {
         use crate::ports::World;
-        let p = pool("exit 0\n");
-        p.real.note_first_build(&p.tree.join("target/debug"), 12);
-        assert!(p.own.join(spira_config::build_dir::FIRST_BUILD).is_file());
-        assert!(!p.slot.join("debug").join(spira_config::build_dir::FIRST_BUILD).exists());
-        assert!(p.real.leases.borrow().is_empty());
+        let t = testkit::TempDir::new("gate-no-lease");
+        let (tree, own) = (t.path().join("tree"), t.path().join("own"));
+        std::fs::create_dir_all(tree.join("target")).unwrap();
+        std::fs::create_dir_all(&own).unwrap();
+        std::os::unix::fs::symlink(&own, tree.join("target/debug")).unwrap();
+        let real = super::super::Real::new(t.path().to_path_buf());
+        real.note_first_build(&tree.join("target/debug"), 12);
+        assert!(own.join(spira_config::build_dir::FIRST_BUILD).is_file());
+        assert!(real.leases.borrow().is_empty());
     }
 
     #[test_id(tltngq9)]
