@@ -21,8 +21,10 @@ fn stalled(now: u64) -> Snapshot {
     Snapshot { sentinel: TaskStatus { armed: true, last_fired_ms: Some(now.saturating_sub(3_600_000)), effect_failures: 0 }, ..quiet(now) }
 }
 
+/// A key sighted before, whose alarm has therefore been standing since.
 fn keyed(phase: Phase, seen: u32) -> Carry {
-    Carry { keys: BTreeMap::from([(KEY.to_string(), KeyState { phase, seen, ..KeyState::default() })]), ..Carry::default() }
+    let alarm = heimdall::alarm::Raised { since: 7_080, text: "sighted".into(), clearing: false };
+    Carry { keys: BTreeMap::from([(KEY.to_string(), KeyState { phase, seen, ..KeyState::default() })]), alarms: BTreeMap::from([(KEY.to_string(), alarm)]), ..Carry::default() }
 }
 
 fn json(s: &Snapshot) -> String {
@@ -255,4 +257,46 @@ fn a_clear_the_broker_missed_is_sent_by_a_later_pass_and_then_dropped() {
     assert_eq!((got.topic.as_str(), got.payload.len()), (ALARM, 0));
     let carry = t::recorded::<H>(&r).expect("the carry");
     assert!(carry.alarms.is_empty(), "a delivered clear is forgotten: {carry:?}");
+}
+
+fn standing(carry: &Carry) -> Vec<(&str, bool)> {
+    carry.alarms.iter().map(|(k, r)| (k.as_str(), r.clearing)).collect()
+}
+
+#[test_id(tydaqrg)]
+#[test]
+fn a_store_outage_with_a_raise_pending_still_sets_new_alarms_and_clears_passed_ones() {
+    let h = t::handler::<H>(MIRROR_SET);
+    let now = 7_200_000;
+    let decide = |carry: &Carry, snap: Snapshot, at: u64| task::decide(&h.cfg, carry, &Input::Observed(snap), at);
+    let (carry, _) = decide(&Carry::default(), stalled(now), now).unwrap();
+    let down = Snapshot { db_reachable: false, mirror_age_secs: Some(200_000), ..stalled(now + TICK) };
+
+    let (next, acts) = decide(&carry, down.clone(), now + TICK).unwrap();
+
+    assert_eq!(names(&acts), [task::ALARMS], "the alarms go out; nothing is written to the store");
+    assert_eq!(standing(&next), [("mirror-stale", false), (KEY, false)]);
+    assert_eq!(next.keys, carry.keys, "the raise still waits for the store");
+    let refused = decide(&next, down, now + 2 * TICK).unwrap_err();
+    assert!(refused.contains("unreachable"), "{refused}");
+
+    let passed = Snapshot { db_reachable: false, mirror_age_secs: None, ..stalled(now + 3 * TICK) };
+    let (next, acts) = decide(&next, passed, now + 3 * TICK).unwrap();
+    assert_eq!(names(&acts), [task::ALARMS]);
+    assert_eq!(standing(&next), [("mirror-stale", true), (KEY, false)]);
+}
+
+#[test_id(trlkqru)]
+#[test]
+fn unread_gate_rows_keep_a_streak_alarm_the_store_does_not_hold_yet() {
+    let h = t::handler::<H>(SET);
+    let rows = ["a", "b", "c", "d"].iter().map(|b| serde_json::json!({ "bead": b, "status": "FAIL", "reason": "branch-red", "red_unit": "u", "red_line": "l" })).collect();
+    let red = Snapshot { gate_runs: vec![("spira".into(), rows)], ..quiet(0) };
+    let (carry, _) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(red), 0).unwrap();
+    assert_eq!(standing(&carry), [("gate-red-streak/spira", false)]);
+
+    let unread = Snapshot { gate_runs_unread: true, ..quiet(TICK) };
+    let (next, _) = task::decide(&h.cfg, &carry, &Input::Observed(unread), TICK).unwrap();
+
+    assert_eq!(next.alarms, carry.alarms);
 }

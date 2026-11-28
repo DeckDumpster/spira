@@ -54,8 +54,9 @@
 //! | `reconcile.heimdall.alarms` → retained `alarm/<key>` on the broker, as `heimdall` (`heimdall::alarm`); a memory-only probe, sent every tick while an alarm or an undelivered clear is carried | host | 10 s | `heimdall/alarms/<now>` | nothing: an unreachable broker is logged and is not the effect's failure |
 //!
 //! An alarm follows the sighting, not the debounce: it is set by the first pass that sees the key
-//! firing and cleared by the first that does not. A pass refused for an unreachable store changes
-//! no alarm.
+//! firing and cleared by the first that does not. The topics do not wait for the store: with it
+//! unreachable and a raise pending, a pass is refused only when its alarms have nothing new to
+//! send; otherwise it sends and carries them, and leaves the debounce counters as they were.
 //!
 //! ## Silence
 //!
@@ -308,7 +309,7 @@ fn act(name: &str, key: String, input: &impl Serialize, deadline_ms: u64, probe:
 /// A raise is a journaled effect; a refresh rewrites an alert already raised and goes as a
 /// memory-only probe, its time carried. With the store unreachable nothing is written to it:
 /// a pass that would raise is refused naming `unreachable`, and any other writes the fallback
-/// channel. A raise that fails is retried by the next refresh.
+/// channel. See Act for what the alarms do meanwhile. A raise that fails is retried by the next refresh.
 pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     let snap = match input {
         Input::Observed(s) => s,
@@ -334,6 +335,10 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
     if !snap.db_reachable {
         let would = heimdall::hosted::raises(&heimdall::hosted::step(now, confirm, clear_n, refresh, true, &firing, &prior));
         if !would.is_empty() {
+            let unsent = alarms != carry.alarms || alarms.values().any(|a| a.clearing);
+            if let Some(announce) = announce.filter(|_| unsent) {
+                return Ok((Carry { alarms, ..carry.clone() }, vec![announce]));
+            }
             return Err(format!("{NAME}: the store is unreachable; the raise of {} is refused and waits for it", would.join(", ")));
         }
         let doc = heimdall::fallback::build(now, false, None, &firing);
