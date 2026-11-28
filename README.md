@@ -68,7 +68,7 @@ Spira keeps state and content apart.
 |---|---|---|
 | **Control store** | Every lifecycle record (bead, delivery, round, ask, mending), readiness and claims, holds, the audit log of every applied and refused event, locks, and the scheduler's journal | `spira-lc`, and only `spira-lc` |
 | **Content database** | A bead's words: title, body, labels, priority, dependency edges, notes; statutes and runbooks | `bead` / `work` (which go through `spira-lc`) |
-| **Run directory** | Tree certificates, round working files, gate queue, time series, spans, watcher logs | the program that owns each file |
+| **Run directory** | Tree certificates, round working files, gate queue, time series, log records, watcher logs | the program that owns each file |
 | **Git repositories** | Branches `spira/<id>`, round branches, the landing ref, archived rounds | dwarves (their own branch), the queue (rounds and landing) |
 | **Releases** | Immutable release directories and the `current` link | `release` |
 

@@ -24,13 +24,13 @@ struct Counters {
 }
 
 /// Reads the store ended at its limit, reads that ran past it without being ended, and reads a WAL restart's gate hold ended.
-type ReadCounts = (u64, u64, u64);
+pub(crate) type ReadCounts = (u64, u64, u64);
 
 /// What a key has served: calls, milliseconds, calls over the answer limit, and child processes started.
-type Counts = (u64, u64, u64, u64);
+pub(crate) type Counts = (u64, u64, u64, u64);
 
 /// (verb, caller, task): what a request is counted under.
-type Key = (String, String, String);
+pub(crate) type Key = (String, String, String);
 
 static COUNTERS: Mutex<Counters> = Mutex::new(Counters { verbs: BTreeMap::new(), tasks: BTreeMap::new(), reads: BTreeMap::new(), gate_max: BTreeMap::new() });
 
@@ -64,6 +64,15 @@ fn push_children_count(started: u64, pushed: &mut u64, push: impl Fn(&[spira_ote
     if push(&[children_started_series(started, *pushed, std::time::SystemTime::now())]).is_ok() {
         *pushed = started;
     }
+}
+
+/// Request spans lost to a full queue or a failed push since this process started.
+pub const SPANS_DROPPED: &str = "spira_otel_spans_dropped_total";
+
+/// Pushes the cumulative dropped-span count, 0 included.
+pub fn push_spans_dropped(sink: &spira_otel::metrics::MetricsSink) {
+    let series = spira_otel::metrics::Series { name: SPANS_DROPPED.into(), value: spira_otel::dropped() as f64, labels: vec![("service".to_string(), "spira-lc".to_string())], at: std::time::SystemTime::now() };
+    let _ = sink.try_push_series(&[series]);
 }
 
 /// How often the counts are pushed over OTLP.

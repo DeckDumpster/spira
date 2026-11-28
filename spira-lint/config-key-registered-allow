@@ -459,8 +459,6 @@ SPIRA_OOM_HOLD_SECS sentinel/src/tower.rs
 SPIRA_OOM_HOLD_SECS watchtower/src/main.rs
 SPIRA_OOM_UNITS sentinel/src/tower.rs
 SPIRA_OOM_UNITS watchtower/src/main.rs
-SPIRA_OTEL_DIR spira/otel-query.sh
-SPIRA_OTEL_NOW spira/otel-query.sh
 SPIRA_PANEL spira-config/src/convert.rs
 SPIRA_PATH_TAIL install/src/install_units.rs
 SPIRA_PATH_TAIL install/src/values.rs
