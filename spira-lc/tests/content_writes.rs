@@ -1698,6 +1698,8 @@ fn a_second_filing_of_a_waiting_outcome_is_folded_into_the_first_and_leaves_no_n
     let defect = first_line(&out);
     let walked = out.lines().nth(1).and_then(|l| l.split_whitespace().next()).unwrap_or_else(|| panic!("no review filed: {out}")).to_string();
     assert_eq!(blockers(&walk), std::slice::from_ref(&defect));
+    // A pair holds one edge, so one the follow-up already has onto the survivor is in the way.
+    ok(&["content", "dep", "add", &defect, &f1], None);
     let (rc, out) = review(&walked, &format!("### Amend {f1}: Fix x seen on a walk\n\nseen on a walk\n"));
     assert_eq!(rc, 0, "{out}");
     assert_eq!(blockers(&walk), std::slice::from_ref(&f1), "{defect} was folded, and the walk still waits for the defect");

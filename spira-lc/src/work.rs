@@ -984,7 +984,7 @@ struct Item {
     superseded_by: Option<String>,
     repo: Option<String>,
     title: String,
-    /// The open items it has a `blocks` edge onto.
+    /// The items it has a `blocks` edge onto that have not ended.
     waits_on: Vec<String>,
 }
 
@@ -993,7 +993,17 @@ fn filed_item(id: &str) -> Result<Item, String> {
     let state = row.as_ref().map(|r| r.state);
     let superseded_by = row.filter(|r| r.state == bead::BeadState::Superseded).and_then(|r| r.reason);
     let repo = crate::plane::repo(id).map_err(|e| format!("{e:?}"))?;
-    Ok(Item { state, superseded_by, repo, title: crate::bd::title(id)?.unwrap_or_default(), waits_on: crate::bd::open_blockers(id)? })
+    Ok(Item { state, superseded_by, repo, title: crate::bd::title(id)?.unwrap_or_default(), waits_on: unended_blockers(id)? })
+}
+
+fn unended_blockers(id: &str) -> Result<Vec<String>, String> {
+    let mut unended = Vec::new();
+    for (on, _) in crate::bd::edges(id)?.into_iter().filter(|(_, kind)| kind == "blocks") {
+        if !crate::plane::bead(&on).map_err(|e| format!("{e:?}"))?.is_some_and(|r| r.state.is_terminal()) {
+            unended.push(on);
+        }
+    }
+    Ok(unended)
 }
 
 /// Retires `dep` as SUPERSEDED by `survivor`, on its row and then in the content store. A row
@@ -1005,6 +1015,10 @@ fn supersede_into(dep: &str, survivor: &str) -> Result<(), String> {
             crate::bd::write(&["dep", "add", &waiter.id, survivor, "--type", "blocks"])?;
         }
         crate::bd::write(&["dep", "remove", &waiter.id, dep])?;
+    }
+    // A pair holds one edge, so any other would stop the `supersedes` edge below.
+    if crate::bd::edges(dep)?.iter().any(|(on, kind)| on == survivor && kind != "supersedes") {
+        crate::bd::write(&["dep", "remove", dep, survivor])?;
     }
     let row = crate::plane::bead(dep).map_err(|e| format!("{e:?}"))?;
     if !row.is_some_and(|r| r.state == bead::BeadState::Superseded && r.reason.as_deref() == Some(survivor)) {
@@ -1107,6 +1121,12 @@ fn apply_reviews(
                 }
                 // A follow-up that ended some other way has nothing to retire, and was not folded.
                 if !retire {
+                    if let Some((_, bound)) = filed {
+                        let moved = format!("{survivor} (\"{survivor_title}\") took the evidence of {dep}");
+                        if let Err(e) = note(bound, &moved) {
+                            return Some((CANNOT_TELL, format!("cannot tell: {request} was left WORKING; the evidence was noted on {survivor}, but {bound} was not told `{moved}` (run work done again): {e}")));
+                        }
+                    }
                     crate::bd::record_event("spira_skuld_amendments_applied", "done");
                     continue;
                 }
@@ -2978,7 +2998,8 @@ mod tests {
         for (state, successor) in [(bead::BeadState::Dropped, None), (bead::BeadState::Superseded, Some("sp-other"))] {
             let (out, effects) = amend_review(ended(state, successor, bead::BeadState::Ready), Ok(()));
             assert_eq!(out, None);
-            assert_eq!(effects.iter().map(|e| (e.0, e.1.as_str())).collect::<Vec<_>>(), [("note", "sp-x")]);
+            assert_eq!(effects.iter().map(|e| (e.0, e.1.as_str())).collect::<Vec<_>>(), [("note", "sp-x"), ("note", "sp-b0")]);
+            assert_eq!(effects[1].2, "sp-x (\"title of sp-x\") took the evidence of sp-f1");
         }
         let (out, effects) = amend_review(ended(bead::BeadState::Dropped, None, bead::BeadState::Landed), Ok(()));
         assert_eq!(out.unwrap().0, super::REFUSED);
