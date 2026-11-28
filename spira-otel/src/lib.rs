@@ -12,6 +12,7 @@ pub mod logs;
 pub mod metrics;
 pub mod oneshot;
 pub mod ops;
+pub(crate) mod push;
 pub mod query;
 pub mod rounds;
 pub mod run;
@@ -20,7 +21,6 @@ pub mod vlogs;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
@@ -30,7 +30,7 @@ use opentelemetry_proto::tonic::resource::v1::Resource;
 use opentelemetry_proto::tonic::trace::v1::{span::SpanKind, status::StatusCode, ResourceSpans, ScopeSpans, Span, Status};
 use prost::Message;
 
-static DROPPED: AtomicU64 = AtomicU64::new(0);
+static SPAN_LOST: push::Lost = push::Lost::new();
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 const TRACES_PATH: &str = "/v1/traces"; // not a path: OTLP traces URL path
@@ -38,31 +38,7 @@ const LOGS_PATH: &str = "/v1/logs"; // not a path: OTLP logs URL path
 
 /// Queues one service's spans and pushes them to a Collector.
 pub struct Sink {
-    inner: Arc<Inner>,
-    queue: Arc<Queue>,
-}
-
-struct Inner {
-    addr: String,
-    service: String,
-    deadline: Duration,
-    dropped: AtomicU64,
-}
-
-/// Spans waiting for the writer thread; `bytes` is their encoded size.
-#[derive(Default)]
-struct Pending {
-    spans: Vec<Span>,
-    bytes: usize,
-    busy: bool,
-    flushers: usize,
-}
-
-#[derive(Default)]
-struct Queue {
-    pending: Mutex<Pending>,
-    wake: Condvar,
-    done: Condvar,
+    queue: push::Push<Span>,
 }
 
 /// The most encoded span bytes a sink holds before it drops.
@@ -124,7 +100,7 @@ pub struct Call<'a> {
 
 /// Spans lost to a full queue or a failed push since this process started.
 pub fn dropped() -> u64 {
-    DROPPED.load(Ordering::Relaxed)
+    SPAN_LOST.total()
 }
 
 impl Sink {
@@ -134,77 +110,38 @@ impl Sink {
     }
 
     fn with_deadline(endpoint: &str, service: &str, deadline: Duration) -> Sink {
-        let inner = Arc::new(Inner { addr: vlogs::host_port(endpoint), service: service.to_string(), deadline, dropped: AtomicU64::new(0) });
-        let queue = Arc::new(Queue::default());
-        let (i, q) = (inner.clone(), queue.clone());
-        std::thread::Builder::new().name("otel-writer".into()).spawn(move || writer_loop(&i, &q)).expect("the span writer thread starts");
-        Sink { inner, queue }
+        let (addr, service) = (vlogs::host_port(endpoint), service.to_string());
+        let bounds = push::Bounds { items: None, bytes: Some(QUEUE_MAX_BYTES), batch: None, tick: Some(APPEND_EVERY) };
+        let queue = push::Push::new("otel-writer", bounds, Some(&SPAN_LOST), move |spans| push_spans(&addr, &service, spans, deadline));
+        assert!(queue.started(), "the span writer thread starts");
+        Sink { queue }
     }
 
     /// Spans this sink lost; `dropped()` counts the process.
     pub fn dropped_here(&self) -> u64 {
-        self.inner.dropped.load(Ordering::Relaxed)
+        self.queue.lost().total()
     }
 
     /// Queues one span; a span the queue cannot take is counted, never returned.
     pub fn emit(&self, call: &Call) {
         let span = span_of(call);
         let len = span.encoded_len();
-        let mut p = self.queue.pending.lock().unwrap_or_else(|e| e.into_inner());
-        if p.bytes + len > QUEUE_MAX_BYTES {
-            drop(p);
-            return self.inner.drop_spans(1);
-        }
-        p.bytes += len;
-        p.spans.push(span);
-        self.queue.wake.notify_one();
+        self.queue.emit(span, len);
     }
 
     /// Blocks until everything queued so far has been pushed or dropped, or `FLUSH_BOUND`
     /// passes: a Collector that never answers must not hold a stopping process.
     pub fn flush(&self) {
-        let mut p = self.queue.pending.lock().unwrap_or_else(|e| e.into_inner());
-        p.flushers += 1;
-        self.queue.wake.notify_one();
-        let (mut p, _) = self.queue.done.wait_timeout_while(p, FLUSH_BOUND, |p| !p.spans.is_empty() || p.busy).unwrap_or_else(|e| e.into_inner());
-        p.flushers -= 1;
+        self.queue.flush(FLUSH_BOUND);
     }
 }
 
-fn writer_loop(inner: &Inner, queue: &Queue) {
-    let mut p = queue.pending.lock().unwrap_or_else(|e| e.into_inner());
-    loop {
-        while p.spans.is_empty() {
-            p = queue.wake.wait(p).unwrap_or_else(|e| e.into_inner());
-        }
-        let batch = std::mem::take(&mut p.spans);
-        p.bytes = 0;
-        p.busy = true;
-        drop(p);
-        inner.push(batch);
-        p = queue.pending.lock().unwrap_or_else(|e| e.into_inner());
-        p.busy = false;
-        queue.done.notify_all();
-        p = queue.wake.wait_timeout_while(p, APPEND_EVERY, |p| p.flushers == 0).unwrap_or_else(|e| e.into_inner()).0;
-    }
-}
-
-impl Inner {
-    fn drop_spans(&self, n: u64) {
-        DROPPED.fetch_add(n, Ordering::Relaxed);
-        self.dropped.fetch_add(n, Ordering::Relaxed);
-    }
-
-    /// Both posts are tried; a batch that misses either is lost, and counted once.
-    fn push(&self, spans: Vec<Span>) {
-        let n = spans.len() as u64;
-        let logs = wide_events(&self.service, &spans).encode_to_vec();
-        let traces = traces(&self.service, spans).encode_to_vec();
-        let sent = [(TRACES_PATH, traces), (LOGS_PATH, logs)].map(|(path, body)| metrics::post(&self.addr, path, &body, self.deadline).is_ok());
-        if sent.contains(&false) {
-            self.drop_spans(n);
-        }
-    }
+/// Both posts are tried; a batch that misses either is not delivered.
+fn push_spans(addr: &str, service: &str, spans: Vec<Span>, deadline: Duration) -> bool {
+    let logs = wide_events(service, &spans).encode_to_vec();
+    let traces = traces(service, spans).encode_to_vec();
+    let sent = [(TRACES_PATH, traces), (LOGS_PATH, logs)].map(|(path, body)| metrics::post(addr, path, &body, deadline).is_ok());
+    !sent.contains(&false)
 }
 
 fn traces(service: &str, spans: Vec<Span>) -> ExportTraceServiceRequest {
@@ -529,9 +466,9 @@ mod tests {
             sink.emit(&Call { content_queries: 1, content_query_max_shape: &shape, ..call(0) });
         }
         assert_eq!(collector.posts().len(), 1, "the first request is still unanswered");
-        let held = sink.queue.pending.lock().unwrap().bytes;
+        let (spans, held) = sink.queue.queued();
         assert!(held <= QUEUE_MAX_BYTES && held > QUEUE_MAX_BYTES - (17 << 10), "{held}");
-        assert_eq!(sink.dropped_here(), 1000 - sink.queue.pending.lock().unwrap().spans.len() as u64);
+        assert_eq!(sink.dropped_here(), 1000 - spans as u64);
         assert!(sink.dropped_here() > 0);
     }
 
