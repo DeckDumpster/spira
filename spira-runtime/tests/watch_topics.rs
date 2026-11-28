@@ -102,8 +102,15 @@ fn is_clear(d: &Delivered, topic: &str) -> bool {
     d.topic == topic && d.payload.is_empty()
 }
 
+/// What the one retained value of a holding condition reads as.
+struct Said {
+    topic: &'static str,
+    text_has: &'static str,
+}
+
 /// Three passes over a holding condition, then the pass where it stops.
-fn holds_once_then_clears(mut row: Row, broker: &Broker, mut watching: Subscriber, held: &str, gone: &str, topic: &str, text_has: &str, level: &str) {
+fn holds_once_then_clears(mut row: Row, broker: &Broker, mut watching: Subscriber, held: &str, gone: &str, said: Said) {
+    let Said { topic, text_has } = said;
     for _ in 0..3 {
         row.pass(held);
     }
@@ -112,7 +119,7 @@ fn holds_once_then_clears(mut row: Row, broker: &Broker, mut watching: Subscribe
     assert_eq!(at_topic, topic);
     let value = payload(value);
     assert!(value["text"].as_str().unwrap().contains(text_has) && !value["text"].as_str().unwrap().contains("[watch:"), "{value}");
-    assert_eq!(value["level"], level);
+    assert_eq!(value["level"], "P2");
     assert!(value["since"].is_u64() && value["at"].is_u64(), "{value}");
     assert_eq!(value.as_object().unwrap().len(), 4, "{value}");
     let first = watching.recv();
@@ -131,7 +138,7 @@ fn a_stale_image_is_one_retained_value_while_it_holds_and_none_once_it_reads_fre
     let broker = Broker::up();
     let watching = Subscriber::to(broker.socket(), &["watch/#"]);
     let row = ami_row(service(&broker));
-    holds_once_then_clears(row, &broker, watching, &stale(), &ami_world(ami::Verdict::Fresh), "watch/round-ami-stale/all", "ami-0abc is stale; EC2 rounds refuse", "P2");
+    holds_once_then_clears(row, &broker, watching, &stale(), &ami_world(ami::Verdict::Fresh), Said { topic: "watch/round-ami-stale/all", text_has: "ami-0abc is stale; EC2 rounds refuse" });
 }
 
 #[test_id(tdcpf0f)]
@@ -141,7 +148,7 @@ fn an_over_claimed_item_is_one_retained_value_while_it_is_live_and_none_once_it_
     let watching = Subscriber::to(broker.socket(), &["watch/#"]);
     let row = claim_row(service(&broker));
     let held = claim_world(&[("sp-a", 5), ("sp-under", 3)]);
-    holds_once_then_clears(row, &broker, watching, &held, &claim_world(&[("sp-under", 3)]), "watch/claim-count/sp-a", "CLAIMS sp-a: claimed by a builder 5 times", "P2");
+    holds_once_then_clears(row, &broker, watching, &held, &claim_world(&[("sp-under", 3)]), Said { topic: "watch/claim-count/sp-a", text_has: "CLAIMS sp-a: claimed by a builder 5 times" });
 }
 
 /// Restarts the broker, which keeps nothing, and requires every value `row` held to come back.
