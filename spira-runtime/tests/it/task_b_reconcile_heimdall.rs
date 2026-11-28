@@ -189,7 +189,7 @@ fn alarming(broker: &testkit::broker::Broker) -> (runtime::taskrig::TaskRig, Wor
     use runtime::host::EffectRunner;
     let fx = spira_runtime::Effects::default();
     let options = spira_pub::Options::new(broker.socket(), std::sync::Arc::new(runtime::ports::VirtualClock::new(0)), Box::new(runtime::ports::SeededRng::new(1)));
-    assert!(fx.heimdall_alarms.set(Some(spira_pub::Publisher::with("heimdall", options).unwrap())).is_ok());
+    assert!(fx.heimdall_alarms.set(Some(heimdall::alarm::Announcer::new(spira_pub::Publisher::with("heimdall", options).unwrap()))).is_ok());
     // Halted, so the unarmed sentinel is not a second alarm.
     let snap = Snapshot { world_halted: true, ..serde_json::from_str(&mirror_stale()).unwrap() };
     let world: World = std::sync::Arc::new(std::sync::Mutex::new(snap));
@@ -233,7 +233,7 @@ fn a_firing_key_is_one_unchanged_alarm_across_passes_and_a_restart_until_it_pass
     pass(&mut r);
     assert_eq!(alarms(&broker), raised, "neither an aging title nor a restart moves the value");
 
-    world.lock().unwrap().mirror_age_secs = None;
+    world.lock().unwrap().mirror_age_secs = Some(10);
     pass(&mut r);
     assert_eq!(alarms(&broker), vec![]);
 }
@@ -244,7 +244,7 @@ fn a_clear_the_broker_missed_is_sent_by_a_later_pass_and_then_dropped() {
     let mut broker = testkit::broker::Broker::up();
     let (mut r, world) = alarming(&broker);
     broker.stop();
-    world.lock().unwrap().mirror_age_secs = None;
+    world.lock().unwrap().mirror_age_secs = Some(10);
     pass(&mut r);
     let carry = t::recorded::<H>(&r).expect("the carry");
     assert!(carry.alarms.contains_key("mirror-stale"), "the undelivered clear is carried: {carry:?}");
@@ -280,7 +280,7 @@ fn a_store_outage_with_a_raise_pending_still_sets_new_alarms_and_clears_passed_o
     let refused = decide(&next, down, now + 2 * TICK).unwrap_err();
     assert!(refused.contains("unreachable"), "{refused}");
 
-    let passed = Snapshot { db_reachable: false, mirror_age_secs: None, ..stalled(now + 3 * TICK) };
+    let passed = Snapshot { db_reachable: false, mirror_age_secs: Some(10), ..stalled(now + 3 * TICK) };
     let (next, acts) = decide(&next, passed, now + 3 * TICK).unwrap();
     assert_eq!(names(&acts), [task::ALARMS]);
     assert_eq!(standing(&next), [("mirror-stale", true), (KEY, false)]);
@@ -299,4 +299,42 @@ fn unread_gate_rows_keep_a_streak_alarm_the_store_does_not_hold_yet() {
     let (next, _) = task::decide(&h.cfg, &carry, &Input::Observed(unread), TICK).unwrap();
 
     assert_eq!(next.alarms, carry.alarms);
+}
+
+#[test_id(t3zrs99)]
+#[test]
+fn an_alarm_neither_the_broker_nor_the_store_could_take_arrives_when_the_broker_returns() {
+    let mut broker = testkit::broker::Broker::up();
+    let (mut r, world) = alarming(&broker);
+    broker.stop();
+    {
+        let mut snap = world.lock().unwrap();
+        snap.db_reachable = false;
+        snap.world_halted = false;
+    }
+    pass(&mut r);
+
+    broker.restart();
+
+    // No further pass: the wait is on the publisher's own reconnect.
+    let mut raw = testkit::broker::Subscriber::to(broker.socket(), &["alarm/sentinel-stale"]);
+    assert!(!raw.recv().payload.is_empty());
+}
+
+#[test_id(t4ef5vc)]
+#[test]
+fn a_source_that_could_not_be_read_neither_clears_nor_moves_its_alarm() {
+    let run = testkit::TempDir::new("heimdall-unread");
+    std::fs::write(run.join("strands.json"), "{").unwrap();
+    let h = t::handler::<H>(SET);
+    let held = |key: &str| (key.to_string(), heimdall::alarm::Raised { since: 7, text: "held".into(), clearing: false });
+    let carry = Carry { alarms: ["sentinel-stale", "mirror-stale", "lease-unreclaimed"].into_iter().map(held).collect(), ..Carry::default() };
+
+    // No scheduler answers on the control socket, so neither of its tasks can be judged.
+    let (next, _) = task::decide(&h.cfg, &carry, &Input::Observed(observed(run.path())), NOW_MS).unwrap();
+
+    assert_eq!(next.alarms, carry.alarms);
+    std::fs::remove_file(run.join("strands.json")).unwrap();
+    let (next, _) = task::decide(&h.cfg, &carry, &Input::Observed(observed(run.path())), NOW_MS).unwrap();
+    assert_eq!(standing(&next), [("lease-unreclaimed", true), ("mirror-stale", false), ("sentinel-stale", false)], "no strands file is no strands");
 }

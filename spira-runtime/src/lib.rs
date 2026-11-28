@@ -244,7 +244,7 @@ pub struct Effects {
     /// no broker.
     pub watch_topics: OnceLock<Option<watch_topics::WatchTopics>>,
     /// heimdall's `alarm/<key>` publisher, built at its first use, as `pr_topics` is.
-    pub heimdall_alarms: OnceLock<Option<spira_pub::Publisher>>,
+    pub heimdall_alarms: OnceLock<Option<heimdall::alarm::Announcer>>,
 }
 
 /// The mail environment operator notes are sent under: no bd (a note needs no tracking bead, and an empty db keeps the mailer from launching one), and the repeat guard overridden because consecutive merges normalise to one subject.
@@ -277,8 +277,14 @@ impl Effects {
     /// Puts `alarm/<key>` on the broker, answering the keys whose clear it took.
     pub(crate) fn heimdall_alarms(&self, input: &str) -> Result<String, String> {
         let alarms: heimdall::alarm::Alarms = serde_json::from_str(input).map_err(|e| e.to_string())?;
-        let build = || spira_pub::Publisher::new("heimdall").inspect_err(|e| eprintln!("heimdall alarm topics: nothing will be published: {e}")).ok();
-        let cleared = self.heimdall_alarms.get_or_init(build).as_ref().map_or_else(Vec::new, |p| heimdall::alarm::deliver(p, &alarms));
+        let build = || spira_pub::Publisher::new("heimdall").inspect_err(|e| eprintln!("heimdall alarm topics: {e}")).ok().map(heimdall::alarm::Announcer::new);
+        let cleared = match self.heimdall_alarms.get_or_init(build) {
+            Some(announcer) => announcer.deliver(&alarms),
+            None => {
+                eprintln!("heimdall alarm topics: not published: there is no publisher");
+                Vec::new()
+            }
+        };
         serde_json::to_string(&cleared).map_err(|e| e.to_string())
     }
 

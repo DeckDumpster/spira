@@ -4,11 +4,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use inbox_rules::Bus;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use spira_pub::{Class, PubError, Publisher};
 
 use crate::classify::Firing;
@@ -38,8 +39,8 @@ pub struct Raised {
 pub type Alarms = BTreeMap<String, Raised>;
 
 /// The alarms after a pass that found `firing`: a key that stopped is marked for clearing.
-/// With `gate_unread`, a streak that was standing stands: its check did not run.
-pub fn step(before: &Alarms, firing: &[Firing], gate_unread: bool, now: i64) -> Alarms {
+/// A standing key that `unread` names stands: its check did not run, so it has not passed.
+pub fn step(before: &Alarms, firing: &[Firing], unread: impl Fn(&str) -> bool, now: i64) -> Alarms {
     let standing = |key: &str| before.get(key).filter(|r| !r.clearing).cloned();
     let mut next: Alarms = firing
         .iter()
@@ -47,26 +48,56 @@ pub fn step(before: &Alarms, firing: &[Firing], gate_unread: bool, now: i64) -> 
         .collect();
     for (key, held) in before {
         if !next.contains_key(key) {
-            let stands = gate_unread && !held.clearing && streak::is_streak(key);
+            let stands = !held.clearing && unread(key);
             next.insert(key.clone(), Raised { clearing: !stands, ..held.clone() });
         }
     }
     next
 }
 
-/// [`send`], answering the keys whose clear the broker took. A failure is logged here or by the
-/// publisher, and takes none.
-pub fn deliver(p: &Publisher, alarms: &Alarms) -> Vec<String> {
-    match send(p, alarms) {
-        Ok(()) => alarms.iter().filter(|(_, r)| r.clearing).map(|(k, _)| k.clone()).collect(),
-        Err(e) => {
-            eprintln!("heimdall alarm topics: {e}");
-            Vec::new()
+/// A long-lived process's publisher: what it was last given goes out again whenever it
+/// reconnects, whether or not another pass has run.
+pub struct Announcer {
+    publisher: Publisher,
+    held: Arc<Mutex<Alarms>>,
+}
+
+fn lock(m: &Mutex<Alarms>) -> MutexGuard<'_, Alarms> {
+    m.lock().unwrap_or_else(|e| e.into_inner()) // loop-safe: taken only by effects on the pool and the publisher thread
+}
+
+impl Announcer {
+    pub fn new(publisher: Publisher) -> Announcer {
+        let held = Arc::new(Mutex::new(Alarms::new()));
+        let latest = held.clone();
+        publisher.on_connect(move |again| {
+            for (topic, value) in messages(&lock(&latest)) {
+                // A refusal is the publisher's to log; nothing here can mend it.
+                let _ = match value {
+                    Some(value) => again.publish(Class::State, &topic, &value),
+                    None => again.clear(&topic),
+                };
+            }
+        });
+        Announcer { publisher, held }
+    }
+
+    /// [`send`], answering the keys whose clear the broker took. A failure is logged here or by
+    /// the publisher, and takes none.
+    pub fn deliver(&self, alarms: &Alarms) -> Vec<String> {
+        // Released before the publish: the connect hook takes this lock while a publish waits.
+        *lock(&self.held) = alarms.clone();
+        match send(&self.publisher, alarms) {
+            Ok(()) => alarms.iter().filter(|(_, r)| r.clearing).map(|(k, _)| k.clone()).collect(),
+            Err(e) => {
+                eprintln!("heimdall alarm topics: {e}");
+                Vec::new()
+            }
         }
     }
 }
 
-/// Forgets the clears [`deliver`] answered. A key that has fired again since is kept.
+/// Forgets the clears [`Announcer::deliver`] answered. A key that has fired again since is kept.
 pub fn delivered(alarms: &mut Alarms, cleared: &[String]) {
     alarms.retain(|k, r| !(r.clearing && cleared.contains(k)));
 }
@@ -125,7 +156,7 @@ pub fn publish(heartbeat: &Path, firing: &[Firing], gate_unread: bool, bus: &Bus
     for key in recorded.into_iter().filter(|k| !(gate_unread && streak::is_streak(k))) {
         before.entry(key).or_insert(Raised { since: now, text: String::new(), clearing: true });
     }
-    let mut next = step(&before, firing, gate_unread, now);
+    let mut next = step(&before, firing, |k| gate_unread && streak::is_streak(k), now);
     if !next.is_empty() {
         match bus.publisher("heimdall").and_then(|p| send(&p, &next)) {
             Ok(()) => next.retain(|_, r| !r.clearing),
@@ -135,16 +166,22 @@ pub fn publish(heartbeat: &Path, firing: &[Firing], gate_unread: bool, bus: &Bus
     Published { line: line(&next), errors }
 }
 
+/// Each topic's value, or `None` to clear it. A topic two keys share is cleared only when
+/// neither stands.
+fn messages(alarms: &Alarms) -> Vec<(String, Option<Value>)> {
+    let live: Vec<(String, Option<Value>)> = alarms.iter().filter(|(_, r)| !r.clearing).map(|(k, r)| (topic(k), Some(json!({ "text": r.text, "since": r.since, "at": r.since })))).collect();
+    let taken: BTreeSet<&String> = live.iter().map(|(t, _)| t).collect();
+    let clears: Vec<(String, Option<Value>)> = alarms.iter().filter(|(_, r)| r.clearing).map(|(k, _)| topic(k)).filter(|t| !taken.contains(t)).map(|t| (t, None)).collect();
+    live.into_iter().chain(clears).collect()
+}
+
 /// Stops at the first failure, so a broker that is not answering costs the pass one wait.
 fn send(p: &Publisher, alarms: &Alarms) -> Result<(), PubError> {
-    let mut live = BTreeSet::new();
-    for (key, r) in alarms.iter().filter(|(_, r)| !r.clearing) {
-        let topic = topic(key);
-        p.publish(Class::State, &topic, &json!({ "text": r.text, "since": r.since, "at": r.since }))?;
-        live.insert(topic);
-    }
-    for topic in alarms.iter().filter(|(_, r)| r.clearing).map(|(k, _)| topic(k)).filter(|t| !live.contains(t)) {
-        p.clear(&topic)?;
+    for (topic, value) in messages(alarms) {
+        match value {
+            Some(value) => p.publish(Class::State, &topic, &value)?,
+            None => p.clear(&topic)?,
+        }
     }
     p.flush(FLUSH)
 }
