@@ -3,7 +3,7 @@
 use rusqlite::{params, Connection, Transaction, TransactionBehavior};
 use sha2::{Digest, Sha256};
 
-use crate::id::{check_test_id, valid_bead_id, valid_test_id};
+use crate::id::{check_test_id, valid_bead_id};
 
 const SCHEMA_VERSION: i64 = 2;
 const COLUMNS: &str = "test, state, since, until, bead, reason, actor";
@@ -112,7 +112,7 @@ fn migrate_name_keys(conn: &Connection) -> Result<(), String> {
         rows.collect::<Result<_, _>>().map_err(sql)?
     };
     for name in old {
-        let id = name.rsplit("::").next().filter(|l| valid_test_id(l));
+        let id = spira_config::unit_tier::test_id_of(&name);
         match id {
             Some(id) => {
                 let new = format!("test:{id}");

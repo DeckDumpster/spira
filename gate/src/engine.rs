@@ -131,6 +131,10 @@ struct State {
     build_timing: Option<(crate::buildtiming::Build, String)>,
     /// The test phase's nextest timings, once a unit test phase ran.
     unit_timings: Option<spira_config::unit_tier::UnitTimings>,
+    /// The workspace members composition parsed from the merged tree; empty when it parsed none.
+    members: Vec<compose::Member>,
+    /// The sink of the test phase's `test.result` records, closed as the trial finishes.
+    test_events: Option<spira_otel::logs::LogPush>,
     op_marks: OpMarks,
     /// The unit test phase failed and its nextest run named no test and printed no summary.
     nextest_unreported: bool,
@@ -1075,6 +1079,7 @@ impl<'w, W: World> Trial<'w, W> {
         let mut mark_err: Option<String> = None;
         let tiers_file = self.s.tiers_file.clone();
         self.s.ran_testenv = build_phase.is_some() || !re.required.is_empty() || compose::gate_string(&comp, &cmd).0.contains("testenv");
+        let mut test_steps: Vec<(String, Option<f64>)> = Vec::new();
         let (rc, out, ph, tiers) = {
             let (run_dir, machine, op_marks) = (Path::new(&self.s.run), &mut self.s.machine, &mut self.s.op_marks);
             let mut mark = |to: GateState, why: &str| {
@@ -1083,6 +1088,13 @@ impl<'w, W: World> Trial<'w, W> {
                 let moved = r.enter(to, why, w.now()).and_then(|m| if m { w.machine_save(run_dir, r) } else { Ok(()) });
                 if let Err(e) = moved {
                     mark_err.get_or_insert(e);
+                }
+            };
+            let report = !w.otlp_endpoint().trim().is_empty();
+            let steps = &mut test_steps;
+            let mut tested = |o: &str| {
+                if report {
+                    steps.push((o.to_string(), w.load1()));
                 }
             };
             let mut run = |envs: Vec<(String, String)>| {
@@ -1106,6 +1118,7 @@ impl<'w, W: World> Trial<'w, W> {
                     &mut self.s.nextest_unreported,
                     &mut self.s.target_vanished,
                     build_phase,
+                    &mut tested,
                 )
             };
             let first_env = env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED"));
@@ -1125,6 +1138,12 @@ impl<'w, W: World> Trial<'w, W> {
         };
         self.s.op_marks.end = w.cgroup_mark();
         let phase_end = w.now();
+        if let Composition::Unit { targets, .. } = &comp {
+            let judged = crate::testevents::Judged { repo_name: &self.s.repo_name, bead: &self.s.bead, gate: &self.s.key, tree: &merged_tree };
+            for (step, load1) in &test_steps {
+                crate::testevents::emit(w, &repo, &self.s.members, *targets, &judged, step, *load1, &mut self.s.test_events);
+            }
+        }
         if let Some(text) = self.s.steps_file.as_ref().and_then(|f| w.read(f)) {
             let (steps, skipped) = parse::step_secs(&text, phase_end);
             if skipped > 0 {
@@ -1384,6 +1403,7 @@ impl<'w, W: World> Trial<'w, W> {
                         &mut false,
                         &mut Vec::new(),
                         Some(false),
+                        &mut |_| {},
                     );
                     base_tiers = take_tiers(w, tiers_file.as_deref());
                     self.s.phases.extend(ph);
@@ -1447,6 +1467,7 @@ impl<'w, W: World> Trial<'w, W> {
                 &mut false,
                 &mut Vec::new(),
                 None,
+                &mut |_| {},
             );
             base_tiers = take_tiers(w, tiers_file.as_deref());
             let before_tests = r != 0 && ph.last().is_some_and(|(n, _)| n == "base-tools" || n == "base-build");
@@ -1826,10 +1847,9 @@ impl<'w, W: World> Trial<'w, W> {
             }
         };
         let members = self.members(ctx, tree);
-        if let Err(e) = &members {
-            self.w.eprint(&format!(
-                "gate: cargo metadata failed in the gate tree: {e}"
-            ));
+        match &members {
+            Ok(m) => self.s.members = m.clone(),
+            Err(e) => self.w.eprint(&format!("gate: cargo metadata failed in the gate tree: {e}")),
         }
         let comp = compose::compose(
             mode,
@@ -2271,6 +2291,13 @@ impl<'w, W: World> Trial<'w, W> {
         self.conclude(&vd);
         if let Some(t) = self.s.tmpdir.take() {
             w.remove_dir_all(&t);
+        }
+        // Before the verdict line, which stays the last line the gate prints.
+        if let Some(sink) = self.s.test_events.take() {
+            let lost = sink.close(crate::testevents::FLUSH);
+            if lost > 0 {
+                w.eprint(&format!("gate: {lost} test.result record(s) not sent to the Collector (the verdict does not read them)"));
+            }
         }
         if !vd.msg.is_empty() {
             w.eprint(&vd.msg);
@@ -2905,6 +2932,7 @@ pub fn run_composed<W: World>(
     unreported: &mut bool,
     vanished: &mut Vec<String>,
     build_phase: Option<bool>,
+    tested: &mut dyn FnMut(&str),
 ) -> (i32, String, Vec<(String, u64)>) {
     vanished.clear();
     let first_state = if comp.suites_off() { GateState::Fences } else { GateState::Trial };
@@ -3108,6 +3136,7 @@ pub fn run_composed<W: World>(
                 && r != NOVERDICT
                 && !t.summarized;
             *unit = Some(t);
+            tested(&o);
         }
         if timed {
             let this = w.read(&report).and_then(|h| Some((crate::buildtiming::parse(&h)?, h))).filter(|(_, h)| !h.is_empty());

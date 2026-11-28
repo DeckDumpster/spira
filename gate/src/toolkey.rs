@@ -8,8 +8,7 @@
 use crate::compose::Member;
 use std::collections::BTreeSet;
 
-/// Workspace-wide build inputs: a change to any of them changes every tool.
-pub const ROOT_INPUTS: [&str; 5] = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rust-toolchain", ".cargo"];
+pub use spira_config::input_hash::ROOT_INPUTS;
 
 /// The workspace members the `pkgs` binaries are built from: each package and, transitively,
 /// its normal and build dependencies. Err names a package that is not a workspace member.

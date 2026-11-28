@@ -41,3 +41,8 @@ testkit = { path = "../testkit" }
 name = "spira_scripts"
 path = "tests/spira_scripts.rs"
 required-features = ["integration"]
+
+[[test]]
+name = "input_trees"
+path = "tests/input_trees.rs"
+required-features = ["integration"]

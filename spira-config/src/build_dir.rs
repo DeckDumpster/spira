@@ -603,9 +603,8 @@ fn head_tree(root: &Path) -> Option<String> {
 }
 
 fn toolchain_of(root: &Path) -> Option<String> {
-    use sha2::Digest;
     let bytes = ["rust-toolchain.toml", "rust-toolchain"].iter().find_map(|f| std::fs::read(root.join(f)).ok())?;
-    Some(sha2::Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect())
+    Some(crate::input_hash::sha256_hex(&bytes))
 }
 
 /// The bases a [`BASE_ENV`] value lists.

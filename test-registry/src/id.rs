@@ -10,10 +10,7 @@ pub fn valid_bead_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
-/// Whether `id` is a test id: `t` and six lowercase alphanumerics.
-pub fn valid_test_id(id: &str) -> bool {
-    id.len() == 7 && id.starts_with('t') && id[1..].bytes().all(|b| b.is_ascii_digit() || b.is_ascii_lowercase())
-}
+pub use spira_config::unit_tier::valid_test_id;
 
 /// Ok if `id` is `suite:<file>` or `test:<id>`.
 pub fn check_test_id(id: &str) -> Result<(), String> {
