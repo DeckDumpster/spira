@@ -4,6 +4,7 @@
 use crate::io;
 use crate::quoting::parse_iso8601;
 use serde_json::Value;
+use spira_store::lc_call::LcError;
 pub use spira_store::lc_state::{self, Row};
 use std::collections::HashMap;
 
@@ -137,10 +138,18 @@ pub fn shared_live(key: &str, fetch: impl FnOnce() -> Option<String>) -> Option<
     io::shared_read(&cache_dir().join("live"), key, ttl, io::now(), fetch)
 }
 
+pub(crate) fn gone_of(e: &LcError) -> Gone {
+    if matches!(e, LcError::NotRunning(_)) {
+        Gone::NotRunning
+    } else {
+        Gone::Failed
+    }
+}
+
 fn list_live(states: &str) -> Result<String, Gone> {
     let names: Vec<&str> = states.split(',').collect();
     let raw = match store_view::shared().and_then(|held| held.rows(&store_view::RowQuery { states: &names, ..Default::default() })) {
-        Some(rows) => serde_json::Value::Array(rows.map_err(|_| Gone::Failed)?.value).to_string(),
+        Some(rows) => serde_json::Value::Array(rows.map_err(|e| gone_of(&e))?.value).to_string(),
         None => verb_read(&["list", "--state", states])?,
     };
     parse_rows(&raw).map(|_| raw).ok_or(Gone::Failed)
@@ -288,6 +297,46 @@ mod tests {
             assert_eq!(asked(&fallback_seen, "condition"), 2, "and the fallback client no more");
             stop.store(true, std::sync::atomic::Ordering::Relaxed);
         });
+    }
+
+    /// Answers the load and one watch; after that nothing is listening.
+    struct Stopping(Mutex<u32>);
+
+    impl Transport for Stopping {
+        fn exchange(&self, _: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+            Err("exchange_kind only".into())
+        }
+        fn exchange_kind(&self, argv: &[String], _: Option<&str>, _: Duration, _: Duration) -> Result<Reply, LcError> {
+            let ok = |out: &str| Ok(Reply { code: 0, out: out.into(), err: String::new(), read_ended: false });
+            match argv[0].as_str() {
+                "rc" => ok(r#"{"ok":{"items":[],"list_rev":4}}"#),
+                "list" => ok(r#"[{"bead_id":"sp-a","state":"SUBMITTED"}]"#),
+                "watch" if std::mem::replace(&mut *self.0.lock().unwrap(), 1) == 0 => ok(r#"{"progress_rev":5}"#),
+                _ => Err(LcError::NotRunning("store not running".into())),
+            }
+        }
+    }
+
+    #[test_id(tv7a2uj)]
+    #[test]
+    fn a_stale_held_funnel_whose_store_stopped_keeps_serving_its_rows_marked_not_running() {
+        let t = testkit::TempDir::new("lc-held-not-running");
+        let d = t.join("snap");
+        let now = Arc::new(Mutex::new(std::time::Instant::now()));
+        let clock = Arc::clone(&now);
+        let views = LcClient::over(Arc::new(Stopping(Mutex::new(0))), true);
+        let p = store_view::install(Arc::new(store_view::Projection::new(views, Duration::from_secs(1), Arc::new(move || *clock.lock().unwrap()))));
+        p.poll().unwrap();
+        p.poll().unwrap();
+        let read = |at| last_good(&d, "list-funnel", at, || list_live(FUNNEL_STATES));
+        let first = read(0);
+        assert!(first.as_deref().is_some_and(|r| r.contains("sp-a")), "{first:?}");
+        assert!(p.poll().is_err(), "the store stopped");
+        *now.lock().unwrap() += Duration::from_secs(120);
+        for at in [31, 63] {
+            assert_eq!(read(at), first, "at {at}s");
+            assert!(d.join("list-funnel.stale").exists() && d.join("list-funnel.not-running").exists(), "at {at}s");
+        }
     }
 
     #[test_id(tcqzon1)]

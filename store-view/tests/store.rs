@@ -20,11 +20,24 @@ struct Script {
     /// A watch with nothing scripted waits a moment and reports no change, as a quiet store's does.
     quiet: bool,
     content_error: Option<String>,
+    /// This many watches find nothing listening on the socket.
+    absent_watches: usize,
 }
 
 struct Double(Arc<Mutex<Script>>);
 
 impl Transport for Double {
+    fn exchange_kind(&self, argv: &[String], stdin: Option<&str>, d: Duration, _wait: Duration) -> Result<Reply, LcError> {
+        if argv[0] == "watch" {
+            let mut s = self.0.lock().unwrap();
+            if s.absent_watches > 0 {
+                s.absent_watches -= 1;
+                return Err(LcError::NotRunning("store not running".into()));
+            }
+        }
+        self.exchange(argv, stdin, d).map_err(LcError::Fault)
+    }
+
     fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
         let mut s = self.0.lock().unwrap();
         s.seen.push(argv.to_vec());
@@ -905,6 +918,27 @@ fn a_lost_watch_shrinks_the_bound_back_to_the_configured_staleness() {
         assert!(w.p.poll().is_err(), "the watch was lost");
         w.advance(Duration::from_secs(11));
         assert!(matches!(w.p.ready_counts(), Err(LcError::Refused(m)) if m.contains("stale past 10000ms") && m.contains("the watch is lost")));
+    });
+}
+
+#[test_id(t8td5hm)]
+#[test]
+fn a_watch_that_finds_no_store_makes_stale_reads_answer_not_running_until_one_is_answered() {
+    within(|| {
+        let w = world(Script { list_rev: 4, rows: vec![bead("sp-a", "READY", "[]", None, false)], ..Default::default() }, Duration::from_secs(10));
+        w.p.poll().unwrap();
+        w.watch(json!({ "progress_rev": 5 }));
+        w.p.poll().unwrap();
+        w.script.lock().unwrap().absent_watches = 1;
+        assert!(w.p.poll().is_err(), "nothing was listening");
+        w.advance(Duration::from_secs(11));
+        let live = || w.p.rows(&RowQuery { live: true, ..Default::default() }).unwrap();
+        for refusal in [w.p.ready_counts().err(), w.p.batch_view("spira").err(), live().err()] {
+            assert!(matches!(&refusal, Some(LcError::NotRunning(m)) if m.starts_with("stale past") && m.contains("the watch is lost")), "{refusal:?}");
+        }
+        w.watch(json!({ "progress_rev": 6 }));
+        w.p.poll().unwrap();
+        assert!(w.p.ready_counts().is_ok() && w.p.batch_view("spira").is_ok() && live().is_ok());
     });
 }
 
