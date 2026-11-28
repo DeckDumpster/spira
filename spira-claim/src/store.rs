@@ -110,7 +110,12 @@ impl Store {
     pub fn new(timeout_s: u64) -> Result<Store, String> {
         let lc_bin = spira_store::lifecycle_row::lc_bin()?;
         let timeout = Duration::from_secs(timeout_s.max(1));
-        Ok(Store { lc: LcClient::for_bin(&lc_bin)?.within(timeout), lc_bin, timeout, views: store_view::shared(), readiness_alert: process_alert() })
+        Ok(Store::of_process(LcClient::for_bin(&lc_bin)?.within(timeout), lc_bin, timeout))
+    }
+
+    /// A store sharing what every other one in this process holds.
+    pub(crate) fn of_process(lc: LcClient, lc_bin: String, timeout: Duration) -> Store {
+        Store { lc, lc_bin, timeout, views: store_view::shared(), readiness_alert: process_alert() }
     }
 
     /// One lifecycle request; any exit code is an answer. `Err` only when there is none.

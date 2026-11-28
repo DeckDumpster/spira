@@ -171,6 +171,19 @@ fn a_pass_puts_exactly_the_record_whose_claim_fields_changed() {
     }
 }
 
+#[test_id(tkkgjjc)]
+#[test]
+fn a_repeated_rejudge_mark_moves_the_readiness_revision_each_time() {
+    let (s, _, _) = fresh();
+    created(&s, "sp-a");
+    seed_judged(&s, "sp-a", "pass-1");
+    s.mark_rejudge("sp-a", &[], &req("mark-1")).unwrap();
+    let first = s.readiness("sp-a").unwrap().unwrap().mod_rev.main;
+    let rev = s.mark_rejudge("sp-a", &[], &req("mark-2")).unwrap();
+    assert!(rev > first);
+    assert_eq!(s.readiness("sp-a").unwrap().unwrap().mod_rev.main, rev);
+}
+
 #[test_id(tmjrgus)]
 #[test]
 fn the_first_claim_judgement_of_a_record_is_written_even_when_it_matches_the_defaults() {

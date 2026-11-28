@@ -108,6 +108,7 @@ impl<B: Backend> Store<B> {
                         req,
                         |r, _, _| {
                             r.open_escalated = true;
+                            true
                         },
                     )?;
                     out.escalated.push(id.to_string());

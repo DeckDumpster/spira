@@ -316,6 +316,18 @@ mod published {
         assert_eq!(clears(&svc.0.lock().unwrap()), 1);
     }
 
+    #[test_id(twopmkj)]
+    #[test]
+    fn an_alert_one_pass_raised_is_cleared_by_a_later_pass_with_its_own_store() {
+        let svc = Arc::new(Service(Mutex::new(Vec::new())));
+        let service: Arc<dyn Transport> = Arc::new(RefusingOnce(svc.clone(), Default::default()));
+        let of_process = || Store::of_process(LcClient::over(service.clone(), true), "nonexistent/spira-lc".into(), Duration::from_secs(1));
+        pass_over(&of_process());
+        pass_over(&of_process());
+        pass_over(&of_process());
+        assert_eq!(clears(&svc.0.lock().unwrap()), 1);
+    }
+
     #[test_id(ty0tfiu)]
     #[test]
     fn a_clear_the_store_does_not_take_is_sent_again_by_the_next_accepted_publish() {
