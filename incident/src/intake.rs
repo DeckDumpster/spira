@@ -1048,17 +1048,26 @@ mod tests {
         file_labelled(tag, reference, repo, "spira,incident")
     }
 
+    /// The caller raises with its own `labels` while the content store is down, then a retry
+    /// from a process holding the default labels files the row.
     fn file_labelled(tag: &str, reference: &str, repo: Option<&str>, labels: &str) -> FakeBd {
         let dir = testkit::TempDir::new(tag);
-        let mut env = env_in(&dir);
-        env.repo = repo.map(str::to_string);
-        env.reference = Some(reference.into());
-        env.labels = labels.into();
-        env.known_repos = vec!["spira".into(), "dumpstar".into()];
-        env.plan_labels = Some("spira,plan".into());
-        let bd = FakeBd { admits: Some(LIVE_MAP.into()), ..FakeBd::new() };
-        let filed = file_event(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), "t", b"payload");
-        assert!(matches!(filed, Ok(Some(_))), "{filed:?}");
+        let routed = || {
+            let mut env = env_in(&dir);
+            env.known_repos = vec!["spira".into(), "dumpstar".into()];
+            env.plan_labels = Some("spira,plan".into());
+            env
+        };
+        let mut caller = routed();
+        caller.repo = repo.map(str::to_string);
+        caller.reference = Some(reference.into());
+        caller.labels = labels.into();
+        let mut bd = FakeBd { admits: Some(LIVE_MAP.into()), create_error: Some("down".into()), ..FakeBd::new() };
+        bd.incidents.now.set(NOW);
+        assert!(file_event(&caller, &bd, &FakeMailer::default(), &FixedClock(NOW), "t", b"payload").is_err());
+        bd.create_error = None;
+        let report = pass(&routed(), &bd, "", NOW + retry_delay(0), BATCH);
+        assert_eq!((report.filed, report.failed), (1, vec![]));
         assert!(bd.incidents.held.borrow().is_empty());
         bd
     }
@@ -1104,6 +1113,17 @@ mod tests {
         assert_eq!((second.filed, second.held_back), (1, 0), "{second:?}");
         let created: Vec<String> = admitting.created.borrow().iter().map(|c| c.1.clone()).collect();
         assert_eq!(created, ["incident:admitted"], "the refused rows take no slot while their lanes stand");
+    }
+
+    // covers: UC-ops-detection-remediation-05
+    #[test_id(tk2fk5l)]
+    #[test]
+    fn a_retried_filing_that_asked_for_the_plan_lane_keeps_it() {
+        let bd = file_labelled("route-retry-plan", "incident:base-red:dumpstar:unit-tests", Some("dumpstar"), "spira,plan");
+        let (labels, body) = only_create(&bd);
+        assert!(labels.contains(&"repo:dumpstar".to_string()) && labels.contains(&"plan".to_string()), "{labels:?}");
+        assert!(!labels.contains(&"incident".to_string()), "{labels:?}");
+        assert!(bead::has_build_spec(&body), "{body}");
     }
 
     // covers: UC-ops-detection-remediation-05

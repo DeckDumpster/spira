@@ -58,6 +58,10 @@ and records the end on it, because its caller needs the bead id at once. A filed
 deleted, unless a newer event arrived under the claim: then it is pending again and files as a
 recurrence.
 
+The payload keeps what its raiser set, `labels` among them (`SPIRA_INCIDENT_LABELS`), and every
+filing of the row uses those, never the labels of the process that retries it. So a filing that
+asked for the plan lane still routes there on a later pass.
+
 A failure waits for its cause. A lane refusal records the lanes the repository admitted, and is
 tried again only when they differ. A filing the content store could not answer is tried again
 after 60 s, doubling to 1 h. `incident retry` lifts either.
