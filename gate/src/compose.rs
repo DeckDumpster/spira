@@ -1010,6 +1010,16 @@ mod tests {
 
     /// spira-config ← queue ← landing-pass; spira-config ← dwarf; gate alone; a nested
     /// member (cockpit/panel) under a directory that also holds bash.
+    #[test_id(tdq9jqd)]
+    #[test]
+    fn the_input_hash_view_of_a_member_keeps_every_edge() {
+        let v = |s: &str| vec![s.to_string()];
+        let from = Member { name: "n".into(), dir: "d".into(), deps: v("dep"), build_deps: v("build"), test_bins: v("bin"), ..Default::default() };
+        let got = spira_config::input_hash::Member::from(&from);
+        assert_eq!((got.name, got.dir), ("n".to_string(), "d".to_string()));
+        assert_eq!((got.deps, got.build_deps, got.test_bins), (v("dep"), v("build"), v("bin")));
+    }
+
     fn ws() -> Vec<Member> {
         vec![
             m("spira-config", "spira-config", &[]),

@@ -1,15 +1,6 @@
 //! The verdict key and the verdict cache entry (gate-lib.sh `gate_key_hash`, `cache_fresh`).
 
-use sha2::{Digest, Sha256};
-
-pub fn sha256_hex(bytes: &[u8]) -> String {
-    let d = Sha256::digest(bytes);
-    d.iter().fold(String::with_capacity(64), |mut acc, b| {
-        use std::fmt::Write;
-        let _ = write!(acc, "{b:02x}");
-        acc
-    })
-}
+pub use spira_config::input_hash::sha256_hex;
 
 /// Everything a verdict depends on. `tree` is the MERGED tree (DESIGN.md "The verdict key").
 #[derive(Clone, Debug, Default)]

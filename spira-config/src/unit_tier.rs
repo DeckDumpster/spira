@@ -252,8 +252,13 @@ impl TestLine {
 
     /// The name's last `::` segment when it is a test id; empty otherwise.
     pub fn test_id(&self) -> &str {
-        self.name.rsplit("::").next().filter(|s| valid_test_id(s)).unwrap_or_default()
+        test_id_of(&self.name).unwrap_or_default()
     }
+}
+
+/// The test id a listed name ends in: its last `::` segment, when that is one.
+pub fn test_id_of(name: &str) -> Option<&str> {
+    name.rsplit("::").next().filter(|s| valid_test_id(s))
 }
 
 /// Whether `id` is a test id: `t` and six lowercase alphanumerics.
@@ -264,8 +269,8 @@ pub fn valid_test_id(id: &str) -> bool {
 fn outcome_of_status(status: &str) -> Option<Outcome> {
     match status {
         // `LEAK` is nextest's pass that left a handle open.
-        "PASS" | "LEAK" => Some(Outcome::Pass),
-        "FAIL" | "LEAK-FAIL" | "EXEC-FAIL" => Some(Outcome::Fail),
+        "PASS" | "LEAK" | "TIMEOUT-PASS" => Some(Outcome::Pass),
+        "FAIL" | "LEAK-FAIL" | "EXEC-FAIL" | "XFAIL" | "ABORT" => Some(Outcome::Fail),
         "TIMEOUT" => Some(Outcome::Timeout),
         "SKIP" => Some(Outcome::Skipped),
         s if s.starts_with("SIG") => Some(Outcome::Fail),
@@ -273,20 +278,19 @@ fn outcome_of_status(status: &str) -> Option<Outcome> {
     }
 }
 
-/// `<STATUS> [ <secs>s] (<k>/<n>) <binary> <name>`; a skip has a blank time, and the counter is optional.
+/// `<STATUS> [ <secs>s] (<k>/<n>) <binary> <name>`; a skip has a blank time and a ruled counter.
+/// The counter is required: a failing test's captured output sits among these lines.
 fn test_line(line: &str) -> Option<TestLine> {
     let (status, rest) = line.trim_start().split_once(' ')?;
     let outcome = outcome_of_status(status)?;
-    let (time, rest) = rest.trim_start().strip_prefix('[')?.split_once(']')?;
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix("+ LEAK").map_or(rest, str::trim_start);
+    let (time, rest) = rest.strip_prefix('[')?.split_once(']')?;
     let secs = match time.trim() {
         "" if outcome == Outcome::Skipped => 0.0,
         t => t.strip_suffix('s')?.trim().parse().ok()?,
     };
-    let rest = rest.trim_start();
-    let rest = match rest.strip_prefix('(') {
-        Some(counter) => counter.split_once(')')?.1,
-        None => rest,
-    };
+    let (_, rest) = rest.trim_start().strip_prefix('(')?.split_once(')')?;
     let (binary, name) = rest.trim().split_once(' ')?;
     Some(TestLine { binary: binary.to_string(), name: name.trim().to_string(), outcome, secs })
 }
@@ -609,5 +613,20 @@ mod tests {
         );
         assert_eq!(results(log)[1].binary, "gate::spira_scripts");
         assert_eq!(timings(log).slowest.len(), 4, "a skip is not timed");
+    }
+
+    #[test_id(tsvrvc1)]
+    #[test]
+    fn results_read_every_terminal_status_nextest_prints_and_no_line_without_its_counter() {
+        use spira_otel::testresult::Outcome;
+        let log = "        LEAK [   0.100s] (1/5) c a\n\
+TIMEOUT-PASS [   0.100s] (2/5) c b\n\
+       XFAIL [   0.100s] (3/5) c d\n\
+ FAIL + LEAK [   0.100s] (4/5) c e\n\
+       ABORT [   0.100s] (5/5) c f\n\
+        PASS [   0.100s] printed by a failing test\n";
+        let got: Vec<(String, Outcome)> = results(log).into_iter().map(|l| (l.name, l.outcome)).collect();
+        let want = [("a", Outcome::Pass), ("b", Outcome::Pass), ("d", Outcome::Fail), ("e", Outcome::Fail), ("f", Outcome::Fail)];
+        assert_eq!(got, want.map(|(n, o)| (n.to_string(), o)));
     }
 }

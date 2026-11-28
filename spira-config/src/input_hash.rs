@@ -21,6 +21,10 @@ pub struct Member {
     pub test_bins: Vec<String>,
 }
 
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// `seed` and everything reachable from it along `edges`.
 fn closure<'m>(by_name: &BTreeMap<&str, &'m Member>, seed: &'m str, edges: fn(&Member) -> &[String]) -> BTreeSet<&'m str> {
     let mut seen = BTreeSet::new();
@@ -55,8 +59,7 @@ pub fn input_hashes(members: &[Member], ls_tree: &str) -> BTreeMap<String, Strin
                 }
             }
             let lines: String = paths.iter().map(|p| format!("{p} {}\n", oids.get(p).copied().unwrap_or("-"))).collect();
-            let hash = Sha256::digest(lines.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
-            (m.name.clone(), hash)
+            (m.name.clone(), sha256_hex(lines.as_bytes()))
         })
         .collect()
 }

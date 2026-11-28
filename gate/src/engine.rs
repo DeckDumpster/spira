@@ -131,6 +131,8 @@ struct State {
     build_timing: Option<(crate::buildtiming::Build, String)>,
     /// The test phase's nextest timings, once a unit test phase ran.
     unit_timings: Option<spira_config::unit_tier::UnitTimings>,
+    /// The workspace members composition parsed from the merged tree; empty when it parsed none.
+    members: Vec<compose::Member>,
     /// The sink of the test phase's `test.result` records, closed as the trial finishes.
     test_events: Option<spira_otel::logs::LogPush>,
     op_marks: OpMarks,
@@ -1077,6 +1079,7 @@ impl<'w, W: World> Trial<'w, W> {
         let mut mark_err: Option<String> = None;
         let tiers_file = self.s.tiers_file.clone();
         self.s.ran_testenv = build_phase.is_some() || !re.required.is_empty() || compose::gate_string(&comp, &cmd).0.contains("testenv");
+        let mut test_steps: Vec<(String, Option<f64>)> = Vec::new();
         let (rc, out, ph, tiers) = {
             let (run_dir, machine, op_marks) = (Path::new(&self.s.run), &mut self.s.machine, &mut self.s.op_marks);
             let mut mark = |to: GateState, why: &str| {
@@ -1087,13 +1090,13 @@ impl<'w, W: World> Trial<'w, W> {
                     mark_err.get_or_insert(e);
                 }
             };
-            let judged = crate::testevents::Judged { repo_name: self.s.repo_name.clone(), bead: self.s.bead.clone(), gate: self.s.key.clone(), tree: merged_tree.clone() };
-            let targets = match &comp {
-                Composition::Unit { targets, .. } => *targets,
-                _ => compose::Targets::default(),
+            let report = !w.otlp_endpoint().trim().is_empty();
+            let steps = &mut test_steps;
+            let mut tested = |o: &str| {
+                if report {
+                    steps.push((o.to_string(), w.load1()));
+                }
             };
-            let test_events = &mut self.s.test_events;
-            let mut tested = |o: &str| crate::testevents::emit(w, &ctx, &repo, &tree, targets, &judged, o, test_events);
             let mut run = |envs: Vec<(String, String)>| {
                 run_composed(
                     w,
@@ -1135,6 +1138,12 @@ impl<'w, W: World> Trial<'w, W> {
         };
         self.s.op_marks.end = w.cgroup_mark();
         let phase_end = w.now();
+        if let Composition::Unit { targets, .. } = &comp {
+            let judged = crate::testevents::Judged { repo_name: &self.s.repo_name, bead: &self.s.bead, gate: &self.s.key, tree: &merged_tree };
+            for (step, load1) in &test_steps {
+                crate::testevents::emit(w, &repo, &self.s.members, *targets, &judged, step, *load1, &mut self.s.test_events);
+            }
+        }
         if let Some(text) = self.s.steps_file.as_ref().and_then(|f| w.read(f)) {
             let (steps, skipped) = parse::step_secs(&text, phase_end);
             if skipped > 0 {
@@ -1838,10 +1847,9 @@ impl<'w, W: World> Trial<'w, W> {
             }
         };
         let members = self.members(ctx, tree);
-        if let Err(e) = &members {
-            self.w.eprint(&format!(
-                "gate: cargo metadata failed in the gate tree: {e}"
-            ));
+        match &members {
+            Ok(m) => self.s.members = m.clone(),
+            Err(e) => self.w.eprint(&format!("gate: cargo metadata failed in the gate tree: {e}")),
         }
         let comp = compose::compose(
             mode,
