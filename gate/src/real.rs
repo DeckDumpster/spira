@@ -412,8 +412,13 @@ fn trim_nl(s: String) -> String {
     s.trim_end_matches('\n').to_string()
 }
 
+/// This box's one-minute load average.
+pub fn load1() -> Option<f64> {
+    std::fs::read_to_string(format!("{}/loadavg", system_paths::PROC)).ok()?.split_whitespace().next()?.parse().ok()
+}
+
 /// An unreadable key sends nothing, as an empty one does.
-fn collector_endpoint(read: impl FnOnce(&str) -> Result<String, String>) -> String {
+pub fn collector_endpoint(read: impl FnOnce(&str) -> Result<String, String>) -> String {
     read("SPIRA_OTEL_COLLECTOR_ENDPOINT").unwrap_or_default()
 }
 
@@ -845,7 +850,7 @@ impl World for Real {
         collector_endpoint(spira_config::process::cfg)
     }
     fn load1(&self) -> Option<f64> {
-        std::fs::read_to_string(format!("{}/loadavg", system_paths::PROC)).ok()?.split_whitespace().next()?.parse().ok()
+        load1()
     }
     fn cgroup_mark(&self) -> Option<spira_otel::cgroup::Mark> {
         spira_otel::cgroup::Mark::own()

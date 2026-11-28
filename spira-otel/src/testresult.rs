@@ -9,6 +9,8 @@ pub const EVENT: &str = "test.result";
 pub enum Tier {
     Unit,
     Integration,
+    /// A shell-suite case.
+    Suite,
 }
 
 impl Tier {
@@ -16,6 +18,7 @@ impl Tier {
         match self {
             Tier::Unit => "unit",
             Tier::Integration => "integration",
+            Tier::Suite => "suite",
         }
     }
 }
@@ -57,6 +60,9 @@ pub struct Result {
     pub bead: String,
     pub repo: String,
     pub tree: String,
+    /// The round's batch id and member beads; empty outside a round, and then not sent.
+    pub round: String,
+    pub members: Vec<String>,
 }
 
 pub fn attrs(r: &Result) -> Vec<(String, Attr)> {
@@ -79,6 +85,12 @@ pub fn attrs(r: &Result) -> Vec<(String, Attr)> {
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
     .collect();
+    if !r.round.is_empty() {
+        out.push(("round".to_string(), s(&r.round)));
+    }
+    if !r.members.is_empty() {
+        out.push(("members".to_string(), Attr::Strs(r.members.clone())));
+    }
     out.extend(r.load1.map(|l| ("load1".to_string(), Attr::Float(l))));
     out
 }
@@ -105,6 +117,8 @@ mod tests {
             bead: "sp-a".into(),
             repo: "r".into(),
             tree: "m".into(),
+            round: String::new(),
+            members: Vec::new(),
         };
         let s = |v: &str| Attr::Str(v.into());
         let want = vec![
@@ -113,6 +127,9 @@ mod tests {
             ("source", s("gate")), ("gate", s("k")), ("bead", s("sp-a")), ("repo", s("r")), ("tree", s("m")), ("load1", Attr::Float(2.5)),
         ];
         assert_eq!(attrs(&r), want.into_iter().map(|(k, v)| (k.to_string(), v)).collect::<Vec<_>>());
+        let in_round = attrs(&Result { round: "b1".into(), members: vec!["sp-x".into()], ..r.clone() });
+        assert!(in_round.contains(&("round".to_string(), s("b1"))) && in_round.contains(&("members".to_string(), Attr::Strs(vec!["sp-x".into()]))), "{in_round:?}");
+        assert!(attrs(&r).iter().all(|(k, _)| k != "round" && k != "members"), "outside a round neither is sent");
         assert!(attrs(&Result { load1: None, ..r }).iter().all(|(k, _)| k != "load1"), "an unread load is absent, never a number");
     }
 }

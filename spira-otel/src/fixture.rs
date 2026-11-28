@@ -404,7 +404,7 @@ struct Held {
 
 type OnPost = Box<dyn Fn(&Post) + Send>;
 
-/// One log record's body and scalar attributes, as the fixture Collector received it.
+/// One log record's body and its scalar and string-array attributes, as the fixture Collector received it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Event {
     pub service: String,
@@ -425,6 +425,15 @@ fn scalar(v: &Value) -> Option<Attr> {
         Value::IntValue(i) => Some(Attr::Int(*i)),
         Value::DoubleValue(f) => Some(Attr::Float(*f)),
         Value::BoolValue(b) => Some(Attr::Bool(*b)),
+        Value::ArrayValue(a) => a
+            .values
+            .iter()
+            .map(|v| match &v.value {
+                Some(Value::StringValue(s)) => Some(s.clone()),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()
+            .map(Attr::Strs),
         _ => None,
     }
 }
