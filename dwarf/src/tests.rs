@@ -179,6 +179,7 @@ pub(crate) mod verdict_run {
             match (prog, args.first().map(String::as_str)) {
                 ("spira-claim", Some("stack")) => Out::ok(self.proposal),
                 ("spira-claim", Some("rejections")) => Out::ok(self.rejections),
+                ("spira-claim", Some("select")) => Out::ok("-\t-\t-\t-\t-\tsp-x\n"),
                 ("spira-lc", Some("list")) => Out::ok("[]"),
                 ("spira-lc", Some("show")) => Out::ok(serde_json::json!({"bead": {"bead_id": "sp-x", "state": self.left.lock().unwrap().unwrap_or("WORKING"), "holder": *self.holder.lock().unwrap(), "holds": self.holds, "ask_since": self.ask_since.lock().unwrap().to_string()}}).to_string()),
                 _ => Out::ok(""),
@@ -210,14 +211,19 @@ pub(crate) mod verdict_run {
 
     fn directed_claim_then(store: &Claimable, then: impl FnOnce(&mut Run)) -> (Vec<String>, String) {
         let dir = testkit::TempDir::new("dwarf-directed-claim");
+        let mode = Mode::Directed(crate::direct::Direct { bead: "sp-x".into(), by: "concierge".into(), reason: "loop fix".into(), replaced: None });
+        claim_in(store, &CountingBd(Default::default()), dir.path(), mode, then)
+    }
+
+    /// `Run::claim()` in `mode` with `run` as SPIRA_RUN.
+    fn claim_in(store: &Claimable, bd: &dyn Bd, run: &Path, mode: Mode, then: impl FnOnce(&mut Run)) -> (Vec<String>, String) {
         let mut vars = super::complete_vars();
-        vars.insert("SPIRA_RUN".into(), dir.path().display().to_string());
+        vars.insert("SPIRA_RUN".into(), run.display().to_string());
         vars.insert("SPIRA_REPO".into(), "shared".into());
-        let ledger = dir.path().join("dwarf-ledger.log");
-        let bd = CountingBd(Default::default());
+        let ledger = run.join("dwarf-ledger.log");
         let sink = Mute::default();
-        with_run_sink(vars, &bd, Dirty(vec![]), store, &|| 0, store, &sink, "", |r| {
-            r.mode = Mode::Directed(crate::direct::Direct { bead: "sp-x".into(), by: "concierge".into(), reason: "loop fix".into(), replaced: None });
+        with_run_sink(vars, bd, Dirty(vec![]), store, &|| 0, store, &sink, "", |r| {
+            r.mode = mode;
             r.claim_bin = "spira-claim".into();
             r.ledger = Ledger { path: ledger.clone(), dry: false };
             let _ = r.claim();
@@ -230,6 +236,84 @@ pub(crate) mod verdict_run {
     fn assert_claim_kept(store: &Claimable, ledger: &str) {
         assert!(store.called(&["release_own_claim"]).is_empty() && store.called(&["spira-lc", "unclaim"]).is_empty(), "{:?}", store.calls.lock().unwrap());
         assert!(ledger.contains("unmapped-repo"), "positive control: the claim reached the repository lookup\n{ledger}");
+    }
+
+    fn assert_requeued_unjudged(store: &Claimable, status: &str) {
+        assert_eq!(store.called(&["bump_requeue"]), vec![vec!["bump_requeue".to_string(), "sp-x".into(), format!("unjudged-{status}")]], "{:?}", store.calls.lock().unwrap());
+    }
+
+    fn assert_released_unjudged(store: &Claimable, status: &str) {
+        assert!(!store.called(&["release_own_claim"]).is_empty(), "{:?}", store.calls.lock().unwrap());
+        assert_requeued_unjudged(store, status);
+    }
+
+    #[test_id(t67v9b4)]
+    #[test]
+    fn a_claim_that_raced_a_hold_is_released_as_unjudged() {
+        let store = Claimable { proposal: UNSTACKED, holds: &["manual"], ..Default::default() };
+        let dir = testkit::TempDir::new("dwarf-hold-raced");
+        let (_, ledger) = claim_in(&store, &CountingBd(Default::default()), dir.path(), Mode::Claim, |_| {});
+        assert!(ledger.contains("status=hold-raced"), "{ledger}");
+        assert_released_unjudged(&store, "hold-raced");
+    }
+
+    #[test_id(tgap7wh)]
+    #[test]
+    fn a_claim_whose_worktree_is_occupied_is_released_as_unjudged() {
+        let store = Claimable { proposal: UNSTACKED, ..Default::default() };
+        let dir = testkit::TempDir::new("dwarf-worktree-held");
+        let work = dir.path().join("worktree").join("sp-x");
+        std::fs::create_dir_all(&work).unwrap();
+        let mut occupant = std::process::Command::new("sleep").arg("60").current_dir(&work).spawn().unwrap();
+        let (_, ledger) = claim_in(&store, &CountingBd(Default::default()), dir.path(), Mode::Claim, |_| {});
+        occupant.kill().unwrap();
+        occupant.wait().unwrap();
+        assert!(ledger.contains("status=worktree-held"), "{ledger}");
+        assert_released_unjudged(&store, "worktree-held");
+    }
+
+    #[test_id(twq9om3)]
+    #[test]
+    fn a_claim_whose_row_does_not_read_held_is_released_as_unjudged() {
+        let store = Claimable { proposal: UNSTACKED, left: Mutex::new(Some("REWORK")), ..Default::default() };
+        let (lines, _) = directed_claim(&store);
+        assert!(lines.iter().any(|l| l.contains("claim-error") && l.contains("not starting a session")), "{lines:?}");
+        assert_released_unjudged(&store, "claim-error");
+    }
+
+    #[test_id(tf145fu)]
+    #[test]
+    fn a_claim_bd_has_no_record_of_is_released_as_unjudged() {
+        let store = Claimable { proposal: UNSTACKED, ..Default::default() };
+        let dir = testkit::TempDir::new("dwarf-no-record");
+        let (lines, _) = claim_in(&store, &NoBd, dir.path(), Mode::Claim, |_| {});
+        assert!(lines.iter().any(|l| l.contains("bd returned no record")), "{lines:?}");
+        assert_released_unjudged(&store, "claim-error");
+    }
+
+    #[test_id(tozbg1k)]
+    #[test]
+    fn a_claim_without_a_required_build_spec_is_released_as_unjudged() {
+        let store = Claimable::default();
+        with_run_sink(crate::tests::complete_vars(), &CountingBd(Default::default()), Dirty(vec![]), &store, &|| 0, &store, &Mute::default(), "", |r| {
+            r.ledger = Ledger { path: PathBuf::from("nonexistent/ledger"), dry: true };
+            r.rune.requires_build_spec = true;
+            let row = crate::bd::first_row(r#"{"id":"sp-x","description":"no section"}"#).unwrap();
+            let claimed = crate::claim::Claimed { id: "sp-x".into(), repo: String::new(), row, raw: String::new() };
+            assert_eq!(r.build_spec_gate(&claimed), Some(0));
+        });
+        assert_released_unjudged(&store, "no-build-spec");
+    }
+
+    /// `park_unmapped` releases inside lib.sh, so only the requeue is visible here.
+    #[test_id(tj60tjd)]
+    #[test]
+    fn a_claim_naming_an_unmapped_repository_is_requeued_as_unjudged() {
+        let store = Claimable { proposal: UNSTACKED, ..Default::default() };
+        let (_, ledger) = directed_claim(&store);
+        assert_claim_kept(&store, &ledger);
+        assert_eq!(store.called(&["park_unmapped"]).len(), 1);
+        assert_requeued_unjudged(&store, "unmapped-repo");
     }
 
     #[test_id(tf9lqjz)]
@@ -279,6 +363,17 @@ pub(crate) mod verdict_run {
             assert_eq!(r.escalation_gate("sp-x"), Some(0));
         });
         assert!(manual_hold_argv(&store).windows(2).any(|w| w == ["--purpose", "sequence"]));
+    }
+
+    #[test_id(t1rp4pw)]
+    #[test]
+    fn a_claim_past_the_escalation_ceiling_is_released_as_unjudged() {
+        let store = Claimable { proposal: UNSTACKED, rejections: r#"{"rejections":9,"stronger_rejections":9,"history":[]}"#, ..Default::default() };
+        with_run_sink(crate::tests::complete_vars(), &CountingBd(Default::default()), Dirty(vec![]), &store, &|| 0, &store, &Mute::default(), "", |r| {
+            r.ledger = Ledger { path: PathBuf::from("nonexistent/ledger"), dry: true };
+            assert_eq!(r.escalation_gate("sp-x"), Some(0));
+        });
+        assert_released_unjudged(&store, "escalation-hold");
     }
 
     #[test_id(tj7jc2h)]
