@@ -312,9 +312,13 @@ fn apply_one(p: &Ports, key: &str, i: &Intent, f: &Fleet) -> Result<String, Stri
     Ok(word.to_string())
 }
 
-fn sync_knobs(p: &Ports, ceiling: u64) -> Result<(), String> {
+/// Writes each knob whose value in `snap` is not `ceiling`.
+fn sync_knobs(p: &Ports, snap: &Value, ceiling: u64) -> Result<(), String> {
     for action in [fleet::RAISE, fleet::LOWER] {
         let knob = knob_key(&format!("{}/{}", fleet::NAME, fleet::SECTION), action);
+        if snap["knobs"][&knob] == json!(ceiling) {
+            continue;
+        }
         lc_ok(p, &knob, &argv(&["intent", "knob-init", &knob, "--actor", fleet::OWNER, "--overwrite", "--json", &ceiling.to_string()]))?;
     }
     Ok(())
@@ -347,7 +351,7 @@ pub fn run(p: &Ports, now: u64, runs: &[Run], rows: &[LcRow], live: u64, claimab
         report.acked.push((key, word));
     }
     let ceiling = p.config.get(fleet::CEILING_KEY)?;
-    sync_knobs(p, ceiling)?;
+    sync_knobs(p, &snap, ceiling)?;
     let prev = previous(&snap);
     let (status, unchanged) = status_of(prev.as_ref(), &measure(&reading(ceiling)), host_shedding(&snap), now);
     if unchanged {
@@ -482,6 +486,50 @@ mod tests {
             { "key": "not-an-intent-key", "intent": intent(fleet::RAISE, Value::Null) },
         ]});
         assert_eq!(open_intents(&snap).iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["intents/DwarfFleet/fleet/1"]);
+    }
+
+    /// The knobs a pass wrote, over a store whose snapshot holds `stored` as (raise, lower) and a
+    /// config whose ceiling is 4.
+    fn knobs_written(stored: (u64, u64)) -> Vec<String> {
+        struct Store(Value, std::cell::RefCell<Vec<String>>);
+        impl Lc for Store {
+            fn call(&self, args: &[String]) -> (i32, Value) {
+                match args[1].as_str() {
+                    "snapshot" => (0, self.0.clone()),
+                    "knob-init" => {
+                        self.1.borrow_mut().push(args[2].clone());
+                        (0, json!({}))
+                    }
+                    _ => (0, json!({})),
+                }
+            }
+        }
+        struct Four;
+        impl Config for Four {
+            fn get(&self, _: &str) -> Result<u64, String> {
+                Ok(4)
+            }
+            fn set(&self, _: &str, _: u64) -> Result<(), String> {
+                Err("no intent is open".into())
+            }
+        }
+        let knob = |action| knob_key(&format!("{}/{}", fleet::NAME, fleet::SECTION), action);
+        let knobs: serde_json::Map<String, Value> = [(knob(fleet::RAISE), json!(stored.0)), (knob(fleet::LOWER), json!(stored.1))].into_iter().collect();
+        let store = Store(json!({ "sections": [], "intents": [], "knobs": knobs }), Default::default());
+        run(&Ports { lc: &store, config: &Four, record: &|_| {} }, NOW, &[], &[], 0, 0).unwrap();
+        store.1.take()
+    }
+
+    #[test_id(ta1a0ml)]
+    #[test]
+    fn knobs_already_at_the_ceiling_are_not_written_again() {
+        assert_eq!(knobs_written((4, 4)), Vec::<String>::new());
+    }
+
+    #[test_id(tzrgwuy)]
+    #[test]
+    fn only_the_knob_that_differs_from_the_ceiling_is_written() {
+        assert_eq!(knobs_written((4, 3)), [knob_key(&format!("{}/{}", fleet::NAME, fleet::SECTION), fleet::LOWER)]);
     }
 
     #[test_id(t08yjmj)]

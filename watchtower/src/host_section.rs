@@ -344,8 +344,9 @@ fn apply_one(p: &Ports, key: &str, i: &Intent, shed_from: &mut Option<u64>, samp
     Ok(word.to_string())
 }
 
-/// The knobs the selector steps mirror what the owner holds, so each intent has a `from`.
-fn sync_knobs(p: &Ports, par: u64, stale_scratch: u64, stale_targets: u64) -> Result<(), String> {
+/// The knobs the selector steps mirror what the owner holds, so each intent has a `from`; one
+/// `snap` already shows at that value is left alone.
+fn sync_knobs(p: &Ports, snap: &Value, par: u64, stale_scratch: u64, stale_targets: u64) -> Result<(), String> {
     let section = format!("{}/{}", host::NAME, host::SECTION);
     for (action, value) in [
         (host::SHED_SLOT, par),
@@ -354,6 +355,9 @@ fn sync_knobs(p: &Ports, par: u64, stale_scratch: u64, stale_targets: u64) -> Re
         (host::REAP_TARGETS, stale_targets),
     ] {
         let knob = knob_key(&section, action);
+        if snap["knobs"][&knob] == json!(value) {
+            continue;
+        }
         lc_ok(p, &knob, &argv(&["intent", "knob-init", &knob, "--actor", host::OWNER, "--overwrite", "--json", &value.to_string()]))?;
     }
     Ok(())
@@ -376,7 +380,7 @@ pub fn run(p: &Ports, now: u64, sample: &Sample) -> Result<Report, String> {
         shed_from = None;
     }
     let (stale_scratch, stale_targets) = (p.reaper.stale(Stale::Scratch)?, p.reaper.stale(Stale::Targets)?);
-    sync_knobs(p, par, stale_scratch, stale_targets)?;
+    sync_knobs(p, &snap, par, stale_scratch, stale_targets)?;
     let h = Host { sample: sample.clone(), certify_par: par, shed_from, stale_scratch, stale_targets };
     report.unreadable = unreadable(sample);
     if !report.unreadable.is_empty() {

@@ -670,6 +670,15 @@ mod tests {
         assert!(all().any(|t| matches!(t.reads, Reads::Undeclarable(_))), "the table has no row that cannot declare");
     }
 
+    #[test_id(tyy9r6g)]
+    #[test]
+    fn a_lifecycle_readiness_or_planning_change_wakes_the_sentinel_pass_which_keeps_its_cadence() {
+        let row = all().find(|t| t.name == a::sentinel_pass::NAME).unwrap();
+        assert_eq!(row.reads.prefixes(), ["lifecycle/", "readiness/", "planning/"]);
+        let wake = crate::registrations(&crate::settings::fixture()).into_iter().find(|r| r.name == a::sentinel_pass::NAME).unwrap().wake.expect("woken by its reads");
+        assert!(wake.polls, "it reads units, files and git too, so the cadence stays");
+    }
+
     #[test_id(tgw04ey)]
     #[test]
     fn a_row_that_reads_only_the_store_stops_polling_and_one_that_reads_more_keeps_its_cadence() {

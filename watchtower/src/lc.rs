@@ -56,6 +56,12 @@ pub fn content_list_read(client: &LcClient, args: &[&str]) -> Result<String, Str
     Ok(out.lines().skip(start).collect::<Vec<_>>().join("\n"))
 }
 
+/// `t` rounded down to the hour: a time bound for a read the store view holds. It only widens the
+/// window, and passes within the hour send the same words, so the held answer serves them.
+pub fn held_bound(t: i64) -> i64 {
+    t - t.rem_euclid(3_600)
+}
+
 /// The ids of the beads carrying exactly `reference`, through the store's `content ref` verb:
 /// a read bounded by its argument, so no caller is refused it. Err is the store's own text.
 pub fn by_ref(client: &LcClient, reference: &str) -> Result<Vec<String>, LcError> {
@@ -171,6 +177,12 @@ pub(crate) mod scripted {
 mod tests {
     use super::scripted::scripted;
     use super::*;
+
+    #[test_id(tidy48d)]
+    #[test]
+    fn a_held_read_bound_is_the_same_all_hour_and_never_later_than_the_time_asked_for() {
+        assert_eq!([held_bound(7_200), held_bound(7_201), held_bound(10_799), held_bound(10_800)], [7_200, 7_200, 7_200, 10_800]);
+    }
 
     #[test_id(t4tdmim)]
     #[test]

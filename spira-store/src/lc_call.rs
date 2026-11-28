@@ -600,6 +600,9 @@ impl LcClient {
 
     fn send<S: AsRef<str>>(&self, argv: &[S], stdin: Option<&str>) -> Result<Reply, LcError> {
         let argv: Vec<String> = argv.iter().map(|a| a.as_ref().to_string()).collect();
+        if let Some(held) = ThreadReads::ask(&argv, stdin) {
+            return held;
+        }
         let reply = self.transport.exchange_kind(&argv, stdin, self.deadline, self.not_running_wait)?;
         match queued_id(&reply.out) {
             Some(id) if reply.code == 0 => self.await_record(id),
@@ -631,6 +634,38 @@ impl LcClient {
     /// The answer's stdout when it applied (exit 0); a refusal (3) or anything else is an error.
     pub fn answer<S: AsRef<str>>(&self, argv: &[S]) -> Result<String, LcError> {
         self.call(argv)?.into_answer()
+    }
+}
+
+/// Answers a request from memory: `None` sends it to the transport as before.
+pub type ReadAnswerer = fn(&[String]) -> Option<Result<Reply, LcError>>;
+
+thread_local! {
+    static THREAD_READS: std::cell::Cell<Option<ReadAnswerer>> = const { std::cell::Cell::new(None) };
+}
+
+/// While held, every bodiless call this thread makes through any [`LcClient`] is offered to the
+/// answerer first, so reads made inside libraries are served as the caller's own are. The
+/// answerer's own calls go to the transport. Not nestable.
+pub struct ThreadReads(std::marker::PhantomData<*const ()>);
+
+impl ThreadReads {
+    pub fn begin(answerer: ReadAnswerer) -> ThreadReads {
+        THREAD_READS.set(Some(answerer));
+        ThreadReads(std::marker::PhantomData)
+    }
+
+    fn ask(argv: &[String], stdin: Option<&str>) -> Option<Result<Reply, LcError>> {
+        let answerer = THREAD_READS.take()?;
+        let held = stdin.is_none().then(|| answerer(argv)).flatten();
+        THREAD_READS.set(Some(answerer));
+        held
+    }
+}
+
+impl Drop for ThreadReads {
+    fn drop(&mut self) {
+        THREAD_READS.set(None);
     }
 }
 
@@ -732,6 +767,30 @@ pub fn run_bounded(mut cmd: Command, limit: Duration) -> (i32, String) {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(t6e45p3)]
+    #[test]
+    fn a_thread_read_answers_what_it_holds_sends_the_rest_and_lets_its_own_calls_through() {
+        use super::{LcClient, LcError, Reply, ThreadReads};
+        fn answerer(argv: &[String]) -> Option<Result<Reply, LcError>> {
+            (argv[0] == "list").then(|| {
+                // A `list` of its own: offered back to the answerer, this would never return.
+                let own = LcClient::over(std::sync::Arc::new(super::fake::Content::new(vec![])), true).call(&["list", "--ids", "sp-a"])?;
+                Ok(Reply { code: 0, out: format!("held {}", own.code), ..Reply::default() })
+            })
+        }
+        let sent = std::sync::Arc::new(super::fake::Content::new(vec![]));
+        let lc = LcClient::over(sent.clone(), true);
+        {
+            let _held = ThreadReads::begin(answerer);
+            assert!(lc.call(&["list", "--live"]).unwrap().out.starts_with("held "), "answered in place of the store");
+            assert!(lc.call(&["list", "--live"]).unwrap().out.starts_with("held "), "and again after its own call");
+            let _ = lc.call(&["content", "list"]);
+            let _ = lc.call_stdin(&["list"], "body");
+        }
+        let _ = lc.call(&["list", "--live"]);
+        let verbs: Vec<String> = sent.requests().iter().map(|a| a.join(" ")).collect();
+        assert_eq!(verbs, ["content list", "list", "list --live"], "unheld, bodied and after the guard go to the store");
+    }
     use std::io::{BufRead, BufReader, Read};
     use std::os::unix::net::UnixStream;
     #[test_id(t862q11)]

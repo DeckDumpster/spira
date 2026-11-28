@@ -124,3 +124,31 @@ fn a_tick_asks_the_observation_with_the_starts_the_sentinel_has_in_flight() {
     let input: ObserveIn = serde_json::from_str(&asked.input).unwrap();
     assert_eq!(input.starting, [("spira-run-x.service".to_string(), "builder".to_string())].into());
 }
+
+#[test_id(tqqipin)]
+#[test]
+fn one_reconciler_observe_asks_for_the_claim_view_once_however_many_partitions_it_reads() {
+    use crate::task_a_sentinel_pass::observe_store_calls::{counted, in_own_process, serve, Fake};
+    in_own_process(module_path!(), |dir| {
+        let fake = Arc::new(Fake::default());
+        let sock = dir.join("lc.sock");
+        serve(&sock, fake.clone());
+        let spira = testkit::manifest_dir().join("../spira");
+        let partitions = spira_config::runes::rune_partitions(&spira, None).len();
+        assert!(partitions > 1, "one call per partition is only told from one per observe with several");
+        let keys = ["SPIRA_RUNES", "SPIRA_STRANDED_RUNNER_MIN_AGE", "SPIRA_INSTANCE"];
+        let values = reconciler::Config::KEYS.iter().chain(&keys).filter_map(|k| Some((k.to_string(), spira_config::process::cfg(k).ok()?))).collect();
+        let gone = dir.join("no-such-tool").display().to_string();
+        let tool = || gone.clone();
+        let seams = reconciler::Seams { systemctl: tool(), tmux: tool(), git: tool(), forge: tool(), units_install: tool(), spira_config: tool(), spira_claim: tool(), strand: tool(), queue_helpers: tool(), queue: tool(), spira_lc: tool(), bead: tool(), target_reap: tool(), podman: tool(), rebuild: tool(), layout: tool(), store_unit: tool(), store_gc_unit: tool(), lint: tool(), guard: tool() };
+        let setup = Reconciler { interval_ms: 300_000, rules: Rules { now_secs: 0, grace_secs: 1800, effect_passes: 3, shadow_kinds: vec![] }, values, home: spira.display().to_string() };
+        let e = spira_runtime::Effects { world: spira_runtime::world::World { lc_socket: sock, run_dir: dir.join("run"), ..Default::default() }, reconciler: Some(setup), seams: Some(seams), ..Default::default() };
+        let input = serde_json::to_string(&ObserveIn { at: 1_793_000_000_000, values: e.reconciler.as_ref().unwrap().values.clone(), reminded: Default::default(), starting: Default::default() }).unwrap();
+        let task = spira_runtime::tasks::all().find(|t| t.name == NAME).unwrap();
+        let (_, observe) = task.runners.iter().find(|(effect, _)| *effect == OBSERVE).unwrap();
+        observe(&e, "k", &runtime::EffectSpec::keyed(OBSERVE, "k", input, 60_000)).expect("the observe answers");
+        let asked = fake.asked.lock().unwrap().clone();
+        eprintln!("observe sent {:?}", counted(&asked));
+        assert_eq!(counted(&asked)["claimable"], 1, "{asked:?}");
+    });
+}

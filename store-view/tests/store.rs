@@ -19,6 +19,7 @@ struct Script {
     seen: Vec<Vec<String>>,
     /// A watch with nothing scripted waits a moment and reports no change, as a quiet store's does.
     quiet: bool,
+    content_error: Option<String>,
 }
 
 struct Double(Arc<Mutex<Script>>);
@@ -73,6 +74,7 @@ impl Transport for Double {
                 }
                 None => Err("the script has no watch answer left".into()),
             },
+            "claimable" => ok(json!({ "rev": 1, "content_error": s.content_error, "beads": [] }).to_string()),
             "content" | "show-batch" | "condition" | "incidents" => ok(format!("answer {}", s.seen.iter().filter(|a| a[0] == argv[0]).count())),
             other => Err(format!("unscripted {other}")),
         }
@@ -946,6 +948,54 @@ fn after_a_failed_watch_the_next_one_sends_wait_ms_0_and_its_quiet_answer_confir
         assert_eq!(waits, ["30000", "30000", "0"]);
         w.advance(Duration::from_secs(11));
         assert_eq!(w.p.ready_counts().unwrap().rev, 5, "the quiet answer was confirmed, and the next watch holds");
+    });
+}
+
+/// Polls `w` through one watch answer that changes `keys`.
+fn changed(w: &World, keys: &[&str], through: u64) {
+    let events: Vec<Value> = keys.iter().map(|k| json!({ "key": k, "rev": through, "value": {} })).collect();
+    w.watch(json!({ "events": events, "through": through }));
+    w.p.poll().unwrap();
+}
+
+#[test_id(t78tlzk)]
+#[test]
+fn the_claim_view_is_held_until_a_row_readiness_or_plan_changes_or_its_hold_runs_out() {
+    within(|| {
+        let w = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(3600));
+        w.p.poll().unwrap();
+        let _watching = w.p.hold_watching();
+        let read = || w.p.claim_view().unwrap().value.out;
+        let first = read();
+        assert_eq!((read(), asked(&w, "claimable")), (first, 1), "unchanged: held");
+        changed(&w, &["conditions/x/y"], 5);
+        read();
+        assert_eq!(asked(&w, "claimable"), 1, "a condition is no input of a verdict");
+        for (n, key) in ["lifecycle/sp-a", "readiness/sp-a", "planning/watermark"].iter().enumerate() {
+            changed(&w, &[key], 6 + n as u64);
+            read();
+            read();
+            assert_eq!(asked(&w, "claimable"), 2 + n, "{key}");
+        }
+        w.advance(store_view::WINDOW_HOLD + Duration::from_secs(1));
+        read();
+        assert_eq!(asked(&w, "claimable"), 4, "outlives the other readers' hold");
+        w.advance(store_view::CLAIM_VIEW_HOLD);
+        read();
+        assert_eq!(asked(&w, "claimable"), 5, "the verdicts turn on the clock too");
+    });
+}
+
+#[test_id(t1zzd5d)]
+#[test]
+fn a_claim_view_the_content_store_could_not_describe_is_asked_again() {
+    within(|| {
+        let w = world(Script { list_rev: 4, content_error: Some("down".into()), ..Default::default() }, Duration::from_secs(10));
+        w.p.poll().unwrap();
+        let _watching = w.p.hold_watching();
+        w.p.claim_view().unwrap();
+        w.p.claim_view().unwrap();
+        assert_eq!(asked(&w, "claimable"), 2);
     });
 }
 

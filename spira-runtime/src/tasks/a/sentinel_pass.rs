@@ -143,7 +143,7 @@ use std::collections::{BTreeMap, HashSet};
 use runtime::event::*;
 use runtime::units::{self, UnitRan, UNIT_RAN};
 use serde::{Deserialize, Serialize};
-use spira_store::lc_call::LcClient;
+use spira_store::lc_call::{LcClient, LcError, Reply, ThreadReads};
 
 use super::kit::{self, Act, Cadence, Shape};
 use crate::Effects;
@@ -888,6 +888,21 @@ pub fn land_log_tail(run: &std::path::Path) -> String {
     }
 }
 
+/// The observe's read seam: a store read made on its thread, strand's and the watchtower's
+/// included, is answered by the held view when it holds it; any other is logged by name and sent.
+fn from_view(argv: &[String]) -> Option<Result<Reply, LcError>> {
+    let words: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let held = match words.as_slice() {
+        ["claimable"] => store_view::held_claim_view(),
+        _ => store_view::held_reply(&words),
+    };
+    if held.is_none() && store_view::shared().is_some() {
+        let name: Vec<&str> = words.iter().take_while(|w| !w.starts_with('-') && !w.contains(['/', '{'])).take(2).copied().collect();
+        eprintln!("sentinel-pass: the store view does not hold `{}`; asking the store", name.join(" "));
+    }
+    held
+}
+
 /// `sentinel-pass.observe`: the content and lifecycle rows over `LcClient`, the plan pool's
 /// ready count from spira-claim in-process, the holders from hel, the landing leg from the
 /// unit manager, and the world and release gates.
@@ -896,6 +911,8 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     let pin = |k: &str| req.pinned.get(k).cloned().unwrap_or_default();
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
     let list = |s: &str| s.split(',').map(str::trim).filter(|x| !x.is_empty()).map(str::to_string).collect::<Vec<_>>();
+    let _one_view = sentinel::claim::TickView::begin();
+    let _held_reads = ThreadReads::begin(from_view);
     let lc = client(e, 5_000);
     let run = e.world.run_dir.clone();
     let mut snap = Snapshot {
@@ -940,8 +957,8 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         ids.extend(sentinel::pilgrimage::open_epic_children(beads, &snap.labels.epics).into_iter().filter(|id| !known.contains(id)));
         ids.sort();
         ids.dedup();
-        for chunk in ids.chunks(100) {
-            if let Some(older) = rows_answer(&lc, &store_view::RowQuery { ids: Some(chunk), ..Default::default() }, &["list", "--ids", &chunk.join(",")]).ok().and_then(|t| sentinel::model::parse_lc_rows(&t).ok()) {
+        if !ids.is_empty() {
+            if let Some(older) = rows_answer(&lc, &store_view::RowQuery { ids: Some(&ids), ..Default::default() }, &["list", "--ids", &ids.join(",")]).ok().and_then(|t| sentinel::model::parse_lc_rows(&t).ok()) {
                 live.extend(older);
             }
         }

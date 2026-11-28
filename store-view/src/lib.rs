@@ -164,6 +164,9 @@ pub struct RowQuery<'a> {
 
 /// The longest an answer the clock can move ([`clock_moves`]) is held: no watch event reports it.
 pub const WINDOW_HOLD: Duration = Duration::from_secs(60);
+/// The longest [`held_claim_view`] holds `claimable`: its verdicts also turn on the clock (a snooze,
+/// a conflict marker's age) and on run-directory stops and reservations, which no watch event reports.
+pub const CLAIM_VIEW_HOLD: Duration = Duration::from_secs(300);
 
 #[derive(Default)]
 struct State {
@@ -358,6 +361,12 @@ pub fn held_read(argv: &[&str]) -> Option<Result<String, LcError>> {
         0 => Ok(r.out),
         _ => Err(LcError::Fault(r.why())),
     }))
+}
+
+/// [`held_reply`] of `claimable` for a loop that costs nothing at idle: held with no change for up
+/// to [`CLAIM_VIEW_HOLD`], where every other reader of it asks again after [`WINDOW_HOLD`].
+pub fn held_claim_view() -> Option<Result<Reply, LcError>> {
+    Some(shared()?.claim_view().map(|r| r.value))
 }
 
 /// [`held_read`] with the exit code the store answered with kept.
@@ -1013,6 +1022,15 @@ impl Projection {
     /// watch does not name the read's prefixes, asks the store each time; one whose watch fell
     /// behind is refused.
     pub fn answer(&self, argv: &[&str]) -> Result<Read<Reply>, LcError> {
+        self.answer_aged(argv, clock_moves(argv).then_some(WINDOW_HOLD))
+    }
+
+    /// [`Projection::answer`] of `claimable`, aged by [`CLAIM_VIEW_HOLD`].
+    pub fn claim_view(&self) -> Result<Read<Reply>, LcError> {
+        self.answer_aged(&["claimable"], Some(CLAIM_VIEW_HOLD))
+    }
+
+    fn answer_aged(&self, argv: &[&str], hold: Option<Duration>) -> Result<Read<Reply>, LcError> {
         let classes = classes_of(argv).ok_or_else(|| LcError::Refused(format!("`{}` is not a read the views hold", argv.join(" "))))?;
         if !self.watching() || !self.watches(classes) {
             return Ok(Read { rev: 0, value: self.client.call(argv)? });
@@ -1021,14 +1039,16 @@ impl Projection {
         let key = argv.join("\u{1f}");
         let before = {
             let m = self.memo.lock().unwrap_or_else(|e| e.into_inner());
-            let aged_out = |at: &Instant| clock_moves(argv) && (self.clock)().saturating_duration_since(*at) > WINDOW_HOLD;
+            let aged_out = |at: &Instant| hold.is_some_and(|hold| (self.clock)().saturating_duration_since(*at) > hold);
             if let Some((_, reply, _)) = m.held.get(&key).filter(|(_, _, at)| !aged_out(at)) {
                 return Ok(Read { rev: fresh.rev, value: reply.clone() });
             }
             m.seen(classes)
         };
         let reply = self.client.call(argv)?;
-        if reply.code == 0 {
+        // A claim view the content store could not describe is asked again, never held.
+        let degraded = argv.first() == Some(&"claimable") && json_of(&reply.out, "claimable").is_ok_and(|v| !v["content_error"].is_null());
+        if reply.code == 0 && !degraded {
             let mut m = self.memo.lock().unwrap_or_else(|e| e.into_inner());
             if m.seen(classes) == before {
                 m.keep(key, classes, reply.clone(), (self.clock)());

@@ -43,7 +43,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: sentinel_pass::NAME,
-        reads: Reads::None,
+        reads: Reads::Polled(&["lifecycle/", "readiness/", "planning/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: sentinel_pass::SentinelPass::boot,

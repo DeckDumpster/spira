@@ -299,6 +299,10 @@ pub trait Host: Send + Sync {
     fn dwarf_count(&self, _rune: &str) -> Option<i64> {
         None
     }
+    /// A guard under which every ready read the calling thread makes answers from one claim view.
+    fn one_claim_view(&self) -> Option<Box<dyn std::any::Any>> {
+        None
+    }
     /// The runes the sentinel's last call pass left uncalled with ready work, each with its reason; `None` when this host cannot tell, `Err` when that pass cannot be read.
     fn uncalled(&self) -> Option<Result<BTreeMap<String, String>, String>> {
         None
@@ -1240,6 +1244,8 @@ fn fleet_readings(cfg: &Config) -> FleetReadings {
     let live_reactive: i64 = reactive_runes.iter().map(|f| live_of(f)).sum();
     let live_total = live_reactive + task_runes.iter().map(|f| live_of(f)).sum::<i64>();
 
+    // Held here: the fleet invariant observes on its own thread, and the view is per thread.
+    let _one_view = cfg.host.as_ref().and_then(|h| h.one_claim_view());
     let mut rows = Vec::new();
     for line in cfg.config(&["rune", "partitions"]).lines() {
         let (labels, exclude) = line.split_once('\t').unwrap_or((line, ""));

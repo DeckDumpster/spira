@@ -143,7 +143,7 @@ pub fn join_states(mut beads: Vec<TriggerBead>, lc: &HashMap<String, lc_state::R
 /// The label's open beads, and its beads closed since `now − lookback`, merged by id. The store
 /// refuses a label as a bound on the whole history, so the closed read carries a time window.
 fn query_bd(lc: &LcClient, label: &str, now: i64, lookback_hours: i64) -> Result<Vec<TriggerBead>, String> {
-    let since = crate::log::fmt_iso(now - lookback_hours * 3600);
+    let since = crate::log::fmt_iso(crate::lc::held_bound(now - lookback_hours * 3600));
     let reads: [&[&str]; 2] = [
         &["--label", label, "--limit", "0", "--json", "--brief"],
         &["--label", label, "--all", "--limit", "0", "--closed-after", &since, "--json", "--brief"],
@@ -241,7 +241,7 @@ mod tests {
         assert_eq!(beads.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), vec!["sp-a"], "one bead read twice is one bead");
         let seen = t.seen.lock().unwrap();
         assert_eq!(seen[0], vec!["content", "list", "--label", "czar-trigger", "--limit", "0", "--json", "--brief"]);
-        let since = crate::log::fmt_iso(NOW - 24 * 3600);
+        let since = crate::log::fmt_iso(crate::lc::held_bound(NOW - 24 * 3600));
         assert_eq!(seen[1], vec!["content", "list", "--label", "czar-trigger", "--all", "--limit", "0", "--closed-after", &since, "--json", "--brief"]);
         assert!(query_bd(&crate::lc::scripted::scripted(2, "cannot tell").1, "x", NOW, 24).is_err());
     }

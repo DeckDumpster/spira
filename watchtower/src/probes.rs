@@ -668,13 +668,20 @@ fn ids_of(stdout: &[u8], key: &str) -> Option<Vec<String>> {
 pub fn rowless_beads(cfg: &RowlessCfg, now: i64) -> Reading {
     let prior = load_rowless_state(&cfg.state);
     let plan = rowless_plan(prior.as_ref(), now, cfg.full_secs);
+    // Read before the rows it stamps. No bead is created without moving it, so between full
+    // sweeps an unmoved watermark leaves nothing new to read.
+    let watermark = planning_watermark(&cfg.lc);
+    let unmoved = prior.as_ref().filter(|p| plan.created_after.is_some() && watermark.is_some() && p.watermark == watermark);
     let mut args: Vec<String> = ["--status", "open,in_progress,blocked,deferred", "--exclude-type", &spira_config::nonwork::no_row_types_arg(), "--json", "--limit", "0", "--brief"]
         .iter().map(|s| s.to_string()).collect();
     if let Some(since) = plan.created_after {
-        args.extend(["--created-after".to_string(), crate::log::fmt_iso(since)]);
+        args.extend(["--created-after".to_string(), crate::log::fmt_iso(crate::lc::held_bound(since))]);
     }
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let open = crate::lc::content_list(&cfg.lc, &args).and_then(|o| ids_of(o.as_bytes(), "id"));
+    let open = match unmoved {
+        Some(_) => Some(Vec::new()),
+        None => crate::lc::content_list(&cfg.lc, &args).and_then(|o| ids_of(o.as_bytes(), "id")),
+    };
     let Some(mut candidates) = open else { return Reading::Unknown };
     candidates.extend(plan.carried);
     candidates.sort();
@@ -685,14 +692,20 @@ pub fn rowless_beads(cfg: &RowlessCfg, now: i64) -> Reading {
         let Some(rows) = lifecycle_ids(&cfg.lc, &candidates) else { return Reading::Unknown };
         rowless(&candidates, &rows)
     };
-    save_rowless_state(&cfg.state, &RowlessState { last_full: if plan.created_after.is_none() { now } else { prior.map_or(now, |p| p.last_full) }, last_check: now, missing: missing.clone() });
+    let last_check = unmoved.map_or(now, |p| p.last_check);
+    save_rowless_state(&cfg.state, &RowlessState { last_full: if plan.created_after.is_none() { now } else { prior.map_or(now, |p| p.last_full) }, last_check, watermark, missing: missing.clone() });
     Reading::Standing(rowless_cond(&missing, cfg.cap, cfg.sustain_secs).into_iter().collect())
+}
+
+fn planning_watermark(lc: &spira_store::lc_call::LcClient) -> Option<u64> {
+    serde_json::from_str::<serde_json::Value>(&lc.answer(&["plan", "watermark"]).ok()?).ok()?["watermark"].as_u64()
 }
 
 #[derive(Debug, PartialEq)]
 pub struct RowlessState {
     pub last_full: i64,
     pub last_check: i64,
+    pub watermark: Option<u64>,
     pub missing: Vec<String>,
 }
 
@@ -716,16 +729,23 @@ pub fn rowless_plan(prior: Option<&RowlessState>, now: i64, full_secs: i64) -> R
     }
 }
 
+const WATERMARK_LINE: &str = "watermark ";
+
 fn load_rowless_state(path: &Path) -> Option<RowlessState> {
     let text = std::fs::read_to_string(path).ok()?;
     let mut lines = text.lines();
     let last_full = lines.next()?.parse().ok()?;
     let last_check = lines.next()?.parse().ok()?;
-    Some(RowlessState { last_full, last_check, missing: lines.filter(|l| !l.is_empty()).map(String::from).collect() })
+    let mut lines = lines.peekable();
+    let watermark = lines.next_if(|l| l.starts_with(WATERMARK_LINE)).and_then(|l| l[WATERMARK_LINE.len()..].parse().ok());
+    Some(RowlessState { last_full, last_check, watermark, missing: lines.filter(|l| !l.is_empty()).map(String::from).collect() })
 }
 
 fn save_rowless_state(path: &Path, st: &RowlessState) {
     let mut text = format!("{}\n{}\n", st.last_full, st.last_check);
+    if let Some(w) = st.watermark {
+        text.push_str(&format!("{WATERMARK_LINE}{w}\n"));
+    }
     for id in &st.missing {
         text.push_str(id);
         text.push('\n');
@@ -832,7 +852,8 @@ mod tests {
         assert_eq!(conds.len(), 1);
         assert!(conds[0].body.contains("sp-b") && !conds[0].body.contains("sp-a,"), "{}", conds[0].body);
         let seen = t.seen.lock().unwrap();
-        assert_eq!(&seen[0][..3], &["content", "list", "--status"]);
+        let content = seen.iter().find(|a| a[0] == "content").expect("a content read");
+        assert_eq!(&content[..3], &["content", "list", "--status"]);
         let (_, down) = crate::lc::scripted::scripted(2, "cannot tell");
         let cfg = RowlessCfg { lc: down, cap: 5, sustain_secs: 0, state: d.join("rowless2.state"), full_secs: 3600 };
         assert!(matches!(rowless_beads(&cfg, 1_700_000_000), Reading::Unknown), "no answer is unknown, never no rowless beads");
@@ -921,10 +942,28 @@ mod tests {
         assert_eq!(tally(Some(("i1", 2)), &kill), Some(("i2".into(), 3)));
     }
 
+    #[test_id(tsk81ti)]
+    #[test]
+    fn a_pass_over_an_unmoved_planning_watermark_reads_no_content_rows_and_a_moved_one_does() {
+        let d = testkit::TempDir::new("wt-rowless-watermark");
+        let sweep = |watermark: &str, now: i64| {
+            let (t, lc) = crate::lc::scripted::scripted_by(&[("plan watermark", 0, watermark), ("content list", 0, "[]")]);
+            let cfg = RowlessCfg { lc, cap: 5, sustain_secs: 0, state: d.join("rowless.state"), full_secs: 3600 };
+            assert!(matches!(rowless_beads(&cfg, now), Reading::Standing(_)));
+            let seen = t.seen.lock().unwrap().iter().filter(|a| a[0] == "content").count();
+            seen
+        };
+        let now = 1_700_000_000;
+        assert_eq!(sweep(r#"{"watermark":7}"#, now), 1, "the first sweep is full");
+        assert_eq!(sweep(r#"{"watermark":7}"#, now + 120), 0, "no bead was created since");
+        assert_eq!(sweep(r#"{"watermark":8}"#, now + 240), 1, "a planning write");
+        assert_eq!(sweep(r#"{"watermark":8}"#, now + 3600), 1, "the hourly full sweep asks its client whatever the watermark says");
+    }
+
     #[test_id(taoe892)]
     #[test]
     fn rowless_plan_is_incremental_between_full_sweeps_and_full_after() {
-        let st = RowlessState { last_full: 1000, last_check: 1500, missing: vec!["sp-m".into()] };
+        let st = RowlessState { last_full: 1000, last_check: 1500, watermark: None, missing: vec!["sp-m".into()] };
         let p = rowless_plan(Some(&st), 1600, 3600);
         assert_eq!(p.created_after, Some(1500 - ROWLESS_OVERLAP_SECS));
         assert_eq!(p.carried, vec!["sp-m".to_string()]);
@@ -938,7 +977,7 @@ mod tests {
     fn rowless_state_round_trips() {
         let t = testkit::TempDir::new("rowless-state");
         let f = t.path().join("sub").join("rowless.state");
-        let st = RowlessState { last_full: 5, last_check: 9, missing: vec!["sp-a".into(), "sp-b".into()] };
+        let st = RowlessState { last_full: 5, last_check: 9, watermark: Some(4), missing: vec!["sp-a".into(), "sp-b".into()] };
         save_rowless_state(&f, &st);
         assert_eq!(load_rowless_state(&f), Some(st));
     }

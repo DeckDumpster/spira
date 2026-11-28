@@ -746,3 +746,171 @@ fn t5_check2_ends_a_takeover_whose_owner_session_is_gone_with_a_note_and_keeps_a
     let (_, acts) = decide(&Carry::default(), &reserved("direct@1.2", false));
     assert!(acts.iter().all(|a| !(a.effect == LC_EVENT && a.key.starts_with("sp-a"))), "a live owner's takeover stays: {acts:?}");
 }
+
+/// What a real observe sends the store. The installed projection and the resolved config are each
+/// one per process, so each test re-runs itself in a child with its own.
+pub(crate) mod observe_store_calls {
+    use std::collections::BTreeMap;
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixListener;
+    use std::path::Path;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    use runtime::units::ScriptedUnits;
+    use serde_json::{json, Value};
+    use spira_store::lc_call::LcClient;
+
+    const CHILD: &str = "SPIRA_TEST_OBSERVE_CHILD";
+
+    #[derive(Default)]
+    pub(crate) struct Fake {
+        pub(crate) asked: Mutex<Vec<Vec<String>>>,
+        knobs: Mutex<serde_json::Map<String, Value>>,
+    }
+
+    impl Fake {
+        fn answer(&self, argv: &[String]) -> String {
+            let words: Vec<&str> = argv.iter().map(String::as_str).collect();
+            let row = |id: &str, state: &str| json!({ "bead_id": id, "state": state, "version": "1", "holds": "[]", "stack": "{}", "express": "0", "repo": "spira" });
+            match words.as_slice() {
+                ["rc", ..] => json!({ "ok": { "items": [], "list_rev": 5 } }).to_string(),
+                ["list", "--live", ..] => json!([row("sp-a", "READY"), row("sp-c", "CERTIFIED")]).to_string(),
+                ["list", ..] => "[]".into(),
+                ["section", "snapshot"] => json!({ "sections": [], "intents": [], "knobs": *self.knobs.lock().unwrap() }).to_string(),
+                ["intent", "knob-init", knob, .., "--json", value] => {
+                    self.knobs.lock().unwrap().insert(knob.to_string(), serde_json::from_str(value).unwrap());
+                    "{}".into()
+                }
+                ["claimable"] => json!({ "rev": 5, "cannot_tell": 0, "content_error": null, "beads": [] }).to_string(),
+                // `sp-a` waits on a bead outside the live set that has no row.
+                ["content", "list", ..] => json!([{ "id": "sp-a", "title": "a", "status": "open", "issue_type": "task", "labels": ["spira", "spira-red-tracker"], "dependencies": [{ "issue_id": "sp-a", "depends_on_id": "sp-gone", "type": "blocks" }] }]).to_string(),
+                ["plan", ..] => json!({ "watermark": 1, "items": [], "edges": [] }).to_string(),
+                _ => "{}".into(),
+            }
+        }
+    }
+
+    pub(crate) fn serve(path: &Path, fake: Arc<Fake>) {
+        let listener = UnixListener::bind(path).unwrap();
+        std::thread::spawn(move || {
+            for conn in listener.incoming().flatten() {
+                let fake = fake.clone();
+                std::thread::spawn(move || {
+                    let mut line = String::new();
+                    if BufReader::new(&conn).read_line(&mut line).unwrap_or(0) == 0 {
+                        return;
+                    }
+                    let request: Value = serde_json::from_str(line.trim()).unwrap();
+                    let argv: Vec<String> = serde_json::from_value(request.get("argv").cloned().unwrap_or(request)).unwrap();
+                    fake.asked.lock().unwrap().push(argv.clone());
+                    let out = fake.answer(&argv);
+                    let _ = (&conn).write_all(format!("{}\n{out}", json!({ "exit_code": 0, "len": out.len() })).as_bytes());
+                });
+            }
+        });
+    }
+
+    /// Runs `body` in a child of this binary that has its own fixture config in `dir`; `test` is
+    /// the calling test's `module_path!()`, which `test_id` ends with its name.
+    pub(crate) fn in_own_process(test: &str, body: fn(&Path)) {
+        if let Ok(dir) = std::env::var(CHILD) {
+            return body(Path::new(&dir));
+        }
+        let dir = testkit::TempDir::new("sentinel-observe");
+        let run = dir.path().join("run");
+        let release = spira_config::process::fixture_release(dir.path(), true);
+        std::fs::create_dir_all(release.join("bin")).unwrap();
+        // Named by the passes, never run: the lifecycle route is the socket, and the host
+        // section only resolves its two tools until an intent asks one to act.
+        for tool in ["spira-lc", "spira-config", "target-reap"] {
+            testkit::write_exe(release.join("bin").join(tool), "");
+        }
+        std::fs::create_dir_all(&run).unwrap();
+        // A unit manager listing no unit: without one, strand stops before its ready reads.
+        let systemctl = dir.path().join("no-units");
+        testkit::write_exe(&systemctl, "#!/bin/sh\nexit 0\n");
+        // The only program the child can find by name: the one the unit listing is run under.
+        let path = dir.path().join("path");
+        std::fs::create_dir(&path).unwrap();
+        let timeout = std::env::split_paths(&std::env::var_os("PATH").unwrap()).map(|d| d.join("timeout")).find(|p| p.is_file()).unwrap();
+        std::os::unix::fs::symlink(timeout, path.join("timeout")).unwrap();
+        let sock = dir.path().join("lc.sock");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", run.to_str().unwrap()), ("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_LC_LIFECYCLE_ON_STORE", "1"), ("SPIRA_RUNES_DIR", testkit::manifest_dir().join("../spira/runes").to_str().unwrap())]);
+        let name = test.split_once("::").unwrap().1;
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([&format!("{name}::"), "--nocapture"])
+            .env_clear()
+            .env("PATH", &path)
+            .env("CARGO_MANIFEST_DIR", testkit::manifest_dir())
+            .env("SPIRA_SYSTEMCTL", &systemctl)
+            .env("HOME", dir.path())
+            .env("SPIRA_HOME", testkit::manifest_dir().join("../spira"))
+            .env("SPIRA_RELEASE", &release)
+            .env("SPIRA_TOML", toml)
+            .env(CHILD, dir.path())
+            .output()
+            .unwrap();
+        let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        said.lines().filter(|l| l.starts_with("observe sent")).for_each(|l| eprintln!("{l}"));
+        assert!(out.status.success() && said.contains("1 passed"), "{said}");
+    }
+
+    /// The calls of each verb the acceptance names, and each knob write.
+    pub(crate) fn counted(asked: &[Vec<String>]) -> BTreeMap<&'static str, usize> {
+        let mut counts: BTreeMap<&'static str, usize> = ["claimable", "list", "content list", "intent knob-init"].map(|v| (v, 0)).into();
+        for argv in asked {
+            let two = argv.iter().take(2).cloned().collect::<Vec<_>>().join(" ");
+            if let Some((_, n)) = counts.iter_mut().find(|(verb, _)| two == **verb || argv[0] == **verb) {
+                *n += 1;
+            }
+        }
+        counts
+    }
+
+    /// Two observes one cadence apart over one unchanging store, with a projection watching what
+    /// the runtime's does: what each one sent.
+    fn two_passes(dir: &Path) -> [Vec<Vec<String>>; 2] {
+        let fake = Arc::new(Fake::default());
+        let sock = dir.join("lc.sock");
+        serve(&sock, fake.clone());
+        let now = Arc::new(Mutex::new(Instant::now()));
+        let clock = now.clone();
+        let projection = store_view::Projection::new(LcClient::socket(&sock), Duration::from_secs(600), Arc::new(move || *clock.lock().unwrap()));
+        let views = store_view::install(Arc::new(projection.with_prefixes(&spira_runtime::tasks::watched_prefixes())));
+        views.load().unwrap();
+        let _watching = views.hold_watching();
+        let units = Arc::new(ScriptedUnits::new(Arc::new(runtime::ports::WallClock)));
+        let e = spira_runtime::Effects { world: spira_runtime::world::World { lc_socket: sock, run_dir: dir.join("run"), ..Default::default() }, units: Some(units), ..Default::default() };
+        let input = json!({ "pinned": { "SPIRA_SCOPE_LABEL": "spira", "SPIRA_RED_TRACKER_LABEL": "spira-red-tracker" } }).to_string();
+        [(); 2].map(|()| {
+            fake.asked.lock().unwrap().clear();
+            spira_runtime::tasks::a::sentinel_pass::observe(&e, &input).expect("the observe answers");
+            let asked = fake.asked.lock().unwrap().clone();
+            eprintln!("observe sent {:?}: {asked:?}", counted(&asked));
+            *now.lock().unwrap() += Duration::from_millis(spira_runtime::tasks::a::sentinel_pass::CADENCE_MS);
+            asked
+        })
+    }
+
+    #[test_id(thfm235)]
+    #[test]
+    fn one_observe_asks_for_the_claim_view_once() {
+        in_own_process(module_path!(), |dir| {
+            let [first, _] = two_passes(dir);
+            assert_eq!(counted(&first)["claimable"], 1, "{first:?}");
+        });
+    }
+
+    #[test_id(ttamkwa)]
+    #[test]
+    fn a_second_observe_over_unchanged_data_asks_the_store_for_no_lifecycle_or_content_read() {
+        in_own_process(module_path!(), |dir| {
+            let [_, second] = two_passes(dir);
+            assert!(counted(&second).values().all(|n| *n == 0), "{:?}: {second:?}", counted(&second));
+            let mut sent: Vec<String> = second.iter().map(|argv| argv.iter().take(2).take_while(|w| !w.starts_with('-')).cloned().collect::<Vec<_>>().join(" ")).collect();
+            sent.sort();
+            assert_eq!(sent, ["audits", "reconcile-content", "section snapshot"], "all the unchanged pass sends: two verbs the view never holds, and the section snapshot, aged out");
+        });
+    }
+}
