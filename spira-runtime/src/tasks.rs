@@ -104,7 +104,10 @@ pub static CORE: &[Task] = &[
     Task { name: writer_grants::NAME, reads: Reads::Undeclarable("the verdict is lc-serve's in-memory writer grants, read with no store call"), plane: runtime::Plane::Work, signal: &[], boot: writer_grants::WriterGrants::boot, cadence_ms: |s| s.writer_grants.interval_ms, effects: &[writer_grants::OBSERVE, INBOX_APPEND], runners: &[(writer_grants::OBSERVE, |e, _, _| e.world.writer_grants_snapshot())], keys: &[&["SPIRA_RUNTIME_WRITER_GRANTS_SECS"]], build: |s| s.writer_grants.clone().registration() },
     Task { name: wake_audit::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: wake_audit::WakeAudit::boot, cadence_ms: |s| s.sweep_secs * 1000, effects: &[INBOX_APPEND], runners: &[], keys: &[&["SPIRA_RUNTIME_SWEEP_SECS"]], build: |s| wake_audit::WakeAudit { interval_ms: s.sweep_secs * 1000 }.registration() },
     Task { name: supersede_duty::NAME, reads: Reads::Only(&["lifecycle/", "readiness/"]), plane: runtime::Plane::Work, signal: &[], boot: supersede_duty::SupersedeDuty::boot, cadence_ms: |s| s.supersede_duty.interval_ms, effects: &[supersede_duty::OBSERVE, supersede_duty::ACT, INBOX_APPEND], runners: &[(supersede_duty::OBSERVE, |e, _, s| e.world.supersede_snapshot(&s.input)), (supersede_duty::ACT, |e, _, s| e.world.supersede_act(&s.input))], keys: &[&["SPIRA_RUNTIME_SUPERSEDE_DUTY_SECS"]], build: |s| s.supersede_duty.clone().registration() },
-    Task { name: claim_count::NAME, reads: Reads::Only(&["lifecycle/", "readiness/"]), plane: runtime::Plane::Work, signal: &[], boot: claim_count::ClaimCount::boot, cadence_ms: |s| s.claim_count.interval_ms, effects: &[claim_count::OBSERVE, INBOX_APPEND], runners: &[(claim_count::OBSERVE, |e, _, _| e.world.claim_count_snapshot())], keys: &[&["SPIRA_RUNTIME_CLAIM_COUNT_SECS", "SPIRA_CLAIM_PAGE_EVERY"]], build: |s| s.claim_count.clone().registration() },
+    Task { name: claim_count::NAME, reads: Reads::Only(&["lifecycle/", "readiness/"]), plane: runtime::Plane::Work, signal: &[], boot: claim_count::ClaimCount::boot, cadence_ms: |s| s.claim_count.interval_ms, effects: &[claim_count::OBSERVE, INBOX_APPEND, WATCH_PUBLISH], runners: &[(claim_count::OBSERVE, |e, _, s| {
+        e.watch_track(&s.input);
+        e.world.claim_count_snapshot()
+    })], keys: &[&["SPIRA_RUNTIME_CLAIM_COUNT_SECS", "SPIRA_CLAIM_PAGE_EVERY"]], build: |s| s.claim_count.clone().registration() },
     Task { name: bead_sweep::NAME, reads: Reads::Polled(&["lifecycle/", "readiness/", "planning/"]), plane: runtime::Plane::Work, signal: &[], boot: bead_sweep::BeadSweep::boot, cadence_ms: |s| s.bead_sweep.interval_ms, effects: &[bead_sweep::OBSERVE, bead_sweep::REPAIR, INBOX_APPEND], runners: &[(bead_sweep::OBSERVE, |e, _, _| e.world.sweep_snapshot()), (bead_sweep::REPAIR, |e, _, s| e.world.sweep_repair(&s.input))], keys: &[&["SPIRA_RUNTIME_BEAD_SWEEP_SECS", "SPIRA_BEAD_SWEEP_HOLD_MIN", "SPIRA_BEAD_SWEEP_REWORK_MIN", "SPIRA_BEAD_SWEEP_CERT_MIN", "SPIRA_BEAD_SWEEP_WAIT_MIN", "SPIRA_BEAD_SWEEP_BATCH_MIN", "SPIRA_SCOPED_STOP_REVIEW_SECS"]], build: |s| s.bead_sweep.clone().registration() },
     Task { name: publish_backlog::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: publish_backlog::PublishBacklog::boot, cadence_ms: |s| s.publish_backlog.interval_ms, effects: &[publish_backlog::OBSERVE, INBOX_APPEND], runners: &[(publish_backlog::OBSERVE, |e, _, _| e.world.publish_backlog_snapshot())], keys: &[&["SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS", "SPIRA_RUNTIME_PUBLISH_BACKLOG_RECHECK_SECS", "SPIRA_LOCAL_BACKLOG_COUNT", "SPIRA_LOCAL_BACKLOG_AGE"]], build: |s| s.publish_backlog.clone().registration() },
     Task { name: overrides::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: overrides::Overrides::boot, cadence_ms: |s| s.overrides.interval_ms, effects: &[overrides::APPLY, INBOX_APPEND], runners: &[(overrides::APPLY, |e, _, s| e.world.overrides_apply(&s.input, &e.overrides_held))], keys: &[&["SPIRA_RUNTIME_OVERRIDES_SECS", "SPIRA_OVERRIDES"]], build: |s| s.overrides.clone().registration() },
@@ -180,6 +183,7 @@ pub fn clashes(families: &[&[Task]]) -> Vec<String> {
 /// (`runtime::units::EFFECTS`), each run on `Effects::units`.
 pub static SHARED: &[(&str, Runner)] = &[
     (INBOX_APPEND, |e, _, s| e.world.inbox_append(&s.input)),
+    (WATCH_PUBLISH, |e, _, s| e.watch_publish(&s.input)),
     (units::UNIT_START, |e, _, s| e.unit(s)),
     (units::UNIT_STOP, |e, _, s| e.unit(s)),
     (units::UNIT_RESTART, |e, _, s| e.unit(s)),
@@ -188,8 +192,8 @@ pub static SHARED: &[(&str, Runner)] = &[
 ];
 
 /// Effects that run through a halt whichever task asks for them: the inbox line is how a
-/// stopped world still reaches the operator.
-pub const SIGNAL_EFFECTS: &[&str] = &[INBOX_APPEND];
+/// stopped world still reaches the operator, and a watch topic is the same condition.
+pub const SIGNAL_EFFECTS: &[&str] = &[INBOX_APPEND, WATCH_PUBLISH];
 
 /// Every effect on the signal plane, with what its runner touches. Reviewed by hand against
 /// the runner: each pages, sends mail, wakes a reader or appends to the inbox (or, for a
@@ -197,6 +201,7 @@ pub const SIGNAL_EFFECTS: &[&str] = &[INBOX_APPEND];
 /// A signal effect missing here is one [`signal_violations`] reports.
 pub const SIGNAL_SAFE: &[(&str, &str)] = &[
     (INBOX_APPEND, "appends a line to the Concierge's inbox file (World::inbox_append)"),
+    (WATCH_PUBLISH, "publishes a watch row's conditions to watch/<row>/<subject> on the broker"),
     (g::mail_wake::OBSERVE, "reads each mailbox's unread age (mail unread-age, ls)"),
     (g::mail_wake::WAKE, "runs the mailbox reader's own wake command through the process port"),
     (e::incident_probe::OBSERVE, "reads the newest probe attempt under the run dir"),

@@ -24,6 +24,7 @@ pub mod status;
 pub mod store;
 pub mod tasks;
 pub mod unpublished;
+pub mod watch_topics;
 pub mod watchers;
 pub mod wiki_git;
 pub mod world;
@@ -239,6 +240,9 @@ pub struct Effects {
     /// pr-notify's publisher, built at its first use; `None` when the configuration names no
     /// broker.
     pub pr_topics: OnceLock<Option<pr_topics::PrTopics>>,
+    /// The watch rows' publisher, built at its first use; `None` when the configuration names
+    /// no broker.
+    pub watch_topics: OnceLock<Option<watch_topics::WatchTopics>>,
 }
 
 /// The mail environment operator notes are sent under: no bd (a note needs no tracking bead, and an empty db keeps the mailer from launching one), and the repeat guard overridden because consecutive merges normalise to one subject.
@@ -277,6 +281,25 @@ impl Effects {
 
     fn pr_publish(&self, input: &str) -> Result<String, String> {
         self.pr_topics().map_or_else(|| Ok("not published: no broker configured".into()), |t| t.publish(input))
+    }
+
+    fn watch_topics(&self) -> Option<&watch_topics::WatchTopics> {
+        let build = || spira_pub::Publisher::new("spira-runtime").inspect_err(|e| eprintln!("watch rows: nothing will be published: {e}")).ok().map(watch_topics::WatchTopics::new);
+        self.watch_topics.get_or_init(build).as_ref()
+    }
+
+    /// What a watch row's observe was asked with: nothing to say builds no publisher.
+    pub(crate) fn watch_track(&self, input: &str) {
+        if input.is_empty() {
+            return;
+        }
+        if let Some(topics) = self.watch_topics() {
+            topics.track(input);
+        }
+    }
+
+    pub(crate) fn watch_publish(&self, input: &str) -> Result<String, String> {
+        self.watch_topics().map_or_else(|| Ok("not published: no broker configured".into()), |t| t.publish(input))
     }
 
     fn operator_note(&self, input: &str) -> Result<String, String> {

@@ -234,3 +234,8 @@ required-features = ["integration"]
 name = "sift_reads"
 path = "tests/sift_reads.rs"
 required-features = ["integration"]
+
+[[test]]
+name = "watch_topics"
+path = "tests/watch_topics.rs"
+required-features = ["integration"]

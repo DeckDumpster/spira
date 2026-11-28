@@ -348,6 +348,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("watch.perf.metrics", Host),
     ("watch.perf.observe", Store),
     ("watch.perf.slow_sample", Host),
+    ("watch.publish", Host),
     ("watch.refusals.file", Store),
     ("watch.refusals.observe", Store),
     ("watch.runtime.file_bump", Store),
