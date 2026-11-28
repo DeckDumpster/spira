@@ -1,4 +1,4 @@
-// covers: systemd/mosquitto.conf install/src/broker.rs
+// covers: systemd/mosquitto.conf install/src/broker.rs testkit/src/broker.rs
 //! The rendered broker config against the real `mosquitto` on PATH.
 #[macro_use]
 extern crate spira_test_id;
@@ -54,4 +54,21 @@ fn a_keepalive_zero_client_gets_connack_and_the_broker_leaves_no_database() {
     std::fs::write(&conf, persisting).unwrap();
     Process::start(&dir, &conf).stop_clean();
     assert!(dir.join("mosquitto.db").exists(), "the check above could have found a database");
+}
+
+#[test_id(tn4c89y)]
+#[test]
+fn a_broker_that_exits_before_ready_fails_the_start_at_once_naming_its_exit() {
+    let dir = testkit::TempDir::new("mq");
+    let (conf, _) = placed_config(&dir);
+
+    // Positive control: the unmodified config starts, so the failure below is the directive's.
+    Process::start(&dir, &conf).stop_clean();
+
+    let mut refused = std::fs::read_to_string(&conf).unwrap();
+    refused.push_str("\nno_such_option true\n");
+    std::fs::write(&conf, refused).unwrap();
+    let panic = std::panic::catch_unwind(|| drop(Process::start(&dir, &conf))).expect_err("mosquitto refuses the directive");
+    let message = panic.downcast_ref::<String>().expect("a formatted panic message");
+    assert!(message.contains("exited before it reported ready: exit status:"), "{message}");
 }

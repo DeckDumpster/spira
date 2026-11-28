@@ -98,7 +98,7 @@ prompt carrying the state.
 spira-sub add 'session/+/age/+' --note "read this builder's approach"
 ```
 
-The topic families are in `{{SPIRA_HOME}}/topics.toml`.
+The topic families ever published: `spira-lc topics`.
 
 ### Reading the state of the world
 

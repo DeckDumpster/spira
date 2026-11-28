@@ -350,9 +350,12 @@ verbatim.
   `case="(suite)"`, `status` `skip`/`bail`. A suite whose `.out` does not open with the header line takes the fallback branch below.
 - **Otherwise (`out_text` is `None`, unreadable, or does not open with the header):** one
   `case="(suite)"` row built from `fallback` (the caller's own status vocabulary, not
-  reinterpreted here) — `ok`→pass, `skip`→skip, `unreached`→unreached, everything else
-  (`timeout`, `red`, `quarantined-red`, anything unrecognised)→fail, `detail="not migrated
-  to testlib.sh"`. Every suite gets a row; one that prints TAP adds per-case rows.
+  reinterpreted here) — `ok`→pass, `skip`→skip, `unreached`→unreached, with
+  `detail="not migrated to testlib.sh"`. Any other status that `record::Status::executed()`
+  says never ran (`disabled`, `deferred`, `skip-req`)→skip, `detail="not run: <fallback>"`,
+  so no reader counts it as a failure. Everything else (`timeout`, `red`, `quarantined-red`,
+  `fault`, anything unrecognised)→fail, `detail="not migrated to testlib.sh"`. Every suite
+  gets a row; one that prints TAP adds per-case rows.
 
 **Escaping asymmetry, kept from the bash exactly.** `suite` and `tier` (and the whole
 fallback row) escape backslash, quote, newline and tab. `case` and `detail`, read from a TAP

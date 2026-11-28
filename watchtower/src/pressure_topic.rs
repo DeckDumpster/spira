@@ -71,6 +71,7 @@ impl Pressure {
     pub fn new(publisher: Publisher, run: &Path) -> Pressure {
         let path = record_path(run);
         let held = path.clone();
+        publisher.resident();
         publisher.on_connect(move |again| {
             if let Some(band) = recorded(&held) {
                 // A refusal is the publisher's to log; nothing here can mend it.

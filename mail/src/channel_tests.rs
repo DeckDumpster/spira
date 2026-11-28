@@ -44,6 +44,7 @@ fn fixture(name: &str) -> (testkit::TempDir, Env) {
     let t = testkit::TempDir::new(name);
     fs::create_dir_all(t.path().join("kinds")).unwrap();
     fs::write(t.path().join("kinds/note.md"), "---\n---\n\n## Note\n\nsay it\n").unwrap();
+    fs::write(t.path().join("kinds/alert.md"), "---\n---\n\n## Alert\n\nsay it\n").unwrap();
     let e = env(t.path());
     (t, e)
 }
@@ -52,8 +53,13 @@ fn args<'a>(mailbox: &'a str, from: Option<&'a str>, subject: &'a str) -> SendAr
     SendArgs { mailbox, from, subject, kind: "note", default: "", class: "", bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" }
 }
 
+/// The one non-ask kind the operator's mailbox takes from this fixture's override.
+fn to_operator<'a>(from: Option<&'a str>, subject: &'a str) -> SendArgs<'a> {
+    SendArgs { kind: "alert", ..args("operator", from, subject) }
+}
+
 fn send(e: &Env, a: &SendArgs) -> Result<cmds::SendOutcome, String> {
-    cmds::send(&FakeBd::new(vec![]), e, a, "## Note\nsomething happened\n".into())
+    cmds::send(&FakeBd::new(vec![]), e, a, "## Note\nsomething happened\n\n## Alert\nsomething happened\n".into())
 }
 
 fn names(e: &Env, mailbox: &str, sub: &str) -> Vec<String> {
@@ -106,8 +112,8 @@ fn read_prints_the_oldest_unread_and_moves_it_from_new_to_cur() {
 fn a_message_read_is_flagged_seen_so_count_and_tidy_agree_it_was_read() {
     let (_t, e) = fixture("mail-read-seen");
     maildir::mail_ensure(&e.mail_root.join("operator")).unwrap();
-    let merged = SendArgs { digest: true, ..args("operator", FROM, "MERGED #7 [spira]") };
-    send(&e, &merged).unwrap();
+    let failed = SendArgs { kind: "alert", digest: true, ..args("operator", FROM, "DEPLOY FAILED #7 [spira]") };
+    send(&e, &failed).unwrap();
     let id = names(&e, "operator", "new")[0].clone();
     cmds::read_cmd(&e, "operator", Some(&id)).unwrap();
     let read = e.mail_root.join("operator/cur").join(format!("{id}:2,S"));
@@ -116,7 +122,7 @@ fn a_message_read_is_flagged_seen_so_count_and_tidy_agree_it_was_read() {
     assert_eq!(cmds::count(&e, "operator").unwrap(), 0);
     let bd = FakeBd::new(vec![crate::bead::BdOut::ok("[]"), crate::bead::BdOut::ok(r#"[{"id":"probe"}]"#)]);
     let report = crate::tidy::tidy(&bd, true, &e.mail_root, &e.run_dir, "operator", "asks", 86_400, false).unwrap();
-    assert_eq!((report.archived, report.kept), (1, 0), "a read MERGED note leaves inside the fresh window");
+    assert_eq!((report.archived, report.kept), (1, 0), "a read digest alert leaves inside the fresh window");
     assert!(e.mail_root.join("archive/cur").join(format!("{id}:2,S")).is_file());
 }
 
@@ -297,8 +303,8 @@ fn the_lint_override_admits_an_offender_and_records_its_reason_in_a_header() {
 #[test]
 fn a_repeat_to_the_operator_within_the_window_is_refused_naming_the_override() {
     let (t, e) = fixture("mail-uc06-repeat");
-    send(&e, &args("operator", FROM, "gate red 5 times")).unwrap();
-    let err = send(&e, &args("operator", FROM, "gate red 6 times")).unwrap_err();
+    send(&e, &to_operator(FROM, "gate red 5 times")).unwrap();
+    let err = send(&e, &to_operator(FROM, "gate red 6 times")).unwrap_err();
     assert!(err.contains("repeat refused") && err.contains("SPIRA_MAIL_REPEAT_CONSIDERED"), "{err}");
     assert_eq!(names(&e, "operator", "new").len(), 1);
     assert!(fs::read_dir(t.path().join("run/mail-repeat")).unwrap().flatten().any(|f| f.file_name().to_string_lossy().ends_with(".refused")));
@@ -309,10 +315,10 @@ fn a_repeat_to_the_operator_within_the_window_is_refused_naming_the_override() {
 #[test]
 fn a_repeat_outside_the_window_and_a_different_subject_are_delivered() {
     let (_t, mut e) = fixture("mail-uc06-window");
-    send(&e, &args("operator", FROM, "gate red")).unwrap();
-    send(&e, &args("operator", FROM, "queue stuck")).unwrap();
+    send(&e, &to_operator(FROM, "gate red")).unwrap();
+    send(&e, &to_operator(FROM, "queue stuck")).unwrap();
     e.repeat_window_s = 0;
-    send(&e, &args("operator", FROM, "gate red")).unwrap();
+    send(&e, &to_operator(FROM, "gate red")).unwrap();
     assert_eq!(names(&e, "operator", "new").len(), 3);
 }
 
@@ -321,9 +327,9 @@ fn a_repeat_outside_the_window_and_a_different_subject_are_delivered() {
 #[test]
 fn the_repeat_override_lets_a_repeat_through_with_a_header() {
     let (_t, mut e) = fixture("mail-uc06-override");
-    send(&e, &args("operator", FROM, "gate red")).unwrap();
+    send(&e, &to_operator(FROM, "gate red")).unwrap();
     e.repeat_considered = Some("operator asked again".into());
-    let out = send(&e, &args("operator", FROM, "gate red")).unwrap();
+    let out = send(&e, &to_operator(FROM, "gate red")).unwrap();
     assert!(fs::read_to_string(out.delivered_path).unwrap().contains("\nX-Spira-Repeat-Override: operator asked again\n"));
 }
 
@@ -342,10 +348,10 @@ fn the_repeat_guard_does_not_apply_to_other_mailboxes() {
 #[test]
 fn a_lint_refused_operator_send_writes_no_stamp_so_the_corrected_send_is_not_a_repeat() {
     let (t, e) = fixture("mail-uc06-lint-order");
-    assert!(send(&e, &args("operator", None, "gate red")).unwrap_err().contains("missing From"));
+    assert!(send(&e, &to_operator(None, "gate red")).unwrap_err().contains("missing From"));
     let stamps = fs::read_dir(t.path().join("run/mail-repeat")).map(|d| d.flatten().filter(|f| !f.file_name().to_string_lossy().ends_with(".lock")).count()).unwrap_or(0);
     assert_eq!(stamps, 0);
-    send(&e, &args("operator", FROM, "gate red")).unwrap();
+    send(&e, &to_operator(FROM, "gate red")).unwrap();
 }
 
 // covers: UC-operator-channel-07

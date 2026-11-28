@@ -105,7 +105,7 @@ fn an_alert_that_keeps_firing_is_one_retained_value_a_subscriber_hears_once_unti
     let mut heard = Vec::new();
     for _ in 0..3 {
         let got = raw.recv();
-        heard.extend(subscriber.message(&got.topic, &got.payload, true).lines);
+        heard.extend(subscriber.message(&got.topic, &got.payload, true, true).lines);
     }
     assert_eq!(heard.len(), 1, "{heard:?}");
 

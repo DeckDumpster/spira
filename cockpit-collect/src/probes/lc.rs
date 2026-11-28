@@ -147,8 +147,12 @@ pub(crate) fn gone_of(e: &LcError) -> Gone {
 }
 
 fn list_live(states: &str) -> Result<String, Gone> {
+    list_live_in(store_view::shared().as_deref(), states)
+}
+
+fn list_live_in(held: Option<&store_view::Projection>, states: &str) -> Result<String, Gone> {
     let names: Vec<&str> = states.split(',').collect();
-    let raw = match store_view::shared().and_then(|held| held.rows(&store_view::RowQuery { states: &names, ..Default::default() })) {
+    let raw = match held.and_then(|p| p.rows(&store_view::RowQuery { states: &names, ..Default::default() })) {
         Some(rows) => serde_json::Value::Array(rows.map_err(|e| gone_of(&e))?.value).to_string(),
         None => verb_read(&["list", "--state", states])?,
     };
@@ -271,12 +275,22 @@ mod tests {
         seen.lock().unwrap().iter().filter(|v| *v == verb).count()
     }
 
+    struct StopOnDrop<'a>(&'a std::sync::atomic::AtomicBool);
+
+    impl Drop for StopOnDrop<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
     #[test_id(t0qp6d0)]
     #[test]
     fn the_condition_list_is_asked_of_the_store_each_time_until_a_watch_holds_it_and_then_once() {
         let (fallback, fallback_seen) = counting();
         let (views, views_seen) = counting();
-        let p = store_view::install(Arc::new(store_view::Projection::new(views, Duration::from_secs(10), Arc::new(std::time::Instant::now))));
+        let own = Arc::new(store_view::Projection::new(views, Duration::from_secs(10), Arc::new(std::time::Instant::now)));
+        let p = store_view::install(Arc::clone(&own));
+        assert!(Arc::ptr_eq(&p, &own), "another test in this binary installed the global store view first");
         p.poll().unwrap();
         let args = ["condition", "list", "--owner", "heimdall"];
         verb_read_on(&fallback, &args).unwrap();
@@ -285,6 +299,8 @@ mod tests {
 
         let stop = std::sync::atomic::AtomicBool::new(false);
         std::thread::scope(|sc| {
+            // A panic below must still end `p.run`, or the scope never joins.
+            let _stop = StopOnDrop(&stop);
             sc.spawn(|| p.run(&stop, &mut |_| {}));
             // clock-safe: a cap on the wait for the watch to start
             while !p.watching() {
@@ -295,7 +311,6 @@ mod tests {
             verb_read_on(&fallback, &args).unwrap();
             assert_eq!(asked(&views_seen, "condition"), 1, "a watching view asks the store once");
             assert_eq!(asked(&fallback_seen, "condition"), 2, "and the fallback client no more");
-            stop.store(true, std::sync::atomic::Ordering::Relaxed);
         });
     }
 
@@ -331,10 +346,10 @@ mod tests {
         let now = Arc::new(Mutex::new(std::time::Instant::now()));
         let clock = Arc::clone(&now);
         let views = LcClient::over(Arc::new(Stopping::default()), true);
-        let p = store_view::install(Arc::new(store_view::Projection::new(views, Duration::from_secs(1), Arc::new(move || *clock.lock().unwrap()))));
+        let p = store_view::Projection::new(views, Duration::from_secs(1), Arc::new(move || *clock.lock().unwrap()));
         p.poll().unwrap();
         p.poll().unwrap();
-        let read = |at| last_good(&d, "list-funnel", at, || list_live(FUNNEL_STATES));
+        let read = |at| last_good(&d, "list-funnel", at, || list_live_in(Some(&p), FUNNEL_STATES));
         let first = read(0);
         assert!(first.as_deref().is_some_and(|r| r.contains("sp-a")), "{first:?}");
         assert!(p.poll().is_err(), "the store stopped");

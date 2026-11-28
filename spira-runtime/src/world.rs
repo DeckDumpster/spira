@@ -1499,7 +1499,7 @@ impl World {
     pub fn inbox_append(&self, input: &str) -> Result<String, String> {
         let lines: Vec<&str> = input.lines().filter(|l| !l.is_empty()).collect();
         let cursor = watchd::paths::cursorfile(&self.run_dir.to_string_lossy(), INBOX_WATCHER);
-        // Not `spira-runtime`: dropping this one says gone, and that name is resident in the topic table.
+        // Not `spira-runtime`: dropping this one says gone, and that name is resident: its going is news to `watch/` subscribers.
         let publisher = || self.inbox_bus.publisher("spira-runtime-inbox");
         inbox_rules::record_lines(&self.inbox, &lines, &cursor, publisher)?;
         Ok("appended".into())

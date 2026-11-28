@@ -53,6 +53,12 @@ mod full_repositories {
     /// [`TwoRepos`] with the `repo:spira` bead in REWORK.
     struct Reworked;
 
+    /// [`TwoRepos`] with the `repo:spira` bead at P0.
+    struct Urgent;
+
+    /// [`Urgent`] with the `repo:spira` bead also taken by `watcher`, which leases no folder.
+    struct UrgentAlsoWatched;
+
     /// One READY builder bead that names no repository.
     struct Unlabelled;
 
@@ -86,6 +92,26 @@ mod full_repositories {
             let mut reply = TwoRepos.exchange(argv, stdin, within)?;
             if argv == ["claimable"] {
                 reply.out = reply.out.replacen("\"READY\"", "\"REWORK\"", 1);
+            }
+            Ok(reply)
+        }
+    }
+
+    impl Transport for Urgent {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, within: Duration) -> Result<Reply, String> {
+            let mut reply = TwoRepos.exchange(argv, stdin, within)?;
+            if argv == ["claimable"] {
+                reply.out = reply.out.replacen("\"priority\":2", "\"priority\":0", 1);
+            }
+            Ok(reply)
+        }
+    }
+
+    impl Transport for UrgentAlsoWatched {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, within: Duration) -> Result<Reply, String> {
+            let mut reply = Urgent.exchange(argv, stdin, within)?;
+            if argv == ["claimable"] {
+                reply.out = reply.out.replacen("[\"builder\"]", "[\"builder\",\"watcher\"]", 1);
             }
             Ok(reply)
         }
@@ -144,6 +170,12 @@ mod full_repositories {
             let none = |_: &str| None;
             let config = Config { runes: "builder".into(), run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), build_base: base.into(), build_ceiling: 2, home_repo: "spira".into(), ..Config::default() };
             f(&mut Env { stdin: &mut stdin, config, lookup: &none })
+        }
+
+        fn urgent(&self, base: &str, runes: &[&str], service: Arc<dyn Transport>) -> Result<String, String> {
+            let a = Args::parse(&runes.iter().map(|r| r.to_string()).collect::<Vec<_>>()).unwrap();
+            let st = over(service).unwrap();
+            self.with_env(base, |env| urgent_over(&a, env, &st))
         }
 
         fn counted(&self) -> String {
@@ -216,6 +248,50 @@ mod full_repositories {
             let o = fx.with_env(base, |env| rune_ready_over(&a, env, fx.dir.path(), "builder", &open));
             assert_eq!((o.code, o.out.as_str()), (1, "0"), "{o:?}");
             assert!(o.err.contains("build folders cannot be counted"), "{o:?}");
+        }
+    }
+
+    #[test_id(tik1eu8)]
+    #[test]
+    fn an_urgent_bead_only_a_full_repositorys_builder_takes_is_left_out_until_a_folder_is_released() {
+        let fx = Fixture::new();
+        let base = fx.base().display().to_string();
+        let held = fx.fill_spira();
+        assert_eq!(fx.urgent(&base, &["builder"], Arc::new(Urgent)).unwrap(), "");
+        drop(held);
+        assert_eq!(fx.urgent(&base, &["builder"], Arc::new(Urgent)).unwrap(), "sp-full\t0\t0\t0\n");
+    }
+
+    #[test_id(t0b5u1j)]
+    #[test]
+    fn a_rework_bead_only_a_full_repositorys_builder_takes_is_not_urgent_until_a_folder_is_released() {
+        let fx = Fixture::new();
+        let base = fx.base().display().to_string();
+        let held = fx.fill_spira();
+        assert_eq!(fx.urgent(&base, &["builder"], Arc::new(Reworked)).unwrap(), "");
+        drop(held);
+        assert_eq!(fx.urgent(&base, &["builder"], Arc::new(Reworked)).unwrap(), "sp-full\t2\t1\t0\n");
+    }
+
+    #[test_id(tmig7hq)]
+    #[test]
+    fn urgent_for_a_building_rune_refuses_when_the_build_folders_cannot_be_counted() {
+        let fx = Fixture::new();
+        let err = fx.urgent("", &["builder"], Arc::new(Urgent)).unwrap_err();
+        assert!(err.contains("build folders cannot be counted"), "{err}");
+    }
+
+    #[test_id(ttz1hl8)]
+    #[test]
+    fn a_full_repository_hides_no_urgent_bead_from_no_named_rune_or_one_that_leases_no_folder() {
+        let fx = Fixture::new();
+        std::fs::write(fx.dir.path().join("runes/watcher.rune"), "RUNE_LABELS=plan\n").unwrap();
+        let base = fx.base().display().to_string();
+        let _held = fx.fill_spira();
+        let listed = "sp-full\t0\t0\t0\n";
+        assert_eq!(fx.urgent(&base, &[], Arc::new(Urgent)).unwrap(), listed);
+        for runes in [&["watcher"][..], &["builder", "watcher"]] {
+            assert_eq!(fx.urgent(&base, runes, Arc::new(UrgentAlsoWatched)).unwrap(), listed, "{runes:?}");
         }
     }
 }

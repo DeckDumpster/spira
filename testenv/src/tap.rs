@@ -310,20 +310,22 @@ pub fn jsonl_rows(suite: &str, suite_source: &str, out_text: Option<&str>, fallb
         }
     }
 
-    let rstatus = match fallback {
-        "ok" => "pass",
-        "skip" => "skip",
-        "unreached" => "unreached",
-        "timeout" | "red" | "quarantined-red" => "fail",
-        _ => "fail",
+    let never_ran = crate::record::Status::parse(fallback).is_some_and(|s| !s.executed());
+    let (rstatus, detail) = match fallback {
+        "unreached" => ("unreached", "not migrated to testlib.sh".to_string()),
+        _ if never_ran => ("skip", format!("not run: {fallback}")),
+        "ok" => ("pass", "not migrated to testlib.sh".to_string()),
+        "skip" => ("skip", "not migrated to testlib.sh".to_string()),
+        _ => ("fail", "not migrated to testlib.sh".to_string()),
     };
     format!(
-        "{{\"suite\":\"{}\",\"tier\":\"{}\",\"case\":\"(suite)\",\"status\":\"{}\",\"seconds\":{},\"uc\":{},\"detail\":\"not migrated to testlib.sh\"}}\n",
+        "{{\"suite\":\"{}\",\"tier\":\"{}\",\"case\":\"(suite)\",\"status\":\"{}\",\"seconds\":{},\"uc\":{},\"detail\":\"{}\"}}\n",
         esc_full(suite),
         esc_full(&tier),
         rstatus,
         secs,
         uc_j,
+        esc_full(&detail),
     )
 }
 
@@ -508,10 +510,15 @@ mod tests {
             ("red", "fail"),
             ("quarantined-red", "fail"),
             ("something-else", "fail"),
+            ("disabled", "skip"),
+            ("deferred", "skip"),
+            ("skip-req", "skip"),
         ] {
             let row = jsonl_rows("s.sh", "", None, fallback, "0");
             assert!(row.contains(&format!("\"status\":\"{status}\"")), "{fallback} -> {row}");
         }
+        let row = jsonl_rows("s.sh", "", None, "disabled", "0");
+        assert!(row.contains(r#""detail":"not run: disabled""#), "{row}");
     }
 
     #[test_id(the803r)]

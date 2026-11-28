@@ -56,7 +56,7 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim ready-args [--raw] [--scope-label L] [--noloop-label L]   (READY_ARGS/ready_raw_args, one token a line)
        spira-claim shared-exclude                                            (ready_shared_exclude)
        spira-claim ready-count <labels> [<exclude-labels>] [--json] [--express]          (ready_count; prints '0' on a failed query too; --json: the rows)
-       spira-claim urgent [<rune>...]                                                  (claimable P0 and REWORK beads: id, priority, rework 0|1, express 0|1, tab-separated)
+       spira-claim urgent [<rune>...]                                                  (claimable P0 and REWORK beads, less those only full-repository building runes take: id, priority, rework 0|1, express 0|1, tab-separated)
        spira-claim rune-exclude <rune> [own-exclusions]                    (rune_exclude; resolves $SPIRA_HOME in-process, $SPIRA_RUNES)
        spira-claim rune-ready <rune> [--json [--freshness]] [--express]                             (rune_ready; ditto, plus $SPIRA_READY_CACHE; --json: the rows themselves, never cached)
        spira-claim bulk-ready-by-rune                                      (bulk_ready_by_rune; the machine's claimable set)
@@ -773,11 +773,12 @@ fn ready_count_over(a: &Args, env: &Env, st: &Store) -> Outcome {
     }
 }
 
-/// The partitions named by `urgent`'s positional runes; empty when none are named. A rune
-/// that is not in runes/ or whose predicate would widen is a refusal, never skipped.
-fn urgent_scope(a: &Args, env: &Env) -> Result<Vec<ready::RunePart>, String> {
+/// The partitions named by `urgent`'s positional runes and the home they were read from; empty
+/// when none are named. A rune that is not in runes/ or whose predicate would widen is a
+/// refusal, never skipped.
+fn urgent_scope(a: &Args, env: &Env) -> Result<(std::path::PathBuf, Vec<ready::RunePart>), String> {
     if a.pos.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Default::default());
     }
     let home = rune_home()?;
     let mut parts = Vec::new();
@@ -795,12 +796,13 @@ fn urgent_scope(a: &Args, env: &Env) -> Result<Vec<ready::RunePart>, String> {
     if parts.is_empty() {
         return Err("none of the named runes has a claim partition".into());
     }
-    Ok(parts)
+    Ok((home, parts))
 }
 
 /// `urgent [<rune>...]`: the claimable beads that outrank the lanes — P0, or in REWORK —
 /// restricted to those claimable under one of the named runes' partitions when any are
-/// named. A machine that cannot answer is a refusal, never an empty list.
+/// named, less those only building runes of a full repository would take. A machine or a build
+/// folder count that cannot answer is a refusal, never an empty list.
 fn cmd_urgent(a: &Args, env: &mut Env) -> Outcome {
     if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
         return Outcome::usage(e);
@@ -813,8 +815,12 @@ fn cmd_urgent(a: &Args, env: &mut Env) -> Outcome {
 }
 
 fn urgent_over(a: &Args, env: &Env, st: &Store) -> Result<String, String> {
-    let parts = urgent_scope(a, env)?;
-    let v = viewed(a, env, st)?;
+    let (home, parts) = urgent_scope(a, env)?;
+    let mut v = viewed(a, env, st)?;
+    for p in &parts {
+        let full = full_repo_labels(env, &home, &p.name)?;
+        withhold_full(&mut v, &p.name, &full, &env.config.home_repo);
+    }
     let mut out = String::new();
     for r in v.rows.iter().filter(|r| !rank::is_container(r)) {
         if !parts.is_empty() && !parts.iter().any(|p| v.runes.get(&r.id).is_some_and(|taking| taking.contains(&p.name))) {

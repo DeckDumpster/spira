@@ -23,13 +23,10 @@ fn word(value: &Value) -> String {
     }
 }
 
-/// `k=v` per field, the family's declared fields first; a null field is left out.
-fn fields(topic: &str, value: &Value) -> String {
+/// `k=v` per field in the payload's key order; a null field is left out.
+fn fields(value: &Value) -> String {
     let Value::Object(map) = value else { return word(value) };
-    let declared: &[String] = topics::family_of(topic).map_or(&[], |f| &f.fields);
-    let first = declared.iter().filter_map(|k| map.get_key_value(k));
-    let rest = map.iter().filter(|(k, _)| !declared.contains(k));
-    first.chain(rest).filter(|(_, v)| !v.is_null()).map(|(k, v)| format!("{k}={}", word(v))).collect::<Vec<_>>().join(" ")
+    map.iter().filter(|(_, v)| !v.is_null()).map(|(k, v)| format!("{k}={}", word(v))).collect::<Vec<_>>().join(" ")
 }
 
 fn tagged(id: &str, what: &str, note: &str) -> String {
@@ -38,7 +35,7 @@ fn tagged(id: &str, what: &str, note: &str) -> String {
 }
 
 pub(crate) fn line(id: &str, topic: &str, value: &Value, note: &str) -> String {
-    let fields = fields(topic, value);
+    let fields = fields(value);
     let what = if fields.is_empty() { topic.to_string() } else { format!("{topic} {fields}") };
     tagged(id, &what, note)
 }
@@ -109,7 +106,7 @@ pub(crate) fn list(core: &Core, name: &str, connected: bool, readers: usize) -> 
         }
     }
     let filters = core.filters();
-    let watched: Vec<_> = topics::families().iter().filter(|f| filters.iter().any(|x| topics::families_matching(x).any(|m| m.family == f.family))).collect();
+    let watched: Vec<_> = core.topics.iter().filter(|row| filters.iter().any(|f| topics::filter_meets_family(f, &row.family))).collect();
     if !watched.is_empty() {
         out.push_str("publishers\n");
     }

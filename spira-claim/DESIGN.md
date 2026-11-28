@@ -410,9 +410,10 @@ the started tier from bd would be the read this replaces.
 build folders are all leased (`spira_config::build_dir::full_repositories`: builders', gates'
 and release builds' leases alike; a bead naming no repository is the home repository's), and
 `rune-exclude` adds its `repo:<name>` for the express
-count. `select` ranks the rows `rune-ready` gave. The claim view's own membership knows
-nothing of leases. Folders that cannot be counted are cannot-tell: no `bulk-ready-by-rune`
-line, `rune-ready` exit 1, `rune-exclude` exit 2.
+count. `urgent` takes each named rune off the same way, so a bead no other named rune takes
+is not urgent. `select` ranks the rows `rune-ready` gave. The claim view's own membership
+knows nothing of leases. Folders that cannot be counted are cannot-tell: no
+`bulk-ready-by-rune` line, `rune-ready` and `urgent` exit 1, `rune-exclude` exit 2.
 
 ## 7. Decisions
 

@@ -846,7 +846,7 @@ closes the question the gate could not answer.
 ## What a trial publishes
 
 After its `gate-run` row, a trial publishes `gate/<repo>/<bead>` and `test/<id>/red` for each
-test its branch run showed red (`src/publish.rs`; fields in `spira/topics.toml`). `killed_by`
+test its branch run showed red (`src/publish.rs`; `spira-lc topics` lists the families ever published). `killed_by`
 is read from the `stopped=` field ending testenv's last `VERDICT` line, and only by a trial
 that ran testenv; that field names the sender's program and unit, not its whole command or
 cgroup path. A failed publish is logged and changes no verdict.

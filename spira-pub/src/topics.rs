@@ -1,11 +1,7 @@
-//! The topic table, `spira/topics.toml`: the families subscribers filter by. Publishing does
-//! not read it.
-
-use std::sync::OnceLock;
+//! Topic names: the class a publisher gives a message, the family a topic is recorded under,
+//! and MQTT filter matching.
 
 use serde::Deserialize;
-
-const TABLE: &str = include_str!("../../spira/topics.toml");
 
 /// A state topic is retained, so whoever connects gets the current value; chatter is best
 /// effort. There is no third class.
@@ -36,53 +32,16 @@ impl std::str::FromStr for Class {
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Family {
-    /// The pattern: `<name>` is any one segment, `<a|b>` one of the words.
-    pub family: String,
-    pub class: Class,
-    pub publisher: String,
-    /// The payload's field names.
-    pub fields: Vec<String>,
-    /// The publisher names that live as long as what they publish: one going is news to this
-    /// family's subscribers. A publisher that exits after each message is not listed.
-    #[serde(default)]
-    pub resident: Vec<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Table {
-    topic: Vec<Family>,
-}
-
-/// The whole table, in file order.
-pub fn families() -> &'static [Family] {
-    static F: OnceLock<Vec<Family>> = OnceLock::new();
-    F.get_or_init(|| toml::from_str::<Table>(TABLE).expect("the compiled-in topics.toml parses").topic)
-}
-
-enum Segment<'a> {
+pub enum Segment<'a> {
     Literal(&'a str),
     Any,
-    OneOf(&'a str),
 }
 
-impl<'a> Segment<'a> {
-    fn of(s: &'a str) -> Segment<'a> {
-        match s.strip_prefix('<').and_then(|s| s.strip_suffix('>')) {
-            Some(inner) if inner.contains('|') => Segment::OneOf(inner),
-            Some(_) => Segment::Any,
-            None => Segment::Literal(s),
-        }
-    }
-
+impl Segment<'_> {
     fn admits(&self, word: &str) -> bool {
         match self {
             Segment::Literal(l) => *l == word,
             Segment::Any => !word.is_empty(),
-            Segment::OneOf(words) => words.split('|').any(|w| w == word),
         }
     }
 }
@@ -96,40 +55,24 @@ pub fn family(topic: &str) -> String {
     levels.collect::<Vec<_>>().join("/")
 }
 
-fn segments(pattern: &str) -> Vec<Segment<'_>> {
-    // An alternation holds `|`, never `/`, so splitting on `/` keeps each `<...>` whole.
-    pattern.split('/').map(Segment::of).collect()
-}
-
-/// The family a concrete topic belongs to; a topic holding a wildcard belongs to none.
-pub fn family_of(topic: &str) -> Option<&'static Family> {
-    if topic.contains(['+', '#', '\0']) {
-        return None;
-    }
-    let words: Vec<&str> = topic.split('/').collect();
-    families().iter().find(|f| {
-        let pattern = segments(&f.family);
-        pattern.len() == words.len() && pattern.iter().zip(&words).all(|(p, w)| p.admits(w))
-    })
-}
-
-/// Whether an MQTT subscription filter (`+` one level, a final `#` the rest, the parent level
-/// included) could match a topic of any declared family. A malformed filter matches none.
-pub fn filter_matches_any(filter: &str) -> bool {
-    families_matching(filter).next().is_some()
-}
-
-/// The declared families some topic of which the filter selects.
-pub fn families_matching(filter: &str) -> impl Iterator<Item = &'static Family> + '_ {
+/// Whether `filter` is one a broker takes: `+` and `#` each a whole level, `#` only the last.
+pub fn filter_is_well_formed(filter: &str) -> bool {
     let words: Vec<&str> = filter.split('/').collect();
-    let well_formed = !filter.is_empty()
+    !filter.is_empty()
         && !filter.contains('\0')
         && words.iter().enumerate().all(|(i, w)| match *w {
             "+" => true,
             "#" => i + 1 == words.len(),
             w => !w.contains(['+', '#']),
-        });
-    families().iter().filter(move |f| well_formed && filter_meets(&words, &segments(&f.family)))
+        })
+}
+
+/// Whether the well-formed filter could select a topic of the recorded `family`, whose `+`
+/// levels each stand for any one level.
+pub fn filter_meets_family(filter: &str, family: &str) -> bool {
+    let filter: Vec<&str> = filter.split('/').collect();
+    let pattern = family.split('/').map(|l| if l == "+" { Segment::Any } else { Segment::Literal(l) });
+    filter_meets(&filter, &pattern.collect::<Vec<_>>())
 }
 
 fn filter_meets(filter: &[&str], pattern: &[Segment]) -> bool {
@@ -179,14 +122,25 @@ mod tests {
         }
     }
 
-    #[test_id(t274ltk)]
+    #[test_id(tn8c8yg)]
     #[test]
-    fn a_filter_matches_when_some_declared_family_could_carry_a_topic_it_selects() {
-        for yes in ["bead/+/state", "session/+/#", "session/+/age/+", "session/sp-a/age/30m", "release/active/#", "#"] {
-            assert!(filter_matches_any(yes), "{yes}");
+    fn a_filter_is_well_formed_when_its_wildcards_are_whole_levels_and_hash_is_last() {
+        for yes in ["bead/+/state", "nosuch/#", "#", "+", "a//b"] {
+            assert!(filter_is_well_formed(yes), "{yes}");
         }
-        for no in ["nosuch/#", "bead/+/nosuch", "session/+/age/45m", "bead/+", "bead/#/state", "bead/a+/state", ""] {
-            assert!(!filter_matches_any(no), "{no}");
+        for no in ["bead/#/state", "bead/a+/state", "a/#/b", "a/b#", "a\0", ""] {
+            assert!(!filter_is_well_formed(no), "{no:?}");
+        }
+    }
+
+    #[test_id(tkf58bj)]
+    #[test]
+    fn a_filter_meets_a_recorded_family_whose_plus_stands_for_any_one_level() {
+        for (filter, family) in [("bead/sp-a/state", "bead/+/state"), ("bead/+/state", "bead/+/state"), ("bead/#", "bead/+/state"), ("session/+/age/45m", "session/+/age/+")] {
+            assert!(filter_meets_family(filter, family), "{filter} {family}");
+        }
+        for (filter, family) in [("bead/+/nosuch", "bead/+/state"), ("bead/+", "bead/+/state"), ("nosuch/#", "bead/+/state")] {
+            assert!(!filter_meets_family(filter, family), "{filter} {family}");
         }
     }
 
@@ -198,34 +152,6 @@ mod tests {
         }
         for (filter, topic) in [("a/+", "a/b/c"), ("a/b", "a"), ("a/c", "a/b"), ("a/b/c", "a/b")] {
             assert!(!filter_selects(filter, topic), "{filter} {topic}");
-        }
-    }
-
-    #[test_id(t6suhqh)]
-    #[test]
-    fn every_family_of_the_design_is_declared_with_its_class() {
-        let of = |t: &str| family_of(t).map(|f| (f.family.as_str(), f.class));
-        for topic in [
-            "bead/sp-a/state", "bead/sp-a/sessions", "round/r/12", "gate/r/sp-a", "session/sp-a/state",
-            "session/sp-a/age/15m", "session/sp-a/age/30m", "session/sp-a/age/60m", "release/active",
-            "host/pressure", "pr/r/7", "watch/claim-count/sp-a", "mail/concierge/100.1.1", "concierge/inbox", "publisher/queue", "subscriber/concierge", "ask/sp-a",
-        ] {
-            assert_eq!(of(topic).map(|(_, c)| c), Some(Class::State), "{topic}");
-        }
-        assert_eq!(of("progress/sp-a"), Some(("progress/<bead>", Class::Chatter)));
-        assert_eq!(of("test/t1/red"), Some(("test/<id>/red", Class::Chatter)));
-        for none in ["bead//state", "bead/+/state", "bead/sp-a/state/more", "session/sp-a/age/45m"] {
-            assert!(of(none).is_none(), "{none}");
-        }
-    }
-
-    #[test_id(tir0yka)]
-    #[test]
-    fn every_row_names_its_publisher_and_payload_fields_and_no_family_twice() {
-        let mut seen = std::collections::BTreeSet::new();
-        for f in families() {
-            assert!(!f.publisher.is_empty() && !f.fields.is_empty(), "{}", f.family);
-            assert!(seen.insert(&f.family), "{} is declared twice", f.family);
         }
     }
 }

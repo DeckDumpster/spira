@@ -1,6 +1,7 @@
 //! OPENED, FAIL RED, GREEN, MERGED, CLOSED and `no PR` for the PRs the harness opened, read from
 //! its own batch and publish records and from the PRs already tracked; and one deploy verdict,
-//! DEPLOYED, DEPLOY FAILED or NOT LIVE, for each merge or forge tip move. Each tick asks the world
+//! DEPLOYED, DEPLOY FAILED or NOT LIVE, for each merge or forge tip move. DEPLOYED is a line and a
+//! topic, never mail; only DEPLOY FAILED and NOT LIVE are notes to the operator. Each tick asks the world
 //! for one snapshot; the decision over snapshot and carried state is `decide`, which does no IO.
 
 use std::collections::BTreeMap;
@@ -165,7 +166,7 @@ pub struct Snapshot {
     pub repos: Vec<(String, RepoObs)>,
 }
 
-/// A deploy verdict for the operator's mailbox.
+/// A failed or never-live deploy, for the operator's mailbox.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Note {
     pub subject: String,
@@ -419,10 +420,12 @@ fn completed(repo: &str, d: &Deploy, run: &Run, say: &mut Said) {
     } else {
         (format!("{verdict} #{n} [{repo}] {}", short(sha)), format!("{verdict}: PR #{n} {title} [{repo}]"), "Merge", format!("{verdict} #{n} {title} [{repo}]"))
     };
-    say.notes.push(Note {
-        subject,
-        body: format!("{headline}\n{commit}: {sha}\nRun: {concl} in {}m{}s\n{}\n{}", run.secs / 60, run.secs % 60, run.url, beads_block(&d.beads.join("\n"))),
-    });
+    if verdict == "DEPLOY FAILED" {
+        say.notes.push(Note {
+            subject,
+            body: format!("{headline}\n{commit}: {sha}\nRun: {concl} in {}m{}s\n{}\n{}", run.secs / 60, run.secs % 60, run.url, beads_block(&d.beads.join("\n"))),
+        });
+    }
     say.lines.push(format!("{line}: {concl} in {}s {}", run.secs, run.url));
     if n != 0 {
         say.change(repo, n, verdict, sha);
@@ -695,8 +698,7 @@ mod tests {
         assert!(carried_topics(&c).is_empty(), "no PR, no PR topic");
         let (c, say) = decide(&cfg(), &c, &at_tip(NEW, answered(NEW, completed("success", 61))), 1180);
         assert_eq!(say.lines, ["DEPLOYED [r] 70bf904e0: success in 61s http://u"]);
-        assert_eq!(say.notes[0].subject, "DEPLOYED [r] 70bf904e0");
-        assert_eq!(say.notes[0].body, "DEPLOYED: [r]\nCommit: 70bf904e00000000\nRun: success in 1m1s\nhttp://u\n");
+        assert!(say.notes.is_empty(), "a successful deploy mails nothing: {:?}", say.notes);
         assert!(say.changes.is_empty());
         let (c, say) = decide(&cfg(), &c, &at_tip(NEW, open(vec![])), 1270);
         assert_eq!((say, c.repos["r"].deploys.len()), (Said::default(), 0));
@@ -714,7 +716,7 @@ mod tests {
         let (c, _) = decide(&cfg(), &Carry::default(), &at_tip(OLD, open(vec![pr(7, "green", "")])), 1000);
         let (c, _) = decide(&cfg(), &c, &at_tip(OLD, merged_at(NEW)), 1090);
         let (c, say) = decide(&cfg(), &c, &at_tip(OLD, answered(NEW, completed("success", 1))), 1180);
-        assert_eq!(say.notes.len(), 1);
+        assert_eq!((say.lines.len(), say.lines[0].starts_with("DEPLOYED "), say.notes.len()), (1, true, 0), "{:?}", say.lines);
         let (c, say) = decide(&cfg(), &c, &at_tip(NEW, open(vec![])), 1270);
         assert_eq!((say, c.repos["r"].deploys.len()), (Said::default(), 0));
     }
@@ -784,6 +786,7 @@ mod tests {
         done.runs.insert("0123456789abcdef".into(), DeployRun::Completed(Run { conclusion: "success".into(), secs: 1, url: "u".into() }));
         let (c, say) = decide(&cfg(), &c, &one(done), 1100);
         assert_eq!(say.topics(1100)["pr/r/7"]["state"], "DEPLOYED");
+        assert!(say.notes.is_empty(), "{:?}", say.notes);
         assert!(carried_topics(&c).is_empty());
         let said = hear(&mut Carry::default(), &result(9, "closed")).unwrap();
         assert_eq!(said.topics(5)["pr/r/9"]["state"], "CLOSED");

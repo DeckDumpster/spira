@@ -247,10 +247,11 @@ pub struct Effects {
     pub heimdall_alarms: OnceLock<Option<heimdall::alarm::Announcer>>,
 }
 
-/// The mail environment operator notes are sent under: no bd (a note needs no tracking bead, and an empty db keeps the mailer from launching one), and the repeat guard overridden because consecutive merges normalise to one subject.
+/// The mail environment operator alerts are sent under: no bd (an alert needs no tracking bead, and an empty db keeps the mailer from launching one), the operator override pr-notify's alerts are admitted by, and the repeat guard overridden because consecutive merges normalise to one subject.
 pub fn operator_mail(mut env: mail::env::Env) -> mail::env::Env {
     env.db.clear();
     env.repeat_considered = Some("pr-notify deduplicates by merge sha; subjects differ only in PR number and sha".into());
+    env.operator_considered = Some("pr-notify reports a deploy that failed or never went live".into());
     env
 }
 
@@ -321,9 +322,9 @@ impl Effects {
     fn operator_note(&self, input: &str) -> Result<String, String> {
         let env = self.mail.as_deref().ok_or("no mail environment configured")?;
         let note: watchers::pr_notify::Note = serde_json::from_str(input).map_err(|e| e.to_string())?;
-        let args = mail::cmds::SendArgs { mailbox: "operator", from: Some("PR Notify <pr-notify@spira>"), subject: &note.subject, kind: "note", default: "", class: "", bead: "", urgent: false, digest: true, dry_run: false, requested_by: "" };
+        let args = mail::cmds::SendArgs { mailbox: "operator", from: Some("PR Notify <pr-notify@spira>"), subject: &note.subject, kind: "alert", default: "", class: "", bead: "", urgent: false, digest: true, dry_run: false, requested_by: "" };
         let bd = mail::bead::BdCli { conn_retries: 1 };
-        mail::cmds::send(&bd, env, &args, format!("## Note\n{}\n", note.body)).map(|o| o.delivered_path.display().to_string()).inspect_err(|_| eprintln!("pr-notify: operator mail failed for: {}", note.subject))
+        mail::cmds::send(&bd, env, &args, format!("## Alert\n{}\n", note.body)).map(|o| o.delivered_path.display().to_string()).inspect_err(|_| eprintln!("pr-notify: operator mail failed for: {}", note.subject))
     }
 }
 
@@ -503,6 +504,52 @@ mod remedy_note_tests {
         assert!(log.contains("remedy step false a --wait-cancel 1 failed: exit 1"), "{log}");
         let landing = std::fs::read_to_string(dir.path().join("landing.log")).unwrap();
         assert!(landing.trim_end().ends_with("repo=r run=7 ok=false"), "{landing}");
+    }
+}
+
+#[cfg(test)]
+mod operator_note_tests {
+    use super::*;
+
+    // covers: UC-operator-channel-38
+    #[test_id(t0f7q3u)]
+    #[test]
+    fn a_pr_notify_note_passes_the_lint_and_reaches_the_operator_as_a_digest_alert() {
+        let tmp = testkit::TempDir::new("operator-note");
+        let root = tmp.path().to_path_buf();
+        std::fs::create_dir_all(root.join("run")).unwrap();
+        let base = mail::env::Env {
+            mail_root: root.join("mail"),
+            kinds_dir: testkit::manifest_dir().join("../spira/mail/kinds"),
+            index_file: root.join("index"),
+            mute: false,
+            loom_budget_ms: 1000,
+            repeat_window_s: 0,
+            tidy_fresh_s: 0,
+            id_prefix: "sp".into(),
+            ask_label: String::new(),
+            db: String::new(),
+            bd_conn_retries: 1,
+            operator_actor: "operator".into(),
+            run_dir: root.join("run"),
+            home: root.clone(),
+            mail_from: None,
+            lint_considered: None,
+            repeat_considered: None,
+            operator_considered: None,
+            statute_guards: String::new(),
+            statute_considered: None,
+            allow_blocking: false,
+            bead_id: None,
+            lock_timeout_ms: 1000,
+            condition: None,
+        };
+        let effects = Effects { mail: Some(Arc::new(operator_mail(base))), ..Effects::default() };
+        let note = watchers::pr_notify::Note { subject: "NOT LIVE [r] 012345678".into(), body: "NOT LIVE [r] 012345678: no deploy.yml on o/r\n".into() };
+        let path = effects.operator_note(&serde_json::to_string(&note).unwrap()).unwrap();
+        assert!(std::path::Path::new(&path).starts_with(root.join("mail/operator")), "{path}");
+        let sent = std::fs::read_to_string(path).unwrap();
+        assert!(sent.contains("\nX-Spira-Kind: alert\n") && sent.contains("\nX-Spira-Digest: yes\n") && sent.contains("\n## Alert\n"), "{sent}");
     }
 }
 

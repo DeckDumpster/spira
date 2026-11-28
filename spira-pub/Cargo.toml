@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 autotests = false
-description = "spira-pub — publishes a harness fact to the MQTT broker: the library every component calls, a thin CLI, and the subscribers' topic table."
+description = "spira-pub — publishes a harness fact to the MQTT broker: the library every component calls, a thin CLI, and the topic names subscribers match."
 
 [lib]
 name = "spira_pub"
@@ -33,7 +33,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
-toml = "0.8"
 
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
