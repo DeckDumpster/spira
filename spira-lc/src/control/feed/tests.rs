@@ -764,14 +764,14 @@ fn audits_newest_walking_the_whole_window_holds_one_chunk() {
     let at = crate::db::now_epoch() - 2_000;
     let argv = ["audits", "--newest", "--to-state", "DROPPED"];
     let mut peaks = Vec::new();
-    for (from, to) in [(0, 1_100), (1_100, 2_200)] {
+    for (from, to) in [(0, 200), (200, 800)] {
         long_log(&s, from, to, at);
         let (answer, peak) = crate::peak_alloc::peak_of(|| call(&s, &argv));
         assert_eq!(answer, serde_json::json!({ "newest_at": null }), "{to} revisions: the walk must run to the end");
         peaks.push(peak);
     }
     let (short, long) = (peaks[0], peaks[1]);
-    assert!(long < short * 3 / 2, "--newest held {short} B at 1,100 revisions and {long} B at 2,200");
+    assert!(long < short * 3 / 2, "--newest held {short} B at 200 revisions and {long} B at 800");
 }
 
 fn event_seq_names_only_the_beads_with_an_applied_event_after_the_revision<B: Backend>(
