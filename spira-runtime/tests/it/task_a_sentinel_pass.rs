@@ -748,7 +748,7 @@ fn t5_check2_ends_a_takeover_whose_owner_session_is_gone_with_a_note_and_keeps_a
 }
 
 /// What a real observe sends the store. The installed projection and the resolved config are each
-/// one per process, so each test re-runs itself in a child with its own, with nothing on `PATH`.
+/// one per process, so each test re-runs itself in a child with its own.
 mod observe_store_calls {
     use std::collections::BTreeMap;
     use std::io::{BufRead, BufReader, Write};
@@ -766,6 +766,7 @@ mod observe_store_calls {
     #[derive(Default)]
     struct Fake {
         asked: Mutex<Vec<Vec<String>>>,
+        knobs: Mutex<serde_json::Map<String, Value>>,
     }
 
     impl Fake {
@@ -776,6 +777,11 @@ mod observe_store_calls {
                 ["rc", ..] => json!({ "ok": { "items": [], "list_rev": 5 } }).to_string(),
                 ["list", "--live", ..] => json!([row("sp-a", "READY"), row("sp-c", "CERTIFIED")]).to_string(),
                 ["list", ..] => "[]".into(),
+                ["section", "snapshot"] => json!({ "sections": [], "intents": [], "knobs": *self.knobs.lock().unwrap() }).to_string(),
+                ["intent", "knob-init", knob, .., "--json", value] => {
+                    self.knobs.lock().unwrap().insert(knob.to_string(), serde_json::from_str(value).unwrap());
+                    "{}".into()
+                }
                 ["claimable"] => json!({ "rev": 5, "cannot_tell": 0, "content_error": null, "beads": [] }).to_string(),
                 // `sp-a` waits on a bead outside the live set that has no row.
                 ["content", "list", ..] => json!([{ "id": "sp-a", "title": "a", "status": "open", "issue_type": "task", "labels": ["spira", "spira-red-tracker"], "dependencies": [{ "issue_id": "sp-a", "depends_on_id": "sp-gone", "type": "blocks" }] }]).to_string(),
@@ -813,15 +819,28 @@ mod observe_store_calls {
         let run = dir.path().join("run");
         let release = spira_config::process::fixture_release(dir.path(), true);
         std::fs::create_dir_all(release.join("bin")).unwrap();
-        testkit::write_exe(release.join("bin/spira-lc"), "");
+        // Named by the passes, never run: the lifecycle route is the socket, and the host
+        // section only resolves its two tools until an intent asks one to act.
+        for tool in ["spira-lc", "spira-config", "target-reap"] {
+            testkit::write_exe(release.join("bin").join(tool), "");
+        }
         std::fs::create_dir_all(&run).unwrap();
+        // A unit manager listing no unit: without one, strand stops before its ready reads.
+        let systemctl = dir.path().join("no-units");
+        testkit::write_exe(&systemctl, "#!/bin/sh\nexit 0\n");
+        // The only program the child can find by name: the one the unit listing is run under.
+        let path = dir.path().join("path");
+        std::fs::create_dir(&path).unwrap();
+        let timeout = std::env::split_paths(&std::env::var_os("PATH").unwrap()).map(|d| d.join("timeout")).find(|p| p.is_file()).unwrap();
+        std::os::unix::fs::symlink(timeout, path.join("timeout")).unwrap();
         let sock = dir.path().join("lc.sock");
         let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", run.to_str().unwrap()), ("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_LC_LIFECYCLE_ON_STORE", "1"), ("SPIRA_RUNES_DIR", testkit::manifest_dir().join("../spira/runes").to_str().unwrap())]);
         let name = format!("{}::{test}", module_path!().split_once("::").unwrap().1);
         let out = std::process::Command::new(std::env::current_exe().unwrap())
             .args([&format!("{name}::"), "--nocapture"])
             .env_clear()
-            .env("PATH", "")
+            .env("PATH", &path)
+            .env("SPIRA_SYSTEMCTL", &systemctl)
             .env("HOME", dir.path())
             .env("SPIRA_HOME", testkit::manifest_dir().join("../spira"))
             .env("SPIRA_RELEASE", &release)
