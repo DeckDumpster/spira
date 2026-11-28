@@ -568,7 +568,7 @@ mod deadline_verb_tests {
         let dir = testkit::TempDir::new("lc-deadline-verb");
         let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_VICTORIALOGS_URL", &logs.url())]);
         let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
-        let (code, out) = crate::run_deadline("deadline-check", &["--ms".to_string(), "1000".to_string()]);
+        let (code, out) = spira_config::process::with_fresh(|| crate::run_deadline("deadline-check", &["--ms".to_string(), "1000".to_string()])).unwrap();
         assert_eq!((code, logs.queries().len()), (crate::CANNOT_TELL, 1), "{out}");
     }
 }
