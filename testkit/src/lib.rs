@@ -809,7 +809,7 @@ mod tests {
     #[test]
     fn dep_info_from_another_tree_does_not_clear_a_stale_binary() {
         let t = built_workspace();
-        std::fs::write(t.join("target/debug/tool.d"), "/other/tool: /other/me/src/main.rs\n").unwrap();
+        std::fs::write(t.join("target/debug/tool.d"), "other/tool: other/me/src/main.rs\n").unwrap();
         age(&t.join("me/src/main.rs"), 300);
         assert!(refusal(&t).contains("me/src/main.rs"));
     }
@@ -817,8 +817,8 @@ mod tests {
     #[test_id(td932ft)]
     #[test]
     fn dep_info_paths_may_hold_spaces() {
-        let inputs = dep_info_inputs("/t/a b: /s/with\\ space.rs /s/c.rs\n");
-        assert_eq!(inputs, BTreeSet::from([PathBuf::from("/s/with space.rs"), PathBuf::from("/s/c.rs")]));
+        let inputs = dep_info_inputs("t/a b: s/with\\ space.rs s/c.rs\n");
+        assert_eq!(inputs, BTreeSet::from([PathBuf::from("s/with space.rs"), PathBuf::from("s/c.rs")]));
     }
 
     #[test_id(thx7uke)]
