@@ -58,6 +58,20 @@ pub fn lead(held: &mut Vec<Standing>, c: Standing) {
     }
 }
 
+const ORPHAN: &str = "orphan/";
+
+/// The condition of a maintenance, begun at `since`, whose owner is gone: its own, beside the
+/// BLIND a row pages for a store it cannot read, so neither says the other's remedy.
+pub fn orphan(since: u64, line: String) -> Standing {
+    Standing { id: format!("{ORPHAN}{since}"), subject: "all".into(), line }
+}
+
+/// Drops every [`orphan`] but the one begun at `still`.
+pub fn drop_orphans(held: &mut Vec<Standing>, still: Option<u64>) {
+    let still = still.map(|since| format!("{ORPHAN}{since}"));
+    held.retain(|c| !c.id.starts_with(ORPHAN) || Some(&c.id) == still.as_ref());
+}
+
 /// The pass over a row whose subjects may hold several conditions: each subject's lines are
 /// joined in the order of `held`. Moves `published` on, and returns the effect that takes the
 /// broker there, if anything changed.

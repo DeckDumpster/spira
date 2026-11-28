@@ -2211,3 +2211,74 @@ fn a_restarted_row_publishes_nothing_again_and_asks_its_observe_with_what_it_pub
     assert!(input["published"]["spira"]["text"].as_str().unwrap().contains("P0 STALL"), "{input}");
     assert!(input["now"].is_u64(), "{input}");
 }
+
+fn all_text(c: &Change) -> &str {
+    c.set.get("all").map_or("", |v| v.text.as_str())
+}
+
+#[test_id(t4c803f)]
+#[test]
+fn an_orphaned_maintenance_is_held_on_all_until_it_stops_holding_and_the_store_blind_says_its_own_line() {
+    let orphaned = |since: u64| Snapshot { maintenance: Some(spira_world::freeze::Maintenance { since, ..maintained(u32::MAX) }), ..blind("spira-lc dwell: locked") };
+    let w = Arc::new(Mutex::new(orphaned(T0)));
+    let mut r = standing_rig(w.clone());
+    r.advance(2 * 300_000).unwrap();
+    let said = changes(&r);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(all_text(&said[0]).contains("orphaned"), "{said:?}");
+    *w.lock().unwrap() = blind("spira-lc dwell: locked");
+    r.advance(300_000).unwrap();
+    let said = changes(&r);
+    assert_eq!(said.len(), 2, "{said:?}");
+    let text = all_text(&said[1]);
+    assert!(text.starts_with("P0 BLIND: the lifecycle control store") && !text.contains("orphaned"), "{said:?}");
+    *w.lock().unwrap() = orphaned(T0 + 5);
+    r.advance(300_000).unwrap();
+    let text = all_text(changes(&r).last().unwrap()).to_string();
+    assert!(text.contains("orphaned") && text.contains("P0 BLIND: the lifecycle control store"), "both stand: {text}");
+    *w.lock().unwrap() = Snapshot { maintenance: Some(maintained(std::process::id())), ..blind("spira-lc dwell: locked") };
+    r.advance(300_000).unwrap();
+    let text = all_text(changes(&r).last().unwrap()).to_string();
+    assert!(!text.contains("orphaned") && text.contains("P0 BLIND"), "a live maintenance is not orphaned: {text}");
+    *w.lock().unwrap() = healthy(r.now() / 1000);
+    r.advance(300_000).unwrap();
+    assert_eq!(subjects(changes(&r).last().unwrap()), (vec![], vec!["all"]));
+}
+
+#[test_id(tghga87)]
+#[test]
+fn an_ask_the_store_cannot_date_is_held_on_its_repo_until_it_is_dated() {
+    let mut s = healthy(T0);
+    s.beads.push(Bead { held: true, ask_held: true, cannot_tell: Some(UNDATED.into()), ..bead("sp-old", "pokedumpster", "REWORK", T0 - HOUR) });
+    let w = Arc::new(Mutex::new(s.clone()));
+    let mut r = standing_rig(w.clone());
+    r.advance(2 * 300_000).unwrap();
+    let said = changes(&r);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert_eq!(subjects(&said[0]), (vec!["pokedumpster"], vec![]));
+    assert_eq!(said[0].set["pokedumpster"].text, format!("P0 BLIND: {UNDATED}"));
+    *w.lock().unwrap() = healthy(T0);
+    r.advance(300_000).unwrap();
+    let said = changes(&r);
+    assert_eq!(said.len(), 2, "{said:?}");
+    assert_eq!(subjects(&said[1]), (vec![], vec!["pokedumpster"]));
+}
+
+#[test_id(t951mz2)]
+#[test]
+fn a_clear_lost_with_a_stopping_runtime_is_asked_for_again() {
+    let w = Arc::new(Mutex::new(unsubmitted(&["spira"])));
+    let seen = w.clone();
+    let mut r = TaskRig::new(1, registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&*seen.lock().unwrap()).unwrap())).double(INBOX_APPEND, |_| Ok("appended".into())).double(LOG_APPEND, |_| Ok("appended".into())).hanging(WATCH_PUBLISH);
+    r.clock.advance_to(T0 * 1000);
+    let (_, stream, kind) = WatchTransitions::boot();
+    r.tick(stream, kind).unwrap();
+    *w.lock().unwrap() = healthy(T0);
+    r.advance(300_000).unwrap();
+    let mark = changes(&r).len();
+    r.reopen(registration()).unwrap();
+    r.run_until_idle().unwrap();
+    let again = changes(&r)[mark..].to_vec();
+    assert_eq!(again.len(), 1, "{again:?}");
+    assert_eq!(subjects(&again[0]), (vec![], vec!["spira"]), "the lost set is past; the lost clear is not");
+}

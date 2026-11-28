@@ -298,6 +298,8 @@ fn judge(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verdict {
     }
     next.halted.clear();
     if !snap.readable {
+        let orphaned = snap.maintenance.as_ref().filter(|m| !spira_world::freeze::owner_alive(m));
+        watch_topics::drop_orphans(&mut next.conditions, orphaned.map(|m| m.since));
         if let Some(m) = &snap.maintenance {
             if spira_world::freeze::owner_alive(m) {
                 acts.push(say(now_ms, &crate::watchers::maintenance_wait(m)));
@@ -307,7 +309,7 @@ fn judge(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verdict {
                     acts.push(say(now_ms, &line));
                     next.orphan_paged = Some(m.since);
                 }
-                watch_topics::lead(&mut next.conditions, blind_condition(line));
+                watch_topics::lead(&mut next.conditions, watch_topics::orphan(m.since, line));
             }
             return Verdict { carry: next, acts };
         }

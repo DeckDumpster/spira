@@ -118,9 +118,12 @@ fn transitions_world(unsubmitted: bool) -> String {
     serde_json::to_string(&transitions::Snapshot { readable: true, horizon: START_S - 6 * 3_600, beads, last, ..Default::default() }).unwrap()
 }
 
+fn transitions_config() -> transitions::Config {
+    transitions::Config { period_s: 300, working_min: 2, submit_bound_s: 5_400, cut_bound_s: 2_700, pr_bound_s: 900, gate_timeout_s: 2_700, certify_par: 2, deliver_bound_s: 3_600, activate_bound_s: 900, ask_bound_s: 3_600, release_repo: "spira".into(), heartbeat_bound_s: 120, task_bound_s: 600, round_max_open: 1, releases: "rel".into(), repo_map: "map".into(), activation_bound_s: 75, run: "run".into() }
+}
+
 fn transitions_row(fx: Arc<Effects>) -> Row {
-    let config = transitions::Config { period_s: 300, working_min: 2, submit_bound_s: 5_400, cut_bound_s: 2_700, pr_bound_s: 900, gate_timeout_s: 2_700, certify_par: 2, deliver_bound_s: 3_600, activate_bound_s: 900, ask_bound_s: 3_600, release_repo: "spira".into(), heartbeat_bound_s: 120, task_bound_s: 600, round_max_open: 1, releases: "rel".into(), repo_map: "map".into(), activation_bound_s: 75, run: "run".into() };
-    Row::boot("transitions", transitions::OBSERVE, 300_000, transitions::WatchTransitions::new(config).registration(), transitions::WatchTransitions::boot(), transitions_world(false), fx)
+    Row::boot("transitions", transitions::OBSERVE, 300_000, transitions::WatchTransitions::new(transitions_config()).registration(), transitions::WatchTransitions::boot(), transitions_world(false), fx)
 }
 
 fn throughput_world(stalled: bool) -> String {
@@ -129,9 +132,12 @@ fn throughput_world(stalled: bool) -> String {
     serde_json::to_string(&throughput::Snapshot { readable: true, landings: if stalled { vec![landing] } else { vec![] }, ..Default::default() }).unwrap()
 }
 
+fn throughput_config() -> throughput::Config {
+    throughput::Config { stall_s: 600, abandon_count: 5, abandon_window_s: 7_200, ratio_min_pct: 40, ratio_min_runs: 6, passed_grace_s: 300, activation_bound_s: 75 }
+}
+
 fn throughput_row(fx: Arc<Effects>) -> Row {
-    let config = throughput::Config { stall_s: 600, abandon_count: 5, abandon_window_s: 7_200, ratio_min_pct: 40, ratio_min_runs: 6, passed_grace_s: 300, activation_bound_s: 75 };
-    Row::boot("throughput", throughput::OBSERVE, throughput::CADENCE_MS, throughput::WatchThroughput::new(config).registration(), throughput::WatchThroughput::boot(), throughput_world(false), fx)
+    Row::boot("throughput", throughput::OBSERVE, throughput::CADENCE_MS, throughput::WatchThroughput::new(throughput_config()).registration(), throughput::WatchThroughput::boot(), throughput_world(false), fx)
 }
 
 /// What the one retained value of a holding condition reads as.
@@ -311,6 +317,47 @@ fn a_restarted_runtime_says_the_carried_stale_image_again_to_a_broker_that_kept_
 
     let d = watching.recv();
     assert_eq!(vec![(d.topic, String::from_utf8_lossy(&d.payload).into_owned())], before);
+}
+
+/// What each flow row's boot after a restart asks its observe, run by the service's own runner:
+/// the observe's own answer needs a store, but what it was asked with is published either way.
+fn says_its_carried_value_again(mut row: Row, mut broker: Broker, held: &str, observe: &str, registration: Registration, boot: (&str, &str, EventKind)) {
+    row.pass(held);
+    let before = broker.retained(&row.filter());
+    assert_eq!(before.len(), 1, "{before:?}");
+
+    let fx = replace_the_process(&row, &broker);
+    broker.restart();
+    let mut watching = Subscriber::to(broker.socket(), &["watch/#"]);
+    row.rig.reopen(registration).unwrap();
+    let mark = row.rig.requested().len();
+    row.rig.tick(boot.1, boot.2).unwrap();
+    let asked = row.rig.requested()[mark..].iter().find(|q| q.name == observe).expect("the boot observes").input.clone();
+    let _ = fx.run("o", &EffectSpec::probe(observe, asked, 1000));
+    flush(&fx);
+
+    let d = watching.recv();
+    assert_eq!(vec![(d.topic, String::from_utf8_lossy(&d.payload).into_owned())], before);
+}
+
+#[test_id(txzcfv6)]
+#[test]
+fn a_restarted_runtime_says_its_carried_flow_stall_again_to_a_broker_that_kept_nothing() {
+    let _env = testkit::env_read();
+    let broker = Broker::up();
+    let row = transitions_row(service(&broker));
+    let registration = transitions::WatchTransitions::new(transitions_config()).registration();
+    says_its_carried_value_again(row, broker, &transitions_world(true), transitions::OBSERVE, registration, transitions::WatchTransitions::boot());
+}
+
+#[test_id(t9089zn)]
+#[test]
+fn a_restarted_runtime_says_its_carried_landing_stall_again_to_a_broker_that_kept_nothing() {
+    let _env = testkit::env_read();
+    let broker = Broker::up();
+    let row = throughput_row(service(&broker));
+    let registration = throughput::WatchThroughput::new(throughput_config()).registration();
+    says_its_carried_value_again(row, broker, &throughput_world(true), throughput::OBSERVE, registration, throughput::WatchThroughput::boot());
 }
 
 /// A broker that keeps a value while this publisher cannot reach it: the publisher's path to it

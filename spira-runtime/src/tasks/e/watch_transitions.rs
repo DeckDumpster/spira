@@ -1079,6 +1079,8 @@ fn judge(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, V
     }
     next.halted.clear();
     if !snap.readable {
+        let orphaned = snap.maintenance.as_ref().filter(|m| !spira_world::freeze::owner_alive(m));
+        watch_topics::drop_orphans(&mut next.conditions, orphaned.map(|m| m.since));
         if let Some(m) = &snap.maintenance {
             if spira_world::freeze::owner_alive(m) {
                 acts.push(say(now_ms, &crate::watchers::maintenance_wait(m)));
@@ -1088,7 +1090,7 @@ fn judge(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, V
                     acts.push(say(now_ms, &line));
                     next.orphan_paged = Some(m.since);
                 }
-                watch_topics::lead(&mut next.conditions, blind_condition(line));
+                watch_topics::lead(&mut next.conditions, watch_topics::orphan(m.since, line));
             }
             return (next, acts);
         }
@@ -1162,9 +1164,8 @@ fn judge(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, V
             acts.push(say(now_ms, &stall_line(s)));
         }
     }
-    let asks = snap.beads.iter().filter_map(|b| Some((b, b.cannot_tell.as_deref()?)));
-    let mut standing: Vec<Standing> = asks.map(|(b, text)| Standing { id: format!("ask/{}", b.id), subject: b.repo.clone(), line: format!("P0 BLIND: {text}") }).collect();
-    standing.sort_by(|a, b| a.id.cmp(&b.id));
+    let repo_of = |id: &str| snap.beads.iter().find(|b| b.id == id).map_or_else(String::new, |b| b.repo.clone());
+    let mut standing: Vec<Standing> = blind_asks.iter().map(|(id, text)| Standing { id: format!("ask/{id}"), subject: repo_of(id), line: format!("P0 BLIND: {text}") }).collect();
     standing.extend(rows.iter().map(|r| Standing { id: format!("over/{}", r.0), subject: subject(ALL), line: over_line(r) }));
     standing.extend(found.iter().map(|s| Standing { id: format!("stall/{}", s.key()), subject: subject(&s.scope), line: stall_line(s) }));
     next.conditions = watch_topics::keep(&carry.conditions, standing);

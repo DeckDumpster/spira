@@ -34,9 +34,8 @@ fn abandoned(repo: &str, n: u64) -> RepoRounds {
     RepoRounds { repo: repo.into(), cut: n, abandoned: n, abandoned_recent: n, ..Default::default() }
 }
 
-fn rig(world: Arc<Mutex<Snapshot>>) -> TaskRig {
-    let (_, stream, kind) = WatchThroughput::boot();
-    let mut r = TaskRig::new(1, WatchThroughput::new(config()).registration())
+fn unticked(world: Arc<Mutex<Snapshot>>) -> TaskRig {
+    let r = TaskRig::new(1, WatchThroughput::new(config()).registration())
         .unwrap()
         .double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap()))
         .double(FILE, |_| Ok("filed".into()))
@@ -44,8 +43,17 @@ fn rig(world: Arc<Mutex<Snapshot>>) -> TaskRig {
         .double(INBOX_APPEND, |_| Ok("appended".into()))
         .double(WATCH_PUBLISH, |_| Ok("published".into()));
     r.clock.advance_to(NOW * 1000);
+    r
+}
+
+fn start(mut r: TaskRig) -> TaskRig {
+    let (_, stream, kind) = WatchThroughput::boot();
     r.tick(stream, kind).unwrap();
     r
+}
+
+fn rig(world: Arc<Mutex<Snapshot>>) -> TaskRig {
+    start(unticked(world))
 }
 
 fn world(s: Snapshot) -> (TaskRig, Arc<Mutex<Snapshot>>) {
@@ -138,12 +146,14 @@ fn a_passed_round_a_refused_record_and_a_dependency_wait_are_no_conditions() {
     s.landings = vec![RepoLanding { beads: vec!["sp-w".into()], ..stalled_repo("beta") }];
     s.states = [("sp-dep".to_string(), "WORKING".to_string())].into();
     let (stream, state) = (spira_runtime::tasks::a::batcher_local::STREAM, spira_runtime::tasks::a::batcher_local::STATE);
-    let w = Arc::new(Mutex::new(s));
-    let mut r = rig(w);
+    let mut r = unticked(Arc::new(Mutex::new(s)));
     r.tick(stream, runtime::event::EventKind::new(state, r#"{"repos":{"beta":{"state":"Idle","blocked":{"sp-w":"sp-dep"}}}}"#)).unwrap();
+    let mut r = start(r);
     r.advance(2 * CADENCE_MS).unwrap();
-    assert!(lines(&r).len() >= 2, "the lines are still said: {:?}", lines(&r));
-    assert!(changes(&r).iter().all(|c| !c.set.contains_key("alpha")), "{:?}", changes(&r));
+    for said in ["round b-1 passed", "round record refused clearing", "beta: landing waits on a dependency"] {
+        assert!(lines(&r).iter().any(|l| l.contains(said)), "{said} is still said: {:?}", lines(&r));
+    }
+    assert_eq!(changes(&r), vec![]);
 }
 
 #[test_id(tv6zp55)]
@@ -197,4 +207,50 @@ fn two_days_of_a_standing_stall_replay_identically() {
     let r = assert_deterministic(|_| rig(Arc::new(Mutex::new(stalled(&["alpha"])))), 7, 2);
     assert!(r.now() >= NOW * 1000 + 2 * DAY_MS);
     assert_eq!(changes(&r).len(), 1, "{:?}", changes(&r));
+}
+
+fn orphaned(since: u64) -> Snapshot {
+    let m = spira_world::freeze::Maintenance { owner: "concierge".into(), why: "compact".into(), since, pid: u32::MAX };
+    Snapshot { maintenance: Some(m), why: "landings: gone".into(), ..Default::default() }
+}
+
+fn all_text(c: &Change) -> &str {
+    c.set.get("all").map_or("", |v| v.text.as_str())
+}
+
+#[test_id(tn4r4r8)]
+#[test]
+fn an_orphaned_maintenance_is_held_on_all_until_it_stops_holding_and_the_store_blind_says_its_own_line() {
+    let (mut r, w) = world(orphaned(NOW));
+    r.advance(2 * CADENCE_MS).unwrap();
+    let said = changes(&r);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(all_text(&said[0]).contains("orphaned"), "{said:?}");
+    *w.lock().unwrap() = Snapshot { why: "landings: gone".into(), ..Default::default() };
+    r.advance(CADENCE_MS).unwrap();
+    assert_eq!(subjects(changes(&r).last().unwrap()), (vec![], vec!["all"]), "thawed, and not yet blind past the bound");
+    r.advance(12 * CADENCE_MS).unwrap();
+    let said = changes(&r);
+    assert_eq!(said.len(), 3, "{said:?}");
+    let text = all_text(&said[2]);
+    assert!(text.starts_with("P0 BLIND: the landings cannot be read") && !text.contains("orphaned"), "{said:?}");
+    pass(&mut r, &w, orphaned(NOW + 5));
+    let text = all_text(changes(&r).last().unwrap()).to_string();
+    assert!(text.contains("orphaned") && text.contains("P0 BLIND: the landings"), "both stand: {text}");
+    pass(&mut r, &w, quiet());
+    assert_eq!(subjects(changes(&r).last().unwrap()), (vec![], vec!["all"]));
+}
+
+#[test_id(tn9ieha)]
+#[test]
+fn a_clear_lost_with_a_stopping_runtime_is_asked_for_again() {
+    let w = Arc::new(Mutex::new(stalled(&["alpha"])));
+    let mut r = start(unticked(w.clone()).hanging(WATCH_PUBLISH));
+    pass(&mut r, &w, quiet());
+    let mark = changes(&r).len();
+    r.reopen(WatchThroughput::new(config()).registration()).unwrap();
+    r.run_until_idle().unwrap();
+    let again = changes(&r)[mark..].to_vec();
+    assert_eq!(again.len(), 1, "{again:?}");
+    assert_eq!(subjects(&again[0]), (vec![], vec!["alpha"]), "the lost set is past; the lost clear is not");
 }
