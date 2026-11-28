@@ -4,8 +4,7 @@
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
-use std::sync::Arc;
+use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
@@ -13,6 +12,8 @@ use opentelemetry_proto::tonic::common::v1::{any_value::Value, AnyValue, ArrayVa
 use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs, SeverityNumber};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use prost::Message;
+
+use crate::push::{Bounds, Lost, Push};
 
 static DROPPED: AtomicU64 = AtomicU64::new(0);
 
@@ -23,16 +24,16 @@ pub fn dropped() -> u64 {
 
 static QUEUE_DROPPED: AtomicU64 = AtomicU64::new(0);
 
+static PUSH_LOST: Lost = Lost::new();
+
 /// Records refused by a full or closed queue (`LogQueue` or `LogPush`) since this process started.
 pub fn queue_dropped() -> u64 {
-    QUEUE_DROPPED.load(Ordering::Relaxed)
+    QUEUE_DROPPED.load(Ordering::Relaxed) + PUSH_LOST.refused()
 }
-
-static PUSH_FAILED: AtomicU64 = AtomicU64::new(0);
 
 /// Records a `LogPush` could not deliver since this process started.
 pub fn push_failed() -> u64 {
-    PUSH_FAILED.load(Ordering::Relaxed)
+    PUSH_LOST.failed()
 }
 
 /// How many records one request carries at most.
@@ -221,10 +222,8 @@ impl LogQueue {
 /// Records pushed to the local OpenTelemetry Collector over OTLP/HTTP from one thread behind a
 /// bounded queue. `emit` never blocks; a record that cannot be queued or delivered is counted.
 pub struct LogPush {
-    queue: Option<(SyncSender<ExportLogsServiceRequest>, Receiver<()>)>,
+    queue: Option<Push<ExportLogsServiceRequest>>,
     service: String,
-    emitted: AtomicU64,
-    delivered: Arc<AtomicU64>,
 }
 
 impl LogPush {
@@ -232,58 +231,38 @@ impl LogPush {
     /// bounds one request, `cap` the records waiting for the writer.
     pub fn new(endpoint: &str, service: &str, deadline: Duration, cap: usize) -> LogPush {
         let addr = crate::vlogs::host_port(endpoint.trim());
-        let delivered = Arc::new(AtomicU64::new(0));
         let queue = (!addr.is_empty()).then(|| {
-            let (tx, rx) = sync_channel::<ExportLogsServiceRequest>(cap);
-            let (done_tx, done) = sync_channel(1);
-            let sent = delivered.clone();
-            // A writer that cannot start drops `rx`, so every emit counts as refused.
-            let _ = std::thread::Builder::new().name("otel-log-push".into()).spawn(move || {
-                while let Ok(first) = rx.recv() {
-                    push(&addr, first, &rx, deadline, &sent);
-                }
-                let _ = done_tx.send(());
-            });
-            (tx, done)
+            let bounds = Bounds { items: Some(cap), bytes: None, batch: Some(BATCH), tick: None };
+            Push::new("otel-log-push", bounds, Some(&PUSH_LOST), move |records| {
+                merged(records).is_none_or(|request| crate::metrics::post(&addr, crate::LOGS_PATH, &request.encode_to_vec(), deadline).is_ok())
+            })
         });
-        LogPush { queue, service: service.to_string(), emitted: AtomicU64::new(0), delivered }
+        LogPush { queue, service: service.to_string() }
     }
 
     pub fn emit(&self, body: &str, attrs: &[(String, Attr)]) {
-        let Some((tx, _)) = &self.queue else { return };
-        self.emitted.fetch_add(1, Ordering::Relaxed);
+        let Some(queue) = &self.queue else { return };
         let request = LogSink::new(PathBuf::new(), &self.service).request(body, attrs, SystemTime::now());
-        if tx.try_send(request).is_err() {
-            QUEUE_DROPPED.fetch_add(1, Ordering::Relaxed);
-        }
+        let len = request.encoded_len();
+        queue.emit(request, len);
     }
 
     /// Stops taking records, waits at most `bound` for the queue to drain, and returns how many
     /// emitted records were not delivered.
     pub fn close(self, bound: Duration) -> u64 {
-        if let Some((tx, done)) = self.queue {
-            drop(tx);
-            let _ = done.recv_timeout(bound);
-        }
-        self.emitted.load(Ordering::Relaxed).saturating_sub(self.delivered.load(Ordering::SeqCst))
+        self.queue.map_or(0, |queue| queue.close(bound))
     }
 }
 
-/// Sends `first` and whatever else is already queued, up to `BATCH` records, as one request.
-fn push(addr: &str, mut batch: ExportLogsServiceRequest, rx: &Receiver<ExportLogsServiceRequest>, deadline: Duration, delivered: &AtomicU64) {
-    let mut n = 1;
-    while n < BATCH {
-        let Ok(next) = rx.try_recv() else { break };
+/// One request carrying the records of every request given, in order.
+fn merged(requests: Vec<ExportLogsServiceRequest>) -> Option<ExportLogsServiceRequest> {
+    requests.into_iter().reduce(|mut batch, next| {
         let records = next.resource_logs.into_iter().flat_map(|r| r.scope_logs).flat_map(|s| s.log_records);
         if let Some(scope) = batch.resource_logs.first_mut().and_then(|r| r.scope_logs.first_mut()) {
             scope.log_records.extend(records);
         }
-        n += 1;
-    }
-    match crate::metrics::post(addr, crate::LOGS_PATH, &batch.encode_to_vec(), deadline) {
-        Ok(()) => delivered.fetch_add(n as u64, Ordering::SeqCst),
-        Err(_) => PUSH_FAILED.fetch_add(n as u64, Ordering::Relaxed),
-    };
+        batch
+    })
 }
 
 /// Reads back every record a sink wrote into `dir` for `service`: the fixture collector of a test.
