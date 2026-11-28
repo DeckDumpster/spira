@@ -182,7 +182,7 @@ fn a_backlog_is_published_and_carried_in_pieces_the_store_takes() {
 #[test_id(ttsnoih)]
 #[test]
 fn a_step_lost_at_a_restart_is_not_marked_failed_and_the_next_observe_asks_it_again() {
-    let observed = json(&Snapshot { replies: vec![reply("m1", "notice", &[])] });
+    let observed = json(&Snapshot { replies: vec![reply("m1", "notice", &[])], ..Default::default() });
     let mut rig = runtime::taskrig::TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().hanging(task::NOTE).double(task::OBSERVE, move |_| Ok(observed.clone()));
     let (_, stream, kind) = H::boot();
     rig.tick(stream, kind).unwrap();
