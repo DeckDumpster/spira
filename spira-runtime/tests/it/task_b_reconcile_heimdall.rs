@@ -21,8 +21,10 @@ fn stalled(now: u64) -> Snapshot {
     Snapshot { sentinel: TaskStatus { armed: true, last_fired_ms: Some(now.saturating_sub(3_600_000)), effect_failures: 0 }, ..quiet(now) }
 }
 
+/// A key sighted before, whose alarm has therefore been standing since.
 fn keyed(phase: Phase, seen: u32) -> Carry {
-    Carry { keys: BTreeMap::from([(KEY.to_string(), KeyState { phase, seen, ..KeyState::default() })]), ..Carry::default() }
+    let alarm = heimdall::alarm::Raised { since: 7_080, text: "sighted".into(), clearing: false };
+    Carry { keys: BTreeMap::from([(KEY.to_string(), KeyState { phase, seen, ..KeyState::default() })]), alarms: BTreeMap::from([(KEY.to_string(), alarm)]), ..Carry::default() }
 }
 
 fn json(s: &Snapshot) -> String {
@@ -47,13 +49,13 @@ fn t3_a_key_confirms_fires_clears_and_a_raise_while_unreachable_is_refused() {
     let h = t::handler::<H>(SET);
     let now = 7_200_000;
     let (c, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(stalled(now)), now).unwrap();
-    assert_eq!((c.keys[KEY].phase, names(&acts)), (Phase::Seen, vec![]), "one sighting is not yet firing");
+    assert_eq!((c.keys[KEY].phase, names(&acts)), (Phase::Seen, vec![task::ALARMS]), "one sighting is not yet firing: only its alarm goes out");
     let (c, acts) = task::decide(&h.cfg, &c, &Input::Observed(stalled(now + TICK)), now + TICK).unwrap();
-    assert_eq!((c.keys[KEY].phase, names(&acts)), (Phase::Firing, vec![task::RAISE]));
+    assert_eq!((c.keys[KEY].phase, names(&acts)), (Phase::Firing, vec![task::ALARMS, task::RAISE]));
     let (c, _) = task::decide(&h.cfg, &c, &Input::Observed(quiet(now + 2 * TICK)), now + 2 * TICK).unwrap();
     assert_eq!(c.keys[KEY].phase, Phase::Unseen);
     let (c, acts) = task::decide(&h.cfg, &c, &Input::Observed(quiet(now + 3 * TICK)), now + 3 * TICK).unwrap();
-    assert_eq!((c.keys[KEY].phase, names(&acts)), (Phase::Cleared, vec![task::CLEAR]));
+    assert_eq!((c.keys[KEY].phase, names(&acts)), (Phase::Cleared, vec![task::ALARMS, task::CLEAR]));
     let refused = task::decide(&h.cfg, &keyed(Phase::Seen, 1), &Input::Observed(Snapshot { db_reachable: false, ..stalled(now) }), now).unwrap_err();
     assert!(refused.contains("unreachable"), "{refused}");
 }
@@ -72,7 +74,7 @@ fn t5_a_confirmed_stall_raises_once_and_a_store_outage_writes_nothing() {
     let h = t::handler::<H>(SET);
     let now = 7_200_000;
     let (_, acts) = task::decide(&h.cfg, &keyed(Phase::Seen, 1), &Input::Observed(stalled(now)), now).unwrap();
-    assert_eq!(names(&acts), [task::RAISE]);
+    assert_eq!(names(&acts), [task::ALARMS, task::RAISE]);
     let outage = task::decide(&h.cfg, &keyed(Phase::Seen, 1), &Input::Observed(Snapshot { db_reachable: false, ..stalled(now) }), now);
     assert!(matches!(&outage, Err(e) if e.contains("unreachable")), "no store write while unreachable: {outage:?}");
 }
@@ -174,6 +176,165 @@ fn removing_the_still_file_clears_the_alert() {
     assert_eq!(carry.keys["builder-still:sp-a"].phase, Phase::Firing);
     std::fs::remove_file(run.path().join("dwarf/sp-a.still")).unwrap();
     let (carry, acts) = task::decide(&h.cfg, &carry, &Input::Observed(observed(run.path())), NOW_MS + 2 * TICK).unwrap();
-    assert_eq!(names(&acts), [task::CLEAR]);
+    assert_eq!(names(&acts), [task::ALARMS, task::CLEAR]);
     assert_eq!(carry.keys["builder-still:sp-a"].phase, Phase::Cleared);
+}
+
+const ALARM: &str = "alarm/mirror-stale";
+
+type World = std::sync::Arc<std::sync::Mutex<Snapshot>>;
+
+/// The task as the service runs it, its alarm effect going through the real runner to `broker`.
+fn alarming(broker: &testkit::broker::Broker) -> (runtime::taskrig::TaskRig, World) {
+    use runtime::host::EffectRunner;
+    let fx = spira_runtime::Effects::default();
+    let options = spira_pub::Options::new(broker.socket(), std::sync::Arc::new(runtime::ports::VirtualClock::new(0)), Box::new(runtime::ports::SeededRng::new(1)));
+    assert!(fx.heimdall_alarms.set(Some(heimdall::alarm::Announcer::new(spira_pub::Publisher::with("heimdall", options).unwrap()))).is_ok());
+    // Halted, so the unarmed sentinel is not a second alarm.
+    let snap = Snapshot { world_halted: true, ..serde_json::from_str(&mirror_stale()).unwrap() };
+    let world: World = std::sync::Arc::new(std::sync::Mutex::new(snap));
+    let seen = world.clone();
+    let mut r = runtime::taskrig::TaskRig::new(1, t::handler::<H>(MIRROR_SET).registration())
+        .unwrap()
+        .double(task::OBSERVE, move |_| Ok(json(&seen.lock().unwrap())))
+        .double(task::RAISE, |i| Ok(i.into()))
+        .double(task::CLEAR, |i| Ok(i.into()))
+        .double(task::REFRESH, |i| Ok(i.into()))
+        .double(task::ALARMS, move |input| fx.run("alarms", &runtime::event::EffectSpec::probe(task::ALARMS, input, 10_000)));
+    r.tick(task::STREAM, runtime::event::EventKind::new(task::TICK, "")).unwrap();
+    (r, world)
+}
+
+fn pass(r: &mut runtime::taskrig::TaskRig) {
+    r.clock.advance(TICK);
+    r.tick(task::STREAM, runtime::event::EventKind::new(task::TICK, "")).unwrap();
+}
+
+fn alarms(broker: &testkit::broker::Broker) -> Vec<(String, serde_json::Value)> {
+    broker.retained("alarm/#").into_iter().map(|(t, v)| (t, serde_json::from_str(&v).unwrap())).collect()
+}
+
+#[test_id(t4u4btj)]
+#[test]
+fn a_firing_key_is_one_unchanged_alarm_across_passes_and_a_restart_until_it_passes() {
+    let broker = testkit::broker::Broker::up();
+    let (mut r, world) = alarming(&broker);
+    let raised = alarms(&broker);
+    assert_eq!(raised.len(), 1, "published at the first sighting: {raised:?}");
+    let (topic, value) = &raised[0];
+    assert_eq!(topic, ALARM);
+    assert_eq!(value["text"], "The beads mirror has not been rewritten in 55.6h");
+    assert!(value["since"].is_i64() && value["since"] == value["at"], "{value}");
+
+    world.lock().unwrap().mirror_age_secs = Some(300_000);
+    pass(&mut r);
+    pass(&mut r);
+    r.reopen(t::handler::<H>(MIRROR_SET).registration()).unwrap();
+    pass(&mut r);
+    assert_eq!(alarms(&broker), raised, "neither an aging title nor a restart moves the value");
+
+    world.lock().unwrap().mirror_age_secs = Some(10);
+    pass(&mut r);
+    assert_eq!(alarms(&broker), vec![]);
+}
+
+#[test_id(ttp8can)]
+#[test]
+fn a_clear_the_broker_missed_is_sent_by_a_later_pass_and_then_dropped() {
+    let mut broker = testkit::broker::Broker::up();
+    let (mut r, world) = alarming(&broker);
+    broker.stop();
+    world.lock().unwrap().mirror_age_secs = Some(10);
+    pass(&mut r);
+    let carry = t::recorded::<H>(&r).expect("the carry");
+    assert!(carry.alarms.contains_key("mirror-stale"), "the undelivered clear is carried: {carry:?}");
+
+    broker.restart();
+    let mut raw = testkit::broker::Subscriber::to(broker.socket(), &["alarm/#"]);
+    pass(&mut r);
+
+    let got = raw.recv();
+    assert_eq!((got.topic.as_str(), got.payload.len()), (ALARM, 0));
+    let carry = t::recorded::<H>(&r).expect("the carry");
+    assert!(carry.alarms.is_empty(), "a delivered clear is forgotten: {carry:?}");
+}
+
+fn standing(carry: &Carry) -> Vec<(&str, bool)> {
+    carry.alarms.iter().map(|(k, r)| (k.as_str(), r.clearing)).collect()
+}
+
+#[test_id(tydaqrg)]
+#[test]
+fn a_store_outage_with_a_raise_pending_still_sets_new_alarms_and_clears_passed_ones() {
+    let h = t::handler::<H>(MIRROR_SET);
+    let now = 7_200_000;
+    let decide = |carry: &Carry, snap: Snapshot, at: u64| task::decide(&h.cfg, carry, &Input::Observed(snap), at);
+    let (carry, _) = decide(&Carry::default(), stalled(now), now).unwrap();
+    let down = Snapshot { db_reachable: false, mirror_age_secs: Some(200_000), ..stalled(now + TICK) };
+
+    let (next, acts) = decide(&carry, down.clone(), now + TICK).unwrap();
+
+    assert_eq!(names(&acts), [task::ALARMS], "the alarms go out; nothing is written to the store");
+    assert_eq!(standing(&next), [("mirror-stale", false), (KEY, false)]);
+    assert_eq!(next.keys, carry.keys, "the raise still waits for the store");
+    let refused = decide(&next, down, now + 2 * TICK).unwrap_err();
+    assert!(refused.contains("unreachable"), "{refused}");
+
+    let passed = Snapshot { db_reachable: false, mirror_age_secs: Some(10), ..stalled(now + 3 * TICK) };
+    let (next, acts) = decide(&next, passed, now + 3 * TICK).unwrap();
+    assert_eq!(names(&acts), [task::ALARMS]);
+    assert_eq!(standing(&next), [("mirror-stale", true), (KEY, false)]);
+}
+
+#[test_id(trlkqru)]
+#[test]
+fn unread_gate_rows_keep_a_streak_alarm_the_store_does_not_hold_yet() {
+    let h = t::handler::<H>(SET);
+    let rows = ["a", "b", "c", "d"].iter().map(|b| serde_json::json!({ "bead": b, "status": "FAIL", "reason": "branch-red", "red_unit": "u", "red_line": "l" })).collect();
+    let red = Snapshot { gate_runs: vec![("spira".into(), rows)], ..quiet(0) };
+    let (carry, _) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(red), 0).unwrap();
+    assert_eq!(standing(&carry), [("gate-red-streak/spira", false)]);
+
+    let unread = Snapshot { gate_runs_unread: true, ..quiet(TICK) };
+    let (next, _) = task::decide(&h.cfg, &carry, &Input::Observed(unread), TICK).unwrap();
+
+    assert_eq!(next.alarms, carry.alarms);
+}
+
+#[test_id(t3zrs99)]
+#[test]
+fn an_alarm_neither_the_broker_nor_the_store_could_take_arrives_when_the_broker_returns() {
+    let mut broker = testkit::broker::Broker::up();
+    let (mut r, world) = alarming(&broker);
+    broker.stop();
+    {
+        let mut snap = world.lock().unwrap();
+        snap.db_reachable = false;
+        snap.world_halted = false;
+    }
+    pass(&mut r);
+
+    broker.restart();
+
+    // No further pass: the wait is on the publisher's own reconnect.
+    let mut raw = testkit::broker::Subscriber::to(broker.socket(), &["alarm/sentinel-stale"]);
+    assert!(!raw.recv().payload.is_empty());
+}
+
+#[test_id(t4ef5vc)]
+#[test]
+fn a_source_that_could_not_be_read_neither_clears_nor_moves_its_alarm() {
+    let run = testkit::TempDir::new("heimdall-unread");
+    std::fs::write(run.join("strands.json"), "{").unwrap();
+    let h = t::handler::<H>(SET);
+    let held = |key: &str| (key.to_string(), heimdall::alarm::Raised { since: 7, text: "held".into(), clearing: false });
+    let carry = Carry { alarms: ["sentinel-stale", "mirror-stale", "lease-unreclaimed"].into_iter().map(held).collect(), ..Carry::default() };
+
+    // No scheduler answers on the control socket, so neither of its tasks can be judged.
+    let (next, _) = task::decide(&h.cfg, &carry, &Input::Observed(observed(run.path())), NOW_MS).unwrap();
+
+    assert_eq!(next.alarms, carry.alarms);
+    std::fs::remove_file(run.join("strands.json")).unwrap();
+    let (next, _) = task::decide(&h.cfg, &carry, &Input::Observed(observed(run.path())), NOW_MS).unwrap();
+    assert_eq!(standing(&next), [("lease-unreclaimed", true), ("mirror-stale", false), ("sentinel-stale", false)], "no strands file is no strands");
 }

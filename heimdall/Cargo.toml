@@ -27,8 +27,13 @@ name = "inbox_page"
 path = "tests/inbox_page.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "alarm_topics"
+path = "tests/alarm_topics.rs"
+required-features = ["integration"]
+
 [features]
-integration = ["spira-pub/integration", "runtime/integration", "inbox-rules/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
+integration = ["spira-pub/integration", "runtime/integration", "inbox-rules/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration", "ports/integration", "spira-sub/integration"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -44,3 +49,5 @@ spira-pub = { path = "../spira-pub" }
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
+ports = { path = "../ports" }
+spira-sub = { path = "../spira-sub" }

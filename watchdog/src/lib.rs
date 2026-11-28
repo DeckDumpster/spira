@@ -5,11 +5,13 @@
 //! pass whose backoff is due starts the unit again (`reset-failed` then `start` for a unit that
 //! is not running, so systemd's start limit never ends the retries; `restart` for a wedged one),
 //! pages the Concierge inbox once when the starts have not brought it back, with the unit's own
-//! last log lines, and reports the scheduler down rather than success.
+//! last log lines, and reports the scheduler down rather than success. While the scheduler is
+//! down it also holds `alarm/watchdog` on the broker.
 
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
+mod alarm;
 pub mod render;
 
 use std::path::{Path, PathBuf};
@@ -17,6 +19,8 @@ use std::path::{Path, PathBuf};
 use runtime::ports::Clock;
 use runtime::units::{UnitFacts, UnitHandle, UnitState, Units};
 use serde::{Deserialize, Serialize};
+
+pub use alarm::{publisher, watch};
 
 /// The page is one line appended to the Concierge's durable inbox
 /// (law-concierge-signals-ride-watchd-rows): a file append and a bounded publish, so it needs

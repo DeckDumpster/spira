@@ -37,6 +37,12 @@ store could not be read or written — its EXISTENCE is itself the statement "th
 be reached" — and removed the moment the store answers again, so there is never a second
 source of truth standing beside a working first one.
 
+**Each firing key is also a topic**, `alarm/<key>` (`alarm.rs`): retained `{text, since, at}`,
+frozen at the pass the key first fired in, and cleared with an empty publish on the first pass
+without it. Those values, and any clear the broker has not taken, are carried in the hosted
+`reconcile.heimdall` task's journaled carry (the path the scheduler runs) and in the heartbeat
+of this binary's pass. A publish that fails is logged and changes nothing else.
+
 **The condition is a contract with the attention panel** (`cockpit/panel/src/store.rs`): the
 message's first line is the title, the store counts `flaps`, and `acked` and `silent_until`
 are the panel's to write. The store forgets `acked` when the condition RETURNS; Heimdall never
@@ -102,7 +108,7 @@ concerned, and a timeout is reported as saturation, not down.
 | path | mode | what |
 |---|---|---|
 | `$SPIRA_RUN/heimdall.state` | r/w | the TSV debounce state (`state.rs`) |
-| `$SPIRA_RUN/heimdall.status` | w | the heartbeat, every run |
+| `$SPIRA_RUN/heimdall.status` | r/w | the heartbeat, every run; read for the standing alarms |
 | `$SPIRA_RUN/heimdall.alerts.json` (or `SPIRA_HEIMDALL_FALLBACK`) | w/rm | the fallback channel |
 | `$SPIRA_RUN/sentinel.log` (or `SPIRA_HEIMDALL_SENTINEL_LOG`) | r | tailed, bounded |
 | `$SPIRA_RUN/strands.json` (or `SPIRA_HEIMDALL_STRANDS`) | r | strand.sh's episode JSON, passed through opaque |

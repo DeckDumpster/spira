@@ -3,6 +3,7 @@
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
+pub mod alarm;
 pub mod alerts;
 pub mod conditions;
 pub mod classify;

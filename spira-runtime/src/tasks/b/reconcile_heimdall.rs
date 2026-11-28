@@ -51,6 +51,13 @@
 //!
 //! Today a timeout (exit 124) is classed as *saturated*, not unreachable (`conditions.rs:61-67`). An effect `timed_out` keeps that meaning.
 //!
+//! | `reconcile.heimdall.alarms` → retained `alarm/<key>` on the broker, as `heimdall` (`heimdall::alarm`); a memory-only probe, sent on each tick that is not refused while an alarm or an undelivered clear is carried, and republished when its publisher reconnects | host | 10 s | `heimdall/alarms/<now>` | nothing: an unreachable broker is logged and is not the effect's failure |
+//!
+//! An alarm follows the sighting, not the debounce: it is set by the first pass that sees the key
+//! firing and cleared by the first whose check ran and did not. The topics do not wait for the store: with it
+//! unreachable and a raise pending, a pass is refused only when its alarms have nothing new to
+//! send; otherwise it sends and carries them, and leaves the debounce counters as they were.
+//!
 //! ## Silence
 //!
 //! A tick where nothing is firing and every counter is unchanged emits no store write.
@@ -96,7 +103,8 @@ pub const RAISE: &str = "reconcile.heimdall.raise";
 pub const CLEAR: &str = "reconcile.heimdall.clear";
 pub const REFRESH: &str = "reconcile.heimdall.refresh";
 pub const FALLBACK: &str = "reconcile.heimdall.fallback";
-pub const EFFECTS: &[&str] = &[OBSERVE, RAISE, CLEAR, REFRESH, FALLBACK];
+pub const ALARMS: &str = "reconcile.heimdall.alarms";
+pub const EFFECTS: &[&str] = &[OBSERVE, RAISE, CLEAR, REFRESH, FALLBACK, ALARMS];
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_RECONCILE_HEIMDALL_SECS";
 /// The in-scheduler checks' keys only. `SPIRA_SYSTEMCTL`, `SPIRA_HEIMDALL_SENTINEL_LOG` and
@@ -163,6 +171,10 @@ pub struct Snapshot {
     pub gate_runs: Vec<(String, Vec<serde_json::Value>)>,
     /// The Gate section could not be read; a raised streak is held, not cleared.
     pub gate_runs_unread: bool,
+    /// `scheduler status` held no row for the sentinel.
+    pub sentinel_unread: bool,
+    /// The strands file is there and could not be read.
+    pub strands_unread: bool,
     /// Live builders whose transcript is unwritten and whose commands are idle.
     pub stills: Vec<Still>,
 }
@@ -225,6 +237,8 @@ pub struct Carry {
     pub keys: BTreeMap<String, KeyState>,
     pub restart_baselines: BTreeMap<String, u64>,
     pub probe_id: Option<String>,
+    /// What stands on `alarm/<key>`, and the clears the broker has not taken.
+    pub alarms: heimdall::alarm::Alarms,
 }
 
 pub struct ReconcileHeimdall {
@@ -288,19 +302,37 @@ pub struct Clear {
 pub const WRITE_DEADLINE_MS: u64 = 10_000;
 /// The host writes' deadline.
 pub const HOST_DEADLINE_MS: u64 = 2_000;
+/// Longer than the publisher's own connect and flush bounds together.
+pub const ALARMS_DEADLINE_MS: u64 = 10_000;
 
 fn act(name: &str, key: String, input: &impl Serialize, deadline_ms: u64, probe: bool) -> Result<Act, String> {
     Ok(Act { name: name.into(), key, input: serde_json::to_string(input).map_err(|e| e.to_string())?, deadline_ms, probe })
+}
+
+/// Whether the check that decides `key` could not run, so its absence says nothing.
+fn unread(snap: &Snapshot, key: &str) -> bool {
+    match key {
+        "sentinel-stale" => snap.sentinel_unread,
+        "mirror-stale" => snap.mirror_age_secs.is_none(),
+        "lease-unreclaimed" => snap.strands_unread,
+        _ => snap.gate_runs_unread && heimdall::streak::is_streak(key),
+    }
 }
 
 /// `hosted::classify` then `hosted::step` (`reconcile::step_keys` with its counters saturated).
 /// A raise is a journaled effect; a refresh rewrites an alert already raised and goes as a
 /// memory-only probe, its time carried. With the store unreachable nothing is written to it:
 /// a pass that would raise is refused naming `unreachable`, and any other writes the fallback
-/// channel. A raise that fails is retried by the next refresh.
+/// channel. See Act for what the alarms do meanwhile. A raise that fails is retried by the next refresh.
 pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     let snap = match input {
         Input::Observed(s) => s,
+        Input::Outcome { effect, ok: true, body } if effect == ALARMS => {
+            let cleared: Vec<String> = serde_json::from_str(body).map_err(|e| format!("{ALARMS}: {e}"))?;
+            let mut next = carry.clone();
+            heimdall::alarm::delivered(&mut next.alarms, &cleared);
+            return Ok((next, vec![]));
+        }
         Input::Fire | Input::Outcome { .. } => return Ok((carry.clone(), vec![])),
         Input::Ran(r) => return Err(format!("{NAME}: no unit is expected, got {r:?}")),
     };
@@ -311,19 +343,26 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
     if snap.gate_runs_unread {
         heimdall::streak::hold(&snap.alert_rows, &mut firing);
     }
+    let alarms = heimdall::alarm::step(&carry.alarms, &firing, |key| unread(snap, key), now);
+    let announce = (!alarms.is_empty()).then(|| act(ALARMS, format!("heimdall/alarms/{now}"), &alarms, ALARMS_DEADLINE_MS, true)).transpose()?;
     let prior: BTreeMap<String, heimdall::state::KeyState> = carry.keys.iter().map(|(k, v)| (k.clone(), to_heimdall(v))).collect();
     if !snap.db_reachable {
         let would = heimdall::hosted::raises(&heimdall::hosted::step(now, confirm, clear_n, refresh, true, &firing, &prior));
         if !would.is_empty() {
+            if let Some(announce) = announce.filter(|_| alarms != carry.alarms) {
+                return Ok((Carry { alarms, ..carry.clone() }, vec![announce]));
+            }
             return Err(format!("{NAME}: the store is unreachable; the raise of {} is refused and waits for it", would.join(", ")));
         }
         let doc = heimdall::fallback::build(now, false, None, &firing);
-        return Ok((carry.clone(), vec![act(FALLBACK, format!("heimdall/fallback/{now}"), &doc, HOST_DEADLINE_MS, true)?]));
+        let mut acts = vec![act(FALLBACK, format!("heimdall/fallback/{now}"), &doc, HOST_DEADLINE_MS, true)?];
+        acts.extend(announce);
+        return Ok((Carry { alarms, ..carry.clone() }, acts));
     }
     let by_key: BTreeMap<&str, &heimdall::classify::Firing> = firing.iter().map(|f| (f.key.as_str(), f)).collect();
     let when = |s: i64| crate::watchers::iso8601(s.max(0) as u64);
-    let mut next = Carry { keys: BTreeMap::new(), ..carry.clone() };
-    let mut acts = vec![];
+    let mut next = Carry { keys: BTreeMap::new(), alarms, ..carry.clone() };
+    let mut acts: Vec<Act> = announce.into_iter().collect();
     for st in heimdall::hosted::step(now, confirm, clear_n, refresh, true, &firing, &prior) {
         let was = carry.keys.get(&st.key).map(|k| k.phase).unwrap_or_default();
         let is_firing = by_key.contains_key(st.key.as_str());
@@ -401,6 +440,7 @@ pub fn observe(lc: &spira_store::lc_call::LcClient, run_dir: &std::path::Path, c
     let status: Option<serde_json::Value> = runtime::socket::lc_call(std::path::Path::new(control), &["scheduler", "status"]).ok().and_then(|t| serde_json::from_str(&t).ok());
     let task = |name: &str| status.as_ref().and_then(|s| s["tasks"].as_array()?.iter().find(|t| t["name"] == name).cloned());
     let sentinel = sentinel_status(status.as_ref());
+    let sentinel_unread = task(SENTINEL_TASK).is_none();
     let mirror_age_secs = task(EXPORT_TASK).filter(|t| t["last_outcome"] == "succeeded").and_then(|t| t["last_fired_at"].as_u64()).map(|at| now_ms.saturating_sub(at) / 1000);
     let ops = LcConditions { client: lc.clone() };
     let (db_reachable, alert_rows) = match ops.list() {
@@ -412,10 +452,13 @@ pub fn observe(lc: &spira_store::lc_call::LcClient, run_dir: &std::path::Path, c
         heimdall::alerts::maintain_probe(&ops);
         heimdall::fallback::remove(&run_dir.join("heimdall.alerts.json"));
     }
-    let strands = std::fs::read_to_string(run_dir.join("strands.json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).and_then(|v| v.as_object().cloned()).unwrap_or_default();
+    let (strands, strands_unread) = match std::fs::read_to_string(run_dir.join("strands.json")) {
+        Ok(t) => serde_json::from_str::<serde_json::Value>(&t).ok().and_then(|v| v.as_object().cloned()).map_or_else(|| (Default::default(), true), |o| (o, false)),
+        Err(e) => (serde_json::Map::new(), e.kind() != std::io::ErrorKind::NotFound),
+    };
     let strands = strands.iter().filter_map(|(k, v)| k.strip_prefix("ghost:").map(|id| format!("{id}\t{}", v["first"].as_i64().or_else(|| v["first"].as_str().and_then(|s| s.parse().ok())).unwrap_or(0)))).collect();
     let gate_runs = heimdall::gather::gate_runs(lc);
-    let snap = Snapshot { sentinel, restart_alerts: vec![], db_reachable, alert_rows, mirror_age_secs, world_halted: run_dir.join("world.halted").exists(), world_draining: run_dir.join("world.draining").exists(), strands, gate_runs: gate_runs.clone().unwrap_or_default(), gate_runs_unread: gate_runs.is_none(), stills: stills(run_dir) };
+    let snap = Snapshot { sentinel, restart_alerts: vec![], db_reachable, alert_rows, mirror_age_secs, world_halted: run_dir.join("world.halted").exists(), world_draining: run_dir.join("world.draining").exists(), strands, gate_runs: gate_runs.clone().unwrap_or_default(), gate_runs_unread: gate_runs.is_none(), sentinel_unread, strands_unread, stills: stills(run_dir) };
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
 
@@ -442,6 +485,6 @@ pub fn fallback(run_dir: &std::path::Path, input: &str) -> Result<String, String
     heimdall::fallback::write(&run_dir.join("heimdall.alerts.json"), &doc).map(|()| "written".into()).map_err(|e| e.to_string())
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "keys", drop: &[] }, runtime::rows::Part::Map { name: "restart_baselines", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "keys", drop: &[] }, runtime::rows::Part::Map { name: "restart_baselines", drop: &[] }, runtime::rows::Part::Map { name: "alarms", drop: &[] }];
 
 super::hosted!(ReconcileHeimdall);

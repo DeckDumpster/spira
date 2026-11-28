@@ -93,6 +93,12 @@ fields = ["level", "text", "since", "at"]
 resident = ["spira-runtime"]
 
 [[topic]]
+family = "alarm/<name>"
+class = "state"
+publisher = "heimdall, spira-watchdog"
+fields = ["text", "since", "at"]
+
+[[topic]]
 family = "concierge/inbox"
 class = "state"
 publisher = "inbox-writer"
