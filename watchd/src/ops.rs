@@ -31,7 +31,7 @@ pub fn parse_match_output(out: &str) -> Vec<SopMatch> {
         .collect()
 }
 
-pub(crate) fn ask_alert_body(subject: &str, default: &str, why: &str, evidence: &str) -> String {
+pub fn ask_alert_body(subject: &str, default: &str, why: &str, evidence: &str) -> String {
     format!("## Alert\n{subject}\n\nAction: {default}\n\n{why}\n\n{evidence}\n")
 }
 

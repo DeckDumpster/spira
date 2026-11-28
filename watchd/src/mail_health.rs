@@ -319,7 +319,7 @@ mod tests {
         let fx = Fx::new("mh-door");
         std::fs::create_dir_all(fx.t.path().join("run")).unwrap();
         fx.deliver("concierge", "a", 120);
-        fx.aerc_outgoing("/nowhere/spira-sendmail");
+        fx.aerc_outgoing(fx.t.path().join("gone/spira-sendmail").to_str().unwrap());
         let env = mail::env::Env { kinds_dir: testkit::manifest_dir().join("../spira/mail/kinds"), lint_considered: None, ..crate::send::tests::env(fx.t.path()) };
         assert_eq!(check(&fx.cfg(&["concierge"]), &Door { env }, &CheckMemo::default(), &|_| true), 1);
         let sent: Vec<String> = std::fs::read_dir(fx.t.path().join("mail/operator/new")).unwrap().map(|f| std::fs::read_to_string(f.unwrap().path()).unwrap()).collect();
