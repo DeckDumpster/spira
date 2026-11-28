@@ -42,6 +42,9 @@ impl Store {
         match (word(0), word(1)) {
             ("list", _) if !argv.iter().any(|a| a == "--batches") => rows(argv),
             ("content", "list" | "show") => content(),
+            ("content", "memories") => "{}".to_string(),
+            ("content", "gate") => "[]".to_string(),
+            ("plan", "inflow") => json!({ "n": 0, "defect": 0, "kinds": [], "rows": [] }).to_string(),
             ("list-asks", _) => Value::Array(self.asks.clone()).to_string(),
             ("claimable", _) => json!({ "rev": 5, "cannot_tell": 0, "beads": [] }).to_string(),
             ("section", "snapshot") => json!({ "sections": [], "intents": [], "knobs": {}, "pass": null, "list_rev": 5 }).to_string(),
@@ -215,23 +218,15 @@ fn a_second_observe_of_an_unchanged_store_sends_it_nothing_and_an_ask_change_rer
     quiet_after_one_read(&r, FIVE, &["list-asks", "mending list --live", "ops-view ops_recent"]);
     quiet_after_one_read(&r, MINUTE, &["list", "claimable", "list-asks", "ops-graph", "ops-view ops_dwell", "ops-view ops_edges", "plan repo-labels", "section snapshot", "content list"]);
 
-    // The slow tier also reads memories and gates, which no store key ends, so only its lifecycle
-    // and bead content reads are held to silence.
-    let held = |a: &String| ["list ", "content list", "content show"].iter().any(|v| a.starts_with(v));
-    r.observe(TEN_MINUTES.probes);
-    let reads = r.asked();
-    for verb in ["list --live", "content list"] {
-        assert!(reads.iter().any(|a| a.starts_with(verb)), "an unwatched slow observe reads {verb}: {reads:?}");
-    }
+    quiet_after_one_read(&r, TEN_MINUTES, &["list --live", "content list", "content memories", "content gate list", "plan inflow"]);
     {
         let _watching = r.watch();
-        r.observe(TEN_MINUTES.probes);
-        r.asked();
-        r.observe(TEN_MINUTES.probes);
-        assert_eq!(r.asked().into_iter().filter(held).collect::<Vec<_>>(), Vec::<String>::new(), "the slow tier re-reads no bead or row");
         r.changed("planning/watermark");
         r.observe(TEN_MINUTES.probes);
-        assert!(r.asked().iter().any(|a| a.starts_with("content list")), "a planning write ends the content it read");
+        let reads = r.asked();
+        for verb in ["content list", "content memories", "content gate list", "plan inflow"] {
+            assert!(reads.iter().any(|a| a.starts_with(verb)), "a planning write ends {verb}: {reads:?}");
+        }
     }
 
     let _watching = r.watch();

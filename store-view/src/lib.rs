@@ -221,7 +221,7 @@ const ENDED_BY: &[(u16, &str)] = &[
 /// The reads [`Projection::answer`] holds, with the changes that end each; `None` for any other.
 fn classes_of(argv: &[&str]) -> Option<u16> {
     match argv {
-        ["content", "list" | "show" | "state", ..] | ["plan", "items" | "edges" | "children" | "watermark" | "repo-labels", ..] => Some(CONTENT),
+        ["content", "list" | "show" | "state" | "memories", ..] | ["content", "gate", "list", ..] | ["plan", "items" | "edges" | "children" | "watermark" | "repo-labels" | "inflow", ..] => Some(CONTENT),
         ["show-batch", _] => Some(ROUNDS),
         ["condition", "list", ..] => Some(CONDITIONS),
         ["incidents", "list", ..] => Some(INCIDENTS),
@@ -246,7 +246,7 @@ fn classes_of(argv: &[&str]) -> Option<u16> {
 /// the store deletes.
 fn clock_moves(argv: &[&str]) -> bool {
     argv.contains(&"--window")
-        || matches!(argv, ["claimable", ..] | ["section", "snapshot"] | ["ops-view", "ops_edges" | "ops_dwell" | "ops_dwell_p95", ..])
+        || matches!(argv, ["claimable", ..] | ["plan", "inflow", ..] | ["section", "snapshot"] | ["ops-view", "ops_edges" | "ops_dwell" | "ops_dwell_p95", ..])
 }
 
 /// The most answers held: an argv naming a moving instant is new each time, so the set is
@@ -1210,8 +1210,8 @@ mod tests {
     #[test_id(t6xnd3p)]
     #[test]
     fn an_answer_the_clock_can_move_ages_out_and_one_only_a_write_can_move_does_not() {
-        let aged: &[&[&str]] = &[&["claimable"], &["section", "snapshot"], &["ops-view", "ops_edges"], &["ops-view", "ops_dwell"], &["ops-view", "ops_dwell_p95"], &["list", "--batches", "--window", "5"]];
-        let kept: &[&[&str]] = &[&["list-asks"], &["mending", "list", "--live"], &["ops-view", "ops_recent", "--epics"], &["plan", "repo-labels", "--valid", "a"], &["ops-graph"]];
+        let aged: &[&[&str]] = &[&["claimable"], &["section", "snapshot"], &["ops-view", "ops_edges"], &["ops-view", "ops_dwell"], &["ops-view", "ops_dwell_p95"], &["list", "--batches", "--window", "5"], &["plan", "inflow", "--window-secs", "3600"]];
+        let kept: &[&[&str]] = &[&["list-asks"], &["mending", "list", "--live"], &["ops-view", "ops_recent", "--epics"], &["plan", "repo-labels", "--valid", "a"], &["ops-graph"], &["content", "memories", "--json"], &["content", "gate", "list", "--json"]];
         for (argv, ages) in aged.iter().map(|a| (a, true)).chain(kept.iter().map(|a| (a, false))) {
             let h = held_on(COCKPIT_PREFIXES);
             let _watching = h.p.hold_watching();
