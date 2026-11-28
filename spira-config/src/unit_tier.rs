@@ -364,11 +364,13 @@ impl UnitTimings {
     }
 }
 
-/// The unit tier's file form: the VM's seconds, then the log lines [`unit_tier_timing_lines!`] matches.
+/// A tier's file form: the VM's seconds, a `load1 <value>` line, then the log lines [`unit_tier_timing_lines!`] matches.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct UnitFile {
     pub build_secs: u64,
     pub run_secs: u64,
+    /// The VM's one-minute load at the tier's end, when it wrote one.
+    pub load1: Option<f64>,
     pub timings: UnitTimings,
 }
 
@@ -380,7 +382,9 @@ pub fn parse(text: &str) -> Option<UnitFile> {
     let mut it = text.splitn(3, '\n');
     let build_secs = it.next()?.strip_prefix("unit_build_secs ")?.trim().parse().ok()?;
     let run_secs = it.next()?.strip_prefix("unit_secs ")?.trim().parse().ok()?;
-    Some(UnitFile { build_secs, run_secs, timings: timings(it.next().unwrap_or("")) })
+    let rest = it.next().unwrap_or("");
+    let load1 = rest.lines().find_map(|l| l.strip_prefix("load1 ")?.trim().parse().ok());
+    Some(UnitFile { build_secs, run_secs, load1, timings: timings(rest) })
 }
 
 #[cfg(test)]
@@ -574,6 +578,16 @@ mod tests {
         assert_eq!((f.build_secs, f.run_secs), (12, 61));
         assert_eq!(f.timings, timings(&nextest_log()));
         assert_eq!(parse("garbage"), None);
+    }
+
+    #[test_id(trp5yq4)]
+    #[test]
+    fn a_load1_line_is_read_and_leaves_the_seconds_and_timings_as_before() {
+        let lines: String = nextest_log().lines().filter(|l| l.contains("] (") || l.contains("Summary [")).map(|l| format!("{l}\n")).collect();
+        let plain = parse(&render(12, 61, &lines)).unwrap();
+        let loaded = parse(&render(12, 61, &format!("load1 3.25\n{lines}"))).unwrap();
+        assert_eq!((plain.load1, loaded.load1), (None, Some(3.25)));
+        assert_eq!((loaded.build_secs, loaded.run_secs, loaded.timings), (plain.build_secs, plain.run_secs, plain.timings));
     }
 
     #[test_id(tkrzhxj)]

@@ -94,6 +94,8 @@ pub fn emit<W: World>(w: &W, repo: &Path, members: &[Member], targets: Targets, 
             bead: at.bead.to_string(),
             repo: at.repo_name.to_string(),
             tree: at.tree.to_string(),
+            round: String::new(),
+            members: Vec::new(),
         };
         sink.emit(testresult::EVENT, &testresult::attrs(&record));
     }

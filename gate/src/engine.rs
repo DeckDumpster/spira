@@ -980,6 +980,8 @@ impl<'w, W: World> Trial<'w, W> {
                 e("SPIRA_GATE_BRANCH", branch),
                 e("SPIRA_GATE_BASE", &base_rev),
                 e("SPIRA_GATE_BEAD", &self.s.bead),
+                // The trial's verdict key, which a test.result record names its gate by.
+                e("SPIRA_GATE_KEY", &self.s.key),
                 e("SPIRA_GATE_SELECT_HEAD", &br),
                 e(
                     "SPIRA_GATE_FILES",
