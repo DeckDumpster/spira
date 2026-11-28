@@ -299,20 +299,26 @@ mod tests {
         });
     }
 
-    /// Answers the load and one watch; after that nothing is listening.
-    struct Stopping(Mutex<u32>);
+    /// Answers the load and one watch; from the second watch on, nothing is listening.
+    #[derive(Default)]
+    struct Stopping {
+        watches: std::sync::atomic::AtomicUsize,
+    }
 
     impl Transport for Stopping {
         fn exchange(&self, _: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
             Err("exchange_kind only".into())
         }
         fn exchange_kind(&self, argv: &[String], _: Option<&str>, _: Duration, _: Duration) -> Result<Reply, LcError> {
+            use std::sync::atomic::Ordering::SeqCst;
             let ok = |out: &str| Ok(Reply { code: 0, out: out.into(), err: String::new(), read_ended: false });
+            let watches = if argv[0] == "watch" { self.watches.fetch_add(1, SeqCst) + 1 } else { self.watches.load(SeqCst) };
             match argv[0].as_str() {
+                _ if watches > 1 => Err(LcError::NotRunning("store not running".into())),
                 "rc" => ok(r#"{"ok":{"items":[],"list_rev":4}}"#),
                 "list" => ok(r#"[{"bead_id":"sp-a","state":"SUBMITTED"}]"#),
-                "watch" if std::mem::replace(&mut *self.0.lock().unwrap(), 1) == 0 => ok(r#"{"progress_rev":5}"#),
-                _ => Err(LcError::NotRunning("store not running".into())),
+                "watch" => ok(r#"{"progress_rev":5}"#),
+                other => panic!("unscripted {other}"),
             }
         }
     }
@@ -324,7 +330,7 @@ mod tests {
         let d = t.join("snap");
         let now = Arc::new(Mutex::new(std::time::Instant::now()));
         let clock = Arc::clone(&now);
-        let views = LcClient::over(Arc::new(Stopping(Mutex::new(0))), true);
+        let views = LcClient::over(Arc::new(Stopping::default()), true);
         let p = store_view::install(Arc::new(store_view::Projection::new(views, Duration::from_secs(1), Arc::new(move || *clock.lock().unwrap()))));
         p.poll().unwrap();
         p.poll().unwrap();
