@@ -781,10 +781,8 @@ mod tests {
     }
 
     fn entry(reference: &str) -> String {
-        let e = SpoolEntry { reference: reference.into(), title: "t".into(), unit: "u".into(), incident_path: "p".into(), cause: "c".into(), repo: None, body: b"payload".to_vec() };
-        String::from_utf8(format_entry(&e)).unwrap()
+        entry_of(reference, None)
     }
-
 
     #[test_id(tid9pph)]
     #[test]
