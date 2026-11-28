@@ -1403,9 +1403,9 @@ fn a_merged_branch_of_a_landed_bead_is_reaped_in_the_pass_and_sends_no_content_o
     assert!(h.logged("CHECK6 sp-l: spira/sp-l is LANDED and on origin/main — reaped"), "{:?}", h.out.lines());
     assert_eq!(h.mailbox(), "", "a reap is not a movement");
     h.git.refs.borrow_mut().clear();
-    h.git.calls.borrow_mut().clear();
+    assert!(h.logged("landing: walk complete — 1 branch(es)"), "{:?}", h.out.lines());
     h.run();
-    assert!(!h.git.called("", "spira/sp-l"), "{:?}", h.git.calls.borrow());
+    assert!(h.logged("landing: walk complete — 0 branch(es)"), "{:?}", h.out.lines());
     assert_eq!(h.lib.count("reap_landed"), 1, "{:?}", h.lib.calls.borrow());
 }
 

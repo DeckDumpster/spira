@@ -124,12 +124,17 @@ pub fn set_express_on(c: &LcClient, id: &str, on: bool) -> Result<(), String> {
 
 /// A caller verb is not served by the socket: read the row, then send the primitive event.
 pub fn bead_event_on(c: &LcClient, id: &str, kind: &BeadEventKind, actor: &str) -> Result<(), String> {
+    let (state, version) = markable_row(c, id)?;
+    send_bead_event(c, id, &state, &version, kind, actor)
+}
+
+/// The live row's state and version; a row that cannot be read is an error.
+fn markable_row(c: &LcClient, id: &str) -> Result<(String, String), String> {
     let shown = c.call(&["show", id])?;
     if shown.code != 0 {
         return Err(format!("{id}: no lifecycle row to mark: {}", shown.why()));
     }
-    let (state, version) = row_head(id, &shown.out)?;
-    send_bead_event(c, id, &state, &version, kind, actor)
+    row_head(id, &shown.out)
 }
 
 /// The bead row's state and version, from what `show` answered.
@@ -148,11 +153,7 @@ fn send_bead_event(c: &LcClient, id: &str, state: &str, version: &str, kind: &Be
 }
 
 pub fn content_on_base_on(c: &LcClient, id: &str, proof: &str, actor: &str) -> Result<LandedRecord, String> {
-    let shown = c.call(&["show", id])?;
-    if shown.code != 0 {
-        return Err(format!("{id}: no lifecycle row to mark: {}", shown.why()));
-    }
-    let (state, version) = row_head(id, &shown.out)?;
+    let (state, version) = markable_row(c, id)?;
     if crate::lc_state::is_terminal(&state) {
         return Ok(LandedRecord::Nothing { state });
     }
