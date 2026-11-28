@@ -323,7 +323,7 @@ fn batcher_observe(w: &World, input: &str) -> Result<String, String> {
         .filter(|r| matches!(r.state, BeadState::Submitted | BeadState::Certified))
         .map(|r| bl::Member { id: r.bead_id.clone(), state: r.state.as_str().into(), version: r.version, tip: r.tip.clone().unwrap_or_default(), sifted_tip: r.sifted_tip.clone(), title: r.bead_id.clone(), priority: 2, ..bl::Member::default() })
         .collect();
-    let open_round = lc.round.as_ref().map(|r| bl::Round { id: r.batch.clone(), members: r.members.iter().map(|(i, _)| i.clone()).collect(), head: BASE.into(), worktree: r.wt.clone(), driven: held.as_ref() == Some(&r.batch), ..bl::Round::default() });
+    let open_round = lc.round.as_ref().map(|r| bl::Round { id: r.batch.clone(), members: r.members.iter().map(|(i, _)| i.clone()).collect(), head: BASE.into(), base: BASE.into(), worktree: r.wt.clone(), driven: held.as_ref() == Some(&r.batch), ..bl::Round::default() });
     let repo = bl::Repo { pool, open_round, base_sha: BASE.into(), ..bl::Repo::default() };
     json(&bl::Snapshot { repos: [(REPO.to_string(), repo)].into(), now_ms: w.now(), ..Default::default() })
 }
