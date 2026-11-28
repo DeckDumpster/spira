@@ -188,8 +188,9 @@ struct State {
     ran: String,
 }
 
-/// The most flips one gate records: past it the box is the problem, not the tests
-/// (law-a-detector-files-a-bounded-batch). The round's own bound is `MAX_FLIP_TESTS` in
+/// The most flips one gate acts on (law-a-detector-files-a-bounded-batch), counted separately by
+/// each filer: the rerun's rows and fix beads, and the cross-bead detector's deletion incidents.
+/// The round's own bound is `MAX_FLIP_TESTS` in
 /// `batcher/src/drive.rs`.
 pub const MAX_GATE_FLIPS: usize = 3;
 
@@ -1749,8 +1750,15 @@ impl<'w, W: World> Trial<'w, W> {
                     let notes: String = flips.iter().map(|(t, beads)| format!(
                         "gate: not judged — {t} also failed on {} with disjoint diffs in the last 7d: a red on the base or in the gate, not this branch's\n",
                         beads.join(", "))).collect();
-                    self.file_flips(&flips, &out);
-                    return v(PASS, "pass", format!("gate: {name}'s own gate failed: {cmd}\n{out}\n{notes}"));
+                    let held = self.file_flips(&flips, &out);
+                    let held = if held.is_empty() {
+                        String::new()
+                    } else {
+                        let line = format!("gate: held back by the flip cap ({MAX_GATE_FLIPS}): {} — no deletion incident filed", held.join(" "));
+                        self.w.eprint(&line);
+                        format!("{line}\n")
+                    };
+                    return v(PASS, "pass", format!("gate: {name}'s own gate failed: {cmd}\n{out}\n{notes}{held}"));
                 }
                 let failed = parse::failed_tests(&out);
                 let closing = if !base_ran && rerun.held {
@@ -2009,10 +2017,12 @@ impl<'w, W: World> Trial<'w, W> {
         ejection::flipped(&self.s.bead, &digest, &prior)
     }
 
-    /// One deletion incident per flipping test; a filing failure is reported and never changes the verdict.
-    fn file_flips(&self, flips: &[(String, Vec<String>)], out: &str) {
+    /// One deletion incident for each of the first [`MAX_GATE_FLIPS`] flipping tests; returns the
+    /// rest, held back. A filing, failed or held, never changes the verdict.
+    fn file_flips(&self, flips: &[(String, Vec<String>)], out: &str) -> Vec<String> {
         let failures = ejection::failures(out);
-        for (test, beads) in flips {
+        let (filed, held) = flips.split_at(flips.len().min(MAX_GATE_FLIPS));
+        for (test, beads) in filed {
             let at = failures.iter().find(|f| &f.test == test).and_then(|f| f.location.clone()).unwrap_or_else(|| "an unknown location".into());
             let named = match crate::ports::flip_test_id(test) {
                 Some(id) => format!("{test} [{id}]"),
@@ -2026,6 +2036,7 @@ impl<'w, W: World> Trial<'w, W> {
                 self.w.eprint(&format!("gate: could not file the deletion of flipping test {test}: {e}"));
             }
         }
+        held.iter().map(|(test, _)| test.clone()).collect()
     }
 
     /// EJECTED SUITES: the first line of `$SPIRA_RUN/ejected/<bead>` — the suites a

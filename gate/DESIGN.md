@@ -525,8 +525,11 @@ Each failing test is judged on the rerun output: **flip** (a `PASS [` / `... ok`
   signal, a harness fault) is still NO_VERDICT.
 * Any red-twice or unproven test sends the item back as FAIL `branch-red`, the message adding
   `gate: red twice on the same tree <T>: <tests>` and/or `gate: not rerun: <tests>`. Rows for
-  flips among them are still written. A red the cross-bead detector (`shared_unit_red`) matches
-  keeps its behaviour, unless a flip was held back.
+  flips among them are still written. Unless a flip was held back, a red the cross-bead detector
+  (`shared_unit_red`) matches still passes as not judged: it files at most `MAX_GATE_FLIPS`
+  deletion incidents, in first-run order and counted apart from the rerun's rows, and names the
+  rest in `gate: held back by the flip cap (3): <tests> — no deletion incident filed`. A filing,
+  made or held, never changes the verdict.
 * A fences or suites composition, a red beside a red fence or a failed build, never reruns.
 * `flip.rs` calls `bead.sh` and `test-registry` through the bounded runner (60 s each) for both the gate and the round.
 
