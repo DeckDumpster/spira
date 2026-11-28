@@ -51,7 +51,7 @@
 //!
 //! Today a timeout (exit 124) is classed as *saturated*, not unreachable (`conditions.rs:61-67`). An effect `timed_out` keeps that meaning.
 //!
-//! | `reconcile.heimdall.alarms` → retained `alarm/<key>` on the broker, as `heimdall` (`heimdall::alarm`); a memory-only probe, sent every tick while an alarm or an undelivered clear is carried, and republished on a reconnect | host | 10 s | `heimdall/alarms/<now>` | nothing: an unreachable broker is logged and is not the effect's failure |
+//! | `reconcile.heimdall.alarms` → retained `alarm/<key>` on the broker, as `heimdall` (`heimdall::alarm`); a memory-only probe, sent on each tick that is not refused while an alarm or an undelivered clear is carried, and republished when its publisher reconnects | host | 10 s | `heimdall/alarms/<now>` | nothing: an unreachable broker is logged and is not the effect's failure |
 //!
 //! An alarm follows the sighting, not the debounce: it is set by the first pass that sees the key
 //! firing and cleared by the first whose check ran and did not. The topics do not wait for the store: with it
