@@ -146,3 +146,19 @@ fn a_close_that_loses_the_race_publishes_nothing_of_the_ask() {
     assert_eq!(published(), []);
     assert_eq!(r.s.ask("sp-q").unwrap().unwrap().row.state, AskState::Open);
 }
+
+#[test_id(thux3yw)]
+#[test]
+fn a_replayed_create_of_a_since_closed_ask_publishes_nothing() {
+    let r = Rig::new();
+    let req = r.req();
+    r.s.create_ask("sp-q", None, AT, &req).unwrap();
+    let closed = r.s.close_ask("sp-q", answer(), "test", "m-1", AT, &r.req());
+    assert_eq!(closed.unwrap(), AskClose::Closed);
+    let (outbox, published) = Outbox::captured();
+    r.s.set_bridge(outbox);
+
+    r.s.create_ask("sp-q", None, AT, &req).unwrap();
+
+    assert_eq!(published(), []);
+}

@@ -411,4 +411,3 @@ fn a_refused_close_ask_publishes_nothing() {
     assert_eq!(code, 0, "{out}");
     assert_eq!(next(&mut watching).0, "ask/sp-b");
 }
-
