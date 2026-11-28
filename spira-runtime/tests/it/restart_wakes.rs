@@ -68,6 +68,9 @@ impl Journal for Lifting {
     fn poisoned(&self, stream: &StreamKey) -> runtime::Result<Option<Poison>> {
         Ok(self.inner.poisoned(stream)?.filter(|_| !self.lifted.load(Ordering::SeqCst)))
     }
+    fn poisoned_all(&self) -> runtime::Result<Vec<Poison>> {
+        Ok(if self.lifted.load(Ordering::SeqCst) { vec![] } else { self.inner.poisoned_all()? })
+    }
 }
 
 fn boot(journal: Arc<dyn Journal>, clock: &VirtualClock, seen: &Arc<Seen>, extra: Vec<Registration>) -> VirtualDriver {

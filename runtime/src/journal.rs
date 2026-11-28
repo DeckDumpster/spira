@@ -1,7 +1,7 @@
 //! The store behind its trait: what must outlive a process, committed once per turn, and the
 //! event history shipped beside it. Dispatch never reads either back.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
@@ -78,11 +78,20 @@ pub struct Turn {
     pub schedules: Vec<ScheduleRow>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fired: Vec<String>,
+    /// The owners of the schedule rows and the resolved and fired marks, which name no task themselves.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub tasks: BTreeSet<String>,
 }
 
 impl Turn {
     pub fn is_empty(&self) -> bool {
         self.state.is_empty() && self.cleared.is_empty() && self.effects.is_empty() && self.resolved.is_empty() && self.schedules.is_empty() && self.fired.is_empty()
+    }
+
+    /// Every task whose rows the turn carries.
+    pub fn task_names(&self) -> BTreeSet<&str> {
+        let rows = self.state.iter().map(|r| &r.task).chain(self.cleared.iter().map(|c| &c.0)).chain(self.effects.iter().map(|e| &e.task));
+        rows.chain(&self.tasks).map(String::as_str).collect()
     }
 }
 
@@ -103,6 +112,8 @@ pub trait Journal: Send + Sync {
     fn commit(&self, turn: &Turn) -> Result<()>;
     fn poison(&self, p: &Poison) -> Result<()>;
     fn poisoned(&self, stream: &StreamKey) -> Result<Option<Poison>>;
+    /// Every poisoned stream's row, in one read.
+    fn poisoned_all(&self) -> Result<Vec<Poison>>;
     /// The events recorded so far, for a journal that keeps them: tests read history here, and
     /// nothing in the engine does.
     fn history(&self) -> Vec<Event> {
@@ -202,6 +213,10 @@ impl Journal for MemJournal {
         Ok(self.lock().poison.get(stream).cloned())
     }
 
+    fn poisoned_all(&self) -> Result<Vec<Poison>> {
+        Ok(self.lock().poison.values().cloned().collect())
+    }
+
     fn history(&self) -> Vec<Event> {
         self.log()
     }
@@ -283,6 +298,9 @@ impl Journal for FaultyJournal {
     }
     fn poisoned(&self, stream: &StreamKey) -> Result<Option<Poison>> {
         self.inner.poisoned(stream)
+    }
+    fn poisoned_all(&self) -> Result<Vec<Poison>> {
+        self.inner.poisoned_all()
     }
     fn history(&self) -> Vec<Event> {
         self.inner.history()

@@ -20,7 +20,7 @@ use crate::scheduler::Scheduler;
 use crate::wide::{Fields, NullSink, TurnRss, Value, Wide, WideSink};
 use crate::{Result, RuntimeError};
 
-/// A stream found quarantined is asked again after this long, so a cleared row resumes it; a stream found healthy is not.
+/// While any stream is quarantined the rows are read again after this long, so a cleared row resumes it.
 const POISON_RECHECK_MS: u64 = 300_000;
 
 /// Memory-only events a stream keeps in the projection; older ones are dropped.
@@ -289,10 +289,11 @@ pub struct Engine {
     children: BTreeMap<String, BTreeMap<String, u64>>,
     baseline: Vec<(String, Value)>,
     started: Instant,
-    poison_seen: BTreeMap<StreamKey, bool>,
+    /// The streams refused a dispatch.
+    poison_seen: BTreeSet<StreamKey>,
     quarantined_here: BTreeSet<StreamKey>,
     set_aside: BTreeSet<EventId>,
-    poison_cleared_at: u64,
+    poison_read_at: Option<u64>,
     /// Every event waiting for its handlers, in the order it was made; `true` is memory-only.
     queue: VecDeque<(Event, bool)>,
     queued_ids: BTreeSet<EventId>,
@@ -461,10 +462,10 @@ impl Engine {
             children: BTreeMap::new(),
             baseline: vec![],
             started: Instant::now(),
-            poison_seen: BTreeMap::new(),
+            poison_seen: BTreeSet::new(),
             quarantined_here: BTreeSet::new(),
             set_aside: BTreeSet::new(),
-            poison_cleared_at: 0,
+            poison_read_at: None,
             queue: VecDeque::new(),
             queued_ids: BTreeSet::new(),
             replies: BTreeMap::new(),
@@ -1071,6 +1072,7 @@ impl Engine {
                     let row = ScheduleRow { id, at, stream: ev.stream.clone(), kind, cause: Some(ev.id.clone()), correlation: ev.correlation.clone() };
                     self.turn.schedules.retain(|r| r.id != row.id);
                     self.turn.schedules.push(row.clone());
+                    self.turn.tasks.insert(handler.into());
                     self.scheduler.insert(row);
                     self.found_work(ev, handler);
                 }
@@ -1292,8 +1294,14 @@ impl Engine {
         }
         if let Some(row) = self.fire_of.remove(&ev.id) {
             self.turn.fired.push(row);
+            let mut heard = self.regs.iter().filter(|r| r.handler.interests().contains(&ev.kind.tag.as_str())).map(|r| r.name.clone()).peekable();
+            if heard.peek().is_none() {
+                self.turn.tasks.insert(SCHEDULER_TASK.into());
+            }
+            self.turn.tasks.extend(heard);
         }
         if let Some(request) = self.resolves.remove(&ev.id) {
+            self.turn.tasks.insert(self.requesters.get(&request).map_or(SCHEDULER_TASK, String::as_str).to_string());
             self.turn.resolved.push(request);
         }
         if !local && ev.stream.0 == HALT_STREAM {
@@ -1302,13 +1310,13 @@ impl Engine {
         if ev.kind.tag == STORE_CHANGED {
             self.wake_on_change(ev);
         }
-        let offered = if self.is_poisoned(&ev.stream)? {
+        let offered = if self.poison_seen.contains(&ev.stream) {
             self.park(ev);
             Ok(())
         } else {
             let offered = self.offer(ev);
             if offered.is_ok() {
-                if self.poison_seen.get(&ev.stream) == Some(&true) {
+                if self.poison_seen.contains(&ev.stream) {
                     self.park(ev);
                 } else {
                     self.tick_of.remove(&ev.id);
@@ -1473,39 +1481,45 @@ impl Engine {
         wide
     }
 
-    fn is_poisoned(&mut self, stream: &StreamKey) -> Result<bool> {
-        if let Some(p) = self.poison_seen.get(stream) {
-            return Ok(*p);
+    /// One read of every poison row: at the first turn, then at each recheck while a stream is
+    /// refused. A failed read fails the turn, so nothing is dispatched unchecked.
+    fn recheck_poison(&mut self) -> Result<()> {
+        let now = self.clock.now_ms();
+        if self.poison_read_at.is_some_and(|at| now.saturating_sub(at) < POISON_RECHECK_MS) {
+            return Ok(());
         }
-        let step = self.steps.enter("journal.poisoned", &stream.0);
-        let found = self.journal.poisoned(stream);
-        drop(step);
-        let p = match found? {
-            None => {
-                self.quarantined_here.remove(stream);
-                false
+        if self.poison_read_at.is_none() || !self.poison_seen.is_empty() {
+            let step = self.steps.enter("journal.poisoned", "");
+            let found = self.journal.poisoned_all();
+            drop(step);
+            self.refill_poison(found?);
+        }
+        self.poison_read_at = Some(now);
+        Ok(())
+    }
+
+    fn refill_poison(&mut self, rows: Vec<Poison>) {
+        let standing: BTreeSet<&StreamKey> = rows.iter().map(|r| &r.stream).collect();
+        self.quarantined_here.retain(|s| standing.contains(s));
+        self.poison_seen.clear();
+        for row in rows {
+            if row.handler != SCHEDULER_TASK || self.quarantined_here.contains(&row.stream) {
+                self.poison_seen.insert(row.stream);
+            } else if self.set_aside.insert(row.event.clone()) {
+                let w = self.unit("poison.set_aside", None);
+                w.set("stream", row.stream.0.as_str());
+                w.set("poison.event", row.event.0.as_str());
+                w.set("poison.message", row.message.as_str());
+                self.finish(&w);
             }
-            Some(row) if row.handler == SCHEDULER_TASK && !self.quarantined_here.contains(stream) => {
-                if self.set_aside.insert(row.event.clone()) {
-                    let w = self.unit("poison.set_aside", None);
-                    w.set("stream", stream.0.as_str());
-                    w.set("poison.event", row.event.0.as_str());
-                    w.set("poison.message", row.message.as_str());
-                    self.finish(&w);
-                }
-                false
-            }
-            Some(_) => true,
-        };
-        self.poison_seen.insert(stream.clone(), p);
-        Ok(p)
+        }
     }
 
     fn quarantine(&mut self, ev: &Event, handler: &str, message: &str) -> Result<()> {
         let step = self.steps.enter("journal.poison", &ev.stream.0);
         self.journal.poison(&Poison { stream: ev.stream.clone(), event: ev.id.clone(), handler: handler.into(), message: message.into() })?;
         drop(step);
-        self.poison_seen.insert(ev.stream.clone(), true);
+        self.poison_seen.insert(ev.stream.clone());
         self.quarantined_here.insert(ev.stream.clone());
         let w = self.unit("quarantine", Some(ev));
         w.set("handler", handler);
@@ -1536,11 +1550,7 @@ impl Engine {
         self.commit_turn()?;
         self.answer_committed(Ok(()));
         let mut n = 0;
-        let now = self.clock.now_ms();
-        if now.saturating_sub(self.poison_cleared_at) >= POISON_RECHECK_MS {
-            self.poison_seen.retain(|_, p| !*p);
-            self.poison_cleared_at = now;
-        }
+        self.recheck_poison()?;
         while let Some((ev, local)) = self.queue.pop_front() {
             if let Err(e) = self.dispatch(&ev, local) {
                 self.queue.push_front((ev, local));
@@ -1839,6 +1849,9 @@ mod tests {
         fn poisoned(&self, _: &StreamKey) -> Result<Option<Poison>> {
             Ok(None)
         }
+        fn poisoned_all(&self) -> Result<Vec<Poison>> {
+            Ok(vec![])
+        }
     }
 
     #[test_id(tjh7mzx)]
@@ -1852,6 +1865,102 @@ mod tests {
         assert!(err.0.contains("journal open-effects: no reply from the store"), "{err}");
         assert!(err.0.contains("2 attempt(s)"), "{err}");
         assert_eq!(j.asked.load(std::sync::atomic::Ordering::SeqCst), 2, "no ask begins once 10 s are spent");
+    }
+
+    /// The store's poison rows, which the operator can clear, and the reads made of them.
+    struct Rows {
+        inner: Arc<MemJournal>,
+        cleared: std::sync::atomic::AtomicBool,
+        reads: std::sync::atomic::AtomicU32,
+    }
+
+    impl Rows {
+        fn standing(streams: &[&str]) -> Arc<Self> {
+            let inner = MemJournal::new();
+            for s in streams {
+                inner.poison(&Poison { stream: StreamKey((*s).into()), event: EventId(format!("earlier/{s}")), handler: "pinger".into(), message: "left by the run before".into() }).unwrap();
+            }
+            Arc::new(Rows { inner, cleared: Default::default(), reads: Default::default() })
+        }
+
+        fn reads(&self) -> u32 {
+            self.reads.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl Journal for Rows {
+        fn record(&self, ev: &Event) {
+            self.inner.record(ev)
+        }
+        fn boot(&self) -> Result<Boot> {
+            self.inner.boot()
+        }
+        fn commit(&self, t: &Turn) -> Result<()> {
+            self.inner.commit(t)
+        }
+        fn poison(&self, p: &Poison) -> Result<()> {
+            self.inner.poison(p)
+        }
+        fn poisoned(&self, stream: &StreamKey) -> Result<Option<Poison>> {
+            self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(self.inner.poisoned(stream)?.filter(|_| !self.cleared.load(std::sync::atomic::Ordering::SeqCst)))
+        }
+        fn poisoned_all(&self) -> Result<Vec<Poison>> {
+            self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(if self.cleared.load(std::sync::atomic::Ordering::SeqCst) { vec![] } else { self.inner.poisoned_all()? })
+        }
+    }
+
+    struct Heard(Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl Handler for Heard {
+        fn interests(&self) -> &[EventKindTag] {
+            &["ping"]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+            self.0.lock().unwrap().push(ev.stream.0.clone());
+            vec![]
+        }
+    }
+
+    /// Pings every stream at `at` and returns the streams a handler heard.
+    fn pinged(e: &mut Engine, clock: &VirtualClock, heard: &std::sync::Mutex<Vec<String>>, at: u64, streams: &[&str]) -> Vec<String> {
+        clock.advance_to(at);
+        for s in streams {
+            e.submit(&format!("{at}/{s}"), s, EventKind::new("ping", "")).unwrap();
+        }
+        e.run_until_idle().unwrap();
+        std::mem::take(&mut heard.lock().unwrap())
+    }
+
+    #[test_id(tkplgbw)]
+    #[test]
+    fn a_stream_poisoned_before_boot_is_refused_after_the_boot_and_after_a_recheck_at_one_read_each() {
+        let streams = ["a", "b", "c", "ok"];
+        let (store, clock, heard) = (Rows::standing(&["a", "b", "c"]), VirtualClock::new(0), Arc::new(std::sync::Mutex::new(vec![])));
+        let mut e = Engine::open(store.clone(), Arc::new(clock.clone()), vec![Registration::new("pinger", Heard(heard.clone()))], 1).unwrap();
+        assert_eq!(pinged(&mut e, &clock, &heard, 0, &streams), ["ok"]);
+        assert_eq!(store.reads(), 1, "one read at boot, however many streams");
+        assert_eq!(pinged(&mut e, &clock, &heard, POISON_RECHECK_MS - 1, &streams), ["ok"]);
+        assert_eq!(store.reads(), 1, "no read between rechecks");
+        assert_eq!(pinged(&mut e, &clock, &heard, POISON_RECHECK_MS, &streams), ["ok"]);
+        assert_eq!(store.reads(), 2, "one read at the recheck");
+    }
+
+    #[test_id(t4vjo91)]
+    #[test]
+    fn a_poison_cleared_in_the_store_is_seen_at_the_next_recheck_and_then_the_reads_stop() {
+        let (store, clock, heard) = (Rows::standing(&["a"]), VirtualClock::new(0), Arc::new(std::sync::Mutex::new(vec![])));
+        let mut e = Engine::open(store.clone(), Arc::new(clock.clone()), vec![Registration::new("pinger", Heard(heard.clone()))], 1).unwrap();
+        assert_eq!(pinged(&mut e, &clock, &heard, 0, &["a"]), Vec::<String>::new());
+        store.cleared.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(pinged(&mut e, &clock, &heard, POISON_RECHECK_MS - 1, &["a"]), Vec::<String>::new(), "not before the recheck");
+        assert_eq!(pinged(&mut e, &clock, &heard, POISON_RECHECK_MS, &["a"]), ["a"]);
+        let reads = store.reads();
+        for n in 2..14 {
+            assert_eq!(pinged(&mut e, &clock, &heard, n * POISON_RECHECK_MS, &["a"]), ["a"]);
+        }
+        assert_eq!(store.reads(), reads, "with nothing quarantined there is nothing to ask again");
     }
 
     struct Waker(std::sync::atomic::AtomicBool);

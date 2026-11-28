@@ -45,6 +45,9 @@ impl Journal for Unsure {
     fn poisoned(&self, stream: &StreamKey) -> Result<Option<Poison>> {
         self.inner.poisoned(stream)
     }
+    fn poisoned_all(&self) -> Result<Vec<Poison>> {
+        self.inner.poisoned_all()
+    }
 }
 
 fn retry(slept: &Arc<Mutex<Vec<u64>>>, bound_ms: u64) -> BootRetry {

@@ -68,6 +68,7 @@ fn span_of(snapshot: &state_store::phases::Snapshot) -> opentelemetry_proto::ton
         children: snapshot.children,
         programs: &snapshot.programs,
         subverb: None,
+        turn_tasks: None,
     };
     super::record_span(Some(&sink), &call);
     let file = std::fs::read_dir(&dir).unwrap().flatten().next().unwrap();

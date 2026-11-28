@@ -17,6 +17,7 @@ mod check_config;
 mod concierge_wake_one_try;
 mod cr_cadence_restart;
 mod effects_runnable;
+mod idle_hour;
 mod no_fork_edges_ops;
 mod no_spawn;
 mod pinned_settings_env;
