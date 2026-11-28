@@ -323,7 +323,6 @@ SPIRA_HOME strand/src/config.rs
 SPIRA_HOME testenv/src/fixture.rs
 SPIRA_HOME watchd/src/context.rs
 SPIRA_HOME watchd/src/manifest.rs
-SPIRA_HOME watchtower/src/process.rs
 SPIRA_HOME_DIR spira/law-synth.sh
 SPIRA_HOME_LIB spira-world/src/seam.rs
 SPIRA_HOTFIX_ALERT_HOURS release/src/config.rs

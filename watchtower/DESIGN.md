@@ -156,17 +156,15 @@ runs `cockpit/moot-sweep.sh --apply`.
 
 ## 6. Seams
 
-- **`main::lib_sh_dir` vs `main::spira_home` — two different questions, not one.**
+- **`process::lib_sh_dir` vs the located home — two different questions, not one.**
   `lib_sh_dir` is where lib.sh's CODE lives, found via `incident::which("lib.sh")` on
   `$PATH`. The bash always had lib.sh's functions by sourcing it relative to `$0`
   (`. "$(dirname "$0")/lib.sh"`) at the top of watchtower.sh, regardless of what
   `$SPIRA_HOME` was set to — a compiled binary has no `$0` directory to be relative to, so
-  this is the equivalent self-location. The repo registry does not use it:
-  `seams::registry` (and so `git::spira_landref`) reads the located home (`$SPIRA_HOME`,
-  else `$SPIRA_RELEASE/spira`) and refuses when there is none. `spira_home` is
-  `$SPIRA_HOME` the environment variable (falling back to `lib_sh_dir` only when unset),
-  used only by `seams::timer_priority_and_suspended` — the bash reached world.sh/ctrl.sh
-  via a literal `"${SPIRA_HOME}/world.sh"`, genuinely `SPIRA_HOME`-driven, not `$0`-relative.
+  this is the equivalent self-location. `process::resolved_config` and `seams::registry`
+  (and so `git::spira_landref`) both read the located home (`$SPIRA_HOME`, else
+  `$SPIRA_RELEASE/spira`) and never `lib_sh_dir`; with no home named, `resolved_config`
+  says so and resolves nothing, and `seams::registry` refuses.
   Conflating the two was a real bug (sp-lnmbq): a caller that points `SPIRA_HOME` at a
   fixture directory holding data files but no lib.sh (an idle-while-ready
   fixture, which overrides `SPIRA_HOME` so `bulk_ready_by_rune`'s runes lookup reads its
@@ -176,10 +174,6 @@ runs `cockpit/moot-sweep.sh --apply`.
   passed as the sourcing path.
 - `incident::file` — spawns `bash $SPIRA_INCIDENT_SH file <title> -` with the same
   `SPIRA_INCIDENT_*` env and body-on-stdin contract as every bash call site.
-- `seams::timer_priority_and_suspended` — one `bash -c` that sources `world.sh`
-  (`WORLD_LIB=1`) and `ctrl.sh` (`CTRL_LIB=1`) and prints `TIMER_PRIORITY` plus the
-  suspended-base list, NUL-separated. Fixed script, no interpolation — the base names come
-  back on stdout, never assembled into the script text.
 - `czar_outcome::classify` is a pure function over `&[TriggerBead]` — no IO, table-tested
   against fixtures.
 - `throttle::decide`, `pr_stall::decide` are pure decision functions over already-gathered

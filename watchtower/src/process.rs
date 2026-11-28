@@ -2,7 +2,8 @@
 //! registry for the env-only ones, and the sweep's `Cfg` built from both. Shared by `main.rs`
 //! and by a host (the scheduler's `watch.tower` task) that runs the sweep in-process.
 
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// The meminfo file every memory reading shares; `SPIRA_MEMINFO_PATH` points tests at a fixture.
@@ -12,38 +13,31 @@ pub fn meminfo_path() -> PathBuf {
 
 use crate::{cpu_throttle, deadline, incident, sweep};
 
-/// `std::env::var`, trimmed to "set and non-empty" — no `spira_config` fallback. Used only
-/// inside [`resolved_config`]'s own init, which must not call back into [`getenv`] (that
-/// would recurse into `resolved_config()` while it is still being built).
+/// `std::env::var`, trimmed to "set and non-empty" — no `spira_config` fallback.
 pub fn raw_env(k: &str) -> Option<String> {
     std::env::var(k).ok().filter(|v| !v.is_empty())
 }
 
-/// Wave 4.8 ("retire conf re-import seams in Rust"): this crate used to read every
-/// `SPIRA_*` key straight out of its own process environment, with no snapshot and no
-/// the config document load at all (wave4-decomposition.md row (b) names watchtower by file) —
-/// so an operator's toml value for, say, `SPIRA_QUEUE_THROTTLE_DEPTH_AT` was silently
-/// ignored; only an explicit env override (set by the launching unit) ever took effect.
-/// Resolved once, lazily, and cached: `spira_config::resolve_for_process`, using
-/// [`spira_home`]'s own derivation for `SPIRA_HOME` and `spira_config::resolve::
-/// derive_home_repo` for `SPIRA_REPO`. A resolution failure (unreadable registry,
-/// containment refusal) yields an empty [`spira_config::resolve::Resolved`] — [`getenv`]'s
-/// own `unwrap_or(default)` callers see exactly the behaviour this crate had before this
-/// bead, never a panic.
-///
-/// ONE SOURCE OF CONFIG (per Ryan 2026-10-05): every key this registry declares
-/// (`spira/conf.d/SPIRA_*`) now reads through [`reg`]/[`reg_i64`] instead — the process's
-/// single `$SPIRA_TOML` resolution, with no env override and no caller-supplied default.
-/// `getenv`/`getenv_i64` (and this cache) remain only for the keys `spira/conf.d` does not
-/// declare at all — listed in the migration report, never both ways for the same key.
+/// The config for the keys `spira/conf.d` does not declare, resolved once and cached, from the
+/// home `spira_config::resolve::locate_home` names (`$SPIRA_HOME`, else `$SPIRA_RELEASE/spira`).
+/// A failure is said on stderr and yields an empty resolution, so [`getenv`]'s callers get
+/// their own defaults. A registered key reads through [`reg`]/[`reg_i64`] instead.
 pub fn resolved_config() -> &'static spira_config::resolve::Resolved {
     static RESOLVED: std::sync::OnceLock<spira_config::resolve::Resolved> = std::sync::OnceLock::new();
-    RESOLVED.get_or_init(|| {
-        let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-        let home = PathBuf::from(raw_env("SPIRA_HOME").unwrap_or_else(lib_sh_dir));
-        let repo = spira_config::resolve::derive_home_repo(&home, &env_map);
-        spira_config::resolve::resolve_or_say("watchtower", &home, &repo, &env_map)
-    })
+    RESOLVED.get_or_init(|| resolve_from(&std::env::vars().collect()))
+}
+
+fn resolve_from(env: &BTreeMap<String, String>) -> spira_config::resolve::Resolved {
+    match spira_config::resolve::locate_home(env, Path::new("")) {
+        Ok(home) => {
+            let repo = spira_config::resolve::derive_home_repo(&home, env);
+            spira_config::resolve::resolve_or_say("watchtower", &home, &repo, env)
+        }
+        Err(e) => {
+            eprintln!("watchtower: cannot locate the harness home, running on built-in defaults: {e}");
+            Default::default()
+        }
+    }
 }
 
 /// The environment, then `spira_config::resolve()`'s in-process answer — never the
@@ -138,4 +132,44 @@ pub fn sweep_cfg() -> Result<sweep::Cfg, String> {
         lc: spira_store::lc_call::LcClient::configured()?,
         lc_bin: spira_store::lifecycle_row::lc_bin()?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A config whose resolution shows which home it was handed: an empty `runes_dir` is `<home>/runes`.
+    fn home_revealing_toml(dir: &std::path::Path) -> PathBuf {
+        spira_config::process::fixture_toml(dir, &[("SPIRA_RUNES_DIR", "")])
+    }
+
+    fn handed(pairs: &[(&str, &std::path::Path)]) -> BTreeMap<String, String> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.display().to_string())).collect()
+    }
+
+    #[test_id(tcocjqi)]
+    #[test]
+    fn with_no_spira_home_the_config_resolves_from_the_releases_spira_dir() {
+        let d = testkit::TempDir::new("wt-resolve-release");
+        let release = spira_config::process::fixture_release(d.path(), true);
+        let decoy = d.path().join("decoy");
+        std::fs::create_dir(&decoy).unwrap();
+        std::fs::write(decoy.join("lib.sh"), "").unwrap();
+        let toml = home_revealing_toml(d.path());
+
+        let resolved = resolve_from(&handed(&[("SPIRA_RELEASE", &release), ("SPIRA_TOML", &toml), ("PATH", &decoy)]));
+
+        assert_eq!(resolved.get("SPIRA_RUNES_DIR"), release.join("spira/runes").to_str().unwrap());
+    }
+
+    #[test_id(tzp6ovf)]
+    #[test]
+    fn with_no_named_home_nothing_is_resolved_even_from_a_good_config() {
+        let d = testkit::TempDir::new("wt-resolve-nohome");
+        let toml = home_revealing_toml(d.path());
+
+        let resolved = resolve_from(&handed(&[("SPIRA_TOML", &toml)]));
+
+        assert!(resolved.values.is_empty() && resolved.warnings.is_empty(), "{:?}", resolved.values.get("SPIRA_RUNES_DIR"));
+    }
 }
