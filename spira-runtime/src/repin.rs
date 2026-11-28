@@ -24,6 +24,9 @@ struct State {
     pinned: BTreeMap<String, String>,
     /// Keys changed in the file and not yet taken, with the value they will take.
     wanted: BTreeMap<String, String>,
+    /// Keys told again with the value already held, not yet acted on: such a value may name
+    /// a file whose content changed.
+    told: BTreeSet<String>,
     waits: String,
 }
 
@@ -62,6 +65,7 @@ impl Repin {
         let mut st = self.state();
         if wanted == held {
             st.wanted.remove(key);
+            st.told.insert(key.to_string());
             return Ok(serde_json::json!({ "state": "unchanged", "held": held, "wanted": wanted }));
         }
         st.wanted.insert(key.to_string(), wanted.clone());
@@ -80,6 +84,10 @@ impl Repin {
 
     /// Takes what can be taken now. Runs at the start of a turn, with the engine between ticks.
     pub fn apply(&self, engine: &mut Engine) {
+        let told = std::mem::take(&mut self.state().told);
+        for t in crate::tasks::all().filter(|t| t.keys.iter().flat_map(|ks| ks.iter()).any(|k| told.contains(*k))) {
+            engine.wake(t.name);
+        }
         let wanted = self.state().wanted.clone();
         if wanted.is_empty() {
             return;
@@ -122,6 +130,7 @@ impl Repin {
         let mut lines = vec![];
         for t in crate::tasks::all().filter(|t| t.keys.iter().flat_map(|ks| ks.iter()).any(|k| take.contains_key(*k))) {
             engine.rebind(t.name, (t.build)(&next).handler);
+            engine.wake(t.name);
         }
         for (key, value) in &take {
             let old = self.held(key).unwrap_or_default();

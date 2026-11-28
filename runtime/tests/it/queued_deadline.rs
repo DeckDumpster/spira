@@ -265,6 +265,9 @@ impl Journal for SlowJournal {
     fn poisoned(&self, stream: &StreamKey) -> runtime::Result<Option<Poison>> {
         self.inner.poisoned(stream)
     }
+    fn poisoned_all(&self) -> runtime::Result<Vec<Poison>> {
+        self.inner.poisoned_all()
+    }
     fn history(&self) -> Vec<Event> {
         self.inner.history()
     }

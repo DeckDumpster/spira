@@ -75,7 +75,7 @@ impl Transport for Double {
                 None => Err("the script has no watch answer left".into()),
             },
             "claimable" => ok(json!({ "rev": 1, "content_error": s.content_error, "beads": [] }).to_string()),
-            "content" | "show-batch" | "condition" => ok(format!("answer {}", s.seen.iter().filter(|a| a[0] == argv[0]).count())),
+            "content" | "show-batch" | "condition" | "incidents" => ok(format!("answer {}", s.seen.iter().filter(|a| a[0] == argv[0]).count())),
             other => Err(format!("unscripted {other}")),
         }
     }
@@ -137,11 +137,15 @@ struct World {
 }
 
 fn world(script: Script, stale: Duration) -> World {
+    world_watching(script, stale, &[])
+}
+
+fn world_watching(script: Script, stale: Duration, prefixes: &[&str]) -> World {
     let script = Arc::new(Mutex::new(script));
     let now = Arc::new(Mutex::new(Instant::now()));
     let clock_now = Arc::clone(&now);
     let client = LcClient::over(Arc::new(Double(Arc::clone(&script))), true);
-    let p = Projection::new(client, stale, Arc::new(move || *clock_now.lock().unwrap()));
+    let p = Projection::new(client, stale, Arc::new(move || *clock_now.lock().unwrap())).with_prefixes(prefixes);
     World { script, now, p }
 }
 
@@ -954,10 +958,6 @@ fn changed(w: &World, keys: &[&str], through: u64) {
     w.p.poll().unwrap();
 }
 
-fn asked_for(w: &World, verb: &str) -> usize {
-    w.script.lock().unwrap().seen.iter().filter(|a| a[0] == verb).count()
-}
-
 #[test_id(t78tlzk)]
 #[test]
 fn the_claim_view_is_held_until_a_row_readiness_or_plan_changes_or_its_hold_runs_out() {
@@ -967,19 +967,19 @@ fn the_claim_view_is_held_until_a_row_readiness_or_plan_changes_or_its_hold_runs
         let _watching = w.p.hold_watching();
         let read = || w.p.answer(&["claimable"]).unwrap().value.out;
         let first = read();
-        assert_eq!((read(), asked_for(&w, "claimable")), (first, 1), "unchanged: held");
+        assert_eq!((read(), asked(&w, "claimable")), (first, 1), "unchanged: held");
         changed(&w, &["conditions/x/y"], 5);
         read();
-        assert_eq!(asked_for(&w, "claimable"), 1, "a condition is no input of a verdict");
+        assert_eq!(asked(&w, "claimable"), 1, "a condition is no input of a verdict");
         for (n, key) in ["lifecycle/sp-a", "readiness/sp-a", "planning/watermark"].iter().enumerate() {
             changed(&w, &[key], 6 + n as u64);
             read();
             read();
-            assert_eq!(asked_for(&w, "claimable"), 2 + n, "{key}");
+            assert_eq!(asked(&w, "claimable"), 2 + n, "{key}");
         }
         w.advance(store_view::CLAIM_VIEW_HOLD + Duration::from_secs(1));
         read();
-        assert_eq!(asked_for(&w, "claimable"), 5, "the verdicts turn on the clock too");
+        assert_eq!(asked(&w, "claimable"), 5, "the verdicts turn on the clock too");
     });
 }
 
@@ -992,7 +992,7 @@ fn a_claim_view_the_content_store_could_not_describe_is_asked_again() {
         let _watching = w.p.hold_watching();
         w.p.answer(&["claimable"]).unwrap();
         w.p.answer(&["claimable"]).unwrap();
-        assert_eq!(asked_for(&w, "claimable"), 2);
+        assert_eq!(asked(&w, "claimable"), 2);
     });
 }
 
@@ -1013,4 +1013,45 @@ fn an_id_with_no_row_is_asked_once_under_a_watch_until_a_change_names_it() {
         assert_eq!(read().len(), 1, "the row it gained is read");
         assert!(reads() <= before + 1);
     });
+}
+
+/// How often an `incidents list` reached the store after two reads, a change under
+/// `incidents/`, and a third read, on a view watching `prefixes`.
+fn incident_lists_asked(prefixes: &'static [&'static str]) -> (usize, usize) {
+    let (told, asked_after) = mpsc::channel();
+    within(move || {
+        let w = world_watching(Script { list_rev: 4, quiet: true, ..Default::default() }, Duration::from_secs(10), prefixes);
+        w.p.poll().unwrap();
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        std::thread::scope(|sc| {
+            sc.spawn(|| w.p.run(&stop, &mut |_| {}));
+            // clock-safe: a cap on the wait for the watch to start
+            while !w.p.watching() {
+                // clock-safe: a poll interval under that cap
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let list = || w.p.answer(&["incidents", "list"]).unwrap().value.out;
+            list();
+            deliver(&w, &["lifecycle/sp-x"], 8);
+            list();
+            let quiet = asked(&w, "incidents");
+            deliver(&w, &["incidents/incident:a"], 9);
+            list();
+            told.send((quiet, asked(&w, "incidents"))).unwrap();
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+    });
+    asked_after.recv().unwrap()
+}
+
+#[test_id(tv7xfib)]
+#[test]
+fn a_held_incident_list_lasts_until_a_key_under_incidents_changes() {
+    assert_eq!(incident_lists_asked(&["incidents/"]), (1, 2));
+}
+
+#[test_id(t72th21)]
+#[test]
+fn a_view_that_does_not_watch_the_incidents_holds_no_list_of_them() {
+    assert_eq!(incident_lists_asked(&[]), (2, 3));
 }

@@ -537,6 +537,9 @@ impl Journal for Blind {
     fn poisoned(&self, stream: &StreamKey) -> runtime::Result<Option<Poison>> {
         self.0.poisoned(stream)
     }
+    fn poisoned_all(&self) -> runtime::Result<Vec<Poison>> {
+        self.0.poisoned_all()
+    }
     fn history(&self) -> Vec<Event> {
         self.0.history()
     }

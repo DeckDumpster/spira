@@ -5,24 +5,9 @@ use std::collections::BTreeMap;
 
 use tsd::alarm::{Attempt, Outcome};
 
-use crate::run::FileOutcome;
-
 /// How far back an undelivered alarm is still owed: past the intents' TTL nothing retries it.
 pub const LOOKBACK_S: u64 = 48 * 3600;
 pub const DAY_S: u64 = 86_400;
-
-/// An `incident file` filing as an attempt. A filing that names no bead is a failure, whatever
-/// the intake said; activation skew files nothing by design and is no attempt.
-pub fn of_file(outcome: &FileOutcome) -> Option<Outcome> {
-    Some(match outcome {
-        FileOutcome::Filed(id) if !id.trim().is_empty() => Outcome::Delivered { id: id.clone() },
-        FileOutcome::Filed(_) => Outcome::Failed { reason: "the filing returned no bead id".into() },
-        FileOutcome::Unread(why) => Outcome::Failed { reason: format!("{why}; the event stays spooled") },
-        FileOutcome::Refused => Outcome::Failed { reason: "the filing was refused by its guards; the event stays spooled".into() },
-        FileOutcome::LaneRefused(reason) => Outcome::Failed { reason: format!("{reason}; the event stays spooled") },
-        FileOutcome::Skew => return None,
-    })
-}
 
 /// Each alarm whose latest attempt in the lookback failed, the longest untried first.
 pub fn undelivered(attempts: &[Attempt], now: u64) -> Vec<&Attempt> {
@@ -94,15 +79,5 @@ mod tests {
         assert_eq!(open, ["c", "b"], "a failed retry goes to the back, so one stuck alarm never blocks the rest");
         let c = counts(&rows, now, "page");
         assert_eq!(c, Counts { attempts: 4, delivered: 1, failed: 3, pages: 1 });
-    }
-
-    #[test_id(tdsxtsb)]
-    #[test]
-    fn a_filing_with_no_id_is_a_failure_and_skew_is_no_attempt() {
-        assert_eq!(of_file(&FileOutcome::Filed("sp-1".into())), Some(Outcome::Delivered { id: "sp-1".into() }));
-        for o in [FileOutcome::Filed(" ".into()), FileOutcome::Unread("create failed (x)".into()), FileOutcome::Refused] {
-            assert!(matches!(of_file(&o), Some(Outcome::Failed { .. })), "{o:?}");
-        }
-        assert_eq!(of_file(&FileOutcome::Skew), None);
     }
 }

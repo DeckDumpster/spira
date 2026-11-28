@@ -106,7 +106,7 @@ fn the_journal_sweep_finishes_over_many_steps_each_bounded() {
     assert_eq!(sweep(true), (2_500, 1, 1));
     assert!(tables() == before && !exists(&indexed), "a dry run writes nothing");
     assert_eq!(sweep(false), (2_500, 1, 1));
-    assert!(exists(&indexed) && !exists(&key("schedule", "carried00000")) && exists(&key("resolved", "ghost00000")));
+    assert!(exists(&indexed) && !exists(&key("schedule", "carried00000")) && count("resolved") == 0);
     assert!(exists(&key("pending", "live")) && exists(&key("open-effect", "open")), "the open rows are indexed");
     for (argv, wanted) in [(["open-effects"], "open"), (["due"], "live")] {
         counter.store(0, Ordering::SeqCst);

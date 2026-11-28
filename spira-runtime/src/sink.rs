@@ -21,7 +21,7 @@ pub struct OtlpSink {
 }
 
 /// Units the engine writes for every successful turn of the loop. Failures, overruns and
-/// quarantines are never among them.
+/// quarantines are never among them, nor is a journaled effect: its record is all that is kept of it.
 pub fn is_routine(fields: &Fields) -> bool {
     let text = |k: &str| match fields.get(k) {
         Some(Value::Str(s)) => s.as_str(),
@@ -29,7 +29,7 @@ pub fn is_routine(fields: &Fields) -> bool {
     };
     match text("unit") {
         "dispatch" => text("outcome") == "ok",
-        "effect" => text("effect.outcome") == "succeeded" && !fields.keys().any(|k| k.starts_with(CHILDREN_PREFIX)),
+        "effect" => text("effect.outcome") == "succeeded" && fields.get("effect.journaled") == Some(&Value::Bool(false)) && !fields.keys().any(|k| k.starts_with(CHILDREN_PREFIX)),
         "effect.deferred" => true,
         _ => false,
     }
@@ -112,12 +112,18 @@ mod tests {
         pairs.iter().map(|(k, v)| (k.to_string(), Value::Str(v.to_string()))).collect()
     }
 
+    fn effect_succeeded(journaled: bool) -> Fields {
+        let mut f = rec(&[("unit", "effect"), ("effect.outcome", "succeeded")]);
+        f.insert("effect.journaled".into(), Value::Bool(journaled));
+        f
+    }
+
     #[test_id(txvl7rl)]
     #[test]
     fn successful_turns_are_routine_and_failures_and_anomalies_are_not() {
         for routine in [
             rec(&[("unit", "dispatch"), ("outcome", "ok")]),
-            rec(&[("unit", "effect"), ("effect.outcome", "succeeded")]),
+            effect_succeeded(false),
             rec(&[("unit", "effect.deferred")]),
         ] {
             assert!(is_routine(&routine), "{routine:?}");
@@ -137,10 +143,17 @@ mod tests {
         }
     }
 
+    #[test_id(t7xusbh)]
+    #[test]
+    fn a_succeeded_journaled_effect_is_kept_and_a_succeeded_probe_is_routine() {
+        assert!(!is_routine(&effect_succeeded(true)));
+        assert!(is_routine(&effect_succeeded(false)));
+    }
+
     #[test_id(t2xhurx)]
     #[test]
     fn a_succeeded_effect_that_started_programs_is_kept_and_counts_each_program() {
-        let mut started = rec(&[("unit", "effect"), ("effect.outcome", "succeeded")]);
+        let mut started = effect_succeeded(false);
         assert!(is_routine(&started), "no children: still routine");
         started.insert("effect.children.git".into(), Value::Int(2));
         assert!(!is_routine(&started));

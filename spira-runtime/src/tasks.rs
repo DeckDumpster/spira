@@ -733,6 +733,10 @@ mod tests {
             self.poison_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             self.inner.poisoned(stream)
         }
+        fn poisoned_all(&self) -> runtime::Result<Vec<runtime::Poison>> {
+            self.poison_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.poisoned_all()
+        }
     }
 
     fn answer_every_effect(e: &mut runtime::Engine, asked: &mut u64) {

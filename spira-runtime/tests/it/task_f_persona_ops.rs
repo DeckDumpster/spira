@@ -56,7 +56,7 @@ fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> Ta
     let calls = AtomicU64::new(0);
     let mut r = TaskRig::new(seed, handler().registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&world(calls.fetch_add(1, Ordering::SeqCst))).unwrap()));
     r = r.double(BRIEF, |_| Ok(r#"{"name":"ops-1","sys_file":"s.md","task_file":"t.md","argv":["claude"]}"#.into()));
-    for e in [INTAKE_INSTALL, INCIDENT_DRAIN, LEDGER, CLEANUP, UNIT_START, UNIT_STOP] {
+    for e in [INTAKE_INSTALL, LEDGER, CLEANUP, UNIT_START, UNIT_STOP] {
         r = r.double(e, |i| Ok(i.into()));
     }
     let (_, stream, kind) = PersonaOps::boot();
@@ -169,7 +169,6 @@ fn t9_the_prepare_acts_are_keyed_by_the_run_the_handler_assigned() {
     let intake = key(INTAKE_INSTALL).expect("the prepare step asks for the intake install");
     let id = intake.strip_prefix("ops/").and_then(|k| k.strip_suffix("/intake")).expect("ops/<run>/intake");
     assert!(!id.is_empty(), "the run id is built into the key: {intake}");
-    assert_eq!(key(INCIDENT_DRAIN), Some(format!("ops/{id}/drain")));
     assert_eq!(key(BRIEF), Some(format!("ops/{id}/brief")));
 }
 
@@ -335,7 +334,7 @@ fn three_failed_starts_through_the_handler_ask_once_with_a_stamped_raw_line_and_
     let mut r = TaskRig::new(1, handler().registration()).unwrap().double(OBSERVE, |_| Ok(serde_json::to_string(&snap("SWEEP: go", 0, false, Pause::Open)).unwrap()));
     r = r.double(BRIEF, |_| Ok(r#"{"name":"ops-1","sys_file":"s.md","task_file":"t.md","argv":["claude"]}"#.into()));
     r = r.double(UNIT_START, |_| Err("boom\nmore".into()));
-    for e in [INTAKE_INSTALL, INCIDENT_DRAIN, LEDGER, CLEANUP, UNIT_STOP, INBOX_APPEND] {
+    for e in [INTAKE_INSTALL, LEDGER, CLEANUP, UNIT_STOP, INBOX_APPEND] {
         r = r.double(e, |i| Ok(i.into()));
     }
     let (_, stream, kind) = PersonaOps::boot();
@@ -361,7 +360,7 @@ fn a_snapshot_already_swept_is_skipped_and_a_new_one_sweeps() {
     assert_eq!((next.state, names(&acts)), (State::Idle, vec![]));
     assert_eq!(next.swept_head.as_deref(), Some("## Spira pipeline, T1"));
     let (next, acts) = decide(&carry, &Input::Observed(snap("## Spira pipeline, T2", 0, false, Pause::Open))).unwrap();
-    assert_eq!((next.state, names(&acts)), (State::Preparing, vec![INTAKE_INSTALL, INCIDENT_DRAIN]));
+    assert_eq!((next.state, names(&acts)), (State::Preparing, vec![INTAKE_INSTALL]));
 }
 
 #[test_id(tcdaz68)]

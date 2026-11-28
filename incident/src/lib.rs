@@ -1,6 +1,6 @@
 //! incident — turn a production event into a bead Ops can claim, deduplicated on
-//! `external_ref`, with a write-ahead spool so an event that arrives while the store is
-//! down is never lost. DESIGN.md has the contract, the scar and what was retired.
+//! `external_ref`, through one control-store row per unfiled reference. DESIGN.md has the
+//! contract, the scar and what was retired.
 
 #[cfg(test)]
 #[macro_use]
@@ -17,7 +17,6 @@ pub mod ports;
 pub mod real;
 pub mod settle;
 pub mod settle_real;
-pub mod spool;
 pub mod supersede;
 pub mod stub_bd;
 pub mod run;

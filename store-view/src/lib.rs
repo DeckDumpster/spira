@@ -194,9 +194,15 @@ const CONTENT: u8 = 1;
 const ROUNDS: u8 = 2;
 /// A watcher's condition set or cleared.
 const CONDITIONS: u8 = 4;
+/// An incident raised, claimed or filed.
+const INCIDENTS: u8 = 8;
 /// A change to a lifecycle row, a readiness record or the planning plane: the claim view's inputs.
-const CLAIMS: u8 = 8;
-const ALL: u8 = CONTENT | ROUNDS | CONDITIONS | CLAIMS;
+const CLAIMS: u8 = 16;
+const KINDS: usize = 5;
+const ALL: u8 = CONTENT | ROUNDS | CONDITIONS | INCIDENTS | CLAIMS;
+/// The watch prefix of the unfiled incidents (`spira_lc::keys::INCIDENTS`). Their list is
+/// held only by a view that watches it, which [`Projection::with_prefixes`] asks for.
+pub const INCIDENTS_PREFIX: &str = "incidents/";
 /// The watch prefix of the conditions each watcher keeps (`spira_lc::keys::conditions`).
 pub const CONDITIONS_PREFIX: &str = "conditions/";
 
@@ -207,6 +213,7 @@ fn classes_of(argv: &[&str]) -> Option<u8> {
         ["show-batch", _] => Some(ROUNDS),
         ["condition", "list", ..] => Some(CONDITIONS),
         ["claimable", ..] => Some(CLAIMS),
+        ["incidents", "list", ..] => Some(INCIDENTS),
         ["list", rest @ ..] if rest.contains(&"--batches") => Some(ROUNDS | CONTENT),
         _ => None,
     }
@@ -217,16 +224,16 @@ fn classes_of(argv: &[&str]) -> Option<u8> {
 #[derive(Default)]
 struct Memo {
     held: HashMap<String, (u8, Reply, Instant)>,
-    generation: [u64; 4],
+    generation: [u64; KINDS],
 }
 
 impl Memo {
     fn seen(&self, classes: u8) -> u64 {
-        (0..4).filter(|i| classes & (1 << i) != 0).map(|i| self.generation[i]).sum()
+        (0..KINDS).filter(|i| classes & (1 << i) != 0).map(|i| self.generation[i]).sum()
     }
 
     fn end(&mut self, classes: u8) {
-        for i in (0..4).filter(|i| classes & (1 << i) != 0) {
+        for i in (0..KINDS).filter(|i| classes & (1 << i) != 0) {
             self.generation[i] += 1;
         }
         self.held.retain(|_, (held, ..)| *held & classes == 0);
@@ -437,6 +444,8 @@ fn ended_by(s: &State, events: &[Value]) -> u8 {
                 CONTENT
             } else if key.starts_with(CONDITIONS_PREFIX) {
                 CONDITIONS
+            } else if key.starts_with(INCIDENTS_PREFIX) {
+                INCIDENTS
             } else if key.starts_with(BATCHES) || key.strip_prefix(HISTORY).is_some_and(|h| rounds.iter().any(|r| h.strip_prefix(r.as_str()).is_some_and(|rest| rest.starts_with('/')))) {
                 ROUNDS
             } else {
@@ -931,7 +940,8 @@ impl Projection {
     /// without a watch asks the store each time; one whose watch fell behind is refused.
     pub fn answer(&self, argv: &[&str]) -> Result<Read<Reply>, LcError> {
         let classes = classes_of(argv).ok_or_else(|| LcError::Refused(format!("`{}` is not a read the views hold", argv.join(" "))))?;
-        if !self.watching() {
+        let unwatched = classes == INCIDENTS && !self.extra.iter().any(|p| p == INCIDENTS_PREFIX);
+        if !self.watching() || unwatched {
             return Ok(Read { rev: 0, value: self.client.call(argv)? });
         }
         let fresh = self.read(|_| Ok(()))?;

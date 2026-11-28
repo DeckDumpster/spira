@@ -270,11 +270,11 @@ mod tests {
         let s = store();
         let h = held();
         assert_eq!(missing(&s, &h).unwrap().len(), 7, "before the carry the store lacks it all");
-        assert_eq!(carry(&s, &h).unwrap(), (3, 5));
+        assert_eq!(carry(&s, &h).unwrap(), (3, 4), "the resolved effect is not written");
         assert_eq!(missing(&s, &h).unwrap(), Vec::<String>::new());
         assert_eq!(carry(&s, &h).unwrap(), (0, 0), "a second carry writes nothing");
         assert_eq!(s.facts(&[]).unwrap().len(), 3);
-        assert_eq!(s.journal_open_effects().unwrap().len(), 1, "the resolved effect carried over resolved");
+        assert_eq!(s.journal_open_effects().unwrap().len(), 1, "the resolved effect is not open");
     }
 
     #[test_id(t61ybim)]

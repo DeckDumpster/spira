@@ -79,7 +79,8 @@ impl Control {
             ["scheduler", "repin", key] => {
                 let r = self.repin.as_ref().ok_or_else(|| RuntimeError::refused("this scheduler re-pins nothing"))?;
                 let answer = r.request(key).map_err(RuntimeError::refused)?;
-                if answer["state"] == "pending" {
+                // A pinned key told unchanged needs its turn too: the tasks that read it are woken.
+                if answer["state"] == "pending" || (answer["state"] == "unchanged" && r.held(key).is_some()) {
                     let id = format!("{}/{}/{}/{key}", crate::repin::WANTED, self.clock.now_ms(), self.seq.fetch_add(1, Ordering::SeqCst));
                     (self.submit)(&id, crate::repin::STREAM, EventKind::new(crate::repin::WANTED, key)).map_err(RuntimeError::new)?;
                 }
