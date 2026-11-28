@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use crate::alerts::{self, ProbeOutcome};
+use crate::broker;
 use crate::classify::{self, Firing, Observation};
 use crate::conditions::{Conditions, Failure};
 use crate::fallback;
@@ -34,8 +35,10 @@ pub struct PassPaths {
     pub inbox: PathBuf,
     /// How far the inbox has been read.
     pub inbox_cursor: PathBuf,
-    /// The broker for `alarm/<key>` and for a page's `concierge/inbox`.
+    /// The broker for `alarm/<key>` and a page's `concierge/inbox`, and the one checked.
     pub inbox_bus: inbox_rules::Bus,
+    /// How the operator is mailed about a down broker (`broker::pager_env`), or why they cannot be.
+    pub operator_mail: Result<mail::env::Env, String>,
 }
 
 pub struct PassReport {
@@ -160,9 +163,33 @@ pub fn run(inp: &PassInput, ops: &dyn Conditions, state: &mut State, paths: &Pas
         }
     }
 
-    let fallback_needed = !db_reachable || !beads_ok || rep.probe.write_ok == Some(false);
+    let carried = heartbeat::carried_outage(&paths.heartbeat);
+    let reading = broker::check(&paths.inbox_bus);
+    let row_firing = alerts::find_by_key(&rows, broker::KEY).is_some_and(|r| r.firing());
+    let (mut outage, todos) = broker::step(&carried, &reading, row_firing, now);
+    let render = |at: i64| (inp.render_time)(at, &inp.tz);
+    let pager = |subject: &str, body: String| broker::send_page(paths.operator_mail.clone(), subject, body);
+    let done = broker::perform(&todos, ops, &pager, &render);
+    outage.apply(&done);
+    if done.raised {
+        out.push(util::log_line(now, &format!("HEIMDALL raised {}", broker::KEY)));
+    }
+    if done.paged {
+        out.push(util::log_line(now, "HEIMDALL mailed the operator that the broker is down"));
+    }
+    if done.cleared {
+        out.push(util::log_line(now, &format!("HEIMDALL cleared {}", broker::KEY)));
+    }
+    err.extend(done.errors.iter().map(|e| util::log_line(now, &format!("HEIMDALL {e}"))));
+    let unrecorded = todos.iter().any(|t| matches!(t, broker::Todo::Raise { .. }) && !done.raised || *t == broker::Todo::Clear && !done.cleared);
+
+    let fallback_needed = !db_reachable || !beads_ok || unrecorded || rep.probe.write_ok == Some(false);
     if fallback_needed {
-        let doc = fallback::build(now, db_reachable, rep.probe.write_ok, &rep.firing);
+        let mut listed = rep.firing.clone();
+        if let (broker::Reading::Down(why), Some(since), true) = (&reading, outage.down_since, carried.down_since.is_some()) {
+            listed.push(Firing { key: broker::KEY.into(), title: broker::TITLE.into(), evidence: broker::evidence(&render(since), why) });
+        }
+        let doc = fallback::build(now, db_reachable, rep.probe.write_ok, &listed);
         match fallback::write(&paths.fallback, &doc) {
             Ok(()) => out.push(util::log_line(now, &format!("HEIMDALL wrote the fallback channel — db_read={} db_write={:?}", if db_reachable { "ok" } else { "DOWN" }, rep.probe.write_ok))),
             Err(e) => err.push(util::log_line(now, &format!("HEIMDALL could not write the fallback channel: {e}"))),
@@ -178,7 +205,7 @@ pub fn run(inp: &PassInput, ops: &dyn Conditions, state: &mut State, paths: &Pas
     let db_read = heartbeat::db_read_status(db_reachable, rep.db_saturated);
     let db_write = heartbeat::db_write_status(rep.probe.write_ok, rep.db_saturated);
     let keys: Vec<String> = firing_keys.into_iter().collect();
-    let hb = Heartbeat { at: now, firing_keys: &keys, db_read, db_write, db_saturated: rep.db_saturated, fallback_written: fallback_needed, acted };
+    let hb = Heartbeat { at: now, firing_keys: &keys, db_read, db_write, db_saturated: rep.db_saturated, fallback_written: fallback_needed, acted, broker: &outage };
     let _ = heartbeat::write(&paths.heartbeat, &(hb.render() + &alarms.line));
     out.push(util::log_line(now, &format!("heimdall: {} firing [{}], {} change(s), db_read={} db_write={}", keys.len(), keys.join(","), acted, DbStatus::as_str(&db_read), DbStatus::as_str(&db_write))));
 
@@ -236,7 +263,7 @@ mod tests {
             Rig { dir: testkit::TempDir::new("heimdall-pass"), ops: Fake::default(), state: State::default(), now: 1_800_000_000, wedged: false, halted: false, restart_delta: None, refresh: 3600, gate_rows: Vec::new(), gate_unread: false }
         }
         fn paths(&self) -> PassPaths {
-            PassPaths { fallback: self.dir.join("heimdall.alerts.json"), heartbeat: self.dir.join("heimdall.status"), inbox: self.dir.join("inbox.log"), inbox_cursor: self.dir.join("inbox.cursor"), inbox_bus: inbox_rules::Bus::Off }
+            PassPaths { fallback: self.dir.join("heimdall.alerts.json"), heartbeat: self.dir.join("heimdall.status"), inbox: self.dir.join("inbox.log"), inbox_cursor: self.dir.join("inbox.cursor"), inbox_bus: inbox_rules::Bus::Off, operator_mail: Err("no mail in this rig".into()) }
         }
         fn pass(&mut self) -> PassReport {
             self.now += 120;

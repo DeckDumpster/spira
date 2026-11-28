@@ -43,6 +43,13 @@ without it. Those values, and any clear the broker has not taken, are carried in
 `reconcile.heimdall` task's journaled carry (the path the scheduler runs) and in the heartbeat
 of this binary's pass. A publish that fails is logged and changes nothing else.
 
+**A down broker** (`broker.rs`): every pass makes one connect. The second failed pass running
+raises `conditions/heimdall/broker-down` and mails the operator, once per outage; neither path
+uses the broker or waits on the store. The first pass that connects clears it. It is an `alert`
+mail because the operator's door sends a `note` on to the Concierge, who cannot see a down
+broker's traffic. It does not pass the confirm/clear debounce and has no `alarm/` topic. The
+outage is carried in the heartbeat, and in the hosted task's carry.
+
 **The condition is a contract with the attention panel** (`cockpit/panel/src/store.rs`): the
 message's first line is the title, the store counts `flaps`, and `acked` and `silent_until`
 are the panel's to write. The store forgets `acked` when the condition RETURNS; Heimdall never
@@ -86,6 +93,7 @@ unchanged in shape. Each arrow-side is a module:
 | `reconcile.rs` | the confirm/clear/refresh loop | **yes** — the whole debounce state machine, no IO |
 | `alerts.rs` | `body_of`, `alert_write`, `alert_clear`, the write probe | no — store calls, but against a `Conditions` port so it is unit-tested with a fake |
 | `conditions.rs` | `spira-lc condition` calls threaded through the reconcile loop | no — the port |
+| `broker.rs` | not in the shell | no — one connect and the mail; its state step is pure |
 | `fallback.rs` | the fallback-file write/remove | no — but its JSON shape is a pure function, tested |
 | `heartbeat.rs` | the heartbeat write | no — same split |
 | `state.rs` | the TSV state file | **yes** (parse/render) |
@@ -108,7 +116,7 @@ concerned, and a timeout is reported as saturation, not down.
 | path | mode | what |
 |---|---|---|
 | `$SPIRA_RUN/heimdall.state` | r/w | the TSV debounce state (`state.rs`) |
-| `$SPIRA_RUN/heimdall.status` | r/w | the heartbeat, every run; read for the standing alarms |
+| `$SPIRA_RUN/heimdall.status` | r/w | the heartbeat, every run; read for the standing alarms and broker outage |
 | `$SPIRA_RUN/heimdall.alerts.json` (or `SPIRA_HEIMDALL_FALLBACK`) | w/rm | the fallback channel |
 | `$SPIRA_RUN/sentinel.log` (or `SPIRA_HEIMDALL_SENTINEL_LOG`) | r | tailed, bounded |
 | `$SPIRA_RUN/strands.json` (or `SPIRA_HEIMDALL_STRANDS`) | r | strand.sh's episode JSON, passed through opaque |

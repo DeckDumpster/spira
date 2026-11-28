@@ -70,6 +70,7 @@ impl Rig {
             inbox: self.dir.join("inbox.log"),
             inbox_cursor: self.dir.join("inbox.cursor"),
             inbox_bus: self.bus.clone(),
+            operator_mail: Err("no mail in this rig".into()),
         };
         pass::run(&inp, &Store, &mut self.state, &paths, self.now)
     }

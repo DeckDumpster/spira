@@ -4,6 +4,8 @@
 
 use std::path::Path;
 
+use crate::broker::Outage;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DbStatus {
     Ok,
@@ -55,12 +57,13 @@ pub struct Heartbeat<'a> {
     pub db_saturated: bool,
     pub fallback_written: bool,
     pub acted: i64,
+    pub broker: &'a Outage,
 }
 
 impl Heartbeat<'_> {
     pub fn render(&self) -> String {
         format!(
-            "SP_HEIMDALL_AT={}\nSP_HEIMDALL_FIRING={}\nSP_HEIMDALL_KEYS='{}'\nSP_HEIMDALL_DB_READ={}\nSP_HEIMDALL_DB_WRITE={}\nSP_HEIMDALL_DB_SATURATED={}\nSP_HEIMDALL_FALLBACK={}\nSP_HEIMDALL_ACTED={}\n",
+            "SP_HEIMDALL_AT={}\nSP_HEIMDALL_FIRING={}\nSP_HEIMDALL_KEYS='{}'\nSP_HEIMDALL_DB_READ={}\nSP_HEIMDALL_DB_WRITE={}\nSP_HEIMDALL_DB_SATURATED={}\nSP_HEIMDALL_FALLBACK={}\nSP_HEIMDALL_ACTED={}\n{DOWN_SINCE}{}\n{PAGED}{}\n{RAISED}{}\n",
             self.at,
             self.firing_keys.len(),
             self.firing_keys.join(","),
@@ -69,7 +72,25 @@ impl Heartbeat<'_> {
             if self.db_saturated { 1 } else { 0 },
             if self.fallback_written { 1 } else { 0 },
             self.acted,
+            self.broker.down_since.map(|s| s.to_string()).unwrap_or_default(),
+            u8::from(self.broker.paged),
+            u8::from(self.broker.raised),
         )
+    }
+}
+
+const DOWN_SINCE: &str = "SP_HEIMDALL_BROKER_DOWN_SINCE=";
+const PAGED: &str = "SP_HEIMDALL_BROKER_PAGED=";
+const RAISED: &str = "SP_HEIMDALL_BROKER_RAISED=";
+
+/// The broker outage the last heartbeat at `path` carried; none when there is no heartbeat.
+pub fn carried_outage(path: &Path) -> Outage {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let field = |name: &str| text.lines().find_map(|l| l.strip_prefix(name));
+    Outage {
+        down_since: field(DOWN_SINCE).and_then(|v| v.parse().ok()),
+        paged: field(PAGED) == Some("1"),
+        raised: field(RAISED) == Some("1"),
     }
 }
 
@@ -124,7 +145,7 @@ mod tests {
     #[test]
     fn render_shape() {
         let keys = vec!["a".to_string(), "b".to_string()];
-        let h = Heartbeat { at: 100, firing_keys: &keys, db_read: DbStatus::Ok, db_write: DbStatus::Ok, db_saturated: false, fallback_written: false, acted: 2 };
+        let h = Heartbeat { at: 100, firing_keys: &keys, db_read: DbStatus::Ok, db_write: DbStatus::Ok, db_saturated: false, fallback_written: false, acted: 2, broker: &Outage::default() };
         let text = h.render();
         assert!(text.contains("SP_HEIMDALL_AT=100"));
         assert!(text.contains("SP_HEIMDALL_FIRING=2"));
@@ -136,7 +157,7 @@ mod tests {
     #[test_id(twe6t6w)]
     #[test]
     fn render_with_nothing_firing_is_still_written() {
-        let h = Heartbeat { at: 1, firing_keys: &[], db_read: DbStatus::Down, db_write: DbStatus::Unknown, db_saturated: false, fallback_written: true, acted: 0 };
+        let h = Heartbeat { at: 1, firing_keys: &[], db_read: DbStatus::Down, db_write: DbStatus::Unknown, db_saturated: false, fallback_written: true, acted: 0, broker: &Outage::default() };
         let text = h.render();
         assert!(text.contains("SP_HEIMDALL_FIRING=0"));
         assert!(text.contains("SP_HEIMDALL_KEYS=''"));

@@ -84,7 +84,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("reconcile.section", &["reconcile.section.publish"]),
     ("reconcile.goodput", &["reconcile.goodput.observe", "reconcile.goodput.lock", "reconcile.goodput.standby", "reconcile.goodput.judge", "reconcile.goodput.put", "reconcile.goodput.record", "reconcile.goodput.release"]),
     ("reconcile.content", &["reconcile.content.observe", "reconcile.content.skew_check", "reconcile.content.close"]),
-    ("reconcile.heimdall", &["reconcile.heimdall.observe", "reconcile.heimdall.raise", "reconcile.heimdall.clear", "reconcile.heimdall.refresh", "reconcile.heimdall.fallback", "reconcile.heimdall.alarms"]),
+    ("reconcile.heimdall", &["reconcile.heimdall.observe", "reconcile.heimdall.raise", "reconcile.heimdall.clear", "reconcile.heimdall.refresh", "reconcile.heimdall.fallback", "reconcile.heimdall.alarms", "reconcile.heimdall.broker"]),
     ("incident.settle", &["incident.settle.observe", "incident.settle.close", "incident.settle.note", "incident.settle.label", "incident.settle.log"]),
     ("incident.alarms", &["incident.alarms.observe", "incident.alarms.page", "incident.alarms.note", "incident.alarms.floor_ask", "incident.alarms.retry", "incident.alarms.attempt", "incident.alarms.knob_init", "incident.alarms.publish", "incident.alarms.heartbeat"]),
     ("mail.reconcile", &["mail.reconcile.observe", "mail.reconcile.note", "mail.reconcile.close", "mail.reconcile.lift", "mail.reconcile.answer", "mail.reconcile.inbox", "mail.reconcile.mark"]),

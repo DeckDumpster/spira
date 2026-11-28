@@ -244,7 +244,7 @@ fn pass() -> i32 {
     };
     let inp = PassInput { obs, confirm, clear_n, refresh, tz, render_time: util::iso_display, report_only: report };
     let inbox_cursor = inbox_rules::concierge_cursor(&run_dir.to_string_lossy());
-    let paths = PassPaths { fallback: fallback_path, heartbeat: status_path, inbox, inbox_cursor, inbox_bus: inbox_rules::Bus::Configured };
+    let paths = PassPaths { fallback: fallback_path, heartbeat: status_path, inbox, inbox_cursor, inbox_bus: inbox_rules::Bus::Configured, operator_mail: mail::env::Env::load().map(heimdall::broker::pager_env) };
     let rep = pass::run(&inp, &ops, &mut state, &paths, now);
     for l in &rep.out {
         sink.out(l);

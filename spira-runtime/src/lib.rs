@@ -245,6 +245,8 @@ pub struct Effects {
     pub watch_topics: OnceLock<Option<watch_topics::WatchTopics>>,
     /// heimdall's `alarm/<key>` publisher, built at its first use, as `pr_topics` is.
     pub heimdall_alarms: OnceLock<Option<heimdall::alarm::Announcer>>,
+    /// The broker heimdall checks each pass: the configured one.
+    pub broker: heimdall::broker::Bus,
 }
 
 /// The mail environment operator alerts are sent under: no bd (an alert needs no tracking bead, and an empty db keeps the mailer from launching one), the operator override pr-notify's alerts are admitted by, and the repeat guard overridden because consecutive merges normalise to one subject.
