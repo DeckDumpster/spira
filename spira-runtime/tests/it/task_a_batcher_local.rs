@@ -2352,7 +2352,8 @@ fn sp_4odl0h_an_undriven_round_whose_last_pass_ended_red_is_attributed_not_redri
 fn an_adopted_red_round_is_attributed_against_the_base_its_record_names() {
     let (carry, snap) = red_orphan();
     assert_ne!(snap.repos["spira"].base_sha, "bx", "control: the landing ref differs from the record's base");
-    let (_, acts) = decide(&carry, &snap);
+    let (next, acts) = decide(&carry, &snap);
+    assert_eq!(next.repos["spira"].landing_base, snap.repos["spira"].base_sha, "a red pause is lifted against the landing ref");
     let leg: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == CORPUS).unwrap_or_else(|| panic!("no attribution: {acts:?}")).input).unwrap();
     assert_eq!((leg.why.as_str(), leg.base.as_str()), (ATTRIBUTE, "bx"), "{leg:?}");
 }
@@ -2415,6 +2416,17 @@ fn sp_k7ltss_a_green_round_with_no_driver_is_landed_not_abandoned() {
     assert_eq!((rc.state, rc.batch.as_deref(), rc.members.clone()), (State::Landing, Some("r9"), vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())]));
     assert_eq!((rc.wt.as_str(), rc.head.as_str()), ("w", "h"));
     assert_eq!((rc.pace.orphan.len(), rc.pace.redriven.as_str()), (0, ""), "the orphan clock is cleared");
+}
+
+#[test_id(tr6po9s)]
+#[test]
+fn an_adopted_green_round_carries_the_base_its_record_names() {
+    let (carry, mut snap) = green_orphan();
+    snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap().base = "bx".into();
+    let (next, acts) = decide(&carry, &snap);
+    let leg: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == LAND).unwrap_or_else(|| panic!("no land: {acts:?}")).input).unwrap();
+    let rc = &next.repos["spira"];
+    assert_eq!((leg.base.as_str(), rc.base.as_str(), &rc.landing_base), ("bx", "bx", &snap.repos["spira"].base_sha));
 }
 
 #[test_id(tkn030g)]

@@ -2166,11 +2166,9 @@ impl Machine<'_> {
             self.go(Trigger::Released);
         }
         self.rc.skip_why = None;
-        self.adopt(open, &self.rc.pace.core());
+        self.adopt(open, &self.rc.pace.core(), repo);
         self.rc.adopted.push(open.id.clone());
         self.rc.stacked = place_of(repo, live, &open.id) > 0;
-        self.rc.base = open.base.clone();
-        self.rc.landing_base = repo.base_sha.clone();
         self.go(Trigger::OpenRoundOpened);
         self.certify();
         true
@@ -2188,7 +2186,7 @@ impl Machine<'_> {
         }
         if open.phase == "green" {
             if self.adoptable(open, repo) {
-                self.adopt_green(open, st);
+                self.adopt_green(open, st, repo);
             }
             return;
         }
@@ -2233,14 +2231,14 @@ impl Machine<'_> {
 
     /// A round no pass drives whose last pass ended red is attributed from that pass's kept results.
     fn adopt_red(&mut self, open: &Round, st: &pace::State, repo: &Repo) {
-        self.adopt(open, st);
-        self.rc.base = open.base.clone();
-        self.rc.landing_base = repo.base_sha.clone();
+        self.adopt(open, st, repo);
         self.go(Trigger::OpenRoundRed);
         self.attribute_after(kept_results_file(&open.id));
     }
 
-    fn adopt(&mut self, open: &Round, st: &pace::State) {
+    fn adopt(&mut self, open: &Round, st: &pace::State, repo: &Repo) {
+        self.rc.base = open.base.clone();
+        self.rc.landing_base = repo.base_sha.clone();
         self.rc.pace = Pace::of(&pace::State { orphan: String::new(), orphan_since: 0, redriven: String::new(), ..st.clone() }, &self.rc.pace);
         self.rc.batch = Some(open.id.clone());
         self.rc.members = open.members.iter().enumerate().map(|(i, id)| (id.clone(), open.tips[i].clone())).collect();
@@ -2250,8 +2248,8 @@ impl Machine<'_> {
     }
 
     /// A green round no pass drives is landed on the pass that made it green, as one of this task's own.
-    fn adopt_green(&mut self, open: &Round, st: &pace::State) {
-        self.adopt(open, st);
+    fn adopt_green(&mut self, open: &Round, st: &pace::State, repo: &Repo) {
+        self.adopt(open, st, repo);
         self.go(Trigger::OpenRoundGreen);
         self.land_now();
     }
