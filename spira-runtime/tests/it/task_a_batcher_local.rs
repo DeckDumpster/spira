@@ -2269,7 +2269,7 @@ fn sp_byw57t_a_certify_legs_stderr_is_kept_with_its_stdout() {
 // --- sp-5u1oru: a round the batcher opened is always driven ---
 
 fn open_with(phase: &str, members: &[&str], worktree: &str) -> Snapshot {
-    let round = Round { id: "r9".into(), members: members.iter().map(|m| m.to_string()).collect(), head: "h".into(), worktree: worktree.into(), phase: phase.into(), ..Round::default() };
+    let round = Round { id: "r9".into(), members: members.iter().map(|m| m.to_string()).collect(), head: "h".into(), base: busy().repos["spira"].base_sha.clone(), worktree: worktree.into(), phase: phase.into(), ..Round::default() };
     Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), ..busy().repos["spira"].clone() })].into(), now_ms: NOW, ..Default::default() }
 }
 
@@ -2326,6 +2326,7 @@ fn red_orphan() -> (Carry, Snapshot) {
     let mut snap = open_with("attributing", &["sp-a", "sp-b"], "w");
     let round = snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap();
     round.tips = vec!["t1".into(), "t2".into()];
+    round.base = "bx".into();
     round.red = true;
     round.age_secs = 1_400;
     (Carry::default(), snap)
@@ -2344,6 +2345,45 @@ fn sp_4odl0h_an_undriven_round_whose_last_pass_ended_red_is_attributed_not_redri
     assert_eq!((rc.state, rc.batch.as_deref()), (State::Attributing, Some("r9")));
     let (_, again) = decide(&carry, &snap);
     assert!(!effects(&again).contains(&REDRIVE) && !effects(&again).contains(&ABANDON), "{again:?}");
+}
+
+#[test_id(ttfikaz)]
+#[test]
+fn an_adopted_red_round_is_attributed_against_the_base_its_record_names() {
+    let (carry, snap) = red_orphan();
+    assert_ne!(snap.repos["spira"].base_sha, "bx", "control: the landing ref differs from the record's base");
+    let (next, acts) = decide(&carry, &snap);
+    assert_eq!(next.repos["spira"].landing_base, snap.repos["spira"].base_sha, "a red pause is lifted against the landing ref");
+    let leg: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == CORPUS).unwrap_or_else(|| panic!("no attribution: {acts:?}")).input).unwrap();
+    assert_eq!((leg.why.as_str(), leg.base.as_str()), (ATTRIBUTE, "bx"), "{leg:?}");
+}
+
+#[test_id(tz3vziu)]
+#[test]
+fn a_red_round_whose_record_names_no_base_is_not_attributed() {
+    let (carry, mut snap) = red_orphan();
+    snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap().base.clear();
+    let (_, acts) = decide(&carry, &snap);
+    assert!(!effects(&acts).contains(&CORPUS), "{acts:?}");
+}
+
+#[test_id(t812yld)]
+#[test]
+fn the_observed_round_carries_the_base_of_the_queues_record() {
+    let listed = batcher_cut::io::OpenRound { base: "h1".into(), head: "h2".into(), ..Default::default() };
+    assert_eq!(edge::round_of(listed, false, None, vec![]).base, "h1");
+}
+
+#[test_id(t8kcovf)]
+#[test]
+fn no_orphan_is_adopted_while_the_landing_ref_is_unread() {
+    for (orphan, adopting) in [(red_orphan(), CORPUS), (green_orphan(), LAND)] {
+        let (carry, mut snap) = orphan;
+        assert!(effects(&decide(&carry, &snap).1).contains(&adopting), "control: with a readable ref it is adopted");
+        snap.repos.get_mut("spira").unwrap().base_sha.clear();
+        let (_, acts) = decide(&carry, &snap);
+        assert!(!effects(&acts).contains(&adopting), "{acts:?}");
+    }
 }
 
 #[test_id(t4rmls8)]
@@ -2395,6 +2435,17 @@ fn sp_k7ltss_a_green_round_with_no_driver_is_landed_not_abandoned() {
     assert_eq!((rc.state, rc.batch.as_deref(), rc.members.clone()), (State::Landing, Some("r9"), vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())]));
     assert_eq!((rc.wt.as_str(), rc.head.as_str()), ("w", "h"));
     assert_eq!((rc.pace.orphan.len(), rc.pace.redriven.as_str()), (0, ""), "the orphan clock is cleared");
+}
+
+#[test_id(tr6po9s)]
+#[test]
+fn an_adopted_green_round_carries_the_base_its_record_names() {
+    let (carry, mut snap) = green_orphan();
+    snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap().base = "bx".into();
+    let (next, acts) = decide(&carry, &snap);
+    let leg: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == LAND).unwrap_or_else(|| panic!("no land: {acts:?}")).input).unwrap();
+    let rc = &next.repos["spira"];
+    assert_eq!((leg.base.as_str(), rc.base.as_str(), &rc.landing_base), ("bx", "bx", &snap.repos["spira"].base_sha));
 }
 
 #[test_id(tkn030g)]
@@ -2616,7 +2667,7 @@ fn a_green_foreign_round_whose_bare_round_recert_unit_is_active_is_not_landed_by
     let units = ScriptedUnits::new(std::sync::Arc::new(runtime::ports::VirtualClock::new(0)));
     units.install("round-recert-b1.service", UnitFacts { state: UnitState::Active, main_pid: Some(7), exit: None, since_ms: Some(1) });
     let driven = edge::recert_driven(Some(&units), "b1");
-    let open = Round { id: "b1".into(), members: vec!["m1".into()], tips: vec!["t1".into()], head: "h1".into(), phase: "green".into(), driven, ..Round::default() };
+    let open = Round { id: "b1".into(), members: vec!["m1".into()], tips: vec!["t1".into()], head: "h1".into(), base: "base".into(), phase: "green".into(), driven, ..Round::default() };
     let repo = Repo { open_round: Some(open), base_sha: "base".into(), ..Repo::default() };
     let snap = Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms: NOW, ..Default::default() };
     assert!(!decide(&Carry::default(), &snap).1.iter().any(|a| a.effect == LAND));

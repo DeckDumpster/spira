@@ -4147,6 +4147,8 @@ pub struct OpenRound {
     /// Each member's tip, in `members` order.
     pub tips: Vec<String>,
     pub head: String,
+    /// The commit the queue built the round on, from the record's `base` key.
+    pub base: String,
     pub worktree: String,
     pub phase: String,
     pub red: bool,
@@ -4200,6 +4202,7 @@ pub fn open_round_of(r: &store_view::Round, now: u64) -> OpenRound {
         members,
         tips,
         head: get("head").to_string(),
+        base: get("base").to_string(),
         worktree: get("worktree").to_string(),
         phase: r.phase.clone(),
         red: !get("red").is_empty(),
@@ -4222,6 +4225,7 @@ fn open_rounds_of(out: &str) -> Vec<OpenRound> {
                 members,
                 tips,
                 head: get("head"),
+                base: get("base"),
                 worktree: get("worktree"),
                 phase: if p.is_empty() {
                     verb_value(out, "phase").unwrap_or_default()
@@ -6532,19 +6536,19 @@ mod land_exit_tests {
         let record = store_view::Record {
             id: "r2".into(),
             state: "CI_RUNNING".into(),
-            fields: [("head", "bbb"), ("members", "sp-c:tc sp-d:td"), ("worktree", "w2"), ("opened", "1000"), ("red", "test-x.sh"), ("ejected", "sp-a sp-b "), ("ejected_by", "batcher concierge ")].map(|(k, v)| (k.to_string(), v.to_string())).to_vec(),
+            fields: [("head", "bbb"), ("base", "aaa"), ("members", "sp-c:tc sp-d:td"), ("worktree", "w2"), ("opened", "1000"), ("red", "test-x.sh"), ("ejected", "sp-a sp-b "), ("ejected_by", "batcher concierge ")].map(|(k, v)| (k.to_string(), v.to_string())).to_vec(),
         };
         let round = store_view::Round { phase: "certifying".into(), record };
         assert_eq!(
             open_round_of(&round, 1090),
-            OpenRound { id: "r2".into(), members: vec!["sp-c".into(), "sp-d".into()], tips: vec!["tc".into(), "td".into()], head: "bbb".into(), worktree: "w2".into(), phase: "certifying".into(), red: true, red_suites: vec!["test-x.sh".into()], ejected: vec!["sp-a".into(), "sp-b".into()], ejected_by: vec!["batcher".into(), "concierge".into()], age_secs: 90 }
+            OpenRound { id: "r2".into(), members: vec!["sp-c".into(), "sp-d".into()], tips: vec!["tc".into(), "td".into()], head: "bbb".into(), base: "aaa".into(), worktree: "w2".into(), phase: "certifying".into(), red: true, red_suites: vec!["test-x.sh".into()], ejected: vec!["sp-a".into(), "sp-b".into()], ejected_by: vec!["batcher".into(), "concierge".into()], age_secs: 90 }
         );
     }
 
     #[test_id(tu9esdp)]
     #[test]
     fn status_lists_every_open_round_with_its_head_and_age() {
-        let out = "rounds=2\nround=open\nbatch_id=r1\nhead=h1\nmembers=sp-a:ta sp-b:tb\nworktree=/w/1\nwall_secs=90\nround2=open\nround2_batch_id=r2\nround2_head=h2\nround2_members=sp-c:tc\nround2_worktree=/w/2\nround2_red=test-x.sh\nround2_wall_secs=30\nstaged_members=sp-z\n";
+        let out = "rounds=2\nround=open\nbatch_id=r1\nhead=h1\nbase=b0\nmembers=sp-a:ta sp-b:tb\nworktree=/w/1\nwall_secs=90\nround2=open\nround2_batch_id=r2\nround2_head=h2\nround2_base=h1\nround2_members=sp-c:tc\nround2_worktree=/w/2\nround2_red=test-x.sh\nround2_wall_secs=30\nstaged_members=sp-z\n";
         let rounds = open_rounds_of(out);
         assert_eq!(
             rounds
@@ -6553,6 +6557,7 @@ mod land_exit_tests {
                 .collect::<Vec<_>>(),
             [("r1", "h1", false, 90), ("r2", "h2", true, 30)]
         );
+        assert_eq!(rounds.iter().map(|r| r.base.as_str()).collect::<Vec<_>>(), ["b0", "h1"]);
         assert_eq!(rounds[0].members, ["sp-a", "sp-b"]);
         assert_eq!(rounds[0].tips, ["ta", "tb"]);
         assert_eq!(split_members("sp-a:ta sp-b"), (vec!["sp-a".to_string(), "sp-b".to_string()], vec!["ta".to_string(), String::new()]));

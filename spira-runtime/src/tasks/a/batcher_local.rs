@@ -31,8 +31,8 @@
 //! | Idle | observe: stopped, cut-held by a hand-landing, or paused with no open round to drive (`pace.rs:77`) | Held (no write) |
 //! | Idle | observe: paused, open round not ours | as the open-round rows below (a pause stops only a new cut) |
 //! | Idle | observe: open round, driven | Idle |
-//! | Idle | observe: open round, undriven, last pass red | Attributing (`adopt_red`: attribute that pass's kept results) |
-//! | Idle | observe: open round not ours, undriven, phase opened, past `UNDRIVEN_GRACE_S`, fit, every tip known, every open round below it this task's, the repo not stopped or cut-held, no `abandon` in flight and no round of this task waiting on `assemble`, `round_open` or `promote`, not adopted before while open (a reached `SPIRA_ROUND_MAX_OPEN` or a pause does not bar it) | Certifying (adopted as one of this task's rounds, at its place in the queue's order; stacked when a live round is below it, as any of this task's above it then are; nothing is cut on that tick) |
+//! | Idle | observe: open round, undriven, last pass red | Attributing (`adopt_red`: attribute that pass's kept results against the base the round's record names) |
+//! | Idle | observe: open round not ours, undriven, phase opened, past `UNDRIVEN_GRACE_S`, fit, every tip, its record's base and the landing ref known, every open round below it this task's, the repo not stopped or cut-held, no `abandon` in flight and no round of this task waiting on `assemble`, `round_open` or `promote`, not adopted before while open (a reached `SPIRA_ROUND_MAX_OPEN` or a pause does not bar it) | Certifying (adopted as one of this task's rounds, on the base its record names, at its place in the queue's order; stacked when a live round is below it, as any of this task's above it then are; nothing is cut on that tick) |
 //! | Idle | observe: open round not ours, undriven, above the repo's first open round, fit, not adopted above | Idle (left alone until it is the first) |
 //! | Idle | observe: open round, undriven | Orphan (`orphan_step`: Wait / Redrive once / then `abandon` naming why, pace Infra) |
 //! | Idle | observe: `should_cut` = None | Idle (silent) |
@@ -316,6 +316,10 @@ pub struct Round {
     #[serde(default)]
     pub tips: Vec<String>,
     pub head: String,
+    /// The commit the queue built the round on (its record's `base`): the landing ref, or the head
+    /// of the round below a stacked one.
+    #[serde(default)]
+    pub base: String,
     pub worktree: String,
     /// A `round certify` or this task's own machine holds the round.
     pub driven: bool,
@@ -2148,12 +2152,12 @@ impl Machine<'_> {
         self.rc.adopted.retain(|id| repo.open_rounds().any(|r| &r.id == id));
         // An unnamed or just-promoted open round may be this task's own, and one being abandoned is over.
         let unsettled = live.iter().any(|r| matches!(r.state, State::Assembling | State::Opened | State::Promoting)) || repo.in_flight.as_ref().is_some_and(|f| f.iter().any(|e| e == ABANDON));
-        if repo.stopped || repo.cut_hold.is_some() || unsettled {
+        if repo.stopped || repo.cut_hold.is_some() || repo.base_sha.is_empty() || unsettled {
             return false;
         }
         // Only the first round not ours: this task can order a landing only behind rounds it carries.
         let Some(open) = repo.open_rounds().find(|r| !live.iter().any(|l| l.batch.as_ref() == Some(&r.id))) else { return false };
-        let ready = !open.driven && open.phase == "opened" && open.age_secs >= UNDRIVEN_GRACE_S && unfit_of(open, repo).is_none() && tips_known(open);
+        let ready = !open.driven && open.phase == "opened" && open.age_secs >= UNDRIVEN_GRACE_S && unfit_of(open, repo).is_none() && tips_known(open) && !open.base.is_empty();
         if !ready || self.rc.adopted.contains(&open.id) {
             return false;
         }
@@ -2162,11 +2166,9 @@ impl Machine<'_> {
             self.go(Trigger::Released);
         }
         self.rc.skip_why = None;
-        self.adopt(open, &self.rc.pace.core());
+        self.adopt(open, &self.rc.pace.core(), repo);
         self.rc.adopted.push(open.id.clone());
         self.rc.stacked = place_of(repo, live, &open.id) > 0;
-        self.rc.base = repo.base_sha.clone();
-        self.rc.landing_base = repo.base_sha.clone();
         self.go(Trigger::OpenRoundOpened);
         self.certify();
         true
@@ -2184,12 +2186,12 @@ impl Machine<'_> {
         }
         if open.phase == "green" {
             if self.adoptable(open, repo) {
-                self.adopt_green(open, st);
+                self.adopt_green(open, st, repo);
             }
             return;
         }
         if open.red && open.phase == "attributing" && self.adoptable(open, repo) {
-            self.adopt_red(open, st, &repo.base_sha);
+            self.adopt_red(open, st, repo);
             return;
         }
         let unfit = unfit_of(open, repo);
@@ -2222,20 +2224,22 @@ impl Machine<'_> {
         self.go(Trigger::OrphanStepped);
     }
 
-    /// The round is the repo's first open one and every member's tip is known.
+    /// The round is the repo's first open one, and every member's tip, its base and the landing ref
+    /// are known: an unread landing ref would leave a pause keyed to the round's base.
     fn adoptable(&self, open: &Round, repo: &Repo) -> bool {
-        tips_known(open) && is_first(open, repo)
+        tips_known(open) && !open.base.is_empty() && !repo.base_sha.is_empty() && is_first(open, repo)
     }
 
     /// A round no pass drives whose last pass ended red is attributed from that pass's kept results.
-    fn adopt_red(&mut self, open: &Round, st: &pace::State, base: &str) {
-        self.adopt(open, st);
-        self.rc.base = base.to_string();
+    fn adopt_red(&mut self, open: &Round, st: &pace::State, repo: &Repo) {
+        self.adopt(open, st, repo);
         self.go(Trigger::OpenRoundRed);
         self.attribute_after(kept_results_file(&open.id));
     }
 
-    fn adopt(&mut self, open: &Round, st: &pace::State) {
+    fn adopt(&mut self, open: &Round, st: &pace::State, repo: &Repo) {
+        self.rc.base = open.base.clone();
+        self.rc.landing_base = repo.base_sha.clone();
         self.rc.pace = Pace::of(&pace::State { orphan: String::new(), orphan_since: 0, redriven: String::new(), ..st.clone() }, &self.rc.pace);
         self.rc.batch = Some(open.id.clone());
         self.rc.members = open.members.iter().enumerate().map(|(i, id)| (id.clone(), open.tips[i].clone())).collect();
@@ -2245,8 +2249,8 @@ impl Machine<'_> {
     }
 
     /// A green round no pass drives is landed on the pass that made it green, as one of this task's own.
-    fn adopt_green(&mut self, open: &Round, st: &pace::State) {
-        self.adopt(open, st);
+    fn adopt_green(&mut self, open: &Round, st: &pace::State, repo: &Repo) {
+        self.adopt(open, st, repo);
         self.go(Trigger::OpenRoundGreen);
         self.land_now();
     }
@@ -3582,6 +3586,11 @@ pub mod edge {
         [format!("{bare}.service"), format!("{bare}-*.service")].iter().any(|glob| units.list(glob).map_or(true, |l| super::recert_live(&l)))
     }
 
+    /// The queue's open round as the task sees it, with what only the host can say about it.
+    pub fn round_of(r: io::OpenRound, driven: bool, unfit: Option<String>, gate_red: Vec<(String, String, String)>) -> Round {
+        Round { id: r.id, members: r.members, tips: r.tips, head: r.head, base: r.base, worktree: r.worktree, driven, red: r.red, red_suites: r.red_suites, ejected: r.ejected, ejected_by: r.ejected_by, age_secs: r.age_secs, unfit, phase: r.phase, gate_red }
+    }
+
     fn observe_repo(env: &Env, repo: &batcher_cut::io::Repo, units: Option<&dyn runtime::units::Units>) -> Result<Repo, String> {
         let sifted = io::sifted_tips(env)?;
         let (certified, left_out) = io::certified_pool_left_out(env, repo)?;
@@ -3593,7 +3602,7 @@ pub mod edge {
             let unfit = io::round_certifiable(env, repo, &r.id).err();
             let queue = landing_pass::gateq::GateQueue::new(&env.run);
             let gate_red = with_failing(io::gate_red_rows(env, &r.members), |id, tip| queue.failing_at(&repo.name, &format!("spira/{id}"), tip));
-            Round { id: r.id, members: r.members, tips: r.tips, head: r.head, worktree: r.worktree, driven, red: r.red, red_suites: r.red_suites, ejected: r.ejected, ejected_by: r.ejected_by, age_secs: r.age_secs, unfit, phase: r.phase, gate_red }
+            round_of(r, driven, unfit, gate_red)
         });
         let open_round = open.next();
         let open_above: Vec<Round> = open.collect();
@@ -4232,7 +4241,7 @@ pub mod edge {
         use crate::tasks::a::batcher_local::{decide, Carry, Repo, Round, Snapshot, LAND};
 
         fn lands(driven: bool) -> bool {
-            let open = Round { id: "b1".into(), members: vec!["m1".into()], tips: vec!["t1".into()], head: "h1".into(), phase: "green".into(), driven, ..Round::default() };
+            let open = Round { id: "b1".into(), members: vec!["m1".into()], tips: vec!["t1".into()], head: "h1".into(), base: "base".into(), phase: "green".into(), driven, ..Round::default() };
             let repo = Repo { open_round: Some(open), base_sha: "base".into(), ..Repo::default() };
             let snap = Snapshot { repos: [("r".to_string(), repo)].into(), now_ms: 1_000_000, ..Default::default() };
             decide(&Carry::default(), &snap).1.iter().any(|a| a.effect == LAND)

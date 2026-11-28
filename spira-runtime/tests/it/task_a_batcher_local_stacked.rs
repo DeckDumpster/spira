@@ -32,7 +32,7 @@ fn snap(open: Vec<Round>, now_ms: u64) -> Snapshot {
 }
 
 fn round(id: &str, members: &[&str], head: &str, age_secs: u64) -> Round {
-    Round { id: id.into(), members: members.iter().map(|m| m.to_string()).collect(), tips: vec![], head: head.into(), worktree: format!("w/{id}"), driven: true, red: false, red_suites: vec![], ejected: vec![], ejected_by: vec![], age_secs, unfit: None, phase: String::new(), gate_red: vec![] }
+    Round { id: id.into(), members: members.iter().map(|m| m.to_string()).collect(), tips: vec![], head: head.into(), base: "b1".into(), worktree: format!("w/{id}"), driven: true, red: false, red_suites: vec![], ejected: vec![], ejected_by: vec![], age_secs, unfit: None, phase: String::new(), gate_red: vec![] }
 }
 
 fn names(acts: &[Act]) -> Vec<&str> {
@@ -299,14 +299,16 @@ fn ours_certifying(p: &Policy) -> Carry {
 
 fn adopts_beside_ours(max_open: usize) -> Carry {
     let p = small(max_open);
-    let (carry, acts) = decide_with(&p, &ours_certifying(&p), &beside_ours(another_actors(30)));
+    let on_r1 = Round { base: "h1".into(), ..another_actors(30) };
+    let (carry, acts) = decide_with(&p, &ours_certifying(&p), &beside_ours(on_r1));
     assert!(names(&acts).contains(&CERTIFY), "{acts:?}");
     assert_eq!(leg_of(&acts, CERTIFY).batch, "rx");
     assert_eq!(leg_of(&acts, CERTIFY).wt, "w/rx");
     assert!([REDRIVE, ASSEMBLE, ABANDON].iter().all(|no| !names(&acts).contains(no)), "{acts:?}");
     let above = &carry.repos["spira"].above;
     assert_eq!((above.len(), above[0].batch.as_deref(), above[0].state, above[0].stacked), (1, Some("rx"), State::Certifying, true));
-    assert_eq!(above[0].base, "b1");
+    assert_eq!(above[0].base, "h1");
+    assert_eq!(above[0].landing_base, "b1");
     carry
 }
 
@@ -476,4 +478,37 @@ fn a_paused_repo_still_adopts_and_cuts_nothing() {
     world.repos.get_mut("spira").unwrap().paused = Some("hold: an operator".into());
     let (_, acts) = decide_with(&p, &Carry::default(), &world);
     assert_eq!(names(&acts), [CERTIFY], "{acts:?}");
+}
+
+#[test_id(t5gvsa0)]
+#[test]
+fn a_red_adopted_stacked_round_is_attributed_against_the_head_below_it() {
+    let carry = adopts_beside_ours(2);
+    let upper = carry.repos["spira"].above[0].leg.clone().unwrap();
+    let (_, acts) = ran(&carry, &upper, 1, "queue.sh round certify: round rx is RED at hx: test-a.sh\nred=test-a.sh\n");
+    let leg = leg_of(&acts, CORPUS);
+    assert_eq!((leg.why.as_str(), leg.batch.as_str(), leg.base.as_str()), (ATTRIBUTE, "rx", "h1"), "{acts:?}");
+}
+
+#[test_id(ts1rtl4)]
+#[test]
+fn a_round_whose_record_names_no_base_is_not_adopted() {
+    let p = small(2);
+    let unbased = Round { base: String::new(), ..another_actors(30) };
+    let (carry, acts) = decide_with(&p, &ours_certifying(&p), &beside_ours(unbased));
+    assert!(!names(&acts).contains(&CERTIFY), "{acts:?}");
+    assert!(carry.repos["spira"].above.is_empty());
+    adopts_beside_ours(2);
+}
+
+#[test_id(tzy2hfz)]
+#[test]
+fn no_round_is_adopted_while_the_landing_ref_is_unread() {
+    let p = small(2);
+    let mut world = beside_ours(Round { base: "h1".into(), ..another_actors(30) });
+    world.repos.get_mut("spira").unwrap().base_sha.clear();
+    let (carry, acts) = decide_with(&p, &ours_certifying(&p), &world);
+    assert!(!names(&acts).contains(&CERTIFY), "{acts:?}");
+    assert!(carry.repos["spira"].above.is_empty());
+    adopts_beside_ours(2);
 }
