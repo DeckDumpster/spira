@@ -37,6 +37,7 @@ members = [
     "spira-otel",
     "spira-pub",
     "spira-sub",
+    "channel-spike",
     "hel",
     "tsd-lifecycle-export",
     "work",
