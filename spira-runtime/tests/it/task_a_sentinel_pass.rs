@@ -868,13 +868,16 @@ pub(crate) mod observe_store_calls {
         counts
     }
 
-    /// Two observes over one unchanging store with a watching projection: what each one sent.
+    /// Two observes one cadence apart over one unchanging store, with a projection watching what
+    /// the runtime's does: what each one sent.
     fn two_passes(dir: &Path) -> [Vec<Vec<String>>; 2] {
         let fake = Arc::new(Fake::default());
         let sock = dir.join("lc.sock");
         serve(&sock, fake.clone());
-        let frozen = Instant::now();
-        let views = store_view::install(Arc::new(store_view::Projection::new(LcClient::socket(&sock), Duration::from_secs(30), Arc::new(move || frozen))));
+        let now = Arc::new(Mutex::new(Instant::now()));
+        let clock = now.clone();
+        let projection = store_view::Projection::new(LcClient::socket(&sock), Duration::from_secs(600), Arc::new(move || *clock.lock().unwrap()));
+        let views = store_view::install(Arc::new(projection.with_prefixes(&spira_runtime::tasks::watched_prefixes())));
         views.load().unwrap();
         let _watching = views.hold_watching();
         let units = Arc::new(ScriptedUnits::new(Arc::new(runtime::ports::WallClock)));
@@ -885,6 +888,7 @@ pub(crate) mod observe_store_calls {
             spira_runtime::tasks::a::sentinel_pass::observe(&e, &input).expect("the observe answers");
             let asked = fake.asked.lock().unwrap().clone();
             eprintln!("observe sent {:?}: {asked:?}", counted(&asked));
+            *now.lock().unwrap() += Duration::from_millis(spira_runtime::tasks::a::sentinel_pass::CADENCE_MS);
             asked
         })
     }
@@ -906,7 +910,7 @@ pub(crate) mod observe_store_calls {
             assert!(counted(&second).values().all(|n| *n == 0), "{:?}: {second:?}", counted(&second));
             let mut sent: Vec<String> = second.iter().map(|argv| argv.iter().take(2).take_while(|w| !w.starts_with('-')).cloned().collect::<Vec<_>>().join(" ")).collect();
             sent.sort();
-            assert_eq!(sent, ["audits", "reconcile-content", "section snapshot"], "all the unchanged pass sends: reads the view does not hold");
+            assert_eq!(sent, ["audits", "reconcile-content", "section snapshot"], "all the unchanged pass sends: two verbs the view never holds, and the section snapshot, aged out");
         });
     }
 }
