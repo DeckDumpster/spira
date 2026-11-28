@@ -35,6 +35,11 @@ the bead store, the lifecycle machine, git and a handful of files under `$SPIRA_
    measure scripts parse; event rows (`requeued`, `lapsed`, `reopen`) that `spira-claim`
    folds into attempts and poison.
 
+A builder takes its build folder after its claim, so it can lose a race for the last one. That
+refusal (`LeaseError::Ceiling`) is not a harness red: the bead is released, the `done` line
+reads `lease-refused`, the requeue `unjudged-lease-refused` keeps the claim from being charged,
+and neither RAPID-RECUR nor the harness-red streak reads the line.
+
 Sweep mode (`--sweep`) runs a persona without a bead: capacity/draining/paused checks, the
 ledger, the session — no claim, no worktree, no verdict.
 
