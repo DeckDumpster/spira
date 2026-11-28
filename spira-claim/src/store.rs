@@ -213,7 +213,7 @@ impl Store {
     }
 
     fn claim_view_asked(&self) -> Result<Vec<ViewRow>, String> {
-        let text = self.lc_run(&["claimable"]).map_err(|e| format!("spira-lc claimable: {e}"))?;
+        let text = self.read_held(&["claimable".to_string()]).map_err(|e| format!("spira-lc claimable: {e}"))?;
         let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("spira-lc claimable: not JSON: {e}"))?;
         let content_error = v.get("content_error").and_then(serde_json::Value::as_str).map(str::to_string);
         let beads = v.get("beads").and_then(serde_json::Value::as_array).ok_or("spira-lc claimable: no beads array")?;

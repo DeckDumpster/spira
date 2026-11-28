@@ -53,6 +53,11 @@ path = "tests/batcher_cut_blockers.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "cockpit_tiers_idle"
+path = "tests/cockpit_tiers_idle.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "store_quiet_tick"
 path = "tests/store_quiet_tick.rs"
 required-features = ["integration"]

@@ -1181,7 +1181,7 @@ fn strand_cfg() -> strand::config::Config {
 
 pub fn livelock_keys() -> Kv {
     let cfg = strand_cfg();
-    let door = spira_store::lc_call::LcClient::configured().unwrap_or_else(|e| {
+    let door = crate::store::door().unwrap_or_else(|e| {
         eprintln!("cockpit-collect: {e}");
         std::process::exit(1)
     });

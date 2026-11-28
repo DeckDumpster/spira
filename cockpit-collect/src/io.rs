@@ -210,7 +210,7 @@ pub fn content(args: &[&str]) -> Option<String> {
             return None;
         }
     }
-    let lc = spira_store::lc_call::LcClient::configured().ok()?;
+    let lc = crate::store::door().ok()?;
     let tries: u32 = env_or("SPIRA_BDQ_CONN_RETRIES", "2").parse().unwrap_or(2).max(1);
     content_on(&lc, args, tries)
 }
@@ -376,13 +376,17 @@ fn pane_ttl() -> i64 {
 
 /// The one unscoped read of live beads every label-scoped view is filtered from.
 fn live_base() -> Option<String> {
-    base_read("live", pane_ttl(), || {
+    let fetch = || {
         if fixture_mode() {
             let sim: Vec<&str> = LIVE_ARGS.iter().copied().filter(|a| *a != "--brief").collect();
             return read_json(&sim);
         }
-        live_on(&spira_store::lc_call::LcClient::configured().ok()?)
-    })
+        live_on(&crate::store::door().ok()?)
+    };
+    if crate::store::watched() {
+        return fetch();
+    }
+    base_read("live", pane_ttl(), fetch)
 }
 
 /// [`live_base`]'s store read through `lc`: brief rows, since no probe reads a body column.
@@ -420,8 +424,7 @@ pub fn history_beads(labels: &str, window_secs: i64) -> Option<String> {
         if fixture_mode() {
             return read_json(&["list", "--all", "--closed-after", "1970-01-01", "--json"]);
         }
-        let lc = spira_store::lc_call::LcClient::configured().ok()?;
-        history_on(&lc, labels, window_secs, now())
+        history_on(&crate::store::door().ok()?, labels, window_secs, now())
     });
     with_labels(merge_rows(&[live_base(), all]), labels)
 }

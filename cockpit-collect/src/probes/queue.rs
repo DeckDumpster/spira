@@ -135,7 +135,7 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
         let reg = io::repo_registry();
         reg.all().into_iter().filter(|r| reg.land(r) == "queue").filter_map(|r| reg.root(&r)).map(Into::into).collect()
     };
-    let (next_total, next) = match spira_store::lc_call::LcClient::configured() {
+    let (next_total, next) = match crate::store::door() {
         Ok(client) => {
             let lc = queue::real::RealLc { bin: None, client: Some(client) };
             let branches = |root: &std::path::Path| queue::real::RealGit.branches(root, "refs/heads/spira/");
