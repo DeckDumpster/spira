@@ -161,11 +161,12 @@ fn bdq_close(id: &str, reason: &str) -> bool {
     spira_store::lifecycle_row::close_landed(id, reason, "landing-pass").is_ok()
 }
 
-/// hel's `reap-landed-branch` (`[--status-from <f>] <id> <branch> <repo> <why>`), in-process
+/// hel's `reap-landed-branch` (`[--status-from $SPIRA_STATUS_FILE] <id> <branch> <repo> <why>`), in-process
 /// through `hel::verbs`: `Ok(())` sent, `Err(why)` otherwise (failed, refused or
 /// certified-queued — each "left for the Hel" from here).
-fn hel_reap(status_file: Option<&str>, id: &str, branch: &str, repo: &str, why: &str) -> Result<(), String> {
-    hel::verbs::reap_landed_branch(status_file, id, branch, repo, why)
+pub(crate) fn hel_reap(id: &str, branch: &str, repo: &str, why: &str) -> Result<(), String> {
+    let status_file = std::env::var("SPIRA_STATUS_FILE").ok();
+    hel::verbs::reap_landed_branch(status_file.as_deref(), id, branch, repo, why)
 }
 
 /// The push pass's close-on-land `<id> <sha>` — the only place a work bead is closed for a
@@ -192,8 +193,7 @@ pub fn close_on_land(git: &dyn Git, out: &Reporter, home: &Path, row: Option<&Be
     if !git.branch_exists(Path::new(&root), branch_label) {
         return;
     }
-    let status_file = std::env::var("SPIRA_STATUS_FILE").ok();
-    match hel_reap(status_file.as_deref(), id, branch_label, &root, &format!("landed at {shown_sha}")) {
+    match hel_reap(id, branch_label, &root, &format!("landed at {shown_sha}")) {
         Ok(()) => out.log(&format!("land-close {id}: reaped branch {branch_label}")),
         Err(e) => out.log(&format!("land-close {id}: branch {branch_label} not reaped: {e} — left for the Hel")),
     }

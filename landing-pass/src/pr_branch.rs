@@ -273,6 +273,9 @@ mod tests {
         }
         fn ask_budget_deferred(&self, _: &str, _: &str, _: u32) {}
         fn ask_repo_unreadable(&self, _: &str, _: &Path) {}
+        fn reap_landed(&self, _: &str, _: &str, _: &Path, _: &str) -> Result<(), String> {
+            Ok(())
+        }
         fn rebase(&self, br: &str, _: &str, _: &Path, _: &str) -> Rebase {
             self.rec(format!("rebase {br}"));
             self.rebase.borrow().clone().unwrap_or(Rebase { ok: true, ..Default::default() })

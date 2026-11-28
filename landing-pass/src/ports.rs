@@ -110,6 +110,8 @@ pub trait Lib {
     /// `spira-lc content-on-base <id> <proof> landing-pass`: the bead's work is already on the
     /// base. True when the store recorded it; a refusal is logged with its exit and stderr.
     fn content_on_base(&self, id: &str, proof: &str) -> bool;
+    /// hel's `reap-landed-branch` chokepoint; `Err` is why the branch was left.
+    fn reap_landed(&self, id: &str, branch: &str, repo: &Path, why: &str) -> Result<(), String>;
     fn prune_worktrees(&self, repo: &Path);
     /// `spira_ask_refresh_loop <repo> <name> <branch> <id> <base_fq> <n>` — needs_refresh's
     /// escalation when a pull request has been refreshed `SPIRA_PR_REFRESH_MAX` times.
