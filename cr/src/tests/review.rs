@@ -55,7 +55,7 @@ impl World {
         record::dir(self.run.path(), n).join("sealed.json")
     }
     fn open_and_seal(&mut self) -> Outcome {
-        assert_eq!(self.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+        stage_store(self);
         let c = self.comments(1);
         self.seal_with("001", &c)
     }
@@ -1088,4 +1088,142 @@ fn a_lib_root_is_searched_by_the_names_it_publicly_reexports() {
     let c = w.comments(1);
     assert_eq!(w.seal_with("001", &c).code, 0);
     assert!(w.cover().contains("- `census/tests/it.rs:2`"), "{}", w.cover());
+}
+
+fn stage_store(w: &World) {
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+}
+
+/// Rewrites the staged record, standing in for a stage made by an older cr.
+fn restage(w: &World, change: impl FnOnce(&mut record::Review)) {
+    let mut r = record::load(w.run.path(), 1).unwrap();
+    change(&mut r);
+    record::save(w.run.path(), &r).unwrap();
+}
+
+fn grow(r: &mut record::Review) {
+    r.unit.files.push(crate::units::UnitFile { path: "demo/src/sink.rs".into() });
+}
+
+fn paths_of(r: &record::Review) -> Vec<String> {
+    r.unit.files.iter().map(|f| f.path.clone()).collect()
+}
+
+#[test_id(tqhnk8w)]
+#[test]
+fn seal_posts_the_unit_this_cr_draws_not_the_longer_list_saved_at_stage() {
+    let mut w = world();
+    stage_store(&w);
+    restage(&w, grow);
+    let c = w.comments(1);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    let drawn = store_unit_files();
+    assert_eq!(drawn.len(), 3);
+    let posted: Vec<String> = w.margin.collection_posted(0).2.into_iter().map(|d| d.path).collect();
+    assert_eq!(posted, drawn);
+    assert_eq!(o.stderr, "cr: review 001 was staged with 4 files; cr draws 3 for module:demo/src/store.rs at c0ffee; posting 3\n");
+    assert_eq!(o.stdout, format!("{READER}\n"));
+    assert_eq!(paths_of(&record::load(w.run.path(), 1).unwrap()), drawn);
+    let row = ledger_rows(&w.ports).pop().unwrap();
+    assert_eq!(row.files.into_iter().map(|f| f.path).collect::<Vec<_>>(), drawn);
+}
+
+#[test_id(ti9wi2w)]
+#[test]
+fn seal_refuses_a_unit_id_this_cr_no_longer_draws_and_posts_nothing() {
+    let mut w = world();
+    stage_store(&w);
+    restage(&w, |r| r.unit.id = "module:demo/src/gone.rs".into());
+    let c = w.comments(1);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 2, "{}", o.stderr);
+    assert!(o.stderr.contains("unit module:demo/src/gone.rs is not drawn at c0ffee"), "{}", o.stderr);
+    assert!(o.stderr.contains("cr close --review 001") && o.stderr.contains("cr open"), "{}", o.stderr);
+    assert_eq!(w.margin.collections_posted(), 0);
+    assert!(!w.sealed_path(1).exists());
+    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged);
+}
+
+#[test_id(taknbgb)]
+#[test]
+fn a_resumed_seal_refuses_a_stored_comment_on_a_file_the_unit_no_longer_holds() {
+    for half in ["first look", "fresh look"] {
+        let mut w = world();
+        stage_store(&w);
+        restage(&w, grow);
+        // The older cr: it stored the sealed review, then never reached the reader.
+        let c = w.comments(1);
+        let mut v: serde_json::Value = serde_json::from_str(&c).unwrap();
+        let at = if half == "first look" { "lens" } else { "fresh" };
+        v[at][0]["path"] = "demo/src/sink.rs".into();
+        let stored = serde_json::json!({"lens": v["lens"], "fresh": v["fresh"]}).to_string();
+        std::fs::write(w.sealed_path(1), &stored).unwrap();
+        restage(&w, |r| r.sealed_sha256 = Some(sha256(stored.as_bytes())));
+        let o = w.seal_with("001", &v.to_string());
+        assert_eq!(o.code, 2, "{half}: {}", o.stderr);
+        assert!(o.stderr.contains("demo/src/sink.rs"), "{}", o.stderr);
+        assert!(o.stderr.contains("cr close --review 001") && o.stderr.contains("cr open"), "{}", o.stderr);
+        assert_eq!(w.margin.collections_posted(), 0);
+        assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged);
+    }
+}
+
+#[test_id(tv03u8c)]
+#[test]
+fn a_seal_resumed_after_the_collection_was_posted_keeps_the_list_the_reader_holds() {
+    let mut w = world();
+    stage_store(&w);
+    w.margin.fail_comment_number(1);
+    let c = w.comments(1);
+    assert_eq!(w.seal_with("001", &c).code, 1);
+    // The record an older cr left beside its posted collection holds that longer list.
+    restage(&w, grow);
+    let saved = paths_of(&record::load(w.run.path(), 1).unwrap());
+    let o = w.seal_with("001", &c);
+    assert_eq!((o.code, o.stderr.as_str()), (0, ""));
+    assert_eq!(paths_of(&record::load(w.run.path(), 1).unwrap()), saved);
+    assert_eq!(ledger_rows(&w.ports).pop().unwrap().files.into_iter().map(|f| f.path).collect::<Vec<_>>(), saved);
+    assert_eq!(w.margin.collections_posted(), 1);
+}
+
+#[test_id(tny6i39)]
+#[test]
+fn a_review_staged_and_sealed_by_one_cr_seals_with_empty_stderr() {
+    let o = world().open_and_seal();
+    assert_eq!((o.code, o.stderr.as_str()), (0, ""));
+}
+
+#[test_id(t9xjvxx)]
+#[test]
+fn a_seal_that_failed_after_rewriting_the_list_still_reports_the_change_when_rerun() {
+    for posted_before_failing in [false, true] {
+        let mut w = world();
+        stage_store(&w);
+        restage(&w, grow);
+        if posted_before_failing {
+            w.margin.fail_comment_number(1);
+        } else {
+            w.margin.go_down();
+        }
+        let c = w.comments(1);
+        assert_eq!(w.seal_with("001", &c).code, 1);
+        w.margin.come_up();
+        let o = w.seal_with("001", &c);
+        assert_eq!(o.code, 0, "{}", o.stderr);
+        assert!(o.stderr.contains("staged with 4 files; cr draws 3"), "{posted_before_failing}: {:?}", o.stderr);
+    }
+}
+
+#[test_id(tvt0amx)]
+#[test]
+fn a_resumed_seal_stored_as_one_undivided_array_is_not_refused_for_its_missing_half() {
+    let w = world();
+    stage_store(&w);
+    let stored = r#"[{"path":"demo/src/store.rs","line":1,"body":"old"}]"#;
+    std::fs::write(w.sealed_path(1), stored).unwrap();
+    std::fs::write(record::dir(w.run.path(), 1).join("cover.json"), format!(r#"{{"does":"{DOES}","look_first":"{LOOK}"}}"#)).unwrap();
+    restage(&w, |r| r.sealed_sha256 = Some(sha256(stored.as_bytes())));
+    let o = w.cr(&["seal", "--review", "001"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
 }
