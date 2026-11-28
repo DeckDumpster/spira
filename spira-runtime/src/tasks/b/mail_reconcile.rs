@@ -7,8 +7,9 @@
 //!
 //! - Cadence **60 s** (unit: `OnBootSec=1min`, `OnUnitActiveSec=1min`, `AccuracySec=10s`,
 //!   `Persistent=true` — which does nothing on a monotonic timer). First tick 60 s after boot.
-//! - Also woken by `mail.arrived` (the S9 source replacing mail-deliver) on any mailbox: a
-//!   delivery observes at once, leaving the cadence as it was.
+//! - Also woken by `mail.arrived` (the S9 source replacing mail-deliver): a delivery observes
+//!   the unread mail at once, leaving the cadence as it was. Replies are read only on the
+//!   cadence, which is what [`MAX_ATTEMPTS`] counts.
 //! - Single-flight: one observe in flight; a tick that lands while one is outstanding is dropped
 //!   (the next tick repeats the whole pass anyway, `reconcile.rs:195`).
 //!
@@ -172,6 +173,8 @@ pub type Mailboxes = BTreeMap<String, BTreeMap<String, Value>>;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ObserveIn {
+    /// A delivery's observe: the unread mail alone, no replies.
+    pub mail_only: bool,
     pub readers: String,
     pub published: Mailboxes,
 }
@@ -293,10 +296,10 @@ fn failure(request: &EffectSpec, body: &str) -> String {
     if request.name == PUBLISH { request.input.clone() } else { body.to_string() }
 }
 
-fn probe_input(cfg: &Cfg, carry: &Carry) -> String {
+fn probe_input(cfg: &Cfg, carry: &Carry, mail_only: bool) -> String {
     let mut published = carry.published.clone();
     published.values_mut().for_each(|ids| ids.retain(|_, v| !v.is_null()));
-    serde_json::to_string(&ObserveIn { readers: cfg.get(READERS_KEY).cloned().unwrap_or_default(), published }).unwrap_or_default()
+    serde_json::to_string(&ObserveIn { mail_only, readers: cfg.get(READERS_KEY).cloned().unwrap_or_default(), published }).unwrap_or_default()
 }
 
 /// The acts one reply still needs, by the branch structure of `mail::reconcile::apply`: each
@@ -429,7 +432,8 @@ pub fn observe(e: &crate::Effects, input: &str) -> Result<String, String> {
         e.watch_track(&watch_topics::carried_under(&mail_prefix(&mailbox), published));
     }
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let snapshot = json!({ "replies": mail::reconcile::pending(&e.world.mail, &ledger(e), now), "unread": unread(&asked.readers, &e.world.mail) });
+    let replies = if asked.mail_only { vec![] } else { mail::reconcile::pending(&e.world.mail, &ledger(e), now) };
+    let snapshot = json!({ "replies": replies, "unread": unread(&asked.readers, &e.world.mail) });
     serde_json::to_string(&snapshot).map_err(|e| e.to_string())
 }
 
@@ -485,10 +489,10 @@ super::hosted!(MailReconcile, extra = {
             return vec![];
         }
         let carry = crate::watchers::carried::<Carry>(view, &own, STATE);
-        vec![Command::Probe(EffectSpec::probe(OBSERVE, probe_input(&self.cfg, &carry), SPEC.probe_deadline_ms))]
+        vec![Command::Probe(EffectSpec::probe(OBSERVE, probe_input(&self.cfg, &carry, true), SPEC.probe_deadline_ms))]
     }
 
     fn probe_input(cfg: &Cfg, carry: &Carry) -> String {
-        probe_input(cfg, carry)
+        probe_input(cfg, carry, false)
     }
 }, failure = failure);

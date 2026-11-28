@@ -87,10 +87,28 @@ pub fn stand(row: &str, published: &mut Published, held: &[Standing], now_ms: u6
 
 /// The input of one publish: the values to retain and the subjects to forget under `prefix`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "Journaled<V>", bound(deserialize = "V: Deserialize<'de>"))]
 pub struct Change<V = Condition> {
     pub prefix: String,
     pub set: BTreeMap<String, V>,
     pub clear: Vec<String>,
+}
+
+/// A [`Change`] as a journal may hold it: one asked before topics took a prefix names its
+/// watch `row`, and may still be owed after the upgrade's restart.
+#[derive(Deserialize)]
+struct Journaled<V> {
+    #[serde(default)]
+    prefix: String,
+    row: Option<String>,
+    set: BTreeMap<String, V>,
+    clear: Vec<String>,
+}
+
+impl<V> From<Journaled<V>> for Change<V> {
+    fn from(j: Journaled<V>) -> Change<V> {
+        Change { prefix: j.row.map_or(j.prefix, |row| prefix(&row)), set: j.set, clear: j.clear }
+    }
 }
 
 /// What an observe was last told had been published under `prefix`.
@@ -190,6 +208,9 @@ fn topic(prefix: &str, subject: &str) -> String {
 struct State {
     /// Prefix → subject → the retained value.
     held: BTreeMap<String, BTreeMap<String, Value>>,
+    /// Every topic this process has set or cleared. A carry says nothing new about one: it may
+    /// be older than the clear.
+    touched: BTreeSet<String>,
     /// Topics cleared here that the broker has not been seen to take.
     uncleared: BTreeSet<String>,
 }
@@ -198,6 +219,8 @@ pub struct WatchTopics {
     publisher: Publisher,
     state: Arc<Mutex<State>>,
     asked_to_connect: AtomicBool,
+    /// Held across one track or publish, so a clear never overtakes the set it follows.
+    sending: Mutex<()>,
 }
 
 fn lock(m: &Mutex<State>) -> MutexGuard<'_, State> {
@@ -221,36 +244,42 @@ impl WatchTopics {
                 let _ = again.clear(cleared);
             }
         });
-        WatchTopics { publisher, state, asked_to_connect: AtomicBool::new(false) }
+        WatchTopics { publisher, state, asked_to_connect: AtomicBool::new(false), sending: Mutex::new(()) }
     }
 
-    /// Takes the carried state an observe was asked with. Whatever of it is not already held is
-    /// published, so a restarted process says it again.
+    /// Takes the carried state an observe was asked with. Whatever of it this process has never
+    /// said is published, so a restarted process says it again.
     pub fn track(&self, input: &str) {
         let Ok(Carried { prefix, published }) = serde_json::from_str::<Carried<Value>>(input) else { return };
-        let held = lock(&self.state).held.get(&prefix).cloned().unwrap_or_default();
-        let unsaid: Vec<(&String, &Value)> = published.iter().filter(|(s, v)| held.get(*s) != Some(*v)).collect();
+        let _turn = self.turn();
+        let unsaid: Vec<(String, Value)> = {
+            let state = lock(&self.state);
+            published.into_iter().filter(|(s, _)| !state.touched.contains(&topic(&prefix, s))).collect()
+        };
         if !unsaid.is_empty() && !self.asked_to_connect.swap(true, Ordering::SeqCst) {
             // A failure is logged by the publisher, which connects when the broker appears.
             let _ = self.publisher.connect();
         }
-        for (subject, value) in unsaid {
+        for (subject, value) in &unsaid {
             let _ = self.publisher.publish(Class::State, &topic(&prefix, subject), value);
         }
-        let mut state = lock(&self.state);
-        for subject in published.keys() {
-            state.uncleared.remove(&topic(&prefix, subject));
-        }
         // Held only after the publishes: the connect hook takes this lock while they wait.
-        state.held.insert(prefix, published);
+        let mut state = lock(&self.state);
+        state.touched.extend(unsaid.iter().map(|(s, _)| topic(&prefix, s)));
+        state.held.entry(prefix).or_default().extend(unsaid);
         drop(state);
         self.send_clears();
+    }
+
+    fn turn(&self) -> MutexGuard<'_, ()> {
+        self.sending.lock().unwrap_or_else(|e| e.into_inner()) // loop-safe: taken only by effects on the pool
     }
 
     /// Publishes the [`Change`] in `input`. A broker that cannot be reached is logged by the
     /// publisher and is not the effect's failure: the state goes out on reconnect.
     pub fn publish(&self, input: &str) -> Result<String, String> {
         let Change { prefix, set, clear } = serde_json::from_str::<Change<Value>>(input).map_err(|e| e.to_string())?;
+        let _turn = self.turn();
         {
             // A clear is recorded before anything is sent, so a connect on the way cannot put
             // the old value back.
@@ -264,6 +293,7 @@ impl WatchTopics {
             for subject in set.keys() {
                 state.uncleared.remove(&topic(&prefix, subject));
             }
+            state.touched.extend(set.keys().chain(&clear).map(|s| topic(&prefix, s)));
         }
         let sent = set.iter().filter(|(s, v)| self.publisher.publish(Class::State, &topic(&prefix, s), v).is_ok()).count();
         let said = format!("published {sent} of {} value(s), {} clear(s)", set.len(), clear.len());

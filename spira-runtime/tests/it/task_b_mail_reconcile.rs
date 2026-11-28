@@ -2,6 +2,10 @@
 //! `wiki/projects/spira/designs/tasks/mail-reconcile.md`. Red until the task is ported.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+
+use runtime::taskrig::TaskRig;
 
 use serde_json::{json, Value};
 use spira_runtime::tasks::b::kit::{names, testing as t, Input};
@@ -125,4 +129,31 @@ fn unread_mail_is_set_once_and_cleared_when_read_and_a_failed_publish_is_said_ag
     assert!(quiet.is_empty(), "{quiet:?}");
     let (_, acts) = task::decide(&h.cfg, &owed, &unread(&[]), 5 * MIN).unwrap();
     assert_eq!(change(&acts)["clear"], json!(["m1"]), "a clear that did not land is sent again");
+}
+
+#[test_id(t772ugl)]
+#[test]
+fn a_publish_the_engine_saw_fail_is_asked_for_again_by_the_next_pass() {
+    let m1 = BTreeMap::from([("concierge".to_string(), BTreeMap::from([("m1".to_string(), json!({"from": "a"}))]))]);
+    let answers = vec![json(&Snapshot { unread: m1, ..Default::default() }), json(&Snapshot::default()), json(&Snapshot::default())];
+    let asked = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let seen = asked.clone();
+    let passes = AtomicUsize::new(0);
+    // The second publish, the clear that empties the mailbox, fails.
+    let mut rig = TaskRig::new(1, t::handler::<H>(SET).registration())
+        .unwrap()
+        .double(task::OBSERVE, move |_| Ok(answers[passes.fetch_add(1, Ordering::SeqCst).min(answers.len() - 1)].clone()))
+        .double(task::PUBLISH, move |input| {
+            let mut seen = seen.lock().unwrap();
+            seen.push(serde_json::from_str(input).unwrap());
+            if seen.len() == 2 { Err("lost".into()) } else { Ok(String::new()) }
+        });
+    let (_, stream, boot) = H::boot();
+    rig.tick(stream, boot).unwrap();
+    for _ in 0..2 {
+        rig.advance(MIN).unwrap();
+    }
+    t::assert_ported(&rig, task::STREAM);
+    let clears: Vec<Value> = asked.lock().unwrap().iter().skip(1).map(|c| c["clear"].clone()).collect();
+    assert_eq!(clears, [json!(["m1"]), json!(["m1"])]);
 }

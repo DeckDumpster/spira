@@ -427,3 +427,37 @@ fn a_publish_with_no_broker_configured_says_so_and_is_no_failure() {
     let input = json!({"prefix": "watch/claim-count", "set": {}, "clear": ["sp-a"]}).to_string();
     assert_eq!(fx.run("k", &EffectSpec::keyed(WATCH_PUBLISH, "k", input, 1000)), Ok("not published: no broker configured".to_string()));
 }
+
+fn publisher_on(broker: &Broker) -> WatchTopics {
+    WatchTopics::new(Publisher::with("spira-runtime", Options::new(broker.socket(), Arc::new(VirtualClock::new(0)), Box::new(SeededRng::new(1)))).unwrap())
+}
+
+/// An observe asked before a clear can be run after it.
+#[test_id(tdj1tu9)]
+#[test]
+fn a_carry_older_than_a_clear_does_not_bring_the_value_back() {
+    let _env = testkit::env_read();
+    let broker = Broker::up();
+    let topics = publisher_on(&broker);
+    let value = json!({"level": "P2", "text": "x", "since": 1, "at": 1});
+    topics.publish(&json!({"prefix": "watch/claim-count", "set": {"sp-a": value}, "clear": []}).to_string()).unwrap();
+    topics.publish(&json!({"prefix": "watch/claim-count", "set": {}, "clear": ["sp-a"]}).to_string()).unwrap();
+    topics.track(&json!({"prefix": "watch/claim-count", "published": {"sp-a": value}}).to_string());
+    topics.flush(FAILSAFE).unwrap();
+    assert_eq!(broker.retained("watch/#"), vec![]);
+}
+
+/// A publish journaled by the release before this one names its row, not a prefix.
+#[test_id(tiurovs)]
+#[test]
+fn a_publish_journaled_under_a_row_name_still_reaches_the_rows_topics() {
+    let _env = testkit::env_read();
+    let broker = Broker::up();
+    let topics = publisher_on(&broker);
+    let value = json!({"level": "P2", "text": "x", "since": 1, "at": 1});
+    topics.publish(&json!({"row": "claim-count", "set": {"sp-a": value}, "clear": []}).to_string()).unwrap();
+    topics.flush(FAILSAFE).unwrap();
+    assert_eq!(broker.retained("watch/#").into_iter().map(|(t, _)| t).collect::<Vec<_>>(), ["watch/claim-count/sp-a"]);
+    let old: spira_runtime::watch_topics::Change = serde_json::from_value(json!({"row": "claim-count", "set": {}, "clear": ["sp-a"]})).unwrap();
+    assert_eq!(old.prefix, "watch/claim-count");
+}
