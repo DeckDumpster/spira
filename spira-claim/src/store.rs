@@ -12,6 +12,20 @@ use spira_store::lc_call::{LcClient, LcError};
 
 use crate::rank::{self, LifecycleRow, ReadyRow};
 
+thread_local! {
+    static CLAIM_VIEW_FROM_VIEWS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `f` with this thread's claim views answered by the process's watched views. For a reader that
+/// only counts: the verdict also rests on stops and runes no store key reports, so a held one can
+/// be [`store_view::WINDOW_HOLD`] behind them, which a reader that acts must not be.
+pub fn claim_view_from_views<T>(f: impl FnOnce() -> T) -> T {
+    let before = CLAIM_VIEW_FROM_VIEWS.with(|c| c.replace(true));
+    let out = f();
+    CLAIM_VIEW_FROM_VIEWS.with(|c| c.set(before));
+    out
+}
+
 /// Ids per `content events` request and per `plan items --ids` call: keeps the argv bounded.
 pub const EVENT_CHUNK: usize = 200;
 pub const LIST_CHUNK: usize = 100;
@@ -229,7 +243,9 @@ impl Store {
     }
 
     fn claim_view_asked(&self) -> Result<Vec<ViewRow>, String> {
-        let text = self.lc_run(&["claimable"]).map_err(|e| format!("spira-lc claimable: {e}"))?;
+        let argv = ["claimable".to_string()];
+        let text = if CLAIM_VIEW_FROM_VIEWS.with(std::cell::Cell::get) { self.read_held(&argv) } else { self.lc_run(&argv) };
+        let text = text.map_err(|e| format!("spira-lc claimable: {e}"))?;
         let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("spira-lc claimable: not JSON: {e}"))?;
         let content_error = v.get("content_error").and_then(serde_json::Value::as_str).map(str::to_string);
         let beads = v.get("beads").and_then(serde_json::Value::as_array).ok_or("spira-lc claimable: no beads array")?;

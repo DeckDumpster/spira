@@ -210,7 +210,7 @@ pub fn content(args: &[&str]) -> Option<String> {
             return None;
         }
     }
-    let lc = spira_store::lc_call::LcClient::configured().ok()?;
+    let lc = crate::store::door().ok()?;
     let tries: u32 = env_or("SPIRA_BDQ_CONN_RETRIES", "2").parse().unwrap_or(2).max(1);
     content_on(&lc, args, tries)
 }
@@ -376,13 +376,17 @@ fn pane_ttl() -> i64 {
 
 /// The one unscoped read of live beads every label-scoped view is filtered from.
 fn live_base() -> Option<String> {
-    base_read("live", pane_ttl(), || {
+    let fetch = || {
         if fixture_mode() {
             let sim: Vec<&str> = LIVE_ARGS.iter().copied().filter(|a| *a != "--brief").collect();
             return read_json(&sim);
         }
-        live_on(&spira_store::lc_call::LcClient::configured().ok()?)
-    })
+        live_on(&crate::store::door().ok()?)
+    };
+    if store_view::watched() {
+        return fetch();
+    }
+    base_read("live", pane_ttl(), fetch)
 }
 
 /// [`live_base`]'s store read through `lc`: brief rows, since no probe reads a body column.
@@ -411,18 +415,28 @@ pub fn history_on(lc: &spira_store::lc_call::LcClient, labels: &str, window_secs
     content_on(lc, &args, 1).map(|s| json_only(&s).to_string())
 }
 
+/// How far a day window's start moves in one step. A start that moved every second would make
+/// each read a new one the views could not hold; the callers count within their own window.
+pub const WINDOW_STEP_SECS: i64 = 3_600;
+
+/// `now` at the last whole [`WINDOW_STEP_SECS`], so a window reaches no less far back than asked.
+pub fn window_end(now: i64) -> i64 {
+    now - now.rem_euclid(WINDOW_STEP_SECS)
+}
+
 /// Beads carrying `labels` updated inside `window_secs`, closed ones included, for the probes
-/// that count history. Read at most once per `SPIRA_HISTORY_READ_TTL` per label set and window.
+/// that count history. A watched process's views hold the read until a planning write; any other
+/// reads it at most once per `SPIRA_HISTORY_READ_TTL` per label set and window.
 pub fn history_beads(labels: &str, window_secs: i64) -> Option<String> {
     let ttl = ttl_from_env("SPIRA_HISTORY_READ_TTL", HISTORY_TTL_SECS);
     let key = format!("history-{}-{window_secs}", labels.replace(|c: char| !c.is_ascii_alphanumeric(), "_"));
-    let all = base_read(&key, ttl, || {
+    let fetch = || {
         if fixture_mode() {
             return read_json(&["list", "--all", "--closed-after", "1970-01-01", "--json"]);
         }
-        let lc = spira_store::lc_call::LcClient::configured().ok()?;
-        history_on(&lc, labels, window_secs, now())
-    });
+        history_on(&crate::store::door().ok()?, labels, window_secs, window_end(now()))
+    };
+    let all = if store_view::watched() { fetch() } else { base_read(&key, ttl, fetch) };
     with_labels(merge_rows(&[live_base(), all]), labels)
 }
 
@@ -636,6 +650,14 @@ mod tests {
         assert_eq!(unit_active_on(&units, "spira-nothing.timer"), Some(false), "an unknown unit is inactive, as is-active said");
         assert_eq!(unit_active_on(&units, "?"), None);
         assert!(units.calls().is_empty(), "a read starts and stops nothing");
+    }
+
+    #[test_id(tp4qd3l)]
+    #[test]
+    fn a_history_window_start_holds_within_the_hour_and_never_shortens_the_window() {
+        let hour = 3_600 * 500_000;
+        assert_eq!([hour, hour + 1, hour + 3_599].map(window_end), [hour; 3], "one read within the hour");
+        assert_eq!(window_end(hour + 3_600), hour + 3_600, "the next hour is a new read");
     }
 
     #[test_id(tzzzsms)]
