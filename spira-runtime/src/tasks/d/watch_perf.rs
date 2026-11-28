@@ -28,12 +28,14 @@
 //!
 //! | Effect | Class | Deadline | Idempotency key | Refuses |
 //! |---|---|---|---|---|
+//! | `watch.publish` (shared) | host | 10 s | `watch/perf-watch/<pass ms>/<fnv1a(input)>` | — |
 //! | `watch.perf.observe` (probe) | store (host until S7) | 35 s (6 probes × 5 s + stats) | — (probe, not journaled) | a malformed probe file, at boot (`lib.rs:494`) |
 //! | `inbox.append` (shared) | host | 10 s | `watch.perf:<alarm_key>:<printed_at>` | an empty line |
 //! | `watch.perf.log` | host | 5 s | `watch.perf:log:<alarm_key>:<printed_at>` | a path outside `SPIRA_RUN` |
 //! | `watch.perf.slow_sample` | host | 5 s | `watch.perf:slow:<probe>:<epoch>` | a path outside `SPIRA_RUN` |
 //! | `watch.perf.metrics` | host | 5 s | `watch.perf:metrics:<epoch>` | nothing; a lost push is a gap in the series, not a failure |
 //!
+//! - **`watch.publish`** holds each standing alarm on `watch/perf-watch/<probe>`, whether or not this pass prints it. The value reads as the line last printed. It is cleared when a pass measures the probe and `settle` forgets the alarm; a probe cut at its deadline keeps what it held.
 //! - **`inbox.append`** carries `<UTC ISO> [watch:perf-watch] <alarm>` (`inbox_line`, `lib.rs:226-239`, test `lib.rs:350-352`). The alarm is one of `PERF SLOW <name> <ms>ms (limit <L>ms) phases <p|unreported> [rest=<ms>ms; slowest: <phase> <ms>ms (<words>)]; top callers: <c1, c2, c3|unknown>`, `PERF UNRUNNABLE <name>: <err> (after <ms>ms; phases …)` (`lib.rs:116-117`), or `PERF TIMEOUT <name> timed out at <d>ms twice in a row (limit <L>ms); top callers: <c…>` when a probe was cut at its deadline on two passes running. The shared runner adds the newline, so the task drops the trailing `\n` that `inbox_line` appends.
 //! - **`watch.perf.log`** appends the bare alarm line to `run/perf-watch.log`, the log row `spira/watchers:122` that the unit's stdout fills today (`main.rs:144`).
 //! - **`watch.perf.slow_sample`** appends `<epoch>\t<probe>\t<ms>\t<phases>\trest=<ms>\t<top callers>` to `run/perf-slow.log` (`lib.rs:128-141`, `main.rs:147-151`).
@@ -69,7 +71,8 @@ use serde::{Deserialize, Serialize};
 use spira_config::process::{cfg, cfg_parse};
 
 use super::pattern;
-use crate::watchers::INBOX_APPEND;
+use crate::watch_topics::{self, Published};
+use crate::watchers::{carried, INBOX_APPEND, WATCH_PUBLISH};
 
 pub const NAME: &str = "watch.perf";
 pub const STREAM: &str = "watch.perf";
@@ -79,7 +82,7 @@ pub const OBSERVE: &str = "watch.perf.observe";
 pub const LOG: &str = "watch.perf.log";
 pub const SLOW_SAMPLE: &str = "watch.perf.slow_sample";
 pub const METRICS: &str = "watch.perf.metrics";
-pub const EFFECTS: &[&str] = &[OBSERVE, INBOX_APPEND, LOG, SLOW_SAMPLE, METRICS];
+pub const EFFECTS: &[&str] = &[OBSERVE, INBOX_APPEND, LOG, SLOW_SAMPLE, METRICS, WATCH_PUBLISH];
 pub const KEYS: &[&str] = &["SPIRA_READ_WATCH_BUDGET_MS", "SPIRA_READ_WATCH_INTERVAL", "SPIRA_READ_WATCH_REMIND", "SPIRA_CONCIERGE_INBOX", "SPIRA_METRICS_ENDPOINT", "SPIRA_RUN"];
 /// The tag `inbox_line` wrote (`perf-watch/src/lib.rs:226-239`).
 pub const INBOX_TAG: &str = "perf-watch";
@@ -142,6 +145,7 @@ pub struct Carry {
     pub sample: BTreeMap<String, u64>,
     pub timed_out: BTreeSet<String>,
     pub record: Vec<Timing>,
+    pub published: Published,
 }
 
 /// The carry as the library's health: no pass yet is a default carry, and no stats sample yet
@@ -164,6 +168,22 @@ fn spec(name: &str, key: String, input: String, deadline_ms: u64) -> EffectSpec 
     EffectSpec::keyed(name, key, input, deadline_ms)
 }
 
+/// A probe's alarm is its condition: it reads as the line last printed, so the times of a
+/// standing alarm this pass kept quiet about change nothing. A probe cut at its deadline measured
+/// nothing: with no alarm for it this pass, what it held is not over.
+fn conditions(published: &Published, pass: &perf_watch::Pass) -> BTreeMap<String, String> {
+    let cut = pass.timings.iter().filter(|t| t.timed_out_ms.is_some()).filter_map(|t| Some((t.name.clone(), published.get(&t.name)?.text.clone())));
+    let mut out: BTreeMap<String, String> = cut.collect();
+    out.extend(pass.standing
+        .iter()
+        .map(|line| {
+            let probe = perf_watch::alarm_probe(line).unwrap_or("all");
+            let held = published.get(probe).filter(|h| !pass.lines.contains(line) && perf_watch::alarm_key(&h.text) == perf_watch::alarm_key(line));
+            (probe.to_string(), held.map_or_else(|| line.clone(), |h| h.text.clone()))
+        }));
+    out
+}
+
 /// `run_pass` with the probing lifted out: the next carry and the writes, among them each
 /// `inbox.append` line as `<UTC ISO> [watch:perf-watch] <alarm>`. The library's `settle` is the
 /// decision; the metrics push is last, and the handler sends it as a memory-only probe.
@@ -176,8 +196,9 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     }
     let cur = (!snap.callers.is_empty()).then(|| snap.callers.clone());
     let pass = perf_watch::settle(&settings, &prior, now, snap.timings.iter().map(to_lib).collect(), cur);
-    let next = Carry { last_pass: now, alarms: pass.health.alarms, sample_at: pass.health.sample_at.unwrap_or(0), sample: pass.health.sample, timed_out: pass.health.timed_out, record: snap.timings.clone() };
-    let mut acts = vec![];
+    let (published, change) = watch_topics::settle(INBOX_TAG, &carry.published, conditions(&carry.published, &pass), now_ms);
+    let next = Carry { last_pass: now, alarms: pass.health.alarms, sample_at: pass.health.sample_at.unwrap_or(0), sample: pass.health.sample, timed_out: pass.health.timed_out, record: snap.timings.clone(), published };
+    let mut acts: Vec<EffectSpec> = change.map(|c| watch_topics::effects(c, now_ms)).unwrap_or_default();
     for (i, l) in pass.lines.iter().enumerate() {
         acts.push(spec(INBOX_APPEND, format!("watch.perf:{now}:{i}"), perf_watch::inbox_line(now, l).trim_end().to_string(), WRITE_DEADLINE_MS));
         acts.push(spec(LOG, format!("watch.perf:log:{now}:{i}"), l.clone(), WRITE_DEADLINE_MS));
@@ -242,7 +263,8 @@ fn time_one(lc: &Result<spira_store::lc_call::LcClient, String>, argv: &[String]
 }
 
 /// `watch.perf.observe`: every probe timed, then the store's caller counts.
-pub fn observe(_: &crate::Effects, _: &str, _: &EffectSpec) -> Result<String, String> {
+pub fn observe(effects: &crate::Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+    effects.watch_track(&spec.input);
     let lc = spira_store::lc_call::LcClient::configured();
     let timings = probes()?.iter().map(|p| Timing { name: p.name.clone(), ..time_one(&lc, &p.argv, &runtime::ports::SysProc, PROBE_DEADLINE) }).collect();
     let callers = lc.as_ref().ok().and_then(|c| c.call(&["stats"]).ok()).map(|r| perf_watch::caller_counts(&r.out)).unwrap_or_default();
@@ -296,11 +318,11 @@ impl WatchPerf {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("last_pass"), runtime::rows::Part::Map { name: "alarms", drop: &[] }, runtime::rows::Part::Field("sample_at"), runtime::rows::Part::Map { name: "sample", drop: &[] }, runtime::rows::Part::Field("timed_out")];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("last_pass"), runtime::rows::Part::Map { name: "alarms", drop: &[] }, runtime::rows::Part::Field("sample_at"), runtime::rows::Part::Map { name: "sample", drop: &[] }, runtime::rows::Part::Field("timed_out"), runtime::rows::Part::Map { name: "published", drop: &[] }];
 
 impl Handler for WatchPerf {
     fn interests(&self) -> &[EventKindTag] {
-        &[TICK, EFFECT_SUCCEEDED]
+        &[TICK, EFFECT_SUCCEEDED, EFFECT_TIMED_OUT]
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
@@ -308,7 +330,11 @@ impl Handler for WatchPerf {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
+            let held = watch_topics::carried(INBOX_TAG, &carried::<Carry>(view, &ev.stream, STATE).published);
+            return pattern::tick(ev, OBSERVE, held, OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
+        }
+        if ev.kind.tag == EFFECT_TIMED_OUT {
+            return watch_topics::again(view, ev, &carried::<Carry>(view, &ev.stream, STATE).published).map(Command::Effect).into_iter().collect();
         }
         // The push rides as a memory-only probe: a lost one is a gap in the series, and journaling
         // it would cost two events a pass on top of the state the pass must carry.
