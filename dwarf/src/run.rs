@@ -1300,7 +1300,9 @@ impl<'a> Run<'a> {
         let db = self.conf.db();
         let landing = brief::landing_brief(&self.s.repo_land, &self.s.branch, &self.s.base_branch, &self.s.repo_name, &self.s.base);
         let park = brief::park_brief(&self.s.repo_land, &self.s.branch, &self.s.repo_name, &self.s.base_branch);
-        let finish = brief::finish_brief(&bead);
+        let exits = spira_config::runes::working_exits_in(&spira_config::runes::runes_dir(self.home()), self.f())
+            .map_err(|e| Abort::Die(format!("{}: {bead} {e}", self.f())))?;
+        let finish = brief::finish_brief(&bead, &exits);
         let fixture = brief::fixture_brief(self.s.fixture.as_ref(), &self.conf.s("SPIRA_TESTDB_LIB"), fixture_ms);
         let deadline_at = brief::call_deadline(self.rune.timeout_seconds, self.now());
         self.s.wall_deadline = deadline_at;

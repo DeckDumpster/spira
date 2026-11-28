@@ -902,9 +902,15 @@ fn working_exit_check(verb: &str, exit: &str, rune: &str, exits: &[String]) -> O
     if exits.iter().any(|e| e == exit) {
         return None;
     }
+    let declares = |want: &str| exits.iter().any(|e| e == want);
+    let next = match exit {
+        "DONE" if declares("SUBMITTED") => "commit the work and run `work submit`; if the deliverable is not code, ask with `work blocked` that this bead be closed, naming what it delivered",
+        "SUBMITTED" if declares("DONE") => "close it with `work done --delivers \"<what you produced>\"`",
+        _ => "ask with `work blocked`",
+    };
     Some((
         REFUSED,
-        format!("refused: work {verb}: rune {rune} may not leave WORKING for {exit}; its exits are {}", exits.join(" ")),
+        format!("refused: work {verb}: rune {rune} may not leave WORKING for {exit}; its exits are {}; {next}", exits.join(" ")),
     ))
 }
 
@@ -3929,6 +3935,20 @@ mod tests {
         assert!(msg.contains("spike") && msg.contains("SUBMITTED") && msg.contains("DONE ask park hold"), "{msg}");
         assert!(working_exit_check("done", "DONE", "spike", &exits).is_none());
         assert!(working_exit_check("submit", "SUBMITTED", "builder", &v(&["SUBMITTED", "ask"])).is_none());
+    }
+
+    #[test_id(tfq5imr)]
+    #[test]
+    fn a_refused_working_exit_names_the_next_step_the_rune_does_declare() {
+        let refusal = |verb: &str, exit: &str, rune: &str, exits: &[&str]| working_exit_check(verb, exit, rune, &v(exits)).unwrap().1;
+        let builder = refusal("done", "DONE", "builder", &["SUBMITTED", "ask", "park", "hold"]);
+        assert!(builder.contains("run `work submit`") && builder.contains("ask with `work blocked` that this bead be closed"), "{builder}");
+        let spike = refusal("submit", "SUBMITTED", "spike", &["DONE", "ask", "park", "hold"]);
+        assert!(spike.contains("close it with `work done --delivers"), "{spike}");
+        for (verb, exit) in [("done", "DONE"), ("submit", "SUBMITTED")] {
+            let neither = refusal(verb, exit, "asker", &["ask", "hold"]);
+            assert!(neither.ends_with("ask with `work blocked`"), "{neither}");
+        }
     }
 
     #[test_id(t8nwxnz)]

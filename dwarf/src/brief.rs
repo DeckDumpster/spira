@@ -113,23 +113,36 @@ pub fn followup_brief(bead_id: &str) -> String {
     )
 }
 
-/// `{{FINISH}}`: the `work` verbs, the model's only way to act on its bead.
-pub fn finish_brief(bead_id: &str) -> String {
-    format!(
-        "**You have no `bd`.** `bd` is not on your PATH and no database credential is in your
-environment (design §3.5) — the only way you act on your bead is `work`, bound to exactly
-this one: `{bead_id}`. Naming any other bead to `work` is refused.
-
-When the work is committed on your branch:
+/// `{{FINISH}}`: the `work` verbs, the model's only way to act on its bead. `exits` is the
+/// rune's `RUNE_WORKING_EXITS`: a delivery it does not declare is refused, so is not offered.
+pub fn finish_brief(bead_id: &str, exits: &[String]) -> String {
+    let declares = |exit: &str| exits.iter().any(|e| e == exit);
+    let submit = if declares("SUBMITTED") {
+        "When the work is committed on your branch:
 
     work submit
 
 The tip is read from your own worktree's `HEAD` — you never pass one. This moves the bead to
 SUBMITTED; the landing pass carries it from there and lands it once it certifies.
 
-When the deliverable is not code on this branch — child beads, a document, a mail message:
+"
+    } else {
+        ""
+    };
+    let not_code = if declares("DONE") {
+        "When the deliverable is not code on this branch — child beads, a document, a mail message:
 
-    work done --delivers \"<what you produced, or where it lives>\"
+    work done --delivers \"<what you produced, or where it lives>\""
+    } else {
+        "When the deliverable is not code on this branch (child beads, a document, a mail message):
+your rune cannot close the bead. Ask with `work blocked` that it be closed, naming what you delivered and where it lives."
+    };
+    format!(
+        "**You have no `bd`.** `bd` is not on your PATH and no database credential is in your
+environment (design §3.5) — the only way you act on your bead is `work`, bound to exactly
+this one: `{bead_id}`. Naming any other bead to `work` is refused.
+
+{submit}{not_code}
 
 When you are blocked on a question only the operator can answer:
 
@@ -866,8 +879,9 @@ mod tests {
         assert!(on.contains("work file-followup"));
         assert!(on.contains("work split"));
         assert!(on.contains("work split … --prerequisite"));
-        assert!(finish_brief("sp-a").contains("work split … --prerequisite"));
-        for brief in [&on, &finish_brief("sp-a")] {
+        let finish = finish_brief("sp-a", &exits(&["SUBMITTED", "ask", "park", "hold"]));
+        assert!(finish.contains("work split … --prerequisite"));
+        for brief in [&on, &finish] {
             for said in ["small fix-up", "its own commit", "work note", "cannot ride", "P3", "--blocks", "--defect", "law-a-second-defect-gets-its-own-bead"] {
                 assert!(brief.contains(said), "no {said:?} in {brief}");
             }
@@ -1006,11 +1020,33 @@ mod tests {
     #[test_id(tef2apb)]
     #[test]
     fn finish_is_the_work_verbs() {
-        let on = finish_brief("sp-a");
+        let on = finish_brief("sp-a", &exits(&["SUBMITTED", "ask", "park", "hold"]));
         assert!(on.contains("**You have no `bd`.**"));
         assert!(on.contains("this one: `sp-a`"));
         assert!(on.contains("    work submit\n"));
         assert!(!on.contains("bd -C"));
+    }
+
+    fn exits(xs: &[&str]) -> Vec<String> {
+        xs.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test_id(tc45zqo)]
+    #[test]
+    fn finish_offers_only_the_exits_the_rune_declares() {
+        let builder = finish_brief("sp-a", &exits(&["SUBMITTED", "ask", "park", "hold"]));
+        assert!(!builder.contains("work done"), "{builder}");
+        assert!(builder.contains("    work submit\n"), "{builder}");
+        assert!(builder.contains("your rune cannot close the bead. Ask with `work blocked` that it be closed, naming what you delivered and where it lives."), "{builder}");
+        let closer = finish_brief("sp-a", &exits(&["DONE", "ask", "park", "hold"]));
+        assert!(closer.contains("work done --delivers"), "{closer}");
+        assert!(!closer.contains("    work submit\n"), "{closer}");
+        assert!(!closer.contains("your rune cannot close the bead"), "{closer}");
+        for brief in [&builder, &closer] {
+            for said in ["    work blocked \"", "work file-followup", "work superseded-by", "    work note \""] {
+                assert!(brief.contains(said), "no {said:?} in {brief}");
+            }
+        }
     }
 
     #[test_id(thxeezy)]

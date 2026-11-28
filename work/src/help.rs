@@ -322,6 +322,7 @@ pub static ENTRIES: &[Entry] = &[
             "in the home repo, a branch that deletes a round-image recipe or tag input file, or a fixture key the active release's config registry still requires, is refused, naming it",
             "a bead with a `Target:` line is submitted with a verdict; a submission without one is refused by the broker",
             "a --short verdict names a follow-on or escalation you filed",
+            "your rune's `RUNE_WORKING_EXITS` names SUBMITTED; a rune without it is refused, and the refusal names the next step",
         ],
         refusals: &[
             Refusal { id: R::SubmitNoTip, text: "no tip could be read from the worktree", fix: "run it from your worktree after committing; your branch is spira/<bead>" },
@@ -336,7 +337,11 @@ pub static ENTRIES: &[Entry] = &[
         does: "Closes a bead whose deliverable is not code on this branch (child beads, a document, mail).",
         when: "You produced something other than a commit.",
         args: &["--delivers \"<what you produced, or where it lives>\"", "verdict flags as for submit"],
-        checks: &["the bead is the bound one", "a bead with a `Target:` line carries a verdict"],
+        checks: &[
+            "the bead is the bound one",
+            "a bead with a `Target:` line carries a verdict",
+            "your rune's `RUNE_WORKING_EXITS` names DONE; a rune without it is refused and asks with `work blocked` that the bead be closed",
+        ],
         refusals: &[],
     },
     Entry {
