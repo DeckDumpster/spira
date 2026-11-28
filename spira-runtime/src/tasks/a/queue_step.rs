@@ -1042,14 +1042,18 @@ pub mod edge {
     /// The queue's verdict pass on a batcher-owned red, as a unit keyed so `on_ran` matches it.
     pub fn judgement(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let s = step(spec)?;
-        let bin = spira_config::release_env::tool("queue")?;
-        start_unit(e, super::NAME, &s.unit, super::verdict_leg_argv(bin, &s.repo), vec![], None)
+        queue_leg_with(e, &s.unit, |bin| super::verdict_leg_argv(bin, &s.repo))
     }
 
     /// `queue <args>`, as a unit: the queue's own verbs this task has no library entry for.
     fn queue_leg(e: &Effects, key: &str, args: &[&str]) -> Result<String, String> {
+        queue_leg_with(e, key, |bin| std::iter::once(bin).chain(args.iter().map(|a| a.to_string())).collect())
+    }
+
+    /// [`queue_leg`] with the whole argv built from the binary's path.
+    fn queue_leg_with(e: &Effects, key: &str, argv: impl FnOnce(String) -> Vec<String>) -> Result<String, String> {
         let bin = spira_config::release_env::tool("queue")?;
-        start_unit(e, super::NAME, key, std::iter::once(bin).chain(args.iter().map(|a| a.to_string())).collect(), vec![], None)
+        start_unit(e, super::NAME, key, argv(bin), vec![], None)
     }
 
     pub fn eject(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
