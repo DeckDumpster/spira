@@ -723,12 +723,12 @@ fn scan_pidfiles(run: &Path, snap: &mut Snapshot, rune_name: &dyn Fn(&str) -> St
         let Some(stem) = name.strip_prefix("dwarf-").and_then(|n| n.strip_suffix(".pid")) else { continue };
         let Some((rune, unit)) = names.iter().find(|(_, u)| stem.starts_with(&format!("{u}-"))) else { continue };
         let bead = stem[unit.len() + 1..].to_string();
-        if !sentinel::dwarf_alive(&entry.path()) {
+        if bead.starts_with("sweep-") || !sentinel::dwarf_alive(&entry.path()) {
             continue;
         }
         let started_ms = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as u64);
         let dwarf = LiveUnit { unit: format!("dwarf-{stem}"), rune: rune.clone(), bead, started_ms };
-        if snap.runes[rune].reactive && !dwarf.bead.starts_with("sweep-") {
+        if snap.runes[rune].reactive {
             snap.reactive_dwarves.push(dwarf.clone());
         }
         snap.live_dwarves.push(dwarf);
@@ -815,7 +815,7 @@ mod tests {
     #[test]
     fn the_pidfile_scan_names_every_rostered_dwarf_and_keeps_the_preemption_list_reactive() {
         let run = testkit::TempDir::new("sentinel-call-pidfiles");
-        for stem in ["dwarf-builder-sp-a", "dwarf-skuld-sp-b"] {
+        for stem in ["dwarf-builder-sp-a", "dwarf-skuld-sp-b", "dwarf-builder-sweep-7", "dwarf-skuld-sweep-8"] {
             std::fs::write(run.join(format!("{stem}.pid")), "1").unwrap();
             std::fs::write(run.join(format!("{stem}.lease")), i64::MAX.to_string()).unwrap();
         }
@@ -827,5 +827,35 @@ mod tests {
         let pair = |f: &str, b: &str| (f.to_string(), b.to_string());
         assert_eq!(pairs(&snap.live_dwarves), [pair("builder", "sp-a"), pair("skuld", "sp-b")].into());
         assert_eq!(pairs(&snap.reactive_dwarves), [pair("skuld", "sp-b")].into());
+    }
+
+    #[test_id(tyfqu8j)]
+    #[test]
+    fn the_pidfile_scan_lists_the_newest_dwarf_first() {
+        let run = testkit::TempDir::new("sentinel-call-pidfile-order");
+        for (bead, secs) in [("sp-b", 20), ("sp-a", 10), ("sp-c", 30)] {
+            let pidfile = run.join(format!("dwarf-builder-{bead}.pid"));
+            std::fs::write(&pidfile, "1").unwrap();
+            std::fs::write(run.join(format!("dwarf-builder-{bead}.lease")), i64::MAX.to_string()).unwrap();
+            std::fs::File::options().write(true).open(&pidfile).unwrap().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs)).unwrap();
+        }
+        let mut snap = Snapshot { roster: vec!["builder".into()], runes: [("builder".to_string(), RuneCfg::default())].into(), ..Snapshot::default() };
+        scan_pidfiles(&run, &mut snap, &|f| f.to_string());
+        assert_eq!(snap.live_dwarves.iter().map(|d| d.bead.as_str()).collect::<Vec<_>>(), ["sp-c", "sp-b", "sp-a"]);
+    }
+
+    #[test_id(tfdx0qo)]
+    #[test]
+    fn the_carried_pool_limit_names_the_snapshots_build_disk_dwarves() {
+        let dwarf = |rune: &str, bead: &str| LiveUnit { rune: rune.into(), bead: bead.into(), ..LiveUnit::default() };
+        let snap = Snapshot {
+            live_by_rune: [("builder".to_string(), 1), ("skuld".to_string(), 1)].into(),
+            roster: vec!["builder".into(), "skuld".into()],
+            runes: [("builder".to_string(), RuneCfg { uses: vec![plan::BUILD_DISK.into()], ..RuneCfg::default() })].into(),
+            max_dwarves: Some(1),
+            live_dwarves: vec![dwarf("skuld", "sp-s"), dwarf("builder", "sp-b")],
+            ..Snapshot::default()
+        };
+        assert_eq!(decide(&Carry::default(), &snap).0.task_limit.unwrap().holders, ["sp-b"]);
     }
 }
