@@ -222,6 +222,7 @@ impl Stats {
 /// The one LogsQL reader: `filter` is the part of a query before the `| stats`.
 pub struct Logs {
     addr: String,
+    deadline: Duration,
 }
 
 impl Logs {
@@ -230,7 +231,12 @@ impl Logs {
         if addr.is_empty() {
             return Err(LogsError::NotConfigured);
         }
-        Ok(Logs { addr })
+        Ok(Logs { addr, deadline: DEADLINE })
+    }
+
+    /// A read waits this long for the store, in place of the short default a polling caller needs.
+    pub fn with_read_deadline(self, deadline: Duration) -> Logs {
+        Logs { deadline, ..self }
     }
 
     /// How many records match `filter`.
@@ -285,7 +291,7 @@ impl Logs {
         }
     }
 
-    fn rows(&self, query: &str) -> Result<Vec<Value>, LogsError> {
+    pub(crate) fn rows(&self, query: &str) -> Result<Vec<Value>, LogsError> {
         let body = self.get(&format!("{QUERY_PATH}?query={}", encode(query)))?;
         let text = std::str::from_utf8(&body).map_err(|e| LogsError::Malformed(format!("not utf-8: {e}")))?;
         text.lines().filter(|l| !l.trim().is_empty()).map(|l| serde_json::from_str(l).map_err(|e| LogsError::Malformed(format!("row: {e}")))).collect()
@@ -293,7 +299,7 @@ impl Logs {
 
     fn get(&self, path: &str) -> Result<Vec<u8>, LogsError> {
         let down = |what: &str, e: std::io::Error| LogsError::Unreachable(format!("{} {what}: {e}", self.addr));
-        let mut s = connect(&self.addr, Instant::now() + DEADLINE).map_err(|e| down("connect", e))?;
+        let mut s = connect(&self.addr, Instant::now() + self.deadline).map_err(|e| down("connect", e))?;
         write!(s, "GET {path} HTTP/1.0\r\nHost: {}\r\n\r\n", self.addr).map_err(|e| down("write", e))?;
         let mut raw = Vec::new();
         s.read_to_end(&mut raw).map_err(|e| down("read", e))?;
@@ -308,7 +314,7 @@ impl Logs {
     }
 }
 
-fn number(row: &Value, key: &str) -> Result<u64, LogsError> {
+pub(crate) fn number(row: &Value, key: &str) -> Result<u64, LogsError> {
     let v = row.get(key).ok_or_else(|| LogsError::Malformed(format!("row has no {key}")))?;
     v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).ok_or_else(|| LogsError::Malformed(format!("{key} is not a count: {v}")))
 }

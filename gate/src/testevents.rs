@@ -17,6 +17,11 @@ pub const FLUSH: Duration = Duration::from_secs(5);
 /// Several times the whole workspace's tests: a step's records are queued at once.
 const QUEUE: usize = 1 << 16;
 
+/// The `tree=` a testenv run's `batch.meta` names: the tree it built and tested.
+pub fn batch_tree(meta: &str) -> Option<String> {
+    meta.lines().find_map(|l| l.strip_prefix("tree=")).map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
 /// What the trial judged, as every record of it says.
 pub struct Judged<'a> {
     pub repo_name: &'a str,

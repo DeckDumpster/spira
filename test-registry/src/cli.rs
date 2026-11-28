@@ -5,11 +5,17 @@ use std::collections::BTreeMap;
 use rusqlite::Connection;
 use runtime::ports::Rng;
 use serde_json::{json, Value};
+use spira_otel::vlogs::{Logs, LogsError};
 
 use crate::store::{self, Row, Set};
 
 pub const PATH_KEY: &str = "SPIRA_TEST_REGISTRY_PATH";
 pub const HOLD_KEY: &str = "SPIRA_TEST_REGISTRY_HOLD_SECS";
+pub const LOGS_KEY: &str = "SPIRA_VICTORIALOGS_URL";
+const DEFAULT_WINDOW_HOURS: u64 = 168;
+/// A week of every test's records takes the store longer to answer than a polling reader waits.
+// batch-job: a report run by hand over every test record in the window; it holds no lock or lease
+const EVENTS_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
 
 pub struct Outcome {
     pub code: i32,
@@ -43,6 +49,8 @@ const VERBS: &[(&str, &[&str], &[&str])] = &[
     ("backup", &["out"], &[]),
     ("mint", &[], &[]),
     ("stamp", &["path"], &[]),
+    ("flips", &[], &["hours"]),
+    ("rates", &[], &["hours", "test"]),
 ];
 
 const REPEATABLE: &[(&str, &str)] = &[("clear-landed", "bead"), ("stamp", "path")];
@@ -197,10 +205,12 @@ pub const HELP: &str = "usage: test-registry <verb> --name value … [--json]
   activate --test T --reason R --actor A
   show --test T | history --test T | list [--at TIME] | deny-list --at TIME
   clear-landed --bead B [--bead B…] --actor A | repoint --from F --to T --actor A | backup --out FILE
+  flips [--hours N]               tests with a pass and a fail/timeout on one input hash (default 168 hours)
+  rates [--hours N] [--test ID]   each test's runs, reds and failure rate, worst first
   mint                            print a fresh test id
   stamp --path FILE [--path FILE…]  write #[test_id(<id>)] above each unstamped test
-exit codes: 0 ok, 1 refused (stamp: a #[test] inside macro_rules!), 2 usage, 3 the registry cannot be opened
-mint and stamp never open the registry.
+exit codes: 0 ok, 1 refused (stamp: a #[test] inside macro_rules!), 2 usage, 3 the registry cannot be opened or the log store cannot be read
+mint, stamp, flips and rates never open the registry; flips and rates read test.result events and run nothing.
 
 ";
 
@@ -271,6 +281,53 @@ fn stamp(paths: &str, rng: &mut dyn Rng) -> Outcome {
     }
 }
 
+fn table(header: &str, rows: impl Iterator<Item = String>) -> String {
+    std::iter::once(header.to_string()).chain(rows).collect::<Vec<_>>().join("\n")
+}
+
+fn events(a: &Args, cfg: Cfg) -> Outcome {
+    let (verb, j) = (a.verb.as_str(), a.json);
+    let hours = match a.named.get("hours") {
+        None => Some(DEFAULT_WINDOW_HOURS),
+        Some(h) => h.parse::<u64>().ok().filter(|h| *h > 0),
+    };
+    let Some(window) = hours.and_then(|h| h.checked_mul(3600)) else {
+        return fail(2, j, format!("{verb}: --hours must be a whole number of hours, at least 1"));
+    };
+    let url = match cfg(LOGS_KEY) {
+        Ok(u) => u,
+        Err(e) => return fail(3, j, format!("cannot read {LOGS_KEY}: {e}")),
+    };
+    let unread = |e: LogsError| fail(3, j, format!("{verb}: cannot read the log store at {url:?} ({LOGS_KEY}): {e}"));
+    let logs = match Logs::new(&url) {
+        Ok(l) => l.with_read_deadline(EVENTS_DEADLINE),
+        Err(e) => return unread(e),
+    };
+    if verb == "flips" {
+        return match logs.flips(window) {
+            Ok(flips) => out(
+                0,
+                j,
+                table(
+                    "test\tname\tcrate\tinput_hash\tpasses\tfails\tfirst_seen\tlast_seen",
+                    flips.iter().map(|f| format!("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", f.test_id, f.name, f.crate_name, f.input_hash, f.passes, f.fails, f.first_seen, f.last_seen)),
+                ),
+                flips.iter().map(|f| json!({"test": f.test_id, "name": f.name, "crate": f.crate_name, "input_hash": f.input_hash, "passes": f.passes, "fails": f.fails, "first_seen": f.first_seen, "last_seen": f.last_seen})).collect(),
+            ),
+            Err(e) => unread(e),
+        };
+    }
+    match logs.rates(window, a.named.get("test").map(String::as_str)) {
+        Ok(rates) => out(
+            0,
+            j,
+            table("test\tname\tcrate\truns\treds\tfailure_rate", rates.iter().map(|r| format!("{}\t{}\t{}\t{}\t{}\t{:.3}", r.test_id, r.name, r.crate_name, r.runs, r.reds, r.rate))),
+            rates.iter().map(|r| json!({"test": r.test_id, "name": r.name, "crate": r.crate_name, "runs": r.runs, "reds": r.reds, "failure_rate": r.rate})).collect(),
+        ),
+        Err(e) => unread(e),
+    }
+}
+
 pub fn run(args: &[String], now: i64, cfg: Cfg, open: Opener, rng: &mut dyn Rng) -> Outcome {
     if matches!(args.first().map(String::as_str), Some("-h" | "--help")) {
         return Outcome { code: 0, stdout: format!("{HELP}{INTENT}"), stderr: String::new() };
@@ -284,6 +341,7 @@ pub fn run(args: &[String], now: i64, cfg: Cfg, open: Opener, rng: &mut dyn Rng)
     match a.verb.as_str() {
         "mint" => return out(0, j, mint_id(rng), json!({"ok": true})),
         "stamp" => return stamp(a.named.get("path").map(String::as_str).unwrap_or(""), rng),
+        "flips" | "rates" => return events(&a, cfg),
         _ => {}
     }
     let get = |k: &str| a.named.get(k).map(String::as_str).unwrap_or("");
@@ -431,6 +489,7 @@ pub fn run(args: &[String], now: i64, cfg: Cfg, open: Opener, rng: &mut dyn Rng)
 mod tests {
     use super::*;
     use runtime::ports::SeededRng;
+    use spira_otel::vlogs::fake::{FakeLogs, Script};
 
     fn run(args: &[String], now: i64, cfg: Cfg, open: Opener) -> Outcome {
         super::run(args, now, cfg, open, &mut SeededRng::new(0))
@@ -452,6 +511,85 @@ mod tests {
         let c = Connection::open_in_memory().map_err(|e| e.to_string())?;
         store::init(&c)?;
         Ok(c)
+    }
+
+    fn two_runs() -> FakeLogs {
+        let row = |id: &str, hash: &str, outcome: &str| {
+            format!(r#"{{"test_id":"{id}","input_hash":"{hash}","outcome":"{outcome}","name":"a::{id}","crate":"queue","n":"1","first":"2026-11-27T01:00:00Z","last":"2026-11-27T01:00:00Z"}}"#)
+        };
+        let rows = [row("tm1a9x4", "h1", "pass"), row("tm1a9x4", "h1", "fail"), row("tm1a9x4", "h2", "pass"), row("tabc123", "h1", "fail"), row("tabc123", "h3", "pass")];
+        let fake = FakeLogs::start();
+        fake.answer("test_id:=\"tm1a9x4\"", Script { status: 200, body: rows[..3].join("\n"), hang: false });
+        fake.answer("test.result", Script { status: 200, body: rows.join("\n"), hang: false });
+        fake
+    }
+
+    /// Every key but the log store's address is unset, the registry path among them.
+    fn logs_cfg(url: String) -> impl Fn(&str) -> Result<String, String> {
+        move |k| if k == LOGS_KEY { Ok(url.clone()) } else { Err(format!("{k} unset")) }
+    }
+
+    fn never_open(p: &str) -> Result<Connection, String> {
+        panic!("the registry was opened: {p}")
+    }
+
+    fn json_of(o: &Outcome) -> Value {
+        serde_json::from_str(&o.stdout).unwrap_or_else(|e| panic!("{e}: {:?} {}", o.stdout, o.stderr))
+    }
+
+    #[test_id(tl6tges)]
+    #[test]
+    fn flips_lists_the_one_flip_without_a_registry_path_and_never_opens_the_registry() {
+        let fake = two_runs();
+        let cfg = logs_cfg(fake.url());
+        let o = run(&argv("flips --json"), 1, &cfg, &never_open);
+        assert_eq!(o.code, 0, "{} {}", o.stdout, o.stderr);
+        assert_eq!(json_of(&o), json!([{"test": "tm1a9x4", "name": "a::tm1a9x4", "crate": "queue", "input_hash": "h1", "passes": 1, "fails": 1, "first_seen": "2026-11-27T01:00:00Z", "last_seen": "2026-11-27T01:00:00Z"}]));
+        assert!(fake.queries()[0].starts_with("_time:604800s "), "the default window is 168 hours: {:?}", fake.queries());
+        let o = run(&argv("flips --hours 24"), 1, &cfg, &never_open);
+        assert_eq!(o.stdout, "test\tname\tcrate\tinput_hash\tpasses\tfails\tfirst_seen\tlast_seen\ntm1a9x4\ta::tm1a9x4\tqueue\th1\t1\t1\t2026-11-27T01:00:00Z\t2026-11-27T01:00:00Z");
+        assert!(fake.queries()[1].starts_with("_time:86400s "));
+    }
+
+    #[test_id(t0oxpkf)]
+    #[test]
+    fn rates_prints_one_tests_runs_reds_and_failure_rate() {
+        let fake = two_runs();
+        let cfg = logs_cfg(fake.url());
+        let o = run(&argv("rates --test tm1a9x4 --json"), 1, &cfg, &never_open);
+        assert_eq!(o.code, 0, "{} {}", o.stdout, o.stderr);
+        let got = json_of(&o);
+        assert_eq!(got.as_array().map(Vec::len), Some(1));
+        assert_eq!((&got[0]["test"], &got[0]["runs"], &got[0]["reds"]), (&json!("tm1a9x4"), &json!(3), &json!(1)));
+        assert!((got[0]["failure_rate"].as_f64().unwrap() - 1.0 / 3.0).abs() < 1e-9);
+        let o = run(&argv("rates --test tm1a9x4"), 1, &cfg, &never_open);
+        assert!(o.stdout.ends_with("tm1a9x4\ta::tm1a9x4\tqueue\t3\t1\t0.333"), "{}", o.stdout);
+    }
+
+    #[test_id(t9efo1k)]
+    #[test]
+    fn an_unreadable_log_store_exits_non_zero_naming_the_url() {
+        let gone = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", gone.local_addr().unwrap());
+        drop(gone);
+        for verb in ["flips", "rates"] {
+            let o = run(&argv(verb), 1, &logs_cfg(url.clone()), &never_open);
+            assert_ne!(o.code, 0, "{verb}");
+            assert!(o.stderr.contains(&url) && o.stdout.is_empty(), "{verb}: {} {}", o.stderr, o.stdout);
+            let o = run(&argv(&format!("{verb} --json")), 1, &logs_cfg(url.clone()), &never_open);
+            assert!(o.code != 0 && json_of(&o)["error"].as_str().is_some_and(|e| e.contains(&url)), "{verb}: {}", o.stdout);
+        }
+        let o = run(&argv("flips"), 1, &logs_cfg(String::new()), &never_open);
+        assert!(o.code != 0 && o.stderr.contains(LOGS_KEY), "{}", o.stderr);
+    }
+
+    #[test_id(tgao8cp)]
+    #[test]
+    fn a_window_that_is_not_a_whole_number_of_hours_is_a_usage_error() {
+        for line in ["flips --hours 0", "rates --hours x", "flips --hours 99999999999999999999"] {
+            let o = run(&argv(line), 1, &logs_cfg("http://127.0.0.1:1".into()), &never_open);
+            assert_eq!(o.code, 2, "{line}: {}", o.stderr);
+        }
     }
 
     #[test_id(tu62qp2)]

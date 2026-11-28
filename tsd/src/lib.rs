@@ -150,7 +150,6 @@ pub mod query;
 pub mod store;
 pub mod report;
 pub mod stop;
-pub mod testrun;
 
 pub fn default_host() -> String {
     std::fs::read_to_string(format!("{}/kernel/hostname", system_paths::PROC_SYS))

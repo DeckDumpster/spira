@@ -16,6 +16,8 @@ const OPERATIONS: &[&str] = &[
     "backup",
     "mint",
     "stamp",
+    "flips",
+    "rates",
 ];
 
 fn main() -> ExitCode {

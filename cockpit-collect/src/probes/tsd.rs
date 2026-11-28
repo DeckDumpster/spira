@@ -1,93 +1,54 @@
-//! `tsd_keys` — the ops pane's flow headlines, read in-process through `tsd::query` (`where`, `rework`) and `tsd::testrun`.
+//! `tsd_keys` — the ops pane's flow headlines, read in-process through `tsd::query` (`where`, `rework`), and
+//! the tests headline from the `test.result` events.
 //! A query that fails, prints nothing parseable or names no known fields is `?`, never `0`.
 
 use super::{push, Kv};
 use crate::io;
 use serde_json::Value;
-use std::sync::Mutex;
+use spira_otel::testresult::Summary;
+use spira_otel::vlogs::Logs;
 
 pub fn tsd_keys() -> Kv {
+    let logs = spira_config::process::cfg("SPIRA_VICTORIALOGS_URL").ok();
     match io::try_run_dir() {
-        Ok(root) => tsd_keys_in(&root, spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), io::now()),
-        Err(_) => tsd_keys_with(|_| None),
+        Ok(root) => tsd_keys_in(&root, spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), logs.as_deref(), io::now()),
+        Err(_) => tsd_keys_with(|_| None, test_summary(logs.as_deref())),
     }
 }
 
-/// The headlines from the run directory's family files and the metrics store at `endpoint`,
-/// read in-process the way `tsd-read` reads them.
-fn tsd_keys_in(root: &std::path::Path, endpoint: Option<&str>, now: i64) -> Kv {
-    static HELD: Mutex<TestsHeld> = Mutex::new(TestsHeld { entry: None, reads: 0 });
-    tsd_keys_held(&mut HELD.lock().unwrap_or_else(|e| e.into_inner()), root, endpoint, now)
-}
-
-/// The inventory text last computed, and what it was computed from.
-struct TestsHeld {
-    entry: Option<(TestsKey, String)>,
-    reads: usize,
-}
-
-/// A file's identity and extent, and the hour: the inventory changes only when one of them does.
-#[derive(PartialEq)]
-struct TestsKey {
-    dev: u64,
-    ino: u64,
-    len: u64,
-    mtime: (i64, i64),
-    hour: u64,
-}
-
-fn tests_key(path: &std::path::Path, now: u64) -> Option<TestsKey> {
-    use std::os::unix::fs::MetadataExt;
-    let m = std::fs::metadata(path).ok()?;
-    Some(TestsKey { dev: m.dev(), ino: m.ino(), len: m.len(), mtime: (m.mtime(), m.mtime_nsec()), hour: now / 3600 })
-}
-
-fn tsd_keys_held(held: &mut TestsHeld, root: &std::path::Path, endpoint: Option<&str>, now: i64) -> Kv {
+/// The flow headlines from the run directory's family files and the metrics store at `endpoint`,
+/// read in-process the way `tsd-read` reads them; the tests headline from the log store at `logs`.
+fn tsd_keys_in(root: &std::path::Path, endpoint: Option<&str>, logs: Option<&str>, now: i64) -> Kv {
     let reader = tsd::store::Reader::new(endpoint).ok();
     let src = tsd::query::Source { reader: reader.as_ref(), root };
     let now = now.max(0) as u64;
-    let held = std::cell::RefCell::new(held);
     let stage = std::cell::OnceCell::new();
     let stage_rows = || stage.get_or_init(|| src.rows(tsd::query::STAGE, tsd::query::since(now, QUERY_HOURS)).ok()).as_ref();
-    tsd_keys_with(|q| match q {
-        "where" => stage_rows().map(|r| tsd::query::wip_of(r, now).to_string()),
-        "rework" => stage_rows().map(|r| tsd::query::rework_of(r).to_string()),
-        _ => {
-            let path = tsd::family_path(root, tsd::testrun::FAMILY);
-            let mut held = held.borrow_mut();
-            let Some(key) = tests_key(&path, now) else {
-                held.entry = None;
-                return None;
-            };
-            if let Some((k, text)) = &held.entry {
-                if *k == key {
-                    return Some(text.clone());
-                }
-            }
-            held.entry = None;
-            held.reads += 1;
-            let since = now.saturating_sub(TESTS_WINDOW_HOURS * 3600);
-            let rows = src.rows(tsd::testrun::FAMILY, since).ok()?;
-            let text = tsd::testrun::inventory(&rows, 10).to_string();
-            held.entry = Some((key, text.clone()));
-            Some(text)
-        }
-    })
+    tsd_keys_with(
+        |q| match q {
+            "where" => stage_rows().map(|r| tsd::query::wip_of(r, now).to_string()),
+            _ => stage_rows().map(|r| tsd::query::rework_of(r).to_string()),
+        },
+        test_summary(logs),
+    )
 }
 
-fn tsd_keys_with(run: impl Fn(&str) -> Option<String>) -> Kv {
+fn test_summary(logs: Option<&str>) -> Option<Summary> {
+    Logs::new(logs?).ok()?.test_summary(TESTS_WINDOW_HOURS * 3600).ok()
+}
+
+fn tsd_keys_with(run: impl Fn(&str) -> Option<String>, tests: Option<Summary>) -> Kv {
     let mut out = Kv::new();
     push(&mut out, "SP_TSD_WHERE", rows(run("where")).and_then(|r| where_line(&r)).unwrap_or_else(unread));
     push(&mut out, "SP_TSD_REWORK", rows(run("rework")).and_then(|r| rework_line(&r)).unwrap_or_else(unread));
-    let tests = run("tests").and_then(|raw| serde_json::from_str::<Value>(raw.trim()).ok()).and_then(|v| tests_line(&v));
-    push(&mut out, "SP_TSD_TESTS", tests.unwrap_or_else(unread));
+    push(&mut out, "SP_TSD_TESTS", tests.and_then(|s| tests_line(&s)).unwrap_or_else(unread));
     out
 }
 
 const TESTS_WINDOW_HOURS: u64 = 72;
 const QUERY_HOURS: u64 = 720;
 
-fn thousands(n: i64) -> String {
+fn thousands(n: u64) -> String {
     let d = n.to_string();
     let mut out = String::new();
     for (i, c) in d.chars().enumerate() {
@@ -99,17 +60,14 @@ fn thousands(n: i64) -> String {
     out
 }
 
-/// `10,914 tests  +12/-3 on 2026-11-06  4 red  slowest a.sh::x 4.2s` from `tsd::testrun::inventory`. The count is
-/// the latest round's own; no suite count is ever added to it.
-fn tests_line(inv: &Value) -> Option<String> {
-    let total = inv.get("total")?.as_i64().filter(|t| *t > 0)?;
-    let mut line = format!("{} tests", thousands(total));
-    if let Some(d) = inv.get("days")?.as_array()?.last() {
-        line.push_str(&format!("  +{}/-{} on {}", d.get("added")?.as_i64()?, d.get("removed")?.as_i64()?, d.get("day")?.as_str()?));
+/// `10,914 tests  4 red  slowest a.sh::x 4.2s`. No events at all is unread, not zero tests.
+fn tests_line(s: &Summary) -> Option<String> {
+    if s.tests == 0 {
+        return None;
     }
-    line.push_str(&format!("  {} red", inv.get("red")?.as_i64()?));
-    if let Some(s) = inv.get("slowest")?.as_array()?.first() {
-        line.push_str(&format!("  slowest {} {:.1}s", s.get("test")?.as_str()?, s.get("seconds")?.as_f64()?));
+    let mut line = format!("{} tests  {} red", thousands(s.tests), s.red);
+    if let Some((test, ms)) = &s.slowest {
+        line.push_str(&format!("  slowest {test} {:.1}s", *ms as f64 / 1000.0));
     }
     Some(line)
 }
@@ -160,6 +118,7 @@ fn rework_line(rows: &[Value]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use spira_otel::vlogs::fake::{FakeLogs, Script};
 
     fn get<'a>(kv: &'a Kv, k: &str) -> &'a str {
         &kv.iter().find(|(key, _)| key == k).unwrap().1
@@ -174,29 +133,47 @@ mod tests {
                 _ => r#"[{"reason":"*","reopens":3,"landed":9},{"reason":"gate-red","reopens":2,"landed":9},{"reason":"ejected","reopens":1,"landed":9}]"#,
             }
             .to_string())
-        });
+        }, None);
         assert_eq!(get(&kv, "SP_TSD_WHERE"), "WORKING 3 (12m) \u{b7} REWORK 1 (2h)");
         assert_eq!(get(&kv, "SP_TSD_REWORK"), "3 reopened / 9 landed  gate-red 2, ejected 1");
     }
 
-    #[test_id(tucgoil)]
+    fn scripted(counts: &str, slowest: &str) -> FakeLogs {
+        let fake = FakeLogs::start();
+        fake.answer("count_uniq", Script { status: 200, body: counts.into(), hang: false });
+        fake.answer("max(duration_ms)", Script { status: 200, body: slowest.into(), hang: false });
+        fake
+    }
+
+    fn tests_row(url: Option<&str>) -> String {
+        let root = testkit::TempDir::new("cockpit-collect-tsd-tests");
+        get(&tsd_keys_in(root.path(), None, url, 1_700_000_000), "SP_TSD_TESTS").to_string()
+    }
+
+    #[test_id(t22qdz0)]
     #[test]
-    fn the_tests_headline_is_the_latest_rounds_test_count_alone() {
-        let kv = tsd_keys_with(|q| {
-            Some(if q == "tests" {
-                r#"{"total":10914,"red":4,"days":[{"day":"2026-11-05","total":10900,"added":5,"removed":0},{"day":"2026-11-06","total":10914,"added":12,"removed":3}],"slowest":[{"test":"a.sh::x","seconds":4.25}],"flakiest":[]}"#.to_string()
-            } else {
-                "[]".to_string()
-            })
-        });
-        assert_eq!(get(&kv, "SP_TSD_TESTS"), "10,914 tests  +12/-3 on 2026-11-06  4 red  slowest a.sh::x 4.2s");
-        assert_eq!(get(&tsd_keys_with(|_| None), "SP_TSD_TESTS"), "?");
+    fn the_tests_headline_is_built_from_the_test_result_events_of_the_last_72_hours() {
+        let fake = scripted("{\"tests\":\"10914\",\"red\":\"4\"}\n", "{\"test_id\":\"a.sh::x\",\"ms\":\"4250\"}\n");
+        assert_eq!(tests_row(Some(&fake.url())), "10,914 tests  4 red  slowest a.sh::x 4.2s");
+        let queries = fake.queries();
+        assert!(!queries.is_empty() && queries.iter().all(|q| q.starts_with("_time:259200s _msg:\"test.result\" ")), "{queries:?}");
+    }
+
+    #[test_id(tuom063)]
+    #[test]
+    fn the_tests_headline_is_a_question_mark_when_the_events_cannot_be_read() {
+        assert_eq!(tests_row(None), "?", "no address");
+        let down = FakeLogs::start();
+        down.answer(spira_otel::testresult::EVENT, Script { status: 500, body: "down".into(), hang: false });
+        assert_eq!(tests_row(Some(&down.url())), "?", "a refused read");
+        let none = scripted("{\"tests\":\"0\",\"red\":\"0\"}\n", "");
+        assert_eq!(tests_row(Some(&none.url())), "?", "no events is not a green zero");
     }
 
     #[test_id(tcbhzrw)]
     #[test]
     fn a_failed_query_is_a_question_mark_never_zero() {
-        let kv = tsd_keys_with(|_| None);
+        let kv = tsd_keys_with(|_| None, None);
         assert_eq!(get(&kv, "SP_TSD_WHERE"), "?");
         assert_eq!(get(&kv, "SP_TSD_REWORK"), "?");
     }
@@ -204,7 +181,7 @@ mod tests {
     #[test_id(t7vdn3h)]
     #[test]
     fn unparseable_or_foreign_output_is_a_question_mark() {
-        let kv = tsd_keys_with(|q| Some(if q == "where" { "Conversion Error: nope".into() } else { r#"[{"x":1}]"#.into() }));
+        let kv = tsd_keys_with(|q| Some(if q == "where" { "Conversion Error: nope".into() } else { r#"[{"x":1}]"#.into() }), None);
         assert_eq!(get(&kv, "SP_TSD_WHERE"), "?");
         assert_eq!(get(&kv, "SP_TSD_REWORK"), "?");
     }
@@ -212,7 +189,7 @@ mod tests {
     #[test_id(t3ttwpy)]
     #[test]
     fn an_empty_pipeline_says_so() {
-        let kv = tsd_keys_with(|_| Some("[]".to_string()));
+        let kv = tsd_keys_with(|_| Some("[]".to_string()), None);
         assert_eq!(get(&kv, "SP_TSD_WHERE"), "nothing in flight");
         assert_eq!(get(&kv, "SP_TSD_REWORK"), "?");
     }
@@ -223,47 +200,21 @@ mod tests {
         pusher.push("bead-stage", ts, &fields).unwrap();
     }
 
-    fn run_row(ts: &str, round: &str) -> String {
-        let f = |k: &str, v: Value| (k.to_string(), v);
-        tsd::build_row(ts, "h", tsd::testrun::FAMILY, &[f("round", round.into()), f("test", "a.sh::x".into()), f("suite", "a.sh".into()), f("status", "pass".into()), f("seconds", 1.5.into())]).unwrap()
-    }
-
-    #[test_id(tr0wcnt)]
+    #[test_id(tekb7ql)]
     #[test]
-    fn the_tests_file_is_reread_only_when_it_or_the_hour_changes_and_the_stage_is_fetched_once_a_pass() {
-        let root = testkit::TempDir::new("cockpit-collect-tsd-held");
+    fn the_stage_rows_are_fetched_once_a_pass() {
+        let root = testkit::TempDir::new("cockpit-collect-tsd-stage");
         let store = spira_otel::fixture::FakeStore::start();
         let now = 1_700_000_000_i64;
-        let ts = tsd::iso_utc(now as u64 - 600);
-        push_stage(&store, &ts);
-        let path = tsd::family_path(root.path(), tsd::testrun::FAMILY);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let mut held = TestsHeld { entry: None, reads: 0 };
-        let pass = |held: &mut TestsHeld, now: i64| tsd_keys_held(held, root.path(), Some(store.addr()), now);
-
-        assert_eq!(get(&pass(&mut held, now), "SP_TSD_TESTS"), "?", "a missing file is unread");
-        std::fs::write(&path, format!("{}\n", run_row(&ts, "r1"))).unwrap();
+        push_stage(&store, &tsd::iso_utc(now as u64 - 600));
         let before = store.export_requests();
-        let first = pass(&mut held, now);
-        assert_eq!(store.export_requests() - before, 1, "one bead-stage request a pass");
-        let reads = held.reads;
-        let again = pass(&mut held, now + 60);
-        assert_eq!(held.reads, reads, "an unchanged file is not read again");
-        assert_eq!(get(&first, "SP_TSD_TESTS"), get(&again, "SP_TSD_TESTS"));
-
-        std::fs::write(&path, format!("{}\n{}\n", run_row(&ts, "r1"), run_row(&ts, "r2"))).unwrap();
-        pass(&mut held, now + 60);
-        assert_eq!(held.reads, reads + 1, "an appended row is read");
-        pass(&mut held, now + 3600 + 60);
-        assert_eq!(held.reads, reads + 2, "a later hour is read");
-        std::fs::remove_file(&path).unwrap();
-        assert_eq!(get(&pass(&mut held, now + 3700), "SP_TSD_TESTS"), "?");
-        assert!(held.entry.is_none(), "a missing file is never held");
+        tsd_keys_in(root.path(), Some(store.addr()), None, now);
+        assert_eq!(store.export_requests() - before, 1, "one bead-stage request answers both headlines");
     }
 
     #[test_id(tfnxf1h)]
     #[test]
-    fn the_headlines_are_read_in_process_from_the_store_and_the_family_files() {
+    fn the_headlines_are_read_in_process_from_the_metrics_and_log_stores() {
         let root = testkit::TempDir::new("cockpit-collect-tsd-keys");
         let store = spira_otel::fixture::FakeStore::start();
         let now = 1_700_000_000_i64;
@@ -279,15 +230,12 @@ mod tests {
         pusher
             .push("bead-stage", &ts, &fields(&[("machine", "bead".into()), ("applied", true.into()), ("key", "sp-a".into()), ("seq", 2.into()), ("to_state", "REWORK".into()), ("reason", "gate".into())]))
             .unwrap();
-        let row = tsd::build_row(&ts, "h", tsd::testrun::FAMILY, &fields(&[("round", "r1".into()), ("test", "a.sh::x".into()), ("suite", "a.sh".into()), ("status", "pass".into()), ("seconds", 1.5.into())])).unwrap();
-        std::fs::create_dir_all(root.path().join("tsd")).unwrap();
-        std::fs::write(tsd::family_path(root.path(), tsd::testrun::FAMILY), format!("{row}\n")).unwrap();
-
-        let kv = tsd_keys_in(root.path(), Some(store.addr()), now);
+        let logs = scripted("{\"tests\":\"1\",\"red\":\"0\"}\n", "{\"test_id\":\"a.sh::x\",\"ms\":\"1500\"}\n");
+        let kv = tsd_keys_in(root.path(), Some(store.addr()), Some(&logs.url()), now);
         assert_eq!(get(&kv, "SP_TSD_WHERE"), "REWORK 1 (10m)");
         assert!(get(&kv, "SP_TSD_REWORK").contains("landed"), "{}", get(&kv, "SP_TSD_REWORK"));
         assert!(get(&kv, "SP_TSD_TESTS").starts_with("1 tests"), "{}", get(&kv, "SP_TSD_TESTS"));
-        let unread = tsd_keys_in(root.path(), None, now);
+        let unread = tsd_keys_in(root.path(), None, Some(&logs.url()), now);
         assert_eq!(get(&unread, "SP_TSD_WHERE"), "?", "a moved family with no store is unread, not empty");
     }
 }
