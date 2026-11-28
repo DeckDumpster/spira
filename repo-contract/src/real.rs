@@ -8,12 +8,19 @@ use std::path::{Path, PathBuf};
 
 pub struct Real {
     reg: Registry,
+    cached_shell: bool,
 }
 
 impl Real {
     pub fn from_env() -> Result<Real, String> {
         let home = spira_config::resolve::locate_home_for_process()?;
-        Ok(Real { reg: Registry::from_env_checkout(std::env::vars().collect(), &home) })
+        Ok(Real { reg: Registry::from_env_checkout(std::env::vars().collect(), &home), cached_shell: false })
+    }
+
+    /// With `cached_shell`, a landing-ref dev shell that is not already realised is not
+    /// realised here: no worktree is cut and nix does not run.
+    pub fn cached_shell(self, cached_shell: bool) -> Real {
+        Real { cached_shell, ..self }
     }
 
     pub fn root(&self, repo: &str) -> Result<PathBuf, String> {
@@ -60,7 +67,22 @@ impl Ports for Real {
     }
 
     fn shell_env(&self, repo: &str, tree: Option<&Path>) -> Result<shell::DevShell, String> {
-        let (nix, cache) = (shell::nix_bin()?, shell::cache_dir()?);
+        let cache = shell::cache_dir()?;
+        if tree.is_none() {
+            let Some(flake_nix) = self.read(repo, None, "flake.nix")? else { return Ok(shell::DevShell::Undeclared) };
+            if !shell::declares_dev_shell(flake_nix.as_bytes()) {
+                return Ok(shell::DevShell::Undeclared);
+            }
+            let flake_lock = self.read(repo, None, "flake.lock")?.unwrap_or_default();
+            let key = shell::cache_key(flake_nix.as_bytes(), flake_lock.as_bytes());
+            if let Some(env) = shell::cached_env(&cache, &key) {
+                return Ok(shell::DevShell::Entered(env));
+            }
+            if self.cached_shell {
+                return Err(format!("the dev shell for flake {key} is not realised; repo-contract check {repo} realises it"));
+            }
+        }
+        let nix = shell::nix_bin()?;
         self.in_tree(repo, tree, |t| shell::shell_env(t, &nix, &cache))
     }
 

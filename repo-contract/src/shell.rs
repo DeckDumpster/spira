@@ -70,6 +70,18 @@ pub fn declares_dev_shell(flake_nix: &[u8]) -> bool {
     String::from_utf8_lossy(flake_nix).contains("devShells")
 }
 
+/// The environment cached for `key`, only while every PATH directory it names still exists:
+/// the store paths of a realised shell can be garbage-collected.
+pub fn cached_env(cache: &Path, key: &str) -> Option<ShellEnv> {
+    let json = std::fs::read_to_string(cached_file(cache, key)).ok()?;
+    let env = parse_dev_env(&json).ok().filter(|e| e.path_dirs().iter().all(|d| d.is_dir()))?;
+    Some(ShellEnv { key: key.to_string(), ..env })
+}
+
+fn cached_file(cache: &Path, key: &str) -> PathBuf {
+    cache.join(format!("{key}.json"))
+}
+
 /// The tree's flake dev shell; `Undeclared` (nothing spawned) when it has no `flake.nix`
 /// or its flake names no `devShells`: `print-dev-env` would otherwise fall back to a package's
 /// build environment, which is not a shell anyone declared.
@@ -83,10 +95,10 @@ pub fn shell_env(tree: &Path, nix_bin: &Path, cache: &Path) -> Result<DevShell, 
     }
     let flake_lock = std::fs::read(tree.join("flake.lock")).unwrap_or_default();
     let key = cache_key(&flake_nix, &flake_lock);
-    let cached = cache.join(format!("{key}.json"));
-    if let Some(env) = std::fs::read_to_string(&cached).ok().and_then(|j| parse_dev_env(&j).ok()).filter(|e| e.path_dirs().iter().all(|d| d.is_dir())) {
-        return Ok(DevShell::Entered(ShellEnv { key, ..env }));
+    if let Some(env) = cached_env(cache, &key) {
+        return Ok(DevShell::Entered(env));
     }
+    let cached = cached_file(cache, &key);
     let out = spira_config::bounded::bounded_for(nix_bin, "600").args(["print-dev-env", "--json"]).arg(tree).output().map_err(|e| format!("cannot run {}: {e}", nix_bin.display()))?;
     if !matches!(out.status.code(), Some(c) if !TIMEOUT_OWN_CODES.contains(&c)) {
         return Err(format!("cannot run {}: {}", nix_bin.display(), exit_words(&out)));
@@ -200,6 +212,21 @@ mod tests {
         std::fs::write(cache.join(format!("{}.json", cache_key(b"devShells", b""))), live).unwrap();
         let r = shell_env(&dir, &dir.join("no-nix"), &cache);
         assert!(matches!(r.unwrap(), DevShell::Entered(e) if e.vars.contains_key("PATH")));
+    }
+
+    #[test_id(thew85y)]
+    #[test]
+    fn cached_env_answers_only_a_primed_key_whose_path_dirs_exist() {
+        let dir = testkit::TempDir::new("repo-contract-cached-env");
+        let tools = dir.join("tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        let live = format!(r#"{{"variables":{{"PATH":{{"type":"exported","value":"{}"}}}}}}"#, tools.display());
+        std::fs::write(dir.join("k1.json"), live).unwrap();
+        let env = cached_env(&dir, "k1").unwrap();
+        assert_eq!((env.key.as_str(), env.path_dirs()), ("k1", vec![tools.clone()]));
+        assert_eq!(cached_env(&dir, "k2"), None);
+        std::fs::remove_dir(&tools).unwrap();
+        assert_eq!(cached_env(&dir, "k1"), None);
     }
 
     fn fake_nix(dir: &Path, body: &str) -> PathBuf {

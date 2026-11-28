@@ -791,7 +791,7 @@ fn check_cutting_in(reg: &Registry, name: &str, tree_root: &dyn Fn() -> Result<P
             .ok_or_else(|| "the landing ref does not resolve".to_string())
     );
     let land = land.expect("checked");
-    piece!("worktree", tree_root().and_then(|r| cut_worktree_in(&r, &path, &land)).map(|_| format!("cut from {land}")));
+    piece!("worktree", tree_root().and_then(|r| probe_worktree_in(&r, &path, &land)).map(|_| format!("cut from {land}")));
     {
         let v = reg.format(name).unwrap_or_default();
         piece!(
@@ -951,6 +951,16 @@ pub fn cut_worktree(repo: &Path, land: &str) -> Result<Worktree, String> {
 }
 
 pub fn cut_worktree_in(root: &Path, repo: &Path, land: &str) -> Result<Worktree, String> {
+    add_worktree_in(root, repo, land, &[])
+}
+
+/// [`cut_worktree_in`] writing no files: it proves git can add the worktree, at a cost that
+/// does not grow with the tree.
+pub fn probe_worktree_in(root: &Path, repo: &Path, land: &str) -> Result<Worktree, String> {
+    add_worktree_in(root, repo, land, &["--no-checkout"])
+}
+
+fn add_worktree_in(root: &Path, repo: &Path, land: &str, flags: &[&str]) -> Result<Worktree, String> {
     std::fs::create_dir_all(root).map_err(|e| format!("{}: {e}", root.display()))?;
     reap_dead_checks(root, &pid_alive);
     let _ = git(repo, &["worktree", "prune"]);
@@ -966,10 +976,8 @@ pub fn cut_worktree_in(root: &Path, repo: &Path, land: &str) -> Result<Worktree,
         repo: repo.to_path_buf(),
         dir,
     };
-    git(
-        repo,
-        &["worktree", "add", "-q", "--detach", &guard.dir.display().to_string(), land],
-    )
+    let dir = guard.dir.display().to_string();
+    git(repo, &[&["worktree", "add", "-q", "--detach"], flags, &[&dir, land]].concat())
     .map_err(|e| format!("cannot cut a worktree from {land}: {e}"))?;
     Ok(guard)
 }
@@ -1307,6 +1315,19 @@ mod tests {
         let listed = git(&repo, &["worktree", "list"]).unwrap();
         assert!(!listed.contains("repo-check-"), "{listed}");
         assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+    }
+
+    #[test_id(ter8gf0)]
+    #[test]
+    fn the_worktree_piece_passes_a_repository_whose_checkout_fails_and_leaves_none_listed() {
+        let (f, repo) = gated_fx("queue.local", "", &[(".gitattributes", "f filter=x\n"), ("f", "body\n")]);
+        git(&repo, &["config", "filter.x.smudge", "false"]).unwrap();
+        git(&repo, &["config", "filter.x.required", "true"]).unwrap();
+        let worktree = piece(&f, "worktree");
+        assert!(worktree.ok, "{}", worktree.detail);
+        let listed = git(&repo, &["worktree", "list"]).unwrap();
+        assert!(!listed.contains("repo-check-"), "{listed}");
+        assert!(cut_worktree_in(&f._d.path().join("wt"), &repo, "local/main").is_err(), "the fixture's checkout does not fail");
     }
 
     #[test_id(ttf72r7)]

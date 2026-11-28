@@ -1,4 +1,4 @@
-//! `repo-contract check <repo>|--all [--tree <dir>] [--clauses <csv>]`: read-only; one line per
+//! `repo-contract check <repo>|--all [--tree <dir>] [--clauses <csv>] [--cached-shell]`: read-only; one line per
 //! clause. Exit 0 all met, 1 any not met, 2 cannot tell.
 //! `repo-contract scaffold <repo> [--into <dir>]`: writes the contract files the tree lacks.
 
@@ -8,19 +8,21 @@ use repo_contract::real::Real;
 use std::path::PathBuf;
 
 const SCAFFOLD_USAGE: &str = "usage: repo-contract scaffold <repo> [--into <dir>]";
-const USAGE: &str = "usage: repo-contract check <repo>|--all [--tree <dir>] [--clauses <csv>]";
+const USAGE: &str = "usage: repo-contract check <repo>|--all [--tree <dir>] [--clauses <csv>] [--cached-shell]";
 
 struct Args {
     repo: Option<String>,
     tree: Option<PathBuf>,
     clauses: Vec<Clause>,
+    cached_shell: bool,
 }
 
 fn parse(args: &[String]) -> Result<Args, String> {
-    let mut a = Args { repo: None, tree: None, clauses: clause::ALL.to_vec() };
+    let mut a = Args { repo: None, tree: None, clauses: clause::ALL.to_vec(), cached_shell: false };
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
+            "--cached-shell" => a.cached_shell = true,
             "--all" => a.repo = Some("--all".into()),
             "--tree" => a.tree = Some(it.next().ok_or(USAGE)?.into()),
             "--clauses" => {
@@ -65,7 +67,7 @@ fn run() -> i32 {
         }
     };
     let ports = match Real::from_env() {
-        Ok(p) => p,
+        Ok(p) => p.cached_shell(a.cached_shell),
         Err(e) => {
             eprintln!("repo-contract: {e}");
             return 2;

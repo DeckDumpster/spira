@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use spira_config::RepoSection;
 
@@ -211,10 +212,24 @@ pub struct CheckRun {
 
 type Checker = Arc<dyn Fn(&str) -> Result<CheckRun, String> + Send + Sync>;
 
+/// How the release's `repo-contract` is run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Invocation {
+    pub cached_shell: bool,
+    pub bound: Duration,
+}
+
+/// The arguments that check `repo`; with `cached_shell` the check realises no dev shell.
+pub fn checker_argv(repo: &str, cached_shell: bool) -> Vec<String> {
+    std::iter::once("check").chain(cached_shell.then_some("--cached-shell")).chain([repo]).map(str::to_string).collect()
+}
+
 /// The home repo, which is never checked, and the check run on any other.
 #[derive(Clone)]
 pub struct Contract {
     pub home_repo: String,
+    /// `None` when the check is not the release's `repo-contract`.
+    pub invocation: Option<Invocation>,
     check: Checker,
 }
 
@@ -226,16 +241,34 @@ impl std::fmt::Debug for Contract {
 
 impl Contract {
     pub fn new(home_repo: impl Into<String>, check: impl Fn(&str) -> Result<CheckRun, String> + Send + Sync + 'static) -> Contract {
-        Contract { home_repo: home_repo.into(), check: Arc::new(check) }
+        Contract { home_repo: home_repo.into(), invocation: None, check: Arc::new(check) }
     }
 
     /// The installation's: the release's `repo-contract`, every clause, bounded.
     pub fn real(home_repo: impl Into<String>) -> Contract {
-        Contract::new(home_repo, |repo| {
+        // batch-job: a full check may realise a dev shell through nix; no request waits on it.
+        Contract::installed(home_repo, Invocation { cached_shell: false, bound: Duration::from_secs(300) })
+    }
+
+    /// The content door's: the check runs inside a request, so it realises no dev shell and is
+    /// killed at `deadline`.
+    pub fn door(home_repo: impl Into<String>, deadline: Duration) -> Contract {
+        Contract::installed(home_repo, Invocation { cached_shell: true, bound: deadline })
+    }
+
+    fn installed(home_repo: impl Into<String>, invocation: Invocation) -> Contract {
+        let Invocation { cached_shell, bound } = invocation;
+        let contract = Contract::new(home_repo, move |repo| {
             let exe = spira_config::release_env::tool("repo-contract")?;
-            let out = spira_config::bounded::bounded_for(exe, "300").args(["check", repo]).output().map_err(|e| format!("cannot run repo-contract: {e}"))?;
+            let mut check = spira_config::bounded::bounded_for(exe, &bound.as_secs_f64().to_string());
+            if cached_shell {
+                // Its git calls lead process groups of their own, with watchdogs that die with it.
+                check.kill_tree();
+            }
+            let out = check.args(checker_argv(repo, cached_shell)).output().map_err(|e| format!("cannot run repo-contract: {e}"))?;
             Ok(CheckRun { code: out.status.code(), stdout: String::from_utf8_lossy(&out.stdout).into_owned(), stderr: String::from_utf8_lossy(&out.stderr).into_owned() })
-        })
+        });
+        Contract { invocation: Some(invocation), ..contract }
     }
 
     /// Admits everything.
@@ -261,12 +294,12 @@ impl Policy {
 
     /// The installation's policy: the personas under `home`'s runes, and the files the
     /// registered keys `SPIRA_REPO_MAP`, `SPIRA_REPO_IDENTITY` and `SPIRA_STATUTE_GUARDS` name.
-    pub fn load(home: &Path, cfg: &dyn Fn(&str) -> Result<String, String>) -> Result<Policy, String> {
+    pub fn load(home: &Path, cfg: &dyn Fn(&str) -> Result<String, String>, contract: Contract) -> Result<Policy, String> {
         let path = |key: &str| cfg(key).map(|v| (!v.is_empty()).then_some(v));
         let repos = path("SPIRA_REPO_MAP")?.and_then(|p| std::fs::read_to_string(p).ok()).map(|t| repos_by_name(&t)).unwrap_or_default();
         let identity = path("SPIRA_REPO_IDENTITY")?.and_then(|p| std::fs::read_to_string(p).ok()).map(|t| identity::parse(&t)).unwrap_or_default();
         let statutes = Statutes::at(&cfg("SPIRA_STATUTE_GUARDS")?);
-        Ok(Policy { personas: personas(home), repos, identity, statutes, contract: Contract::real(cfg("SPIRA_HOME_REPO")?) })
+        Ok(Policy { personas: personas(home), repos, identity, statutes, contract })
     }
 
     /// The persona a create is filed for: the most specific one whose whole predicate the
@@ -655,7 +688,7 @@ mod tests {
         spira_config::set_paths_in_file(&toml, &[("repo.home", r#"{"path":"/srv/home","mode":"push","base":"origin/main","lanes":["plan"]}"#)]).unwrap();
         spira_config::set_paths_in_file(&toml, &[("repo.home.lanes", r#"["plan","incident"]"#)]).unwrap();
         let cfg = |key: &str| Ok(if key == "SPIRA_REPO_MAP" { map.display().to_string() } else { String::new() });
-        let policy = Policy::load(dir.path(), &cfg).unwrap();
+        let policy = Policy::load(dir.path(), &cfg, Contract::none()).unwrap();
         match crate::lane_check("incident", "home", &policy.repos, false) {
             crate::LaneCheck::Admitted => {}
             crate::LaneCheck::Refused(why) => panic!("{why}"),
@@ -693,6 +726,13 @@ mod tests {
         assert!(partition_label("add", "builder-lane", &parts).unwrap_err().text.starts_with("bead: label add: refusing — builder-lane is a partition label"));
         assert!(partition_label("remove", "rune:x", &parts).is_err());
         assert_eq!(partition_label("add", "kit-bump", &parts), Ok(()));
+    }
+
+    #[test_id(tg066rh)]
+    #[test]
+    fn only_a_cached_shell_check_asks_repo_contract_to_realise_nothing() {
+        assert_eq!(checker_argv("r", true), a(&["check", "--cached-shell", "r"]));
+        assert_eq!(checker_argv("r", false), a(&["check", "r"]));
     }
 
     const NOT_MET: &str = "met environment: ok\nnot met submit-checks: .spira/checks.toml does not exist\n";

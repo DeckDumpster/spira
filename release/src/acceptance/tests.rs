@@ -633,7 +633,7 @@ fn filing_policy() -> bead::filing::Policy {
             _ => String::new(),
         })
     };
-    let mut policy = bead::filing::Policy::load(&home, &cfg).unwrap();
+    let mut policy = bead::filing::Policy::load(&home, &cfg, bead::filing::Contract::real("scratch-repo")).unwrap();
     policy.repos = bead::repos_by_name(SCRATCH_MAP);
     policy
 }
