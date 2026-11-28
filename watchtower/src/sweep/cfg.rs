@@ -93,6 +93,7 @@ impl Cfg {
             ask_label: self.ask_label.clone(),
             timeout_s: self.moot_timeout_s,
             resolve: self.resolve_bin.clone(),
+            proc: std::sync::Arc::new(runtime::ports::SysProc),
         }
     }
 }

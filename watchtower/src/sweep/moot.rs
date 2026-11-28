@@ -6,8 +6,12 @@
 //! errors or times out leaves the ask open (a failed probe never reads as cleared). Resolution
 //! goes through `resolve`, never a raw close.
 
+use runtime::ports::{Proc, ProcOutput, ProcSpec};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::time::Duration;
+
+const RESOLVE_DEADLINE: Duration = Duration::from_secs(5);
 
 pub struct MootCfg {
     /// `COCKPIT_DB`: the beads database, verified to hold `.beads` before anything is read.
@@ -16,8 +20,10 @@ pub struct MootCfg {
     pub ask_label: String,
     /// `SPIRA_MOOT_TIMEOUT`: each predicate's bound, seconds.
     pub timeout_s: u64,
-    /// `SPIRA_RESOLVE_SH`: the `resolve` program (a test hands in a recorder).
+    /// `SPIRA_RESOLVE_SH`: the `resolve` program.
     pub resolve: String,
+    /// Runs the predicates and `resolve`.
+    pub proc: Arc<dyn Proc>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -70,24 +76,16 @@ fn short(out: &[u8]) -> String {
     String::from_utf8_lossy(&trimmed[..trimmed.len().min(300)]).into_owned()
 }
 
-/// One predicate's exit code and combined output; `None` when it could not be run.
-fn check(cfg: &MootCfg, pred: &str) -> Option<(i32, Vec<u8>)> {
-    let path = std::env::temp_dir().join(format!("watchtower-moot-{}-{:?}.out", std::process::id(), std::thread::current().id()));
-    let file = std::fs::File::create(&path).ok()?;
-    let err = file.try_clone().ok()?;
+fn run(cfg: &MootCfg, prog: &str, args: [&str; 2], deadline: Duration) -> Result<ProcOutput, String> {
+    cfg.proc.run(&ProcSpec { prog: prog.into(), args: args.map(String::from).to_vec(), stdin: vec![], deadline })
+}
+
+/// One predicate's exit code, and its stdout then stderr; `Err` when it could not be run or
+/// passed its deadline.
+fn check(cfg: &MootCfg, pred: &str) -> Result<(Option<i32>, Vec<u8>), String> {
     // FORK-EDGE: operator predicate — MOOT-WHEN is a shell command by contract (W1 allow-list: bash)
-    let status = Command::new("timeout")
-        .arg(cfg.timeout_s.to_string())
-        .arg("bash")
-        .arg("-c")
-        .arg(pred)
-        .stdin(Stdio::null())
-        .stdout(file)
-        .stderr(err)
-        .status();
-    let out = std::fs::read(&path).unwrap_or_default();
-    let _ = std::fs::remove_file(&path);
-    Some((status.ok()?.code().unwrap_or(-1), out))
+    let out = run(cfg, "bash", ["-c", pred], Duration::from_secs(cfg.timeout_s))?;
+    Ok((out.code, [out.stdout, out.stderr].concat()))
 }
 
 /// The open asks' rows, or `None` when the store did not answer.
@@ -109,17 +107,17 @@ pub fn sweep(cfg: &MootCfg, apply: bool) -> Summary {
         }
         s.found += 1;
         match check(cfg, &pred) {
-            Some((0, out)) if apply => {
+            Ok((Some(0), out)) if apply => {
                 let reason = format!("auto-resolved: MOOT-WHEN predicate cleared — {pred} → exit 0. Evidence: {}", short(&out));
-                let ok = spira_config::bounded::bounded(&cfg.resolve).arg(&id).arg(&reason).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|st| st.success());
-                if ok {
+                if run(cfg, &cfg.resolve, [&id, &reason], RESOLVE_DEADLINE).is_ok_and(|o| o.code == Some(0)) {
                     s.resolved += 1;
                 } else {
                     s.errors += 1;
                 }
             }
-            Some((124, _)) => s.errors += 1,
-            _ => {}
+            // 124 is a predicate's own `timeout` giving up.
+            Ok((Some(124), _)) | Err(_) => s.errors += 1,
+            Ok(_) => {}
         }
     }
     s
@@ -152,6 +150,65 @@ mod tests {
         assert!(asks_of("not json", "needs-ryan").is_empty());
     }
 
+    const RESOLVE: &str = "scripted-resolve";
+    type Answer = Result<(i32, &'static str), &'static str>;
+
+    /// Answers a predicate by its text and `resolve` by its program, recording every spec.
+    struct ScriptedProc {
+        predicates: Vec<(&'static str, Answer)>,
+        resolve: Answer,
+        seen: std::sync::Mutex<Vec<ProcSpec>>,
+    }
+
+    impl ScriptedProc {
+        fn new(predicates: &[(&'static str, Answer)], resolve: Answer) -> Arc<Self> {
+            Arc::new(ScriptedProc { predicates: predicates.to_vec(), resolve, seen: Default::default() })
+        }
+
+        fn resolve_args(&self) -> Vec<Vec<String>> {
+            self.seen.lock().unwrap().iter().filter(|s| s.prog == RESOLVE).map(|s| s.args.clone()).collect()
+        }
+
+        fn predicate_deadlines(&self) -> Vec<Duration> {
+            self.seen.lock().unwrap().iter().filter(|s| s.prog == "bash").map(|s| s.deadline).collect()
+        }
+    }
+
+    impl Proc for ScriptedProc {
+        fn run(&self, spec: &ProcSpec) -> Result<ProcOutput, String> {
+            self.seen.lock().unwrap().push(spec.clone());
+            let answer = if spec.prog == RESOLVE {
+                self.resolve
+            } else {
+                assert_eq!((spec.prog.as_str(), spec.args[0].as_str()), ("bash", "-c"));
+                self.predicates.iter().find(|(p, _)| *p == spec.args[1]).expect("a scripted predicate").1
+            };
+            answer.map(|(code, out)| ProcOutput { code: Some(code), stdout: out.into(), stderr: vec![] }).map_err(String::from)
+        }
+    }
+
+    /// One open ask per predicate, ids `sp-0`.. in order, behind a scripted store.
+    fn sweep_over(preds: &[&str], proc: Arc<dyn Proc>, apply: bool) -> Summary {
+        let d = testkit::TempDir::new("wt-moot");
+        std::fs::create_dir_all(d.join("db/.beads")).unwrap();
+        // literal-ok: test fixture label
+        let rows = preds.iter().enumerate().map(|(i, p)| ask(&format!("sp-{i}"), "open", &["needs-ryan"], &format!("MOOT-WHEN: {p}")));
+        let (_, lc) = crate::lc::scripted::scripted(0, &serde_json::Value::Array(rows.collect()).to_string());
+        sweep(&cfg_over(&d, lc, proc), apply)
+    }
+
+    fn cfg_over(d: &testkit::TempDir, lc: spira_store::lc_call::LcClient, proc: Arc<dyn Proc>) -> MootCfg {
+        MootCfg {
+            db: Some(d.join("db").to_string_lossy().into_owned()),
+            lc,
+            // literal-ok: test fixture label
+            ask_label: "needs-ryan".into(),
+            timeout_s: 1,
+            resolve: RESOLVE.into(),
+            proc,
+        }
+    }
+
     #[test_id(tq6a3fe)]
     #[test]
     fn a_cleared_predicate_is_resolved_a_live_one_kept_and_a_timeout_counted() {
@@ -166,26 +223,55 @@ mod tests {
             ask("sp-t", "open", &["needs-ryan"], "MOOT-WHEN: sleep 5"),
         ]);
         let (t, lc) = crate::lc::scripted::scripted(0, &rows.to_string());
-        testkit::write_exe(d.join("resolve"), &format!("#!/bin/sh\nprintf '%s|%s\\n' \"$1\" \"$2\" >> {}\n", d.join("resolved").display()));
-        let cfg = MootCfg {
-            db: Some(d.join("db").to_string_lossy().into_owned()),
-            lc,
-            // literal-ok: test fixture label
-            ask_label: "needs-ryan".into(),
-            timeout_s: 1,
-            resolve: d.join("resolve").to_string_lossy().into_owned(),
-        };
-        assert_eq!(sweep(&cfg, true), Summary { found: 3, resolved: 1, errors: 1 });
-        let resolved = std::fs::read_to_string(d.join("resolved")).unwrap();
-        assert_eq!(resolved, "sp-c|auto-resolved: MOOT-WHEN predicate cleared — echo gone → exit 0. Evidence: gone\n");
+        let proc = ScriptedProc::new(&[("echo gone", Ok((0, "gone\n"))), ("false", Ok((1, ""))), ("sleep 5", Err("bash exceeded its 1s deadline"))], Ok((0, "")));
+        assert_eq!(sweep(&cfg_over(&d, lc, proc.clone()), true), Summary { found: 3, resolved: 1, errors: 1 });
+        assert_eq!(proc.resolve_args(), vec![vec!["sp-c", "auto-resolved: MOOT-WHEN predicate cleared — echo gone → exit 0. Evidence: gone"]]);
+        assert_eq!(proc.predicate_deadlines(), vec![Duration::from_secs(1); 3]);
         // literal-ok: test fixture label
         assert_eq!(t.seen.lock().unwrap()[0], vec!["content", "list", "--all", "--limit", "0", "--label-any", "insight,needs-ryan,overseer", "--json"]);
+    }
+
+    #[test_id(tkzkxs5)]
+    #[test]
+    fn a_predicate_that_cannot_be_run_counts_an_error_and_resolves_nothing() {
+        let refused: Answer = Err("spawn bash: resource temporarily unavailable");
+        let proc = ScriptedProc::new(&[("a", refused), ("b", refused)], Ok((0, "")));
+        assert_eq!(sweep_over(&["a", "b"], proc.clone(), true), Summary { found: 2, resolved: 0, errors: 2 });
+        assert!(proc.resolve_args().is_empty());
+    }
+
+    #[test_id(t524z1b)]
+    #[test]
+    fn a_predicate_exiting_124_counts_an_error_and_resolves_nothing() {
+        let proc = ScriptedProc::new(&[("a", Ok((124, "")))], Ok((0, "")));
+        assert_eq!(sweep_over(&["a"], proc.clone(), true), Summary { found: 1, resolved: 0, errors: 1 });
+        assert!(proc.resolve_args().is_empty());
+    }
+
+    #[test_id(tza9cz2)]
+    #[test]
+    fn a_resolve_that_fails_counts_an_error_and_no_resolution() {
+        for failed in [Ok((1, "")), Err("scripted-resolve exceeded its 5s deadline")] {
+            let proc = ScriptedProc::new(&[("a", Ok((0, "")))], failed);
+            assert_eq!(sweep_over(&["a"], proc.clone(), true), Summary { found: 1, resolved: 0, errors: 1 });
+            assert_eq!(proc.resolve_args().len(), 1);
+        }
+    }
+
+    #[test_id(tpqdbpt)]
+    #[test]
+    fn without_apply_a_cleared_predicate_is_neither_resolved_nor_an_error() {
+        let proc = ScriptedProc::new(&[("a", Ok((0, "")))], Ok((0, "")));
+        assert_eq!(sweep_over(&["a"], proc.clone(), false), Summary { found: 1, resolved: 0, errors: 0 });
+        assert!(proc.resolve_args().is_empty());
     }
 
     #[test_id(t7swceo)]
     #[test]
     fn no_database_checks_nothing() {
-        let cfg = MootCfg { db: Some("does/not/exist".into()), lc: crate::lc::scripted::scripted(0, "[]").1, ask_label: "a".into(), timeout_s: 1, resolve: system_paths::BIN_FALSE.into() };
+        let proc = runtime::ports::CountingProc::refusing();
+        let cfg = MootCfg { db: Some("does/not/exist".into()), lc: crate::lc::scripted::scripted(0, "[]").1, ask_label: "a".into(), timeout_s: 1, resolve: RESOLVE.into(), proc: proc.clone() };
         assert_eq!(sweep(&cfg, true), Summary::default());
+        assert_eq!(proc.spawned(), 0);
     }
 }
