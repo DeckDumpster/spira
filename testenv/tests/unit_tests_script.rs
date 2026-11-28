@@ -19,12 +19,18 @@ fn a_red_run_exits_with_cargo_tests_status_and_still_keeps_its_units() {
     two_runs_keep_the_unit(101);
 }
 
+#[test_id(tagsbid)]
+#[test]
+fn a_second_run_after_the_root_manifest_alone_differs_keeps_the_units() {
+    two_runs(0, false, Some("[workspace]\nmembers = [\"a\"]\n# another tree's manifest\n"));
+}
+
 /// In the container the script's user can neither create nor remove a file in the checkout's
 /// `target/`: it can only rewrite the copy testenv left there.
 #[test_id(tsvwqv5)]
 #[test]
 fn a_run_that_cannot_write_target_still_rewrites_the_copy_testenv_left() {
-    two_runs(0, true);
+    two_runs(0, true, None);
 }
 
 #[test_id(tex2gv1)]
@@ -94,7 +100,7 @@ fn a_run_through_a_linked_debug_directory_records_the_seconds_in_the_leased_one(
 }
 
 fn two_runs_keep_the_unit(test_exit: i32) {
-    two_runs(test_exit, false);
+    two_runs(test_exit, false, None);
 }
 
 struct Fixture {
@@ -146,7 +152,7 @@ impl Fixture {
     }
 }
 
-fn two_runs(test_exit: i32, locked_target: bool) {
+fn two_runs(test_exit: i32, locked_target: bool, root_manifest_between: Option<&str>) {
     let f = fixture("unit-tests-script", "true\n");
     let (d, tree) = (&f.d, &f.tree);
     let copy = tree.join("target/unit-tests.clean.json");
@@ -184,6 +190,9 @@ fn two_runs(test_exit: i32, locked_target: bool) {
     assert_eq!(acts, [("whole-workspace", "missing-record")]);
     // The stub's `test` would recreate a dropped unit, so the message and a marker tell.
     std::fs::write(unit.join("marker"), "first run").unwrap();
+    if let Some(manifest) = root_manifest_between {
+        std::fs::write(tree.join("Cargo.toml"), manifest).unwrap();
+    }
     let said = run();
     assert_eq!(std::fs::read_to_string(&noted).unwrap(), "999\n", "the first build wins");
     assert!(unit.join("marker").exists(), "the second run keeps the unit: {said}");

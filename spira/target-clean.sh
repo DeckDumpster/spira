@@ -17,9 +17,10 @@
 # inputs, and every file outside a crate that a crate's dep-info names (include_str! targets),
 # so an amend that edits a doc cleans nothing and one that edits a crate cleans that crate
 # (cargo rebuilds its dependents from the changed fingerprint). A changed build input, a missing
-# record, or a tree that cannot be hashed cleans the whole workspace. Cargo.lock is the exception
-# outside a release: a tree whose lockfile alone differs cleans only its changed crates. A tree with no Cargo.toml
-# is no cargo workspace: nothing to clean or record.
+# record, or a tree that cannot be hashed cleans the whole workspace. Outside a release the only
+# such inputs are .cargo/config.toml, .cargo/config and a root Cargo.toml holding a [package]:
+# cargo keys or fingerprints every unit by the rest (root manifest, lockfile, toolchain pin). A
+# tree with no Cargo.toml is no cargo workspace: nothing to clean or record.
 #
 # Every run but a stamp writes .target-clean-report.json in the target at exit: what it removed.
 #
@@ -112,9 +113,32 @@ cargo_clean() {
 DEPS_DIR="$TARGET/debug/deps"
 rm -f "$TARGET/.unit-tests-built-tree"
 roots=(Cargo.toml Cargo.lock rust-toolchain.toml rust-toolchain .cargo/config.toml .cargo/config)
+# The strings of the root manifest's array $1, one per line.
+manifest_list() {
+  awk -v key="^$1[[:space:]]*=" '$0 ~ key {on=1} on{line=$0; sub(/#.*/,"",line); while (match(line, /"[^"]*"/)) { print substr(line, RSTART+1, RLENGTH-2); line=substr(line, RSTART+RLENGTH) } if (line ~ /\]/) exit}' Cargo.toml
+}
+mapfile -t excluded < <(manifest_list exclude)
+# The paths member entry $1 names: itself, or what its glob matches less the excluded paths.
+member_paths() {
+  case "$1" in
+    *[*?[]*) ;;
+    *) printf '%s\n' "$1"; return ;;
+  esac
+  local p x
+  (shopt -s nullglob; IFS=; for p in ${1%/}; do printf '%s\n' "$p"; done) | LC_ALL=C sort |
+    while IFS= read -r p; do
+      for x in "${excluded[@]}"; do [ "$p" != "${x%/}" ] || continue 2; done
+      printf '%s\n' "$p"
+    done
+}
+# A path two entries name is one member.
 members=()
-while IFS= read -r m; do [ -n "$m" ] && [ -f "$m/Cargo.toml" ] && members+=("$m"); done < <(
-  awk '/^members[[:space:]]*=/{on=1} on{line=$0; sub(/#.*/,"",line); while (match(line, /"[^"]*"/)) { print substr(line, RSTART+1, RLENGTH-2); line=substr(line, RSTART+RLENGTH) } if ($0 ~ /\]/) exit}' Cargo.toml)
+declare -A is_member=()
+while IFS= read -r m; do
+  [ -n "$m" ] && [ -f "$m/Cargo.toml" ] && [ -z "${is_member[$m]-}" ] || continue
+  is_member[$m]=1
+  members+=("$m")
+done < <(manifest_list members | while IFS= read -r e; do member_paths "$e"; done)
 package_name() {
   awk '/^\[package\]/{p=1;next} /^\[/{p=0} p && /^name[[:space:]]*=/{gsub(/.*=[[:space:]]*"|".*/,""); print; exit}' "$1/Cargo.toml"
 }
@@ -221,14 +245,22 @@ keep_built_units() {
   return $kept
 }
 if [ -n "$manifest" ] && [ -f "$BUILT" ] && [ -n "${changed:-}" ]; then
-  # A lockfile that differs between two trees is no reason to clean on its own: cargo keys each
-  # unit by the dependencies it resolved, so a unit built against other versions is a different
-  # unit. Only source files need this clean, because cargo trusts their mtimes across trees. A
-  # release still counts it: the lock changed under units this lease built.
+  # Across two trees only sources need this clean, because cargo trusts their mtimes; it keys or
+  # fingerprints units by the roots left to it. It may not by .cargo's runner, linker and env, and
+  # a root [package] makes the root manifest that package's own. A release counts every root: it
+  # changed under units this lease built.
   root_changed=()
+  left_to_cargo=()
   for r in "${roots[@]}"; do
-    [ -z "$release" ] && [ "$r" = Cargo.lock ] && continue
-    grep -qxF "$r" <<< "$changed" && root_changed+=("$r")
+    grep -qxF "$r" <<< "$changed" || continue
+    if [ -z "$release" ]; then
+      case "$r" in
+        .cargo/*) ;;
+        Cargo.toml) grep -q '^[[:space:]]*\[package\]' Cargo.toml || { left_to_cargo+=("$r"); continue; } ;;
+        *) left_to_cargo+=("$r"); continue ;;
+      esac
+    fi
+    root_changed+=("$r")
   done
   if [ "${#root_changed[@]}" -gt 0 ] && [ -z "$release" ]; then
     echo "unit-tests: ${root_changed[*]} changed — cleaning the workspace crates"
@@ -278,8 +310,10 @@ if [ -n "$manifest" ] && [ -f "$BUILT" ] && [ -n "${changed:-}" ]; then
       done
       add_act per-crate bytes-changed '[]' "$(json_list "${cleaned[@]}")" "$unit_bytes" "$unit_files"
     else
-      if [ -z "$release" ] && grep -qxF Cargo.lock <<< "$changed"; then
+      if [ "${left_to_cargo[*]-}" = Cargo.lock ]; then
         echo "unit-tests: only Cargo.lock changed — cargo keys each unit by its resolved dependencies; nothing cleaned"
+      elif [ "${#left_to_cargo[@]}" -gt 0 ]; then
+        echo "unit-tests: ${left_to_cargo[*]} changed — cargo keys or fingerprints every unit by these itself; nothing cleaned"
       else
         echo "unit-tests: no workspace crate's bytes changed — nothing cleaned"
       fi
