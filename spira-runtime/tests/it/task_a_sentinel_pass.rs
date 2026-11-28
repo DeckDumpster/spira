@@ -766,7 +766,6 @@ mod observe_store_calls {
     #[derive(Default)]
     struct Fake {
         asked: Mutex<Vec<Vec<String>>>,
-        knobs: Mutex<serde_json::Map<String, Value>>,
     }
 
     impl Fake {
@@ -779,7 +778,7 @@ mod observe_store_calls {
                 ["list", ..] => "[]".into(),
                 ["claimable"] => json!({ "rev": 5, "cannot_tell": 0, "content_error": null, "beads": [] }).to_string(),
                 // `sp-a` waits on a bead outside the live set that has no row.
-                ["content", "list", ..] => json!([{ "id": "sp-a", "title": "a", "status": "open", "issue_type": "task", "labels": ["spira"], "dependencies": [{ "issue_id": "sp-a", "depends_on_id": "sp-gone", "type": "blocks" }] }]).to_string(),
+                ["content", "list", ..] => json!([{ "id": "sp-a", "title": "a", "status": "open", "issue_type": "task", "labels": ["spira", "spira-red-tracker"], "dependencies": [{ "issue_id": "sp-a", "depends_on_id": "sp-gone", "type": "blocks" }] }]).to_string(),
                 ["plan", ..] => json!({ "watermark": 1, "items": [], "edges": [] }).to_string(),
                 _ => "{}".into(),
             }
@@ -814,23 +813,24 @@ mod observe_store_calls {
         let run = dir.path().join("run");
         let release = spira_config::process::fixture_release(dir.path(), true);
         std::fs::create_dir_all(release.join("bin")).unwrap();
-        std::fs::write(release.join("bin/spira-lc"), "").unwrap();
+        testkit::write_exe(release.join("bin/spira-lc"), "");
         std::fs::create_dir_all(&run).unwrap();
         let sock = dir.path().join("lc.sock");
-        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", run.to_str().unwrap()), ("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_LC_LIFECYCLE_ON_STORE", "1")]);
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", run.to_str().unwrap()), ("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_LC_LIFECYCLE_ON_STORE", "1"), ("SPIRA_RUNES_DIR", testkit::manifest_dir().join("../spira/runes").to_str().unwrap())]);
         let name = format!("{}::{test}", module_path!().split_once("::").unwrap().1);
         let out = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([&name, "--exact", "--nocapture"])
+            .args([&format!("{name}::"), "--nocapture"])
             .env_clear()
             .env("PATH", "")
             .env("HOME", dir.path())
-            .env("SPIRA_HOME", spira_config::process::fixture_home())
+            .env("SPIRA_HOME", testkit::manifest_dir().join("../spira"))
             .env("SPIRA_RELEASE", &release)
             .env("SPIRA_TOML", toml)
             .env(CHILD, dir.path())
             .output()
             .unwrap();
         let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        said.lines().filter(|l| l.starts_with("observe sent")).for_each(|l| eprintln!("{l}"));
         assert!(out.status.success() && said.contains("1 passed"), "{said}");
     }
 
