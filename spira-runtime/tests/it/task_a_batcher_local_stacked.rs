@@ -394,6 +394,14 @@ fn no_round_is_adopted_while_one_of_ours_is_unnamed_or_being_abandoned() {
     let (_, acts) = decide_with(&p, &Carry::default(), &snap(vec![another_actors(30)], NOW));
     assert_eq!(names(&acts), [CERTIFY], "control: with nothing pending it is adopted: {acts:?}");
 
+    for state in [State::Opened, State::Promoting] {
+        let mut waiting = ours_certifying(&p);
+        let rc = waiting.repos.get_mut("spira").unwrap();
+        (rc.state, rc.batch, rc.waiting) = (state, None, None);
+        let (_, acts) = decide_with(&p, &waiting, &snap(vec![another_actors(30)], NOW + 5_000));
+        assert!(!names(&acts).contains(&CERTIFY), "{state:?}: {acts:?}");
+    }
+
     let mut closing = snap(vec![another_actors(30)], NOW);
     closing.repos.get_mut("spira").unwrap().in_flight = Some(vec![ABANDON.into()]);
     let (_, acts) = decide_with(&p, &Carry::default(), &closing);
@@ -432,4 +440,40 @@ fn a_stacked_foreign_round_that_is_not_adopted_is_left_alone_until_it_is_first()
         }
         assert!([REDRIVE, ABANDON].iter().all(|no| !all.iter().any(|a| a == no)), "{phase}: {all:?}");
     }
+}
+
+#[test_id(ty6gk58)]
+#[test]
+fn a_round_above_one_this_task_does_not_carry_is_not_adopted_so_it_cannot_land_first() {
+    let p = small(2);
+    let by_hand = Round { driven: true, phase: "certifying".into(), ..round("rh", &["sp-a", "sp-b"], "h1", 90) };
+    let (carry, acts) = decide_with(&p, &Carry::default(), &snap(vec![by_hand, another_actors(30)], NOW));
+    assert!([CERTIFY, LAND].iter().all(|no| !names(&acts).contains(no)), "{acts:?}");
+    assert!(carry.repos.get("spira").is_none_or(|rc| rc.batch.is_none()));
+    adopts_beside_ours(2);
+}
+
+#[test_id(t847qgd)]
+#[test]
+fn a_round_opened_under_one_of_ours_is_adopted_below_it_and_lands_first() {
+    let p = small(1);
+    let under = snap(vec![another_actors(120), round("r1", &["sp-a", "sp-b"], "h1", 90)], NOW + 60_000);
+    let (carry, acts) = decide_with(&p, &ours_certifying(&p), &under);
+    assert_eq!(leg_of(&acts, CERTIFY).batch, "rx", "{acts:?}");
+    let rc = &carry.repos["spira"];
+    assert_eq!((rc.batch.as_deref(), rc.stacked), (Some("rx"), false));
+    assert_eq!((rc.above[0].batch.as_deref(), rc.above[0].stacked), (Some("r1"), true));
+    let ours = rc.above[0].leg.clone().unwrap();
+    let (_, acts) = ran(&carry, &ours, 0, "");
+    assert!(!names(&acts).contains(&LAND), "ours waits for the round now under it: {acts:?}");
+}
+
+#[test_id(tyk6gqt)]
+#[test]
+fn a_paused_repo_still_adopts_and_cuts_nothing() {
+    let p = small(2);
+    let mut world = snap(vec![another_actors(30)], NOW);
+    world.repos.get_mut("spira").unwrap().paused = Some("hold: an operator".into());
+    let (_, acts) = decide_with(&p, &Carry::default(), &world);
+    assert_eq!(names(&acts), [CERTIFY], "{acts:?}");
 }

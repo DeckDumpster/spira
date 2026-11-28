@@ -32,7 +32,7 @@
 //! | Idle | observe: paused, open round not ours | as the open-round rows below (a pause stops only a new cut) |
 //! | Idle | observe: open round, driven | Idle |
 //! | Idle | observe: open round, undriven, last pass red | Attributing (`adopt_red`: attribute that pass's kept results) |
-//! | Idle | observe: open round not ours, undriven, phase opened, past `UNDRIVEN_GRACE_S`, fit, every tip known, above every round of this task, the repo not stopped or cut-held, no `abandon` in flight and no round of this task waiting on `assemble`, `round_open` or `promote`, not adopted before while open (a reached `SPIRA_ROUND_MAX_OPEN` or a pause does not bar it) | Certifying (adopted as one of this task's rounds; stacked when a live round is below it; nothing is cut on that tick) |
+//! | Idle | observe: open round not ours, undriven, phase opened, past `UNDRIVEN_GRACE_S`, fit, every tip known, every open round below it this task's, the repo not stopped or cut-held, no `abandon` in flight and no round of this task waiting on `assemble`, `round_open` or `promote`, not adopted before while open (a reached `SPIRA_ROUND_MAX_OPEN` or a pause does not bar it) | Certifying (adopted as one of this task's rounds, at its place in the queue's order; stacked when a live round is below it, as any of this task's above it then are; nothing is cut on that tick) |
 //! | Idle | observe: open round not ours, undriven, above the repo's first open round, fit, not adopted above | Idle (left alone until it is the first) |
 //! | Idle | observe: open round, undriven | Orphan (`orphan_step`: Wait / Redrive once / then `abandon` naming why, pace Infra) |
 //! | Idle | observe: `should_cut` = None | Idle (silent) |
@@ -2151,19 +2151,12 @@ impl Machine<'_> {
         if repo.stopped || repo.cut_hold.is_some() || unsettled {
             return false;
         }
-        let ours = |r: &Round| live.iter().any(|l| l.batch.as_ref() == Some(&r.id));
-        let found = repo.open_rounds().enumerate().find(|(at, r)| {
-            !ours(r)
-                && !r.driven
-                && r.phase == "opened"
-                && r.age_secs >= UNDRIVEN_GRACE_S
-                && unfit_of(r, repo).is_none()
-                && tips_known(r)
-                && !self.rc.adopted.contains(&r.id)
-                // The new round is carried on top, so none of ours may be above it in the queue.
-                && !repo.open_rounds().skip(at + 1).any(ours)
-        });
-        let Some((_, open)) = found else { return false };
+        // Only the first round not ours: this task can order a landing only behind rounds it carries.
+        let Some(open) = repo.open_rounds().find(|r| !live.iter().any(|l| l.batch.as_ref() == Some(&r.id))) else { return false };
+        let ready = !open.driven && open.phase == "opened" && open.age_secs >= UNDRIVEN_GRACE_S && unfit_of(open, repo).is_none() && tips_known(open);
+        if !ready || self.rc.adopted.contains(&open.id) {
+            return false;
+        }
         eprintln!("{NAME} {}: adopting open round {}, which has no pass and no driver, and certifying it", self.repo, open.id);
         if self.rc.state == State::Held {
             self.go(Trigger::Released);
@@ -2171,7 +2164,7 @@ impl Machine<'_> {
         self.rc.skip_why = None;
         self.adopt(open, &self.rc.pace.core());
         self.rc.adopted.push(open.id.clone());
-        self.rc.stacked = !live.is_empty();
+        self.rc.stacked = place_of(repo, live, &open.id) > 0;
         self.rc.base = repo.base_sha.clone();
         self.rc.landing_base = repo.base_sha.clone();
         self.go(Trigger::OpenRoundOpened);
@@ -2863,6 +2856,12 @@ impl Machine<'_> {
     }
 }
 
+/// Where `batch` goes among `live` (lowest first): under the first of them the queue lists above it.
+fn place_of(repo: &Repo, live: &[RepoCarry], batch: &str) -> usize {
+    let over: Vec<&str> = repo.open_rounds().map(|r| r.id.as_str()).skip_while(|id| *id != batch).skip(1).collect();
+    live.iter().position(|l| l.batch.as_deref().is_some_and(|b| over.contains(&b))).unwrap_or(live.len())
+}
+
 fn is_first(open: &Round, repo: &Repo) -> bool {
     repo.open_round.as_ref().is_some_and(|r| r.id == open.id)
 }
@@ -2933,7 +2932,9 @@ fn decide_repo(policy: &Policy, name: &str, rc: &RepoCarry, repo: &Repo, now_ms:
         m.cut(policy, repo, &live);
     }
     if m.rc.live() {
-        live.push(m.rc.round());
+        let at = m.rc.batch.as_deref().map_or(live.len(), |batch| place_of(repo, &live, batch));
+        live.iter_mut().skip(at).for_each(|above| above.stacked = true);
+        live.insert(at, m.rc.round());
     }
     let state = if live.is_empty() { m.rc.state } else { idle };
     let mut rc = RepoCarry::rebuilt(&m.rc, live, state);
