@@ -118,6 +118,49 @@ fn the_probe_reads_content_in_bounded_id_chunks_never_one_whole_store_dump() {
     }
 }
 
+fn mirrored_wiki(tag: &str, lines: &[String]) -> testkit::TempDir {
+    let wiki = testkit::TempDir::new(tag);
+    let out = wiki.path().join(task::REL);
+    std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+    std::fs::write(out, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+    wiki
+}
+
+fn bead_line(id: &str) -> String {
+    format!("{{\"id\":\"{id}\",\"lifecycle_state\":\"\"}}")
+}
+
+#[test_id(ts0xo9x)]
+#[test]
+fn a_mirrored_bead_without_a_lifecycle_row_is_still_read() {
+    let memory = r#"{"_type":"memory","key":"k","value":"v"}"#.to_string();
+    let wiki = mirrored_wiki("export-beads-union", &[bead_line("sp-zz001"), bead_line("sp-zz002"), memory]);
+    let store = std::sync::Arc::new(Store(Default::default(), 3));
+    let lc = spira_store::lc_call::LcClient::over(store.clone(), true);
+    let snap: Snapshot = serde_json::from_str(&task::observe(&lc, wiki.path().to_str().unwrap()).unwrap()).unwrap();
+    let ids: Vec<&str> = snap.content.iter().map(|v| v["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["sp-00000", "sp-00001", "sp-00002", "sp-zz001", "sp-zz002"]);
+    assert_eq!(snap.mirrored_count, 2);
+    let calls = store.0.lock().unwrap().clone();
+    assert!(calls.iter().filter(|a| a.starts_with(&["content".into(), "list".into()])).all(|a| a[3].split(',').count() <= task::CONTENT_CHUNK), "{calls:?}");
+}
+
+#[test_id(txfzk2t)]
+#[test]
+fn a_mirror_over_twice_the_lifecycle_store_is_rewritten_not_refused_as_a_shrink() {
+    let n = task::CONTENT_CHUNK;
+    let lines: Vec<String> = (0..2 * n + 1).map(|i| bead_line(&format!("sp-m{i:05}"))).collect();
+    let wiki = mirrored_wiki("export-beads-outgrown", &lines);
+    let store = std::sync::Arc::new(Store(Default::default(), n));
+    let lc = spira_store::lc_call::LcClient::over(store.clone(), true);
+    let snap: Snapshot = serde_json::from_str(&task::observe(&lc, wiki.path().to_str().unwrap()).unwrap()).unwrap();
+    let h = t::handler::<H>(SET);
+    let (c, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(snap), TICK).unwrap();
+    assert_eq!((c.refused.as_deref(), names(&acts)), (None, vec![task::WRITE]));
+    let calls = store.0.lock().unwrap().clone();
+    assert!(calls.iter().filter(|a| a.starts_with(&["content".into(), "list".into()])).all(|a| a[3].split(',').count() <= n), "{calls:?}");
+}
+
 #[test_id(t82aaq3)]
 #[test]
 fn the_lifecycle_store_is_read_as_cursor_pages_never_as_list_all() {

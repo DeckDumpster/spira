@@ -24,7 +24,7 @@
 //!            watermarks: String, mirrored_count: usize, mirror_bytes_sha: String }
 //! ```
 //!
-//! - `content` = store verb `content list --id <chunk> --all --limit 0 --json`, one query per `CONTENT_CHUNK` lifecycle ids (300 s in all); `lifecycle` = `list --bare --after <id> --limit <n>`
+//! - `content` = store verb `content list --id <chunk> --all --limit 0 --json`, one query per `CONTENT_CHUNK` ids of the union of the lifecycle ids and the ids already mirrored (300 s in all); `lifecycle` = `list --bare --after <id> --limit <n>`
 //!   pages, one request each (`:29`, 120 s); `memories` = `content memories --json` (`:30`, 60 s, absent → `{}`);
 //!   `watermarks` = `plane-watermarks --manifest` (`:32`, 5 s). All four through the in-process
 //!   `LcClient` (S7a), not the `spira-lc` CLI.
@@ -77,7 +77,7 @@
 //! `mirror-stale` fires after its threshold, which is the intended signal.
 //!
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use runtime::event::EventKindTag;
 use serde::{Deserialize, Serialize};
@@ -258,6 +258,12 @@ pub const CONTENT_CHUNK: usize = 200;
 /// Lifecycle rows per `list --bare` request; each page is its own call under the request deadline.
 pub const LIFECYCLE_PAGE: usize = 1_000;
 
+/// The `sp-` id of a mirror line, read without parsing the whole line.
+fn mirrored_id(line: &str) -> Option<&str> {
+    let value = line.split("\"id\":").nth(1)?.trim_start().strip_prefix('"')?;
+    value.starts_with("sp-").then(|| value.split('"').next().unwrap_or(value))
+}
+
 /// The runner of [`OBSERVE`]: the content, lifecycle and memory dumps and the planes'
 /// watermarks over the socket, and what is mirrored now.
 pub fn observe(lc: &LcClient, wiki: &str) -> Result<String, String> {
@@ -285,7 +291,13 @@ pub fn observe(lc: &LcClient, wiki: &str) -> Result<String, String> {
             _ => break,
         }
     }
-    let ids: Vec<&str> = lifecycle.keys().map(String::as_str).collect();
+    let mirror = std::fs::read(std::path::Path::new(wiki).join(REL)).unwrap_or_default();
+    let text = String::from_utf8_lossy(&mirror);
+    let mirrored: Vec<&str> = text.lines().filter_map(mirrored_id).collect();
+    let mirrored_count = mirrored.len();
+    let mirror_bytes_sha = if mirror.is_empty() { String::new() } else { sha_hex(&mirror) };
+    // A mirrored bead stays mirrored even with no lifecycle row.
+    let ids: Vec<&str> = lifecycle.keys().map(String::as_str).chain(mirrored).collect::<BTreeSet<_>>().into_iter().collect();
     let mut content: Vec<serde_json::Value> = Vec::with_capacity(ids.len());
     for chunk in ids.chunks(CONTENT_CHUNK) {
         let ids = chunk.join(",");
@@ -306,10 +318,6 @@ pub fn observe(lc: &LcClient, wiki: &str) -> Result<String, String> {
         Ok(r) => format!("Planning watermarks: unreadable ({}).", r.text()),
         Err(e) => format!("Planning watermarks: unreadable ({e})."),
     };
-    let mirror = std::fs::read(std::path::Path::new(wiki).join(REL)).unwrap_or_default();
-    let text = String::from_utf8_lossy(&mirror);
-    let mirrored_count = text.lines().filter(|l| l.split("\"id\":").nth(1).is_some_and(|r| r.trim_start().starts_with("\"sp-"))).count();
-    let mirror_bytes_sha = if mirror.is_empty() { String::new() } else { sha_hex(&mirror) };
     serde_json::to_string(&Snapshot { content, lifecycle, memories, watermarks, mirrored_count, mirror_bytes_sha, disabled: false }).map_err(|e| e.to_string())
 }
 
