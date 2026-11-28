@@ -190,6 +190,10 @@ pub fn deadline_scoped(at: Instant) -> DeadlineScope {
     DeadlineScope
 }
 
+pub fn deadline() -> Option<Instant> {
+    DEADLINE.with(|d| d.get())
+}
+
 pub fn deadline_passed() -> bool {
     DEADLINE.with(|d| d.get()).is_some_and(|at| Instant::now() >= at) // clock-safe: the deadline is a monotonic instant the server sets
 }
