@@ -116,7 +116,7 @@ fn a_failed_judgement_leg_is_driven_again_on_the_next_tick_and_mails_once() {
 #[test_id(thf1sv9)]
 #[test]
 fn the_judgement_leg_is_the_queues_verdict_pass_for_the_repo() {
-    assert_eq!(verdict_leg_argv("/r/queue".into(), "dumpstar"), ["/r/queue", "verdict", "dumpstar"]);
+    assert_eq!(verdict_leg_argv("/r/queue".into(), "dumpstar"), ["/r/queue", "verdict", "dumpstar"]); // not a path: an argv word, never opened
 }
 
 const NAMED_TEST_RED: &str = "red\nfailed-step: gate / Run tests\nstep-log:         FAIL [   0.412s] (1/1) demo::it a_test\n";
