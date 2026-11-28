@@ -1,4 +1,4 @@
-//! spira-claim — bead attempt accounting, the CHECK 4 poison decision, and epic-first claim
+//! spira-claim — bead attempt accounting, the CHECK 4 poison decision, and claim
 //! selection. The verbs live in the library ([`spira_claim::cli`]); this is the process.
 
 fn main() {

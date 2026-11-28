@@ -3,7 +3,7 @@
 //! `verdicts` the dispatcher hands the lifecycle store, so a reader asks what the dispatcher
 //! decided instead of re-deriving it, and [`cli`] — every verb the binary answers, called
 //! in-process ([`cli::dispatch_in`]) instead of forking `spira-claim`. The bead-attempt
-//! accounting, CHECK 4 poison decision, epic-first claim selection and `unpoison` stay
+//! accounting, CHECK 4 poison decision, claim selection and `unpoison` stay
 //! private behind it; see DESIGN.md.
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 //! Claim selection: the stacked-dependents claimability rule (machine mode) and the
-//! epic-first rank (sp-ns46j). Pure. DESIGN.md §2 `select`, §3.
+//! claim rank. Pure. DESIGN.md §2 `select`, §3.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -104,7 +104,7 @@ pub fn parse_lookup(text: &str) -> Result<EpicLookup, String> {
     serde_json::from_str(t).map_err(|e| format!("epic lookup is not JSON: {e}"))
 }
 
-/// The distinct parent epics a ready set references, sorted.
+/// The distinct parents a ready set references, sorted; only those that are epics group.
 pub fn parents(rows: &[ReadyRow]) -> Vec<String> {
     rows.iter().filter_map(|r| r.parent.clone()).filter(|p| !p.is_empty()).collect::<BTreeSet<_>>().into_iter().collect()
 }
@@ -138,18 +138,19 @@ pub struct Ranked {
 }
 
 impl Ranked {
-    /// Express first, then REWORK (by bead priority), then fresh work by effective priority,
-    /// epic started-ness and bead priority. The order law-a-beads-priority-is-a-floor names:
-    /// express outranks both; started work outranks all fresh work.
-    fn tier(&self) -> (u8, u8, i64, u8, i64) {
+    /// Express first, then REWORK (by bead priority), then fresh work by bead priority. The
+    /// epic's priority and started-ness only break ties among equal bead priority
+    /// (law-a-beads-priority-is-a-floor). The last three fields mean different things in
+    /// the two arms; [`top_tier`] reads them back.
+    fn tier(&self) -> (u8, u8, i64, i64, i64) {
         if self.rework == 0 {
             (self.express, 0, 0, 0, self.bead_priority)
         } else {
-            (self.express, 1, self.epic_priority, self.epic_started, self.bead_priority)
+            (self.express, 1, self.bead_priority, self.epic_priority, self.epic_started.into())
         }
     }
     #[allow(clippy::type_complexity)]
-    fn key(&self) -> ((u8, u8, i64, u8, i64), u8, &str, &str, &str) {
+    fn key(&self) -> ((u8, u8, i64, i64, i64), u8, &str, &str, &str) {
         (self.tier(), self.resumable, &self.age, &self.id, &self.epic_id)
     }
     pub fn tsv(&self) -> String {
@@ -161,19 +162,18 @@ impl Ranked {
 }
 
 pub fn rank_one(r: &ReadyRow, lookup: &EpicLookup, resumable: &BTreeSet<String>, rework: &BTreeSet<String>) -> Ranked {
-    let pid = r.parent.clone().unwrap_or_default();
-    let started: BTreeSet<&str> = lookup.started.iter().map(String::as_str).collect();
-    let epic_priority = if pid.is_empty() { r.prio() } else { (*lookup.prio.get(&pid).unwrap_or(&r.prio())).min(r.prio()) };
+    // The lookup lists only epics, so any other parent is no grouping at all.
+    let epic = r.parent.as_deref().and_then(|p| lookup.prio.get_key_value(p));
     Ranked {
-        epic_priority,
+        epic_priority: epic.map_or(r.prio(), |(_, prio)| (*prio).min(r.prio())),
         express: if r.express { 0 } else { 1 },
-        epic_started: if started.contains(pid.as_str()) { 0 } else { 1 },
+        epic_started: if epic.is_some_and(|(id, _)| lookup.started.contains(id)) { 0 } else { 1 },
         bead_priority: r.prio(),
         rework: if rework.contains(&r.id) { 0 } else { 1 },
         resumable: if resumable.contains(&r.id) { 0 } else { 1 },
         age: r.created_at.clone().or_else(|| r.updated_at.clone()).unwrap_or_default(),
         id: r.id.clone(),
-        epic_id: if pid.is_empty() { r.id.clone() } else { pid },
+        epic_id: epic.map_or(&r.id, |(id, _)| id).clone(),
     }
 }
 
@@ -189,7 +189,7 @@ pub fn is_container(r: &ReadyRow) -> bool {
 }
 
 /// dwarf.sh's band lines for the best tier — express first, then REWORK beads by bead
-/// priority, else the best (epic priority, epic started, bead priority):
+/// priority, else the best (bead priority, epic priority, epic started):
 /// `id|branch|repo|eprio|estarted|bprio`,
 /// in input order.
 pub fn top_tier(rows: &[ReadyRow], lookup: &EpicLookup, rework: &BTreeSet<String>) -> Vec<String> {
@@ -199,7 +199,7 @@ pub fn top_tier(rows: &[ReadyRow], lookup: &EpicLookup, rework: &BTreeSet<String
     let Some(best) = ranked.iter().map(|(_, k)| k.tier()).min() else {
         return Vec::new();
     };
-    let top = (best.2, best.3, best.4);
+    let (eprio, estarted, bprio) = if best.1 == 0 { (best.2, best.3, best.4) } else { (best.3, best.4, best.2) };
     ranked
         .iter()
         .filter(|(_, k)| k.tier() == best)
@@ -209,9 +209,9 @@ pub fn top_tier(rows: &[ReadyRow], lookup: &EpicLookup, rework: &BTreeSet<String
                 r.id,
                 r.label_value("branch:").unwrap_or(""),
                 r.label_value("repo:").unwrap_or(""),
-                top.0,
-                top.1,
-                top.2
+                eprio,
+                estarted,
+                bprio
             )
         })
         .collect()
@@ -548,12 +548,12 @@ mod tests {
         r.iter().map(|k| k.id.as_str()).collect()
     }
 
-    #[test_id(tqmptle)]
+    #[test_id(tqgtutg)]
     #[test]
-    fn epic_priority_ranks_first() {
+    fn a_childs_own_priority_outranks_a_higher_priority_epic() {
         let rows = vec![row("a", 2, Some("E2"), "2026-01-01"), row("b", 3, Some("E1"), "2026-01-02")];
         let lk = EpicLookup { prio: [("E2".into(), 2), ("E1".into(), 1)].into(), started: vec![] };
-        assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new())), ["b", "a"]);
+        assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new())), ["a", "b"]);
     }
 
     #[test_id(t8a6h45)]
@@ -566,15 +566,14 @@ mod tests {
         assert_eq!(r[0].epic_priority, 0);
     }
 
-    #[test_id(tatid6i)]
+    #[test_id(tt6mhrf)]
     #[test]
-    fn equal_effective_priority_keeps_epic_first_order() {
+    fn epic_grouping_only_breaks_ties_among_equal_bead_priority() {
         let rows = vec![row("a", 1, Some("E1"), "2026-01-01"), row("b", 0, Some("E2"), "2026-01-02")];
         let lk = EpicLookup { prio: [("E1".into(), 1), ("E2".into(), 1)].into(), started: vec!["E1".into()] };
         assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new())), ["b", "a"]);
         let lk = EpicLookup { prio: [("E1".into(), 0), ("E2".into(), 1)].into(), started: vec!["E1".into()] };
-        let rows = vec![row("b", 0, Some("E2"), "2026-01-02"), row("a", 1, Some("E1"), "2026-01-01")];
-        assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new())), ["a", "b"]);
+        assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new())), ["b", "a"]);
     }
 
     #[test_id(tg4o8ha)]
@@ -599,15 +598,38 @@ mod tests {
         assert_eq!(ids(&rank(&rows, &lk, &res, &BTreeSet::new())), ["hi", "res", "old", "new"]);
     }
 
-    #[test_id(tx5xcuj)]
+    #[test_id(t74agoh)]
     #[test]
-    fn unaffiliated_bead_is_its_own_epic_at_its_own_priority() {
+    fn a_standalone_p1_outranks_a_p2_child_of_a_p0_epic_and_is_its_own_epic() {
         let rows = vec![row("solo", 1, None, "2026-01-01"), row("kid", 2, Some("E"), "2026-01-01")];
         let lk = EpicLookup { prio: [("E".into(), 0)].into(), started: vec![] };
         let r = rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new());
-        assert_eq!(ids(&r), ["kid", "solo"]);
-        assert_eq!(r[1].epic_id, "solo");
-        assert_eq!(r[1].epic_started, 1);
+        assert_eq!(ids(&r), ["solo", "kid"]);
+        assert_eq!((r[0].epic_id.as_str(), r[0].epic_started), ("solo", 1));
+    }
+
+    #[test_id(tda2bvw)]
+    #[test]
+    fn a_p2_child_of_a_started_p1_epic_ranks_between_a_fresh_p1_and_an_older_p2() {
+        let rows = vec![row("old", 2, None, "2026-01-01"), row("kid", 2, Some("E"), "2026-02-01"), row("p1", 1, None, "2026-03-01")];
+        let lk = EpicLookup { prio: [("E".into(), 1)].into(), started: vec!["E".into()] };
+        assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new())), ["p1", "kid", "old"]);
+    }
+
+    #[test_id(tdegd5u)]
+    #[test]
+    fn at_equal_bead_priority_the_higher_priority_epic_goes_first_even_unstarted_and_newer() {
+        let rows = vec![row("a", 2, Some("E1"), "2026-01-01"), row("b", 2, Some("E0"), "2026-02-01")];
+        let lk = EpicLookup { prio: [("E0".into(), 0), ("E1".into(), 1)].into(), started: vec!["E1".into()] };
+        assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new())), ["b", "a"]);
+    }
+
+    #[test_id(tsb5mzl)]
+    #[test]
+    fn a_parent_absent_from_the_lookup_counts_as_no_parent_even_when_listed_started() {
+        let lk = EpicLookup { prio: Default::default(), started: vec!["T".into()] };
+        let r = rank_one(&row("kid", 2, Some("T"), "t"), &lk, &BTreeSet::new(), &BTreeSet::new());
+        assert_eq!((r.epic_priority, r.epic_started, r.epic_id.as_str()), (2, 1, "kid"));
     }
 
     #[test_id(ty6mkji)]
