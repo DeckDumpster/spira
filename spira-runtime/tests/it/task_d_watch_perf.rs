@@ -142,7 +142,7 @@ fn a_slow_probe_held_across_three_passes_is_set_once_and_cleared_once_and_probes
     }
     let held = published(&r);
     let [set] = held.as_slice() else { panic!("one set: {held:?}") };
-    assert_eq!((set.row.as_str(), set.set.keys().map(String::as_str).collect::<Vec<_>>(), set.clear.len()), (INBOX_TAG, vec!["lc-list", "lc-show"], 0));
+    assert_eq!((set.prefix.clone(), set.set.keys().map(String::as_str).collect::<Vec<_>>(), set.clear.len()), (format!("watch/{INBOX_TAG}"), vec!["lc-list", "lc-show"], 0));
     assert_eq!(set.set["lc-list"].text, "PERF SLOW lc-list 900ms (limit 500ms) phases unreported; top callers: unknown");
     assert_eq!(set.set["lc-list"].level, "P2");
 

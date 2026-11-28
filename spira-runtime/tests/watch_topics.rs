@@ -507,7 +507,7 @@ fn a_restarted_runtime_says_its_carried_request_again_and_reads_no_known_hold_tw
 fn asks_for_a_lost_clear_again(row: &str, subject: &str, registration: impl Fn() -> Registration, boot: (&str, &str, EventKind), observe: &str, held_world: String, gone: String, cadence_ms: u64) {
     let broker = Broker::up();
     let fx = service(&broker);
-    let held = json!({"row": row, "set": {subject: {"level": "P2", "text": "x", "since": 1, "at": 1}}, "clear": []}).to_string();
+    let held = json!({"prefix": format!("watch/{row}"), "set": {subject: {"level": "P2", "text": "x", "since": 1, "at": 1}}, "clear": []}).to_string();
     fx.run("k", &EffectSpec::keyed(WATCH_PUBLISH, "k", held, 10_000)).unwrap();
     flush(&fx);
 
@@ -569,12 +569,12 @@ fn a_clear_the_broker_could_not_take_is_sent_once_it_can_be_reached() {
     let dir = testkit::TempDir::new("watch-unreached");
     let path = dir.join("s");
     let topics = WatchTopics::new(Publisher::with("spira-runtime", Options::new(&path, Arc::new(VirtualClock::new(0)), Box::new(SeededRng::new(1)))).unwrap());
-    topics.publish(&json!({"row": "claim-count", "set": {}, "clear": ["sp-a"]}).to_string()).unwrap();
+    topics.publish(&json!({"prefix": "watch/claim-count", "set": {}, "clear": ["sp-a"]}).to_string()).unwrap();
     assert_eq!(broker.retained("watch/#").len(), 1, "the clear had no way to the broker");
 
     std::os::unix::fs::symlink(broker.socket(), &path).unwrap();
     let value = json!({"level": "P2", "text": "new", "since": 1, "at": 1});
-    topics.publish(&json!({"row": "claim-count", "set": {"sp-b": value}, "clear": []}).to_string()).unwrap();
+    topics.publish(&json!({"prefix": "watch/claim-count", "set": {"sp-b": value}, "clear": []}).to_string()).unwrap();
     topics.flush(FAILSAFE).unwrap();
 
     let held: Vec<String> = broker.retained("watch/#").into_iter().map(|(t, _)| t).collect();
@@ -588,7 +588,7 @@ fn a_clear_lost_with_a_stopping_runtime_is_asked_for_again_after_the_restart() {
     let broker = Broker::up();
     let fx = service(&broker);
     // What the process that is about to stop had put on the broker.
-    let held = json!({"row": "claim-count", "set": {"sp-a": {"level": "P2", "text": "x", "since": 1, "at": 1}}, "clear": []}).to_string();
+    let held = json!({"prefix": "watch/claim-count", "set": {"sp-a": {"level": "P2", "text": "x", "since": 1, "at": 1}}, "clear": []}).to_string();
     fx.run("k", &EffectSpec::keyed(WATCH_PUBLISH, "k", held, 10_000)).unwrap();
     flush(&fx);
 
@@ -619,6 +619,40 @@ fn a_publish_with_no_broker_configured_says_so_and_is_no_failure() {
     let _env = testkit::env_read();
     let fx = Effects::default();
     assert!(fx.watch_topics.set(None).is_ok());
-    let input = json!({"row": "claim-count", "set": {}, "clear": ["sp-a"]}).to_string();
+    let input = json!({"prefix": "watch/claim-count", "set": {}, "clear": ["sp-a"]}).to_string();
     assert_eq!(fx.run("k", &EffectSpec::keyed(WATCH_PUBLISH, "k", input, 1000)), Ok("not published: no broker configured".to_string()));
+}
+
+fn publisher_on(broker: &Broker) -> WatchTopics {
+    WatchTopics::new(Publisher::with("spira-runtime", Options::new(broker.socket(), Arc::new(VirtualClock::new(0)), Box::new(SeededRng::new(1)))).unwrap())
+}
+
+/// An observe asked before a clear can be run after it.
+#[test_id(tdj1tu9)]
+#[test]
+fn a_carry_older_than_a_clear_does_not_bring_the_value_back() {
+    let _env = testkit::env_read();
+    let broker = Broker::up();
+    let topics = publisher_on(&broker);
+    let value = json!({"level": "P2", "text": "x", "since": 1, "at": 1});
+    topics.publish(&json!({"prefix": "watch/claim-count", "set": {"sp-a": value}, "clear": []}).to_string()).unwrap();
+    topics.publish(&json!({"prefix": "watch/claim-count", "set": {}, "clear": ["sp-a"]}).to_string()).unwrap();
+    topics.track(&json!({"prefix": "watch/claim-count", "published": {"sp-a": value}}).to_string());
+    topics.flush(FAILSAFE).unwrap();
+    assert_eq!(broker.retained("watch/#"), vec![]);
+}
+
+/// A publish journaled by the release before this one names its row, not a prefix.
+#[test_id(tiurovs)]
+#[test]
+fn a_publish_journaled_under_a_row_name_still_reaches_the_rows_topics() {
+    let _env = testkit::env_read();
+    let broker = Broker::up();
+    let topics = publisher_on(&broker);
+    let value = json!({"level": "P2", "text": "x", "since": 1, "at": 1});
+    topics.publish(&json!({"row": "claim-count", "set": {"sp-a": value}, "clear": []}).to_string()).unwrap();
+    topics.flush(FAILSAFE).unwrap();
+    assert_eq!(broker.retained("watch/#").into_iter().map(|(t, _)| t).collect::<Vec<_>>(), ["watch/claim-count/sp-a"]);
+    let old: spira_runtime::watch_topics::Change = serde_json::from_value(json!({"row": "claim-count", "set": {}, "clear": ["sp-a"]})).unwrap();
+    assert_eq!(old.prefix, "watch/claim-count");
 }

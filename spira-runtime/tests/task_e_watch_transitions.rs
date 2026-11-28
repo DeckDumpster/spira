@@ -2126,7 +2126,7 @@ fn a_stall_held_over_three_passes_is_one_publish_and_the_clearing_pass_clears_it
     r.advance(2 * 300_000).unwrap();
     let said = changes(&r);
     assert_eq!(said.len(), 1, "{said:?}");
-    assert_eq!((said[0].row.as_str(), subjects(&said[0])), ("transitions", (vec!["spira"], vec![])));
+    assert_eq!((said[0].prefix.as_str(), subjects(&said[0])), ("watch/transitions", (vec!["spira"], vec![])));
     let v = &said[0].set["spira"];
     assert!(v.text.starts_with("P0 STALL WORKING→SUBMITTED (spira): "), "{v:?}");
     assert_eq!((v.level.as_str(), v.since, v.at), ("P0", T0, T0));
@@ -2207,7 +2207,7 @@ fn a_restarted_row_publishes_nothing_again_and_asks_its_observe_with_what_it_pub
     assert!(asked.iter().all(|q| q.name != WATCH_PUBLISH), "{asked:?}");
     let observe = asked.iter().find(|q| q.name == OBSERVE).expect("the boot observes");
     let input: serde_json::Value = serde_json::from_str(&observe.input).unwrap();
-    assert_eq!(input["row"], "transitions");
+    assert_eq!(input["prefix"], "watch/transitions");
     assert!(input["published"]["spira"]["text"].as_str().unwrap().contains("P0 STALL"), "{input}");
     assert!(input["now"].is_u64(), "{input}");
 }

@@ -167,6 +167,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("landing.pr_create", Forge),
     ("landing.rebase", Git),
     ("landing.reopen", Store),
+    ("mail.publish", Host),
     ("mail.reconcile.answer", Store),
     ("mail.reconcile.close", Store),
     ("mail.reconcile.inbox", Host),

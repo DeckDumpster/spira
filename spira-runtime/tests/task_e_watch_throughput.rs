@@ -85,7 +85,7 @@ fn a_stall_held_over_three_passes_is_one_publish_and_the_clearing_pass_clears_it
     r.advance(2 * CADENCE_MS).unwrap();
     let said = changes(&r);
     assert_eq!(said.len(), 1, "{said:?}");
-    assert_eq!((said[0].row.as_str(), subjects(&said[0])), ("throughput", (vec!["alpha"], vec![])));
+    assert_eq!((said[0].prefix.as_str(), subjects(&said[0])), ("watch/throughput", (vec!["alpha"], vec![])));
     let v = &said[0].set["alpha"];
     assert!(v.text.starts_with("P0 alpha: landing stalled"), "{v:?}");
     assert_eq!((v.level.as_str(), v.since, v.at), ("P0", NOW, NOW));
@@ -188,7 +188,7 @@ fn a_restarted_row_publishes_nothing_again_and_asks_its_observe_with_what_it_pub
     assert!(asked.iter().all(|q| q.name != WATCH_PUBLISH), "{asked:?}");
     let observe = asked.iter().find(|q| q.name == OBSERVE).expect("the boot observes");
     let input: serde_json::Value = serde_json::from_str(&observe.input).unwrap();
-    assert_eq!(input["row"], "throughput");
+    assert_eq!(input["prefix"], "watch/throughput");
     assert!(input["published"]["alpha"]["text"].as_str().unwrap().contains("landing stalled"), "{input}");
     assert_eq!(input["abandon_window_s"], 7_200, "{input}");
 }

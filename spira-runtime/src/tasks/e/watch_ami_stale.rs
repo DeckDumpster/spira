@@ -245,7 +245,7 @@ mod tests {
     fn the_topic_is_set_when_the_image_goes_stale_left_alone_while_unchanged_and_cleared_on_fresh() {
         let (c, change) = pass(&Carry::default(), "ec2", stale("old"), 10_000);
         let change = change.expect("appear");
-        assert_eq!((change.row.as_str(), change.set.keys().collect::<Vec<_>>(), change.clear.len()), (INBOX_TAG, vec![&SUBJECT.to_string()], 0));
+        assert_eq!((change.prefix.as_str(), change.set.keys().collect::<Vec<_>>(), change.clear.len()), ("watch/round-ami-stale", vec![&SUBJECT.to_string()], 0));
         let value = &change.set[SUBJECT];
         assert_eq!((value.text.clone(), value.level.as_str(), value.since, value.at), (format!("old{SUFFIX}"), "P2", 10, 10));
         let (held, change) = pass(&c, "ec2", stale("old"), 310_000);
