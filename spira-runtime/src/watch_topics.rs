@@ -193,6 +193,7 @@ impl WatchTopics {
     pub fn new(publisher: Publisher) -> WatchTopics {
         let state = Arc::new(Mutex::new(State::default()));
         let republish = state.clone();
+        publisher.resident();
         publisher.on_connect(move |again| {
             let state = lock(&republish);
             for (row, published) in &state.held {

@@ -6,16 +6,20 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ports::Clock;
-use rumqttc::{Client, Connection, Event, Packet, QoS};
+use rumqttc::v5::mqttbytes::v5::{Filter, Packet};
+use rumqttc::v5::mqttbytes::QoS;
+use rumqttc::v5::{Client, Connection, Event};
+use serde::Deserialize;
 use serde_json::json;
 use spira_otel::metrics::{MetricsSink, Point};
 use spira_pub::link::{sleep_until_readable, Dial};
 use spira_pub::SocketWatch;
+use spira_store::lc_call::LcClient;
 
-use crate::core::{Core, Out, Saved, LIVENESS};
+use crate::core::{Core, Out, Saved, TopicRow, LIVENESS};
 use crate::protocol::{Reply, Request};
 
 /// The most a command waits for the broker to acknowledge what it asked of it.
@@ -24,6 +28,9 @@ const ACK_DEADLINE: Duration = Duration::from_secs(3);
 const RETRY: Duration = Duration::from_secs(5);
 /// The longest one sleep toward a timer, so a stepped wall clock is noticed.
 const TIMER_SLICE: Duration = Duration::from_secs(60);
+/// The most the whole topic record is waited for: with [`ACK_DEADLINE`], inside the time an
+/// `add` waits for its reply.
+const READ_DEADLINE: Duration = Duration::from_millis(1500);
 /// Requests the client holds ahead of the connection: the whole set, resubscribed at once.
 const CHANNEL: usize = 1 << 12;
 /// Deliveries a reader may fall behind before it is cut off; it re-attaches.
@@ -90,6 +97,8 @@ struct State {
     acked: u64,
     readers: Vec<Reader>,
     next_reader: u64,
+    /// The last read of the topic record failed, and has been logged.
+    record_failing: bool,
 }
 
 struct Server {
@@ -98,6 +107,8 @@ struct Server {
     state: Mutex<State>,
     changed: Condvar,
     telemetry: Option<SyncSender<Sample>>,
+    /// Where the topic record is read, or why there is nowhere.
+    store: Result<LcClient, String>,
 }
 
 fn say(name: &str, line: &str) {
@@ -118,6 +129,30 @@ fn store(path: &Path, saved: &Saved) -> std::io::Result<()> {
     spira_config::write_atomic(path, &(serde_json::to_string(saved)? + "\n"))
 }
 
+/// The whole topic record, `spira-lc topics` page by page.
+fn read_topics(store: &LcClient) -> Result<Vec<TopicRow>, String> {
+    #[derive(Deserialize)]
+    struct Page {
+        topics: Vec<TopicRow>,
+        next: Option<String>,
+    }
+    let mut rows = Vec::new();
+    let mut argv = vec!["topics".to_string()];
+    // Real time: this bounds socket I/O.
+    let began = Instant::now();
+    loop {
+        let left = READ_DEADLINE.saturating_sub(began.elapsed());
+        if left.is_zero() {
+            return Err(format!("`spira-lc topics` was still paging after {READ_DEADLINE:?}"));
+        }
+        let out = store.within(left).not_running_wait(Duration::ZERO).call(&argv)?.into_answer()?;
+        let page: Page = serde_json::from_str(&out).map_err(|e| format!("`spira-lc topics` answered {:?}: {e}", out.trim()))?;
+        rows.extend(page.topics);
+        let Some(next) = page.next else { return Ok(rows) };
+        argv = vec!["topics".to_string(), "--after".to_string(), next];
+    }
+}
+
 /// What carrying out a step left behind.
 struct Applied {
     /// The last acknowledgement asked for.
@@ -131,11 +166,20 @@ fn unsaved(live: &str, why: &str) -> Reply {
 }
 
 impl State {
+    fn new(core: Core) -> State {
+        State { core, client: None, connection: 0, up: None, kept: false, asked: 0, acked: 0, readers: Vec::new(), next_reader: 0, record_failing: false }
+    }
+
     /// Sends one SUBSCRIBE or UNSUBSCRIBE and returns the acknowledgement it waits for.
     fn ask(&mut self, filter: &str, subscribe: bool) -> Option<(u64, u64)> {
         let client = self.client.as_ref()?;
         let sent = match subscribe {
-            true => client.try_subscribe(filter, QoS::AtLeastOnce),
+            true => {
+                let mut wanted = Filter::new(filter, QoS::AtLeastOnce);
+                // Without it a live publish arrives unretained, and state reads as chatter.
+                wanted.preserve_retain = true;
+                client.try_subscribe_many([wanted])
+            }
             false => client.try_unsubscribe(filter),
         };
         sent.ok()?;
@@ -187,14 +231,51 @@ impl Server {
         state.connection == connection && state.acked >= ticket
     }
 
+    /// Reads the topic record, unlocked so no delivery waits on the store, and says whatever
+    /// notices it now owes the readers. Returns the line it logged, one per failure streak.
+    fn read_record(&self) -> Option<String> {
+        let read = self.store.as_ref().map_err(String::clone).and_then(read_topics);
+        let mut state = self.lock();
+        match read {
+            Ok(rows) => {
+                state.record_failing = false;
+                state.core.set_topics(rows);
+                if !state.readers.is_empty() {
+                    let out = state.core.gone_notices();
+                    self.apply(&mut state, out);
+                }
+                None
+            }
+            Err(why) => {
+                state.core.topics_unread();
+                let first = !std::mem::replace(&mut state.record_failing, true);
+                first.then(|| format!("spira-sub: cannot read the topic record: {why}")).inspect(|line| eprintln!("{line}"))
+            }
+        }
+    }
+
+    /// [`read_record`](Server::read_record) off this thread, so a slow store stalls no connection.
+    fn read_record_aside(self: &Arc<Self>) {
+        let server = self.clone();
+        let reading = std::thread::Builder::new().name("spira-sub-record".into()).spawn(move || drop(server.read_record()));
+        if let Err(e) = reading {
+            say(&self.name, &format!("cannot start a read of the topic record: {e}"));
+        }
+    }
+
     fn command(&self, request: Request) -> Reply {
+        if matches!(request, Request::Add { .. }) {
+            self.read_record();
+        }
+        let mut unchecked = None;
         let mut state = self.lock();
         self.sample(Sample::Command(request.name(), state.core.len()));
         let (printed, ticket) = match request {
             Request::Add { filter, note, once, batch_s } => {
                 let listening = !state.readers.is_empty();
                 match state.core.add_classed(&filter, &note, once, batch_s, listening) {
-                    Ok((id, out)) => {
+                    Ok((id, mut out)) => {
+                        unchecked = out.warning.take();
                         // Asked even when the filter is already held: that is what resends the
                         // retained values, which the other holders recognise and skip.
                         let ticket = state.ask(&filter, true);
@@ -247,7 +328,9 @@ impl Server {
             Some(ticket) => self.acknowledged(state, ticket),
             None => false,
         };
-        let warning = (!confirmed).then(|| "the broker has not confirmed this; it is applied on the next connect".to_string());
+        let unconfirmed = (!confirmed).then(|| "the broker has not confirmed this; it is applied on the next connect".to_string());
+        let warnings: Vec<String> = unchecked.into_iter().chain(unconfirmed).collect();
+        let warning = (!warnings.is_empty()).then(|| warnings.join("; "));
         Reply::Done { out: printed, warning }
     }
 
@@ -357,16 +440,17 @@ impl Server {
 
     /// Watches this subscriber's own topic for the end of the retained values. Only a broker
     /// that held a copy before `up` came back is taken to have kept its state: a restarted one
-    /// whose publishers have not republished must prune nothing.
+    /// whose publishers have not republished must prune nothing. `up` itself comes back
+    /// flagged retained, so only its payload tells it from the copy held before.
     fn end_of_retained(&self, state: &mut State, payload: &[u8], retain: bool) {
-        if retain {
-            state.kept = true;
-        } else if state.up.as_ref().is_some_and(|up| up.as_bytes() == payload) {
+        if state.up.as_ref().is_some_and(|up| up.as_bytes() == payload) {
             state.up = None;
             if state.kept {
                 let out = state.core.synced();
                 self.apply(state, out);
             }
+        } else if retain {
+            state.kept = true;
         }
     }
 
@@ -375,12 +459,13 @@ impl Server {
         loop {
             match connection.recv() {
                 Ok(Ok(Event::Incoming(Packet::Publish(p)))) => {
+                    let topic = String::from_utf8_lossy(&p.topic);
                     let mut state = self.lock();
-                    if p.topic == self.own_topic() {
+                    if topic == self.own_topic() {
                         self.end_of_retained(&mut state, &p.payload, p.retain);
                     }
                     let listening = !state.readers.is_empty();
-                    let out = state.core.message(&p.topic, &p.payload, listening);
+                    let out = state.core.message(&topic, &p.payload, p.retain, listening);
                     self.apply(&mut state, out);
                 }
                 Ok(Ok(Event::Incoming(Packet::SubAck(_) | Packet::UnsubAck(_)))) => {
@@ -396,7 +481,7 @@ impl Server {
 
     /// Holds a connection for as long as there is a broker. Between brokers it sleeps until the
     /// next one makes its socket.
-    fn connection(&self, broker: &Path, clock: &dyn Clock) -> String {
+    fn connection(self: &Arc<Self>, broker: &Path, clock: &dyn Clock) -> String {
         let client_id = self.client_id();
         let dial = Dial { client_id: &client_id, socket: broker, will_topic: self.own_topic(), capacity: CHANNEL };
         let mut watch = SocketWatch::new(broker);
@@ -407,9 +492,10 @@ impl Server {
                 return why;
             }
             watch.drain();
-            match dial.connect(announced) {
+            match dial.connect_v5(announced, &[]) {
                 Ok((client, mut connection)) => {
                     self.connected(client, clock.now_ms());
+                    self.read_record_aside();
                     let why = self.drive(&mut connection);
                     self.lock().client = None;
                     self.changed.notify_all();
@@ -457,13 +543,16 @@ pub fn run(options: Options) -> Result<(), String> {
     let socket = socket_path(dir, &options.name);
     let _ = std::fs::remove_file(&socket);
     let listener = UnixListener::bind(&socket).map_err(|e| format!("cannot listen on {}: {e}", socket.display()))?;
+    let store = LcClient::configured();
     let server = Arc::new(Server {
         telemetry: telemetry(options.metrics, options.name.clone()),
         name: options.name,
         set,
-        state: Mutex::new(State { core, client: None, connection: 0, up: None, kept: false, asked: 0, acked: 0, readers: Vec::new(), next_reader: 0 }),
+        state: Mutex::new(State::new(core)),
         changed: Condvar::new(),
+        store,
     });
+    server.read_record_aside();
     let spawn = |name: &str, body: Box<dyn FnOnce() + Send>| {
         std::thread::Builder::new().name(name.into()).spawn(body).map(drop).map_err(|e| format!("cannot start {name}: {e}"))
     };
@@ -493,15 +582,17 @@ pub fn run(options: Options) -> Result<(), String> {
 mod tests {
     use super::*;
     use ports::VirtualClock;
+    use spira_store::lc_call::{Reply as Answer, Transport};
     use testkit::TempDir;
 
     fn server(dir: &Path, core: Core) -> Server {
         Server {
             name: "t".into(),
             set: dir.join("t.subs"),
-            state: Mutex::new(State { core, client: None, connection: 0, up: None, kept: false, asked: 0, acked: 0, readers: Vec::new(), next_reader: 0 }),
+            state: Mutex::new(State::new(core)),
             changed: Condvar::new(),
             telemetry: None,
+            store: Err("this test has no store".to_string()),
         }
     }
 
@@ -516,7 +607,7 @@ mod tests {
         core.add_classed("release/active", "", false, Some(60), true).unwrap();
         let server = server(&dir, core);
         let (_, standing) = server.attach();
-        server.lock().core.message("release/active", br#"{"release":"r1"}"#, true);
+        server.lock().core.message("release/active", br#"{"release":"r1"}"#, true, true);
         clock.advance(60_000);
 
         let (_, newcomer) = server.attach();
@@ -533,7 +624,7 @@ mod tests {
         let dir = TempDir::new("sub-kept");
         let mut core = Core::new(Arc::new(VirtualClock::new(1_000_000)), Saved::default());
         core.add_classed("release/active", "", false, None, true).unwrap();
-        core.message("release/active", br#"{"release":"r1"}"#, true);
+        core.message("release/active", br#"{"release":"r1"}"#, true, true);
         let server = server(&dir, core);
         let mut state = server.lock();
         let digests = |state: &State| state.core.saved().subs[0].delivered.len();
@@ -545,9 +636,61 @@ mod tests {
             }
             server.end_of_retained(&mut state, b"another up", false);
             assert_eq!(digests(&state), 1, "only this connection's up ends the burst");
-            server.end_of_retained(&mut state, b"up", false);
+            server.end_of_retained(&mut state, b"up", true);
             assert_eq!(digests(&state), left, "held before: {held_before}");
         }
+    }
+
+    /// A store answering each `topics` call with the next of `pages`, keeping what it was asked.
+    #[derive(Default)]
+    struct Pages {
+        pages: Mutex<std::collections::VecDeque<Result<String, String>>>,
+        asked: Mutex<Vec<String>>,
+    }
+
+    impl Transport for Pages {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Answer, String> {
+            self.asked.lock().unwrap().push(argv.join(" "));
+            let page = self.pages.lock().unwrap().pop_front().expect("a page for every call");
+            page.map(|out| Answer { out, ..Answer::default() })
+        }
+    }
+
+    #[test_id(teis9zo)]
+    #[test]
+    fn every_page_of_the_record_is_read_and_a_resident_on_the_last_is_announced_once_it_reads() {
+        let dir = TempDir::new("sub-record");
+        let mut core = Core::new(Arc::new(VirtualClock::new(1_000_000)), Saved::default());
+        core.add("bead/+/state", "", false, false).unwrap();
+        core.message("publisher/lc-serve", br#"{"state":"gone"}"#, true, false);
+        let store = Arc::new(Pages::default());
+        // Rows as `spira-lc topics` records them.
+        let row = |family: &str, resident: &[&str], next: serde_json::Value| {
+            let record = json!({"family": family, "retained": true, "mixed": false, "first_seen": 1, "last_seen": 2, "publishers": resident, "resident": resident});
+            Ok(json!({"topics": [record], "next": next}).to_string())
+        };
+        let down = || Err("down".to_string());
+        store.pages.lock().unwrap().extend([
+            down(),
+            down(),
+            row("a/+", &[], json!("a/+")),
+            row("bead/+/state", &["lc-serve"], serde_json::Value::Null),
+            down(),
+        ]);
+        let mut server = server(&dir, core);
+        server.store = Ok(LcClient::over(store.clone(), false));
+        let (_, reader) = server.attach();
+
+        let logged = server.read_record().expect("the first failure of a streak is logged");
+        assert!(logged.starts_with("spira-sub: cannot read the topic record: ") && logged.contains("down"), "{logged}");
+        assert_eq!(server.read_record(), None, "the streak goes on");
+        assert!(reader.try_recv().is_err(), "an unread record names no resident");
+
+        assert_eq!(server.read_record(), None);
+
+        assert_eq!(reader.try_recv().unwrap(), "[sub:s1] publisher/lc-serve state=gone");
+        assert_eq!(*store.asked.lock().unwrap(), ["topics", "topics", "topics", "topics --after a/+"]);
+        assert!(server.read_record().is_some(), "a new streak is logged again");
     }
 
     // The set file's temp path is a FIFO and the set outgrows its buffer, so `apply` is held
@@ -567,7 +710,7 @@ mod tests {
         let (early, written) = std::thread::scope(|scope| {
             scope.spawn(|| {
                 let mut state = server.lock();
-                let out = state.core.message("release/active", br#"{"release":"r1"}"#, true);
+                let out = state.core.message("release/active", br#"{"release":"r1"}"#, true, true);
                 server.apply(&mut state, out);
             });
             // Opening returns once the writer has the other end.

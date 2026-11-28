@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use runtime::ports::{SeededRng, VirtualClock};
 use spira_pub::{Options, Publisher};
-use testkit::broker::Broker;
+use testkit::broker::{Broker, Subscriber};
 use testkit::TempDir;
 use watchtower::pressure_topic::{record_path, run_pass, Lines, Pressure, CPU_LINE_KEY, IO_LINE_KEY, TOPIC};
 
@@ -50,6 +50,19 @@ fn a_pass_over_the_line_publishes_and_an_identical_pass_publishes_nothing() {
     assert_eq!(held(&broker), [first], "a second publish would carry at=200");
     assert!(record_path(d.path()).is_file());
     assert_eq!(std::fs::read_dir(d.path().join("conditions")).unwrap().count(), 1, "one file, overwritten");
+}
+
+/// The store's record of who is resident is all a subscriber has to hear of this one going.
+#[test_id(tukgij3)]
+#[test]
+fn the_pressure_publisher_says_it_is_resident() {
+    let (broker, d) = (Broker::up(), TempDir::new("psi"));
+    psi(d.path(), "1.00", "45.50");
+    let mut watching = Subscriber::to_v5(broker.socket(), &[TOPIC]);
+    let p = pressure(&broker, d.path());
+    p.pass(d.path(), &LINES, 100).unwrap();
+    let said = watching.recv().user_properties;
+    assert!(said.contains(&("spira-resident".to_string(), "true".to_string())), "{said:?}");
 }
 
 #[test_id(th6fnig)]

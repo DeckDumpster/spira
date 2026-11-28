@@ -61,9 +61,7 @@ fn dispatch(name: String, command: Command) -> u8 {
             };
         }
         // Judged before the client is looked for, so a bad filter is refused with it down.
-        Command::Add { filter, .. } if !topics::filter_matches_any(&filter) => {
-            return fail(REFUSED, &format!("filter {filter:?} matches no topic family declared in spira/topics.toml"))
-        }
+        Command::Add { filter, .. } if !topics::filter_is_well_formed(&filter) => return fail(REFUSED, &spira_sub::core::malformed(&filter)),
         Command::Add { filter, note, once, batch_s } => Request::Add { filter, note, once, batch_s },
         Command::Set { id, batch_s } => Request::Set { id, batch_s },
         Command::At { at_ms, note } => Request::At { at_ms, note },
