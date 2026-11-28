@@ -1961,8 +1961,7 @@ pub fn build_wall(dir: &Path) -> Option<u64> {
 
 /// The tree the VM's testenv run built and tested: `tree=` in the pulled `batch.meta`.
 pub fn reported_tree(results: &Path) -> Option<String> {
-    let t = fs::read_to_string(results.join("batch.meta")).ok()?;
-    t.lines().find_map(|l| l.strip_prefix("tree=")).map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+    tsd::testrun::batch_tree(&fs::read_to_string(results.join("batch.meta")).ok()?)
 }
 
 /// How the batch itself ended, from the last `verdict` line of `run.events` (in `dir` or one
@@ -2343,9 +2342,7 @@ struct Facts {
 /// Seconds per fence from this pass's pulled `fence-times` (`<name> <secs> <rc>` lines); a file
 /// older than the pass is a previous pass's and is not counted.
 fn fence_seconds(results: &Path, started: u64) -> Vec<(String, u64)> {
-    let path = results.join(FENCE_TIMES);
-    let fresh = fs::metadata(&path).and_then(|m| m.modified()).is_ok_and(|t| t >= std::time::UNIX_EPOCH + Duration::from_secs(started));
-    let text = if fresh { fs::read_to_string(&path).unwrap_or_default() } else { String::new() };
+    let text = pass_file(results, FENCE_TIMES, started).unwrap_or_default();
     let mut out: Vec<(String, u64)> = text
         .lines()
         .filter_map(|l| {
@@ -2357,7 +2354,7 @@ fn fence_seconds(results: &Path, started: u64) -> Vec<(String, u64)> {
     out
 }
 
-/// A pulled file this pass wrote; one older than the pass is a previous pass's, as in [`fence_seconds`].
+/// A pulled file this pass wrote; one older than the pass is a previous pass's and is not read.
 fn pass_file(results: &Path, name: &str, started: u64) -> Option<String> {
     let path = results.join(name);
     let fresh = fs::metadata(&path).and_then(|m| m.modified()).is_ok_and(|t| t >= std::time::UNIX_EPOCH + Duration::from_secs(started));
@@ -2667,9 +2664,7 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         unit_slowest: String::new(),
     };
     let record = with_unit_timings(record, &unit);
-    // An unreadable key sends nothing, as an empty one does.
-    let endpoint = spira_config::process::cfg("SPIRA_OTEL_COLLECTOR_ENDPOINT").unwrap_or_default();
-    emit_test_results(&endpoint, &results_root, started, facts.tree.as_deref(), &record);
+    emit_test_results(&env.cfg.collector_endpoint, &results_root, started, facts.tree.as_deref(), &record);
     match env.record.pass_record(&env.cfg.run_dir, &record) {
         Ok(()) => {
             crate::telemetry::push_pass(&record);
@@ -6250,6 +6245,7 @@ mod tests {
             vm_budget_secs: 300,
             build_budget_secs: 600,
             no_output_secs: 0,
+            collector_endpoint: String::new(),
         });
         Fixture { d, fp: FakeProvider::new(), cfg }
     }
@@ -6321,6 +6317,41 @@ mod tests {
             }
             rec.write(root, "h", "2026-10-14T00:00:00Z")
         }
+    }
+
+    /// A round pass whose pulled results hold two unit tests and no `batch.meta`, as a red unit tier leaves them.
+    fn unit_red_round(endpoint: &str) -> (Fixture, i32, Value) {
+        let mut fx = fixture();
+        fx.cfg.collector_endpoint = endpoint.to_string();
+        let mut remote = FakeRemote::green();
+        remote.rc = Ok(1);
+        remote.files.insert(REMOTE_RESULTS, vec![
+            (UNIT_TIMINGS, "unit_build_secs 1\nunit_secs 2\nload1 0.5\n PASS [ 1.000s] (1/2) app a\n FAIL [ 1.000s] (2/2) app b\n"),
+            ("KEY/unit-tests.result", "red 1 2 - - - 1\n"),
+        ]);
+        let code = go(&fx, &remote, &round_args(&fx));
+        let rows = fs::read_to_string(fx.cfg.run_dir.join("tsd/cert-pass.jsonl")).unwrap();
+        let mut row: Value = serde_json::from_str(rows.lines().last().expect("a pass row")).unwrap();
+        for timed in ["capacity_wait_s", "boot_s", "build_s", "suites_s", "attribution_s", "total_s"] {
+            row.as_object_mut().unwrap().remove(timed);
+        }
+        (fx, code, row)
+    }
+
+    #[test_id(tv2ckn7)]
+    #[test]
+    fn a_rounds_pass_sends_its_pulled_tests_and_sending_changes_neither_its_record_nor_its_exit_code() {
+        let fake = spira_otel::fixture::Collector::start();
+        let (_fx, code, row) = unit_red_round(fake.addr());
+        let got = fake.events();
+        assert_eq!(got.len(), 2, "{got:?}");
+        let sent_tree = FakeHost.head(Path::new("tree")).unwrap().1;
+        for e in &got {
+            assert_eq!(["round", "runner", "tree"].map(|k| text_of(e, k)), ["r-1".to_string(), format!("{}:{}", row["where"].as_str().unwrap(), row["instance_type"].as_str().unwrap()), sent_tree.clone()]);
+            assert_eq!(e.attr("members"), Some(&spira_otel::logs::Attr::Strs(vec!["m1".into(), "m2".into()])));
+        }
+        let (_fx, silent_code, silent_row) = unit_red_round("");
+        assert_eq!((code, row), (silent_code, silent_row));
     }
 
     #[test_id(tlk1tpj)]

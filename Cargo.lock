@@ -716,7 +716,6 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-test-id",
- "system-paths",
  "testenv",
  "testkit",
  "tsd",

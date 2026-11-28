@@ -19,6 +19,11 @@ pub fn test_id(suite: &str, case: &str) -> String {
     format!("{suite}::{case}")
 }
 
+/// The `tree=` a run's `batch.meta` names: the tree it built and tested.
+pub fn batch_tree(meta: &str) -> Option<String> {
+    meta.lines().find_map(|l| l.strip_prefix("tree=")).map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
 /// `pass`, `fail` or `skip`: the three outcomes a rate is taken over.
 fn outcome(status: &str) -> &'static str {
     match status {

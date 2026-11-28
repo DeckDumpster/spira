@@ -85,8 +85,7 @@ fn real_main(meter: &spira_otel::metrics::Run) -> i32 {
     let mut tally = Tally::default();
     let code = run(&world, &home, &root, &mut tally);
     let run_dir = spira_config::process::cfg("SPIRA_RUN").ok().filter(|v| !v.is_empty()).map(PathBuf::from);
-    // An unreadable key sends nothing, as an empty one does.
-    let endpoint = spira_config::process::cfg("SPIRA_OTEL_COLLECTOR_ENDPOINT").unwrap_or_default();
+    let endpoint = gate::real::collector_endpoint(spira_config::process::cfg);
     record_tests(&root, run_dir, &endpoint, &Caller::read(|k| std::env::var(k).ok()));
     push_tally(meter, &tally);
     code
@@ -120,17 +119,6 @@ impl Caller {
     }
 }
 
-/// The `tree=` of the `batch.meta` beside the results, or in the first directory below that has one.
-fn tested_tree(root: &std::path::Path) -> String {
-    let mut below: Vec<PathBuf> = std::fs::read_dir(root).into_iter().flatten().flatten().map(|e| e.path()).collect();
-    below.sort();
-    std::iter::once(root.to_path_buf())
-        .chain(below)
-        .filter_map(|d| std::fs::read_to_string(d.join("batch.meta")).ok())
-        .find_map(|t| t.lines().find_map(|l| l.strip_prefix("tree=")).map(|v| v.trim().to_string()))
-        .unwrap_or_default()
-}
-
 /// One `test.result` per `test-run` row. A suite reads the whole tree, so the tree is its input
 /// hash. Best effort: what cannot be sent is counted on stderr.
 fn send_test_results(endpoint: &str, rows: &[String], tree: &str, at: &Caller) {
@@ -139,7 +127,7 @@ fn send_test_results(endpoint: &str, rows: &[String], tree: &str, at: &Caller) {
         return;
     }
     let runner = tsd::default_host();
-    let load1 = std::fs::read_to_string(format!("{}/loadavg", system_paths::PROC)).ok().and_then(|t| t.split_whitespace().next()?.parse().ok());
+    let load1 = gate::real::load1();
     let sink = spira_otel::logs::LogPush::new(endpoint, "spira-gate-diag", SEND_DEADLINE, rows.len());
     for row in rows.iter().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()) {
         let text = |k: &str| row[k].as_str().unwrap_or_default();
@@ -184,7 +172,8 @@ fn record_tests(root: &std::path::Path, run: Option<PathBuf>, endpoint: &str, at
     let (ts, host) = (tsd::now_iso(), tsd::default_host());
     let coverage = std::fs::read_to_string(root.join(tsd::testrun::COVERAGE_EXPORT)).unwrap_or_default();
     let rows = tsd::testrun::rows_from_results(&jsonl, &coverage, &format!("{ts} {}", root.display()), &ts, &host);
-    send_test_results(endpoint, &rows, &tested_tree(root), at);
+    let tree = std::fs::read_to_string(root.join("batch.meta")).ok().and_then(|m| tsd::testrun::batch_tree(&m)).unwrap_or_default();
+    send_test_results(endpoint, &rows, &tree, at);
     let Some(run) = run else { return };
     let path = tsd::family_path(&run, tsd::testrun::FAMILY);
     for row in rows {

@@ -13,6 +13,8 @@ use spira_config::process::{cfg, cfg_parse};
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// The OpenTelemetry Collector a pass's `test.result` records go to; empty sends none.
+    pub collector_endpoint: String,
     pub state_dir: PathBuf,
     pub run_dir: PathBuf,
     pub spira_home: Option<PathBuf>,
@@ -87,6 +89,7 @@ pub struct Config {
 /// isn't. Pure: `build` only converts types, so tests construct this directly instead of
 /// driving it through the environment or a process-global config cache.
 pub(crate) struct Fields {
+    pub collector_endpoint: String,
     pub run: String,
     pub spira_home: Option<String>,
     pub pve_env: String,
@@ -238,6 +241,7 @@ impl Config {
         let vcpus: u32 = must_cfg_parse("SPIRA_ROUND_VM_VCPUS")?;
         let maxpar = maxpar_or_vcpus(&must_cfg("SPIRA_ROUND_VM_MAXPAR")?, vcpus)?;
         Ok(Config::build(Fields {
+            collector_endpoint: gate::real::collector_endpoint(cfg),
             run: must_cfg("SPIRA_RUN")?,
             state_dir: must_cfg("SPIRA_ROUND_VM_STATE_DIR")?,
             pve_env: must_cfg("SPIRA_PVE_ENV")?,
@@ -284,6 +288,7 @@ impl Config {
     /// literal `Fields`), so this only converts types — no I/O, no defaults to invent.
     pub(crate) fn build(f: Fields) -> Config {
         Config {
+            collector_endpoint: f.collector_endpoint,
             run_dir: PathBuf::from(f.run),
             state_dir: PathBuf::from(f.state_dir),
             spira_home: f.spira_home.map(PathBuf::from),
@@ -459,6 +464,7 @@ mod tests {
             vm_budget_secs: 300,
             build_budget_secs: 600,
             no_output_secs: 180,
+            collector_endpoint: String::new(),
         }
     }
 
