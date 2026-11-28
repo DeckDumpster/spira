@@ -622,7 +622,6 @@ SPIRA_SOP_LEDGER incident/src/intake.rs
 SPIRA_SOP_LEDGER sop/src/main.rs
 SPIRA_SOP_LEDGER spira/model-switch-report.sh
 SPIRA_SOP_WINDOW_HOURS cockpit-collect/src/probes/mod.rs
-SPIRA_SPOOL incident/src/intake.rs
 SPIRA_STATUS_FILE landing-pass/src/land_verify.rs
 SPIRA_STATUS_FILE queue/src/real.rs
 SPIRA_STATUS_FILE spira-lc/src/close_on_land.rs

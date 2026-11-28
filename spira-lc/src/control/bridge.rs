@@ -123,7 +123,9 @@ impl Ledger {
     /// The incident topics last told to clear: a clear the broker never received leaves the
     /// old value retained, so a connect says it again.
     fn cleared(&self) -> Vec<String> {
-        self.topics.iter().filter(|(t, (_, p))| t.starts_with(topics::INCIDENTS) && p.is_null()).map(|(t, _)| t.clone()).collect()
+        let mut gone: Vec<String> = self.topics.iter().filter(|(t, (_, p))| t.starts_with(topics::INCIDENTS) && p.is_null()).map(|(t, _)| t.clone()).collect();
+        gone.sort();
+        gone
     }
 
     /// What a connect says for `row`, read from a record last written at `rev`: what this

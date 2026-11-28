@@ -153,7 +153,7 @@ impl Rows for RealRows<'_> {
     }
 
     fn list(&self) -> Result<Vec<(String, Row)>, String> {
-        rows_listed(&self.answer(&["list"])?)
+        rows_listed(&self.answer(&["list"])?) // not-a-lifecycle-list: the incidents verb's own rows
     }
 }
 

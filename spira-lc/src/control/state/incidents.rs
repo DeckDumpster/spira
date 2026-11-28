@@ -24,7 +24,7 @@ const USAGE: &str = "usage: incidents raise <json> | incidents claim <key> --by 
 
 /// What a write makes of a row: put it, or delete it.
 enum Next {
-    Put(Row),
+    Put(Box<Row>),
     Delete,
 }
 
@@ -79,7 +79,7 @@ fn write<B: Backend>(
         let next = change(current).map_err(|why| (REFUSED, format!("refused: incidents {sub} {key}: {why}")))?;
         let when = Compare::ModRev(path.clone(), item.as_ref().map(|i| i.mod_rev));
         let (txn, row) = match next {
-            Next::Put(row) => (Txn::new().when(when).put(&path, Object::new(encode(&row).map_err(cannot_tell)?)), Some(row)),
+            Next::Put(row) => (Txn::new().when(when).put(&path, Object::new(encode(&*row).map_err(cannot_tell)?)), Some(*row)),
             Next::Delete => (Txn::new().when(when).delete(&path), None),
         };
         // The first attempt carries the call's own request id, so a client's resend of a
@@ -107,7 +107,7 @@ fn raise<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> Result<S
         return Err((CANNOT_TELL, "incidents raise: the payload names no reference".into()));
     }
     let key = keys::component(&incident::bound_ref(&payload.reference));
-    let row = write(store, &key, "raise", call, |current| Ok(Next::Put(incident::raise(current, payload.clone(), call.now))))?;
+    let row = write(store, &key, "raise", call, |current| Ok(Next::Put(Box::new(incident::raise(current, payload.clone(), call.now)))))?;
     let (events, state) = row.map(|r| (r.events, r.state.as_str())).unwrap_or_default();
     Ok(json!({ "key": key, "events": events, "state": state }).to_string())
 }
@@ -116,7 +116,7 @@ fn claim<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> Result<S
     let (Some(key), Some(by), Some(Ok(secs))) = (args.first(), flag(args, "--by"), flag(args, "--for").map(|s| s.parse::<i64>())) else {
         return usage();
     };
-    let row = write(store, key, "claim", call, |current| incident::claim(&held(current)?, &by, secs, call.now).map(Next::Put))?;
+    let row = write(store, key, "claim", call, |current| incident::claim(&held(current)?, &by, secs, call.now).map(|r| Next::Put(Box::new(r))))?;
     Ok(row.map(|r| with_key(key, &r)).unwrap_or(Value::Null).to_string())
 }
 
@@ -136,7 +136,7 @@ fn record<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> Result<
         }
         _ => return usage(),
     };
-    let row = write(store, key, "record", call, |current| Ok(incident::record(&held(current)?, &outcome).map_or(Next::Delete, Next::Put)))?;
+    let row = write(store, key, "record", call, |current| Ok(incident::record(&held(current)?, &outcome).map_or(Next::Delete, |r| Next::Put(Box::new(r)))))?;
     Ok(json!({ "key": key, "state": row.map(|r| r.state.as_str()) }).to_string())
 }
 
