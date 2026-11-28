@@ -108,6 +108,9 @@ struct Fake {
     /// The cgroup readings `cgroup_mark` hands out, in order.
     marks: RefCell<std::collections::VecDeque<spira_otel::cgroup::Mark>>,
     ops: RefCell<Vec<spira_otel::ops::Op>>,
+    otlp_endpoint: RefCell<String>,
+    ls_tree_inputs: RefCell<String>,
+    load_reads: Cell<u32>,
     repo_build_secs: Cell<Option<u64>>,
     publish_run: Cell<(i32, u64)>,
     repo_build_result: RefCell<Option<(i32, String)>>,
@@ -339,6 +342,9 @@ impl Fake {
             cmds: RefCell::new(Vec::new()),
             phase_secs: Cell::new(7),
             marks: RefCell::new(Default::default()),
+            otlp_endpoint: RefCell::new(String::new()),
+            ls_tree_inputs: RefCell::new(String::new()),
+            load_reads: Cell::new(0),
             ops: RefCell::new(Vec::new()),
             repo_build_secs: Cell::new(None),
             publish_run: Cell::new((0, 0)),
@@ -974,6 +980,17 @@ impl World for Fake {
     }
     fn cgroup_mark(&self) -> Option<spira_otel::cgroup::Mark> {
         self.marks.borrow_mut().pop_front()
+    }
+    fn otlp_endpoint(&self) -> String {
+        self.otlp_endpoint.borrow().clone()
+    }
+    fn load1(&self) -> Option<f64> {
+        self.load_reads.set(self.load_reads.get() + 1);
+        Some(3.25)
+    }
+    fn input_trees(&self, _: &Path, tree: &str) -> Result<String, String> {
+        assert_eq!(tree, "mergedtree", "the hashes read the merged tree");
+        Ok(self.ls_tree_inputs.borrow().clone())
     }
     fn emit_op(&self, op: &spira_otel::ops::Op) {
         self.ops.borrow_mut().push(op.clone());
@@ -7087,3 +7104,84 @@ fn a_trial_that_ran_no_testenv_takes_no_sender_from_what_its_tests_print() {
 
     assert_eq!(delivered(&mut sub, 1)["gate/spira/sp-a"]["killed_by"], serde_json::Value::Null);
 }
+
+// ---------------------------------------------------------------------------- test.result events
+
+const THREE_TESTS: &str = "        PASS [   0.250s] ( 1/2) spira-config a::t0aaaaa\n        FAIL [   4.500s] ( 2/2) spira-config a::no_id\n     Summary [   4.750s] 2 tests run: 1 passed, 1 failed, 0 skipped\n        FAIL [   4.500s] ( 2/2) spira-config a::no_id\ngate-substep unit secs=5\n        PASS [   1.000s] ( 1/1) queue::round b::t0bbbbb\n     Summary [   1.000s] 1 test run: 1 passed, 0 skipped\ngate-substep integration secs=1\n";
+
+const LS_TREE: &str = "040000 tree g1\tgate\n040000 tree c1\tspira-config\n040000 tree q1\tqueue\n100644 blob l1\tCargo.lock\n";
+
+fn tested_fake(endpoint: &str) -> Fake {
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
+    *f.otlp_endpoint.borrow_mut() = endpoint.to_string();
+    *f.ls_tree_inputs.borrow_mut() = LS_TREE.to_string();
+    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (0, THREE_TESTS.into()));
+    f
+}
+
+#[test_id(th6gwcc)]
+#[test]
+fn a_gates_test_step_sends_one_test_result_event_per_test_with_its_crates_input_hash() {
+    let collector = spira_otel::fixture::Collector::start();
+    let f = tested_fake(collector.addr());
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let got = collector.events();
+    assert_eq!(got.len(), 3, "{got:?}");
+    let meta = metadata_json(&[("gate", &[]), ("spira-config", &[]), ("queue", &["spira-config"])]);
+    let members: Vec<_> = crate::compose::parse_metadata(&meta).unwrap().iter().map(spira_config::input_hash::Member::from).collect();
+    let hashes = spira_config::input_hash::input_hashes(&members, LS_TREE);
+    assert_ne!(hashes["queue"], hashes["spira-config"]);
+    let want = [
+        ("t0aaaaa", "a::t0aaaaa", "spira-config", "unit", "pass", 250),
+        ("", "a::no_id", "spira-config", "unit", "fail", 4500),
+        ("t0bbbbb", "b::t0bbbbb", "queue", "integration", "pass", 1000),
+    ];
+    let verdict_key = f
+        .written
+        .borrow()
+        .iter()
+        .find(|(_, c)| c.contains("compose=unit"))
+        .and_then(|(p, _)| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap();
+    for (r, (id, name, krate, tier, outcome, ms)) in got.iter().zip(want) {
+        assert_eq!((r.body.as_str(), r.service.as_str()), ("test.result", "spira-gate"));
+        let text = |k: &str| match r.attr(k) {
+            Some(spira_otel::logs::Attr::Str(s)) => s.clone(),
+            other => panic!("{k}: {other:?} in {r:?}"),
+        };
+        assert_eq!([text("test_id"), text("name"), text("crate"), text("tier"), text("outcome")], [id, name, krate, tier, outcome]);
+        assert_eq!(r.attr("duration_ms"), Some(&spira_otel::logs::Attr::Int(ms)));
+        assert_eq!(r.attr("load1"), Some(&spira_otel::logs::Attr::Float(3.25)));
+        assert_eq!(text("input_hash"), hashes[krate]);
+        assert_eq!([text("source"), text("gate"), text("bead"), text("repo"), text("tree")], ["gate".to_string(), verdict_key.clone(), "sp-a".into(), "spira".into(), "mergedtree".into()]);
+        assert_eq!(text("runner"), crate::telemetry::host());
+    }
+    assert_eq!(f.load_reads.get(), 1, "the load is read once, when the step ends");
+}
+
+#[test_id(tv3r03f)]
+#[test]
+fn an_empty_otlp_endpoint_sends_nothing_and_leaves_the_verdict_and_meter_as_they_were() {
+    let collector = spira_otel::fixture::Collector::start();
+    let on = tested_fake(collector.addr());
+    assert_eq!(on.run(), PASS);
+    let off = tested_fake("");
+    assert_eq!(off.run(), PASS);
+    assert_eq!(collector.events().len(), 3, "positive control: only the configured gate sent");
+    assert_eq!(off.full_verdict_line(), on.full_verdict_line());
+    assert_eq!(meter(&off), meter(&on));
+    assert!(meter(&off).contains(" unit_tests=2 unit_slowest=spira-config/a::no_id:4.5,spira-config/a::t0aaaaa:0.25"), "{}", meter(&off));
+    assert_eq!(off.load_reads.get(), 0);
+}
+
+#[test_id(tkb5ea2)]
+#[test]
+fn a_collector_that_is_down_leaves_the_verdict_a_pass_and_says_what_was_lost() {
+    let down = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().to_string();
+    let f = tested_fake(&down);
+    assert_eq!(f.run(), PASS);
+    assert!(f.stderr().contains("gate: 3 test.result record(s) not sent"), "{}", f.stderr());
+    assert!(f.full_verdict_line().starts_with("gate: VERDICT=PASS"), "the verdict line stays last: {}", f.stderr());
+}
+

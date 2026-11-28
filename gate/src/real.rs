@@ -412,6 +412,11 @@ fn trim_nl(s: String) -> String {
     s.trim_end_matches('\n').to_string()
 }
 
+/// An unreadable key sends nothing, as an empty one does.
+fn collector_endpoint(read: impl FnOnce(&str) -> Result<String, String>) -> String {
+    read("SPIRA_OTEL_COLLECTOR_ENDPOINT").unwrap_or_default()
+}
+
 impl World for Real {
     fn context(&self, repo_name: Option<&str>) -> Result<Ctx, String> {
         // batch-job: runs a gate, build or forge script that takes as long as its work
@@ -714,6 +719,10 @@ impl World for Real {
     fn ls_tree_all(&self, repo: &Path, rev: &str) -> String {
         Self::out(self.git(repo).args(["ls-tree", "-r", "--name-only", rev])).unwrap_or_default()
     }
+    fn input_trees(&self, repo: &Path, tree: &str) -> Result<String, String> {
+        let list = |args: &[&str]| Self::out(self.git(repo).args(args).arg(tree)).map_err(|(rc, e)| format!("git ls-tree {tree}: exit {rc}: {e}"));
+        Ok(list(&["ls-tree", "-r", "-d"])? + &list(&["ls-tree"])?)
+    }
     fn ls_tree_has(&self, repo: &Path, rev: &str, path: &str) -> bool {
         Self::out(self.git(repo).args(["ls-tree", "--name-only", rev, path]))
             .map(|s| s.lines().any(|l| l.contains(path)))
@@ -831,6 +840,12 @@ impl World for Real {
     }
     fn publish(&self, messages: &[(String, serde_json::Value)]) {
         crate::publish::send(spira_pub::Publisher::new("gate"), messages);
+    }
+    fn otlp_endpoint(&self) -> String {
+        collector_endpoint(spira_config::process::cfg)
+    }
+    fn load1(&self) -> Option<f64> {
+        std::fs::read_to_string(format!("{}/loadavg", system_paths::PROC)).ok()?.split_whitespace().next()?.parse().ok()
     }
     fn cgroup_mark(&self) -> Option<spira_otel::cgroup::Mark> {
         spira_otel::cgroup::Mark::own()
@@ -1369,6 +1384,13 @@ fn end_group(pgid: i32) {
 mod tests {
     use crate::ports::World;
     use crate::telemetry::{BuildDir, BuilderMiss, PoolMiss};
+
+    #[test_id(ts0ten9)]
+    #[test]
+    fn the_test_result_endpoint_is_the_collector_key_and_an_unreadable_one_sends_nothing() {
+        assert_eq!(crate::real::collector_endpoint(|k| Ok(format!("{k}:1"))), "SPIRA_OTEL_COLLECTOR_ENDPOINT:1");
+        assert_eq!(crate::real::collector_endpoint(|k| Err(format!("{k} is not declared"))), "");
+    }
 
     #[test_id(tywtqsg)]
     #[test]

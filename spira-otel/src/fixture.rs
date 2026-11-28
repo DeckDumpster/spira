@@ -15,6 +15,8 @@ use opentelemetry_proto::tonic::common::v1::any_value::Value;
 use opentelemetry_proto::tonic::metrics::v1::{metric::Data, number_data_point::Value as Num};
 use prost::Message;
 
+use crate::logs::Attr;
+
 /// One data point as received.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Seen {
@@ -402,6 +404,31 @@ struct Held {
 
 type OnPost = Box<dyn Fn(&Post) + Send>;
 
+/// One log record's body and scalar attributes, as the fixture Collector received it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Event {
+    pub service: String,
+    pub body: String,
+    pub attrs: Vec<(String, Attr)>,
+}
+
+impl Event {
+    pub fn attr(&self, key: &str) -> Option<&Attr> {
+        self.attrs.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+}
+
+/// The scalar attribute types only: an array value is left out.
+fn scalar(v: &Value) -> Option<Attr> {
+    match v {
+        Value::StringValue(s) => Some(Attr::Str(s.clone())),
+        Value::IntValue(i) => Some(Attr::Int(*i)),
+        Value::DoubleValue(f) => Some(Attr::Float(*f)),
+        Value::BoolValue(b) => Some(Attr::Bool(*b)),
+        _ => None,
+    }
+}
+
 /// A stand-in for the OpenTelemetry Collector's OTLP/HTTP receiver: records every POST and
 /// answers 200, or, while hanging, holds the connection unanswered until [`Collector::release`].
 pub struct Collector {
@@ -489,6 +516,22 @@ impl Collector {
     /// Every span received, in the OTLP JSON shape.
     pub fn spans_json(&self) -> Vec<serde_json::Value> {
         self.spans().iter().map(|s| serde_json::to_value(s).unwrap()).collect()
+    }
+
+    /// [`Collector::log_records`] as bodies and attributes.
+    pub fn events(&self) -> Vec<Event> {
+        let value = |v: Option<opentelemetry_proto::tonic::common::v1::AnyValue>| v.and_then(|v| v.value);
+        self.log_records()
+            .into_iter()
+            .map(|(service, r)| Event {
+                service,
+                body: match value(r.body) {
+                    Some(Value::StringValue(s)) => s,
+                    _ => String::new(),
+                },
+                attrs: r.attributes.into_iter().filter_map(|kv| Some((kv.key, scalar(&value(kv.value)?)?))).collect(),
+            })
+            .collect()
     }
 
     /// Every log record received on `/v1/logs`, with its resource's `service.name`.

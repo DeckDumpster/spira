@@ -4,6 +4,8 @@
 //! Each tier is a literal-producing macro (the round's remote script is a `concat!`) and a
 //! `fn` giving the same words for a caller whose profile is optional; a test holds the two equal.
 
+use spira_otel::testresult::Outcome;
+
 /// The unit tier's filter: the targets whose tests share nothing with another binary.
 pub const LIB_BINS: &str = "--lib --bins";
 
@@ -147,9 +149,7 @@ impl DenyList {
             let word = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_ascii_alphanumeric() || "_:.-/".contains(c));
             let well_formed = match f[1].split_once(':') {
                 Some(("suite", name)) => word(name),
-                Some(("test", id)) => {
-                    id.len() == 7 && id.starts_with('t') && id[1..].bytes().all(|b| b.is_ascii_digit() || b.is_ascii_lowercase())
-                }
+                Some(("test", id)) => valid_test_id(id),
                 _ => false,
             };
             if !well_formed {
@@ -235,19 +235,74 @@ macro_rules! unit_tier_timing_lines {
     };
 }
 
-fn per_test(line: &str) -> Option<(String, f64)> {
-    let t = line.trim_start();
-    let (status, rest) = t.split_once(' ')?;
-    if !status.chars().all(|c| c.is_ascii_uppercase() || c == '-') || status.is_empty() {
-        return None;
+/// One test as a nextest status line reports it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TestLine {
+    /// Nextest's binary id: the crate, then `::<target>` for any target but its library.
+    pub binary: String,
+    pub name: String,
+    pub outcome: Outcome,
+    pub secs: f64,
+}
+
+impl TestLine {
+    pub fn crate_name(&self) -> &str {
+        self.binary.split("::").next().unwrap_or_default()
     }
-    let rest = rest.trim_start().strip_prefix('[')?;
-    let (secs, rest) = rest.split_once("s]")?;
-    let secs = secs.trim().parse::<f64>().ok()?;
-    let rest = rest.trim_start().strip_prefix('(')?;
-    let (_, name) = rest.split_once(')')?;
-    let name = name.trim();
-    (!name.is_empty()).then(|| (name.to_string(), secs))
+
+    /// The name's last `::` segment when it is a test id; empty otherwise.
+    pub fn test_id(&self) -> &str {
+        test_id_of(&self.name).unwrap_or_default()
+    }
+}
+
+/// The test id a listed name ends in: its last `::` segment, when that is one.
+pub fn test_id_of(name: &str) -> Option<&str> {
+    name.rsplit("::").next().filter(|s| valid_test_id(s))
+}
+
+/// Whether `id` is a test id: `t` and six lowercase alphanumerics.
+pub fn valid_test_id(id: &str) -> bool {
+    id.len() == 7 && id.starts_with('t') && id[1..].bytes().all(|b| b.is_ascii_digit() || b.is_ascii_lowercase())
+}
+
+fn outcome_of_status(status: &str) -> Option<Outcome> {
+    match status {
+        // `LEAK` is nextest's pass that left a handle open.
+        "PASS" | "LEAK" | "TIMEOUT-PASS" => Some(Outcome::Pass),
+        "FAIL" | "LEAK-FAIL" | "EXEC-FAIL" | "XFAIL" | "ABORT" => Some(Outcome::Fail),
+        "TIMEOUT" => Some(Outcome::Timeout),
+        "SKIP" => Some(Outcome::Skipped),
+        s if s.starts_with("SIG") => Some(Outcome::Fail),
+        _ => None,
+    }
+}
+
+/// `<STATUS> [ <secs>s] (<k>/<n>) <binary> <name>`; a skip has a blank time and a ruled counter.
+/// The counter is required: a failing test's captured output sits among these lines.
+fn test_line(line: &str) -> Option<TestLine> {
+    let (status, rest) = line.trim_start().split_once(' ')?;
+    let outcome = outcome_of_status(status)?;
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix("+ LEAK").map_or(rest, str::trim_start);
+    let (time, rest) = rest.strip_prefix('[')?.split_once(']')?;
+    let secs = match time.trim() {
+        "" if outcome == Outcome::Skipped => 0.0,
+        t => t.strip_suffix('s')?.trim().parse().ok()?,
+    };
+    let (_, rest) = rest.trim_start().strip_prefix('(')?.split_once(')')?;
+    let (binary, name) = rest.trim().split_once(' ')?;
+    Some(TestLine { binary: binary.to_string(), name: name.trim().to_string(), outcome, secs })
+}
+
+/// The one reader of nextest's per-test lines: those before the first `Summary [` of one run, so
+/// the reds the end of the log repeats are not counted twice.
+pub fn results(log: &str) -> Vec<TestLine> {
+    log.lines().take_while(|l| summary_rest(l).is_none()).filter_map(test_line).collect()
+}
+
+fn summary_rest(line: &str) -> Option<&str> {
+    line.trim_start().strip_prefix("Summary [")
 }
 
 /// The test name of a nextest red status line: `FAIL|TIMEOUT|SIG*|LEAK-FAIL|EXEC-FAIL [ <secs>]
@@ -278,22 +333,13 @@ pub fn nextest_status(l: &str) -> bool {
     !status.is_empty() && status.chars().all(|c| c.is_ascii_uppercase() || c == '-') && rest.trim_start().starts_with('[') && rest.contains(']')
 }
 
-/// The one reader of nextest's output for timings: lines up to the first `Summary [` count, so
-/// the reds the end of the log repeats are not counted twice.
+/// The timings of one run: its [`results`] and its first `Summary [` line.
 pub fn timings(log: &str) -> UnitTimings {
-    let mut seen = Vec::new();
-    let mut tests = None;
-    let mut summarized = false;
-    let mut run_secs = 0.0;
-    for line in log.lines() {
-        if let Some(rest) = line.trim_start().strip_prefix("Summary [") {
-            summarized = true;
-            run_secs = rest.split_once("s]").and_then(|(s, _)| s.trim().parse().ok()).unwrap_or(0.0);
-            tests = rest.split_once(']').and_then(|(_, r)| r.split_whitespace().next()?.parse().ok());
-            break;
-        }
-        seen.extend(per_test(line));
-    }
+    let mut seen: Vec<(String, f64)> = results(log).into_iter().filter(|t| t.outcome != Outcome::Skipped).map(|t| (format!("{} {}", t.binary, t.name), t.secs)).collect();
+    let summary = log.lines().find_map(summary_rest);
+    let summarized = summary.is_some();
+    let run_secs = summary.and_then(|r| r.split_once("s]")?.0.trim().parse().ok()).unwrap_or(0.0);
+    let tests: Option<u64> = summary.and_then(|r| r.split_once(']')?.1.split_whitespace().next()?.parse().ok());
     let tests = tests.unwrap_or(seen.len() as u64);
     seen.sort_by(|a, b| b.1.total_cmp(&a.1));
     seen.truncate(SLOWEST);
@@ -536,5 +582,51 @@ mod tests {
         let t = UnitTimings { tests: 2, summarized: true, run_secs: 0.0, slowest: vec![("a t1".into(), 1.5), ("b t2".into(), 0.25)] };
         assert_eq!(t.slowest_field(), "a/t1:1.5,b/t2:0.25");
         assert_eq!(UnitTimings::default().slowest_field(), "-");
+    }
+
+    #[test_id(thvwsyg)]
+    #[test]
+    fn results_yield_one_line_per_test_with_its_outcome_crate_and_id() {
+        use spira_otel::testresult::Outcome;
+        let log = "    Starting 5 tests across 3 binaries\n\
+        PASS [   0.011s] (    1/5) archivist candidates::tests::a_session_is_selected::ttepqi5\n\
+        FAIL [   1.250s] (    2/5) gate::spira_scripts a::b::t0aaaaa\n\
+     TIMEOUT [  60.000s] (    3/5) queue c::no_id_here\n\
+     SIGSEGV [   0.500s] (    4/5) spira-config::bin/spira-config d::tests::T0AAAAA\n\
+        SKIP [         ] (───────) queue e::t0bbbbb\n\
+        SLOW [> 60.000s] (───────) queue c::no_id_here\n\
+     Summary [  61.000s] 5 tests run: 1 passed, 2 failed, 1 timed out, 1 skipped\n\
+        FAIL [   1.250s] (    2/5) gate::spira_scripts a::b::t0aaaaa\n\
+     SIGSEGV [   0.500s] (    4/5) spira-config::bin/spira-config d::tests::T0AAAAA\n";
+        let got: Vec<(String, String, String, Outcome, f64)> =
+            results(log).iter().map(|l| (l.crate_name().to_string(), l.test_id().to_string(), l.name.clone(), l.outcome, l.secs)).collect();
+        let row = |c: &str, id: &str, n: &str, o, s| (c.to_string(), id.to_string(), n.to_string(), o, s);
+        assert_eq!(
+            got,
+            vec![
+                row("archivist", "ttepqi5", "candidates::tests::a_session_is_selected::ttepqi5", Outcome::Pass, 0.011),
+                row("gate", "t0aaaaa", "a::b::t0aaaaa", Outcome::Fail, 1.25),
+                row("queue", "", "c::no_id_here", Outcome::Timeout, 60.0),
+                row("spira-config", "", "d::tests::T0AAAAA", Outcome::Fail, 0.5),
+                row("queue", "t0bbbbb", "e::t0bbbbb", Outcome::Skipped, 0.0),
+            ]
+        );
+        assert_eq!(results(log)[1].binary, "gate::spira_scripts");
+        assert_eq!(timings(log).slowest.len(), 4, "a skip is not timed");
+    }
+
+    #[test_id(tsvrvc1)]
+    #[test]
+    fn results_read_every_terminal_status_nextest_prints_and_no_line_without_its_counter() {
+        use spira_otel::testresult::Outcome;
+        let log = "        LEAK [   0.100s] (1/5) c a\n\
+TIMEOUT-PASS [   0.100s] (2/5) c b\n\
+       XFAIL [   0.100s] (3/5) c d\n\
+ FAIL + LEAK [   0.100s] (4/5) c e\n\
+       ABORT [   0.100s] (5/5) c f\n\
+        PASS [   0.100s] printed by a failing test\n";
+        let got: Vec<(String, Outcome)> = results(log).into_iter().map(|l| (l.name, l.outcome)).collect();
+        let want = [("a", Outcome::Pass), ("b", Outcome::Pass), ("d", Outcome::Fail), ("e", Outcome::Fail), ("f", Outcome::Fail)];
+        assert_eq!(got, want.map(|(n, o)| (n.to_string(), o)));
     }
 }

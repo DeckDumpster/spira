@@ -32,6 +32,7 @@ pub mod target;
 pub mod tier;
 pub mod unitrecord;
 pub mod telemetry;
+pub mod testevents;
 pub mod toolkey;
 pub mod wait;
 pub mod warm;

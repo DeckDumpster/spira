@@ -15,6 +15,7 @@ pub mod ops;
 pub mod query;
 pub mod rounds;
 pub mod run;
+pub mod testresult;
 pub mod vlogs;
 
 use std::path::{Path, PathBuf};
