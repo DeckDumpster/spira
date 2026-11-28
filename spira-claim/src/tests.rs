@@ -50,6 +50,12 @@ mod full_repositories {
     /// One READY builder bead in each of `repo:spira` and `repo:other`.
     struct TwoRepos;
 
+    /// [`TwoRepos`] with the `repo:spira` bead in REWORK.
+    struct Reworked;
+
+    /// One READY builder bead that names no repository.
+    struct Unlabelled;
+
     fn row(id: &str) -> Value {
         json!({ "bead_id": id, "state": "READY", "holds": [], "tip": null })
     }
@@ -75,8 +81,36 @@ mod full_repositories {
         }
     }
 
+    impl Transport for Reworked {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, within: Duration) -> Result<Reply, String> {
+            let mut reply = TwoRepos.exchange(argv, stdin, within)?;
+            if argv == ["claimable"] {
+                reply.out = reply.out.replacen("\"READY\"", "\"REWORK\"", 1);
+            }
+            Ok(reply)
+        }
+    }
+
+    impl Transport for Unlabelled {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+            let mut bare = item("sp-bare", "x");
+            bare["labels"] = json!([]);
+            let out = match argv.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+                ["claimable"] => json!({ "rev": 1, "cannot_tell": 0, "beads": [
+                    { "bead_id": "sp-bare", "verdict": "claimable", "blocker": null, "runes": ["builder"], "row": row("sp-bare"), "content": bare },
+                ] }),
+                _ => json!([]),
+            };
+            Ok(Reply { code: 0, out: out.to_string(), err: String::new(), read_ended: false })
+        }
+    }
+
     fn open() -> Result<Store, String> {
-        Ok(Store { lc: LcClient::over(Arc::new(TwoRepos), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None, readiness_alert: Default::default() })
+        over(Arc::new(TwoRepos))
+    }
+
+    fn over(service: Arc<dyn Transport>) -> Result<Store, String> {
+        Ok(Store { lc: LcClient::over(service, true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None, readiness_alert: Default::default() })
     }
 
     /// A home whose one rune builds, and a ceiling of 2 build folders per repository.
@@ -108,7 +142,7 @@ mod full_repositories {
         fn with_env<R>(&self, base: &str, f: impl FnOnce(&mut Env) -> R) -> R {
             let mut stdin = std::io::empty();
             let none = |_: &str| None;
-            let config = Config { runes: "builder".into(), run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), build_base: base.into(), build_ceiling: 2, ..Config::default() };
+            let config = Config { runes: "builder".into(), run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), build_base: base.into(), build_ceiling: 2, home_repo: "spira".into(), ..Config::default() };
             f(&mut Env { stdin: &mut stdin, config, lookup: &none })
         }
 
@@ -135,6 +169,28 @@ mod full_repositories {
         drop(held);
         assert_eq!(fx.counted(), "builder 2\n");
         assert_eq!(fx.listed(), ["sp-full", "sp-open"]);
+    }
+
+    #[test_id(tbsynwr)]
+    #[test]
+    fn a_bead_naming_no_repository_has_no_builder_work_while_the_home_repository_is_full() {
+        let fx = Fixture::new();
+        let held = fx.fill_spira();
+        let counted = || fx.with_env(&fx.base().display().to_string(), |env| ready_by_rune_over(&Args::parse(&[]).unwrap(), env, &|| over(Arc::new(Unlabelled))).unwrap().lines);
+        assert_eq!(counted(), "builder 0\n");
+        drop(held);
+        assert_eq!(counted(), "builder 1\n");
+    }
+
+    #[test_id(t34vg8n)]
+    #[test]
+    fn a_rework_bead_withheld_from_a_full_repository_is_reported_dropped_for_its_leases() {
+        let fx = Fixture::new();
+        let _held = fx.fill_spira();
+        let a = Args::parse(&["builder".into(), "--json".into(), "--dropped".into()]).unwrap();
+        let o = fx.with_env(&fx.base().display().to_string(), |env| rune_ready_over(&a, env, fx.dir.path(), "builder", &|| over(Arc::new(Reworked))));
+        let said: Value = serde_json::from_str(o.out.trim()).unwrap();
+        assert_eq!(said["dropped"], json!([{ "id": "sp-full", "rule": "build-folders-leased" }]), "{o:?}");
     }
 
     #[test_id(tlo58b9)]

@@ -789,7 +789,8 @@ pub fn lease_for(bases: &[PathBuf], who: &str, repo: &str, ceiling: usize) -> Re
 }
 
 /// The repositories under `bases` holding at least `ceiling` leased folders: those
-/// [`lease_for`] would refuse now. Makes no folder and moves none.
+/// [`lease_for`] would refuse now. Makes no folder and moves none; like a lease, taking the
+/// allocation lock can make the repository's directory on the first base.
 pub fn full_repositories(bases: &[PathBuf], ceiling: usize) -> Result<Vec<String>, LeaseError> {
     let mut repos = BTreeSet::new();
     for base in bases {

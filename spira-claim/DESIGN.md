@@ -408,7 +408,8 @@ the started tier from bd would be the read this replaces.
 **A full repository is not ready for a building rune.** For a rune with `RUNE_BUILDS=1`,
 `rune-ready` and `bulk-ready-by-rune` take the rune off every bead of a repository whose
 build folders are all leased (`spira_config::build_dir::full_repositories`: builders', gates'
-and release builds' leases alike), and `rune-exclude` adds its `repo:<name>` for the express
+and release builds' leases alike; a bead naming no repository is the home repository's), and
+`rune-exclude` adds its `repo:<name>` for the express
 count. `select` ranks the rows `rune-ready` gave. The claim view's own membership knows
 nothing of leases. Folders that cannot be counted are cannot-tell: no `bulk-ready-by-rune`
 line, `rune-ready` exit 1, `rune-exclude` exit 2.

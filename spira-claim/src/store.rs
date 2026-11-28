@@ -97,6 +97,8 @@ pub struct Config {
     pub build_base: String,
     /// `SPIRA_DWARF_BUILD_FOLDERS_PER_REPO` — the most build folders one repository may hold leased.
     pub build_ceiling: usize,
+    /// `SPIRA_HOME_REPO` — the repository a bead that names none builds in.
+    pub home_repo: String,
     /// `SPIRA_LC_STORE_PATH` is set: the control store is where readiness is published.
     pub control_store: bool,
 }
@@ -122,6 +124,7 @@ pub fn load_config() -> Result<Config, String> {
         queue_dir: spira_config::process::cfg("SPIRA_QUEUE_DIR")?,
         build_base: spira_config::process::cfg(spira_config::build_dir::BASE_ENV)?,
         build_ceiling: spira_config::process::cfg_parse(spira_config::build_dir::CEILING_ENV)?,
+        home_repo: spira_config::process::cfg("SPIRA_HOME_REPO")?,
         control_store: !spira_config::process::cfg("SPIRA_LC_STORE_PATH")?.is_empty(),
     })
 }

@@ -876,8 +876,13 @@ fn full_repo_labels(env: &Env, home: &std::path::Path, me: &str) -> Result<Vec<S
 }
 
 /// Takes `rune` off every row of a repository in `full` (as [`full_repo_labels`] names them).
-fn withhold_full(view: &mut Viewed, rune: &str, full: &[String]) {
-    for r in view.rows.iter().filter(|r| r.labels.iter().any(|l| full.contains(l))) {
+/// A row naming no repository builds in `home`.
+fn withhold_full(view: &mut Viewed, rune: &str, full: &[String], home: &str) {
+    let in_full = |r: &&rank::ReadyRow| {
+        let repo = r.label_value("repo:").filter(|repo| !repo.is_empty()).unwrap_or(home);
+        full.iter().any(|l| l.strip_prefix("repo:") == Some(repo))
+    };
+    for r in view.rows.iter().filter(in_full) {
         let Some(taking) = view.runes.get_mut(&r.id) else { continue };
         if taking.iter().any(|t| t == rune) {
             taking.retain(|t| t != rune);
@@ -1291,7 +1296,7 @@ fn rune_ready_over(a: &Args, env: &Env, home: &std::path::Path, me: &str, open: 
     let store_read = std::time::Instant::now();
     let view = match open().and_then(|st| claimable_over(a, env, &st)) {
         Ok(mut v) => {
-            withhold_full(&mut v, me, &full);
+            withhold_full(&mut v, me, &full, &env.config.home_repo);
             v
         }
         Err(e) => return Outcome { code: 1, out: "0".into(), err: format!("spira-claim: rune_ready: {}", first_line(&e)) },
@@ -1374,7 +1379,7 @@ fn ready_by_rune_over(a: &Args, env: &Env, open: &dyn Fn() -> Result<Store, Stri
     let st = open().map_err(|e| first_line(&e).to_string())?;
     let mut view = viewed(a, env, &st).map_err(|e| first_line(&e).to_string())?;
     for (rune, labels) in &full {
-        withhold_full(&mut view, rune, labels);
+        withhold_full(&mut view, rune, labels, &env.config.home_repo);
     }
     if let Err(e) = machine_judged(a, env, &st, true) {
         warnings.push(format!("readiness not published: {}", first_line(&e)));
