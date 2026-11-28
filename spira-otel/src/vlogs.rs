@@ -255,12 +255,8 @@ impl Logs {
 
     /// How many records match `filter`, per combination of the fields `by`; a record lacking a field counts under "".
     pub fn count_groups(&self, filter: &str, by: &[&str]) -> Result<Vec<Group>, LogsError> {
-        let mut out = vec![];
-        for row in self.rows(&format!("{filter} | stats by ({}) count() as n", by.join(", ")))? {
-            let keys = by.iter().map(|k| (k.to_string(), row.get(*k).and_then(Value::as_str).unwrap_or("").to_string())).collect();
-            out.push((keys, number(&row, "n")?));
-        }
-        Ok(out)
+        let counted = self.stats_by(filter, by, &[("count()", "n")])?;
+        counted.into_iter().map(|s| s.values.get("n").copied().flatten().map(|n| (s.keys, n)).ok_or_else(|| LogsError::Malformed("row has no n".into()))).collect()
     }
 
     /// Each of `stats`, a (stats function, result name) pair, per combination of the fields

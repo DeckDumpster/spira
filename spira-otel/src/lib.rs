@@ -483,20 +483,22 @@ mod tests {
     #[test_id(t7icq07)]
     #[test]
     fn emitted_calls_arrive_as_one_trace_post_and_one_log_post_per_batch_with_the_whole_span_in_each_record() {
-        let collector = Collector::start();
-        let sink = Sink::buffered(collector.addr(), "spira-lc");
+        let collector = Collector::hanging();
+        let sink = Sink::with_deadline(collector.addr(), "spira-lc", Duration::from_secs(3600));
+        let answered = || Call { answered: Some(Duration::from_millis(7)), ..call(0) };
+        sink.emit(&answered());
+        assert!(collector.wait_until(|p| !p.is_empty(), CAP), "the first push reached the collector");
         for _ in 0..3 {
-            sink.emit(&Call { answered: Some(Duration::from_millis(7)), ..call(0) });
+            sink.emit(&answered());
         }
+        collector.release();
         sink.flush();
         let posts = collector.posts();
-        assert!(!posts.is_empty() && posts.len().is_multiple_of(2), "{} posts", posts.len());
-        for pair in posts.chunks(2) {
-            assert_eq!((pair[0].path.as_str(), pair[1].path.as_str()), (TRACES_PATH, LOGS_PATH));
-            assert!(pair.iter().all(|p| p.content_type == "application/x-protobuf"), "{pair:?}");
-        }
+        assert_eq!(posts.iter().map(|p| p.path.as_str()).collect::<Vec<_>>(), [TRACES_PATH, LOGS_PATH, TRACES_PATH, LOGS_PATH]);
+        assert!(posts.iter().all(|p| p.content_type == "application/x-protobuf"), "{posts:?}");
+        assert_eq!(crate::fixture::spans_in(&posts[2..]).len(), 3, "the calls queued during a push leave as one batch");
         let (spans, records) = (collector.spans(), collector.log_records());
-        assert_eq!((spans.len(), records.len()), (3, 3));
+        assert_eq!((spans.len(), records.len()), (4, 4));
         for (span, (service, record)) in spans.iter().zip(&records) {
             assert_eq!(service, "spira-lc");
             assert_eq!(record.body.as_ref().and_then(|b| b.value.clone()), text("list"));
