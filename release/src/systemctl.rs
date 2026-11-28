@@ -319,10 +319,12 @@ impl Systemctl for RealSystemctl {
 /// process started with `SCCACHE_START_SERVER=1` (its clients lack it). Empty when the
 /// activator's namespace cannot be read, so nothing is killed.
 fn cache_servers() -> Vec<u32> {
-    let Ok(own_pid_ns) = std::fs::read_link(std::path::Path::new(system_paths::PROC_SELF).join("ns/pid")) else {
-        return Vec::new();
-    };
-    cache_servers_in(std::path::Path::new(system_paths::PROC), own_pid_ns.as_os_str())
+    own_cache_servers(std::path::Path::new(system_paths::PROC), std::path::Path::new(system_paths::PROC_SELF))
+}
+
+fn own_cache_servers(proc_root: &std::path::Path, proc_self: &std::path::Path) -> Vec<u32> {
+    let Ok(own_pid_ns) = std::fs::read_link(proc_self.join("ns/pid")) else { return Vec::new() };
+    cache_servers_in(proc_root, own_pid_ns.as_os_str())
 }
 
 /// A container's server is a same-user host process that `--stop-server` cannot reach; only
@@ -341,9 +343,8 @@ fn cache_servers_in(proc_root: &std::path::Path, own_pid_ns: &std::ffi::OsStr) -
 mod cache_server_tests {
     use super::*;
 
-    #[test_id(tmfbbmf)]
-    #[test]
-    fn only_a_cache_server_in_the_activators_pid_namespace_is_selected() {
+    /// Pid 101 is the host's server, 102 a container's, 103 a client, 104 has no readable namespace.
+    fn fake_proc() -> testkit::TempDir {
         let root = testkit::TempDir::new("fake-proc");
         let process = |pid: u32, env: &str, ns: Option<&str>| {
             let dir = root.path().join(pid.to_string());
@@ -359,10 +360,26 @@ mod cache_server_tests {
         process(102, server, Some("pid:[2]"));
         process(103, "SCCACHE_IDLE_TIMEOUT=7200", Some("pid:[1]"));
         process(104, server, None);
+        root
+    }
 
-        let mut found = cache_servers_in(root.path(), std::ffi::OsStr::new("pid:[1]"));
-        found.sort_unstable();
-        assert_eq!(found, [101]);
+    #[test_id(tmfbbmf)]
+    #[test]
+    fn only_a_cache_server_in_the_activators_pid_namespace_is_selected() {
+        let root = fake_proc();
+        assert_eq!(cache_servers_in(root.path(), std::ffi::OsStr::new("pid:[1]")), [101]);
+    }
+
+    #[test_id(tao3d83)]
+    #[test]
+    fn the_activators_namespace_comes_from_its_own_link_and_without_it_nothing_is_selected() {
+        let root = fake_proc();
+        let own = root.path().join("self");
+        std::fs::create_dir_all(own.join("ns")).unwrap();
+        assert_eq!(own_cache_servers(root.path(), &own), Vec::<u32>::new());
+
+        std::os::unix::fs::symlink("pid:[2]", own.join("ns/pid")).unwrap();
+        assert_eq!(own_cache_servers(root.path(), &own), [102]);
     }
 }
 
