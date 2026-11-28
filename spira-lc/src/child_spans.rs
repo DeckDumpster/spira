@@ -49,6 +49,9 @@ fn is_fn_start(line: &str) -> bool {
 /// The spawn sites in `text` whose function neither wraps them in `phases::child(` nor hands the
 /// built command to `spawn`/`spawn_with`; a function returning a `Command` is judged by its file.
 fn unwrapped(text: &str) -> Vec<String> {
+    if !SPAWNS.iter().any(|s| text.contains(s)) {
+        return Vec::new();
+    }
     let text = without_test_modules(text);
     let lines: Vec<&str> = text.lines().collect();
     let mut bad = Vec::new();
