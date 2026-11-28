@@ -77,6 +77,13 @@ fn the_runs_instances_are_found_by_tag_terminated_and_awaited() {
     let done = at("echo \"no build instance left for run $RUN_TAG\"");
     assert!(found < named && named < terminate && terminate < wait && wait < done, "find, name, terminate, wait, report: {step}");
     assert!(!step.contains("|| true") && step.contains("set -euo pipefail"), "a failed call must fail the step: {step}");
+    for named in ["spira:round-build-run=$RUN_TAG", "${doomed[*]}", "${unfinished[*]}"] {
+        let handler = step.lines().find(|l| l.contains("|| { echo") && l.contains(named)).unwrap_or_else(|| panic!("no failure handler names {named}"));
+        assert!(handler.ends_with(">&2; exit 1; }"), "the handler does not fail the step: {}", handler.trim());
+    }
+    for arm in [r#"pending|running|stopping|stopped) doomed+=("$id"); unfinished+=("$id") ;;"#, "terminated) ;;", r#"*) unfinished+=("$id") ;;"#] {
+        assert!(step.lines().any(|l| l.trim() == arm), "no state arm {arm}");
+    }
 }
 
 #[test_id(tul6xpl)]
