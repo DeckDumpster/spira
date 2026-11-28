@@ -50,6 +50,60 @@ pub(crate) struct Sub {
     /// When the first of `pending` arrived, and when the batch is due. Set while it holds any.
     since_ms: u64,
     due_ms: Option<u64>,
+    /// Per topic, the line carrying a state value that is not yet acked, and the value's digest.
+    unacked_given: BTreeMap<String, (u64, String)>,
+    /// The unacked line that spends this `--once` or `--at`: it sends nothing more meanwhile.
+    spent_by: Option<u64>,
+}
+
+/// Who a line would reach, which decides when it counts as delivered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Nobody,
+    /// A line counts as delivered as it is sent.
+    Spending,
+    /// A line counts once [`Core::ack`] says so.
+    Acking,
+}
+
+/// What a reader that acks is told about a line besides its text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Receipt {
+    pub seq: u64,
+    pub subs: Vec<String>,
+    /// Counts as delivered only once acked.
+    pub held: bool,
+}
+
+/// The seq of every line made, and the subscriptions of each one still to be acked.
+#[derive(Default)]
+struct Ledger {
+    last: u64,
+    unacked: BTreeMap<u64, Vec<String>>,
+}
+
+impl Ledger {
+    fn next(&mut self) -> u64 {
+        self.last += 1;
+        self.last
+    }
+
+    /// A dropped subscription's lines are no longer waited for: nothing would send them again.
+    fn forget(&mut self, id: &str) {
+        self.unacked.retain(|_, subs| {
+            subs.retain(|s| s != id);
+            !subs.is_empty()
+        });
+    }
+
+    fn send(&mut self, mode: Mode, seq: u64, subs: Vec<String>, text: String, out: &mut Out) {
+        let held = mode == Mode::Acking;
+        if held {
+            self.unacked.insert(seq, subs.clone());
+        }
+        out.lines.push(text);
+        out.receipts.push(Receipt { seq, subs, held });
+    }
 }
 
 /// What the store's topic record says of one family that has been published.
@@ -67,6 +121,8 @@ pub struct TopicRow {
 pub struct Out {
     /// Each element is one delivery: one line, or a batch's header and lines.
     pub lines: Vec<String>,
+    /// One for each of `lines`, in order.
+    pub receipts: Vec<Receipt>,
     /// Filters no remaining subscription holds.
     pub unsubscribe: Vec<String>,
     /// The set changed and must be written.
@@ -91,6 +147,7 @@ pub struct Core {
     pub(crate) topics: Vec<TopicRow>,
     /// Whether the latest read of the record succeeded.
     record_read: bool,
+    ledger: Ledger,
 }
 
 fn is_gone(value: &Value) -> bool {
@@ -133,29 +190,53 @@ const NOT_BATCHED: &str = "delivers at once, so it cannot be batched";
 
 impl Sub {
     fn new(entry: Entry) -> Sub {
-        Sub { entry, last_fired_ms: None, pending: BTreeMap::new(), since_ms: 0, due_ms: None }
+        Sub { entry, last_fired_ms: None, pending: BTreeMap::new(), since_ms: 0, due_ms: None, unacked_given: BTreeMap::new(), spent_by: None }
     }
 
     fn filter(&self) -> Option<&str> {
         self.entry.filter.as_deref()
     }
 
+    /// Whether `value` is the one last sent here, acked or still waiting to be.
     fn already_given(&self, topic: &str, value: &Value) -> bool {
-        self.entry.delivered.get(topic) == Some(&digest(value))
+        let last = self.unacked_given.get(topic).map(|(_, digest)| digest).or_else(|| self.entry.delivered.get(topic));
+        last == Some(&digest(value))
     }
 
-    /// The line for `topic` = `value`, unless it is the state value last delivered here. The one
-    /// place a value counts as given.
-    fn deliver(&mut self, topic: &str, value: &Value, state: bool, now: u64, out: &mut Out) -> Option<String> {
+    /// The line `seq` for `topic` = `value`, unless it is the state value last sent here or this
+    /// subscription is waiting to be spent. With [`Core::ack`], the one place a value counts as
+    /// given.
+    #[allow(clippy::too_many_arguments)]
+    fn deliver(&mut self, topic: &str, value: &Value, state: bool, now: u64, mode: Mode, seq: u64, out: &mut Out) -> Option<String> {
+        if self.spent_by.is_some() {
+            return None;
+        }
         if state {
             if self.already_given(topic, value) {
                 return None;
             }
-            self.entry.delivered.insert(topic.to_string(), digest(value));
-            out.changed = true;
+            if mode == Mode::Acking {
+                self.unacked_given.insert(topic.to_string(), (seq, digest(value)));
+                // Which value the reader holds is unknown until the ack, so an older one kept
+                // here would silence a return to it.
+                out.changed |= self.entry.delivered.remove(topic).is_some();
+            } else {
+                self.unacked_given.remove(topic);
+                self.entry.delivered.insert(topic.to_string(), digest(value));
+                out.changed = true;
+            }
         }
         self.last_fired_ms = Some(now);
         Some(render::line(&self.entry.id, topic, value, &self.entry.note))
+    }
+
+    /// Spends this `--once` or `--at` on the line `seq`: true when it is to be dropped now,
+    /// false when only that line's ack drops it.
+    fn spend(&mut self, mode: Mode, seq: u64) -> bool {
+        if mode == Mode::Acking {
+            self.spent_by = Some(seq);
+        }
+        mode != Mode::Acking
     }
 
     fn hold(&mut self, topic: &str, value: &Value, state: bool, batch_s: u64, now: u64) {
@@ -169,6 +250,7 @@ impl Sub {
     /// The topic holds no value any more: there is none to batch, and its next one is news.
     fn clear(&mut self, topic: &str, out: &mut Out) {
         self.pending.remove(topic);
+        self.unacked_given.remove(topic);
         if self.pending.is_empty() {
             self.due_ms = None;
         }
@@ -176,12 +258,15 @@ impl Sub {
     }
 
     /// A line for each gone publisher the filter depends on but does not itself select.
-    fn notify_gone(&mut self, publishers: &BTreeMap<String, Value>, record: &[TopicRow], now: u64, out: &mut Out) {
+    #[allow(clippy::too_many_arguments)]
+    fn notify_gone(&mut self, publishers: &BTreeMap<String, Value>, record: &[TopicRow], now: u64, mode: Mode, ledger: &mut Ledger, out: &mut Out) {
         let Some(filter) = self.entry.filter.clone() else { return };
         for (topic, value) in publishers {
             if is_gone(value) && !topics::filter_selects(&filter, topic) && depends_on(record, &filter, topic.trim_start_matches("publisher/")) {
-                let line = self.deliver(topic, value, true, now, out);
-                out.lines.extend(line);
+                let seq = ledger.next();
+                if let Some(line) = self.deliver(topic, value, true, now, mode, seq, out) {
+                    ledger.send(mode, seq, vec![self.entry.id.clone()], line, out);
+                }
             }
         }
     }
@@ -196,7 +281,7 @@ impl Sub {
 impl Core {
     pub fn new(clock: Arc<dyn Clock>, saved: Saved) -> Core {
         let subs = saved.subs.into_iter().map(Sub::new).collect();
-        Core { clock, next: saved.next.max(1), subs, current: BTreeMap::new(), heard: BTreeSet::new(), publishers: BTreeMap::new(), echoes: Default::default(), topics: Vec::new(), record_read: false }
+        Core { clock, next: saved.next.max(1), subs, current: BTreeMap::new(), heard: BTreeSet::new(), publishers: BTreeMap::new(), echoes: Default::default(), topics: Vec::new(), record_read: false, ledger: Ledger::default() }
     }
 
     pub fn saved(&self) -> Saved {
@@ -227,11 +312,14 @@ impl Core {
     }
 
     /// Tells each subscription of the gone publishers it depends on and has not been told of.
-    pub fn gone_notices(&mut self) -> Out {
+    pub fn gone_notices(&mut self, mode: Mode) -> Out {
         let mut out = Out::default();
+        if mode == Mode::Nobody {
+            return out;
+        }
         let now = self.now_ms();
         for sub in &mut self.subs {
-            sub.notify_gone(&self.publishers, &self.topics, now, &mut out);
+            sub.notify_gone(&self.publishers, &self.topics, now, mode, &mut self.ledger, &mut out);
         }
         out
     }
@@ -250,7 +338,7 @@ impl Core {
         let mut out = Out::default();
         for sub in &mut self.subs {
             let pending = sub.pending.iter().filter(|(_, (_, state))| *state).map(|(t, _)| t);
-            let unheard: BTreeSet<String> = sub.entry.delivered.keys().chain(pending).filter(|t| !self.heard.contains(*t)).cloned().collect();
+            let unheard: BTreeSet<String> = sub.entry.delivered.keys().chain(sub.unacked_given.keys()).chain(pending).filter(|t| !self.heard.contains(*t)).cloned().collect();
             for topic in unheard {
                 sub.clear(&topic, &mut out);
             }
@@ -273,13 +361,13 @@ impl Core {
     }
 
     /// A new subscription delivered at once. See [`Core::add_classed`].
-    pub fn add(&mut self, filter: &str, note: &str, once: bool, listening: bool) -> Result<(String, Out), String> {
-        self.add_classed(filter, note, once, None, listening)
+    pub fn add(&mut self, filter: &str, note: &str, once: bool, mode: Mode) -> Result<(String, Out), String> {
+        self.add_classed(filter, note, once, None, mode)
     }
 
     /// A new subscription, batched when `batch_s` is given. The caller subscribes its filter, which is what brings the retained
-    /// values; a publisher already known to be gone is said here, while someone is `listening`.
-    pub fn add_classed(&mut self, filter: &str, note: &str, once: bool, batch_s: Option<u64>, listening: bool) -> Result<(String, Out), String> {
+    /// values; a publisher already known to be gone is said here, unless there is [`Mode::Nobody`].
+    pub fn add_classed(&mut self, filter: &str, note: &str, once: bool, batch_s: Option<u64>, mode: Mode) -> Result<(String, Out), String> {
         if once && batch_s.is_some() {
             return Err("--batch conflicts with --once: a --once subscription delivers at once".to_string());
         }
@@ -295,10 +383,10 @@ impl Core {
         };
         let id = self.push(Some(filter.to_string()), None, note, once);
         let mut out = Out { changed: true, warning, ..Out::default() };
-        if listening {
+        if mode != Mode::Nobody {
             let now = self.now_ms();
             let sub = self.subs.last_mut().expect("just pushed");
-            sub.notify_gone(&self.publishers, &self.topics, now, &mut out);
+            sub.notify_gone(&self.publishers, &self.topics, now, mode, &mut self.ledger, &mut out);
         }
         self.subs.last_mut().expect("just pushed").entry.batch_s = batch_s;
         Ok((id, out))
@@ -315,9 +403,9 @@ impl Core {
     }
 
     /// Changes how `id` is delivered. Becoming at once, it is given what its batch held. With
-    /// nobody `listening`, the next reader's replay has the state values, and the chatter,
+    /// [`Mode::Nobody`], the next reader's replay has the state values, and the chatter,
     /// which no replay holds, stays pending and due.
-    pub fn set_class(&mut self, id: &str, batch_s: Option<u64>, listening: bool) -> Result<Out, String> {
+    pub fn set_class(&mut self, id: &str, batch_s: Option<u64>, mode: Mode) -> Result<Out, String> {
         let at = self.position(id)?;
         let now = self.now_ms();
         let sub = &mut self.subs[at];
@@ -329,10 +417,12 @@ impl Core {
         sub.entry.batch_s = batch_s;
         match batch_s {
             Some(batch_s) => sub.due_ms = sub.due_ms.map(|_| boundary(now, batch_s)),
-            None if listening => {
+            None if mode != Mode::Nobody => {
                 for (topic, (value, state)) in sub.take_pending() {
-                    let line = sub.deliver(&topic, &value, state, now, &mut out);
-                    out.lines.extend(line);
+                    let seq = self.ledger.next();
+                    if let Some(line) = sub.deliver(&topic, &value, state, now, mode, seq, &mut out) {
+                        self.ledger.send(mode, seq, vec![id.to_string()], line, &mut out);
+                    }
                 }
             }
             None => {
@@ -354,7 +444,9 @@ impl Core {
     fn discard(&mut self, positions: &[usize], out: &mut Out) {
         let mut gone = Vec::new();
         for &at in positions.iter().rev() {
-            gone.extend(self.subs.remove(at).entry.filter);
+            let entry = self.subs.remove(at).entry;
+            self.ledger.forget(&entry.id);
+            gone.extend(entry.filter);
         }
         if positions.is_empty() {
             return;
@@ -384,10 +476,10 @@ impl Core {
     }
 
     /// A message from the broker, `retained` being the publisher's retain flag: set, the value
-    /// is state. With nobody `listening` nothing counts as delivered, so a
+    /// is state. With [`Mode::Nobody`] nothing counts as delivered, so a
     /// `--once` subscription waits for a reader; the value is kept for its replay, and a
     /// batched subscription's in its pending batch.
-    pub fn message(&mut self, topic: &str, payload: &[u8], retained: bool, listening: bool) -> Out {
+    pub fn message(&mut self, topic: &str, payload: &[u8], retained: bool, mode: Mode) -> Out {
         let mut out = Out::default();
         let liveness = topic.starts_with("publisher/");
         if payload.is_empty() {
@@ -426,12 +518,13 @@ impl Core {
                 sub.hold(topic, &value, state, batch_s, now);
                 continue;
             }
-            if !listening || !(direct || notice) {
+            if mode == Mode::Nobody || !(direct || notice) {
                 continue;
             }
-            let Some(line) = sub.deliver(topic, &value, state, now, &mut out) else { continue };
-            out.lines.push(line);
-            if direct && sub.entry.once {
+            let seq = self.ledger.next();
+            let Some(line) = sub.deliver(topic, &value, state, now, mode, seq, &mut out) else { continue };
+            self.ledger.send(mode, seq, vec![sub.entry.id.clone()], line, &mut out);
+            if direct && sub.entry.once && sub.spend(mode, seq) {
                 spent.push(at);
             }
         }
@@ -441,13 +534,13 @@ impl Core {
 
     /// What a newly attached reader is told first: each subscribed state value not yet
     /// delivered, every batch already due and every timer already due.
-    pub fn attach(&mut self) -> Out {
+    pub fn attach(&mut self, mode: Mode) -> Out {
         let mut out = Out::default();
         let now = self.now_ms();
         let mut spent = Vec::new();
         for (at, sub) in self.subs.iter_mut().enumerate() {
             let Some(filter) = sub.entry.filter.clone() else { continue };
-            sub.notify_gone(&self.publishers, &self.topics, now, &mut out);
+            sub.notify_gone(&self.publishers, &self.topics, now, mode, &mut self.ledger, &mut out);
             for (topic, value) in self.current.iter().filter(|(t, _)| topics::filter_selects(&filter, t)) {
                 if let Some(batch_s) = sub.entry.batch_s {
                     // Unheard while it was delivered at once, so no batch holds it yet.
@@ -456,17 +549,21 @@ impl Core {
                     }
                     continue;
                 }
-                let Some(line) = sub.deliver(topic, value, true, now, &mut out) else { continue };
-                out.lines.push(line);
+                let seq = self.ledger.next();
+                let Some(line) = sub.deliver(topic, value, true, now, mode, seq, &mut out) else { continue };
+                self.ledger.send(mode, seq, vec![sub.entry.id.clone()], line, &mut out);
                 if sub.entry.once {
-                    spent.push(at);
+                    if sub.spend(mode, seq) {
+                        spent.push(at);
+                    }
                     break;
                 }
             }
         }
         self.discard(&spent, &mut out);
-        for due in [self.flush_due(true), self.fire_due(true)] {
+        for due in [self.flush_due(mode), self.fire_due(mode)] {
             out.lines.extend(due.lines);
+            out.receipts.extend(due.receipts);
             out.unsubscribe.extend(due.unsubscribe);
             out.changed |= due.changed;
         }
@@ -475,55 +572,118 @@ impl Core {
 
     /// When the earliest timer or batch is due.
     pub fn next_due_ms(&self) -> Option<u64> {
-        self.subs.iter().flat_map(|s| [s.entry.at_ms, s.due_ms]).flatten().min()
+        // A fired timer awaiting its ack stays in the set, and must not be woken for again.
+        self.subs.iter().flat_map(|s| [s.entry.at_ms.filter(|_| s.spent_by.is_none()), s.due_ms]).flatten().min()
     }
 
-    /// Delivers every due batch as one delivery, while someone is `listening`; an unheard one
+    /// Delivers every due batch as one delivery, unless there is [`Mode::Nobody`], whose batch
     /// goes on gathering. A value back to what was last delivered is left out. What a
     /// subscription since set to at once still holds goes as ordinary lines.
-    pub fn flush_due(&mut self, listening: bool) -> Out {
+    pub fn flush_due(&mut self, mode: Mode) -> Out {
         let mut out = Out::default();
-        if !listening {
+        if mode == Mode::Nobody {
             return out;
         }
         let now = self.now_ms();
+        // First what no longer batches: its lines go ahead of the batch, so are numbered first.
+        for sub in self.subs.iter_mut().filter(|s| s.entry.batch_s.is_none() && s.due_ms.is_some_and(|due| due <= now)) {
+            for (topic, (value, state)) in sub.take_pending() {
+                let seq = self.ledger.next();
+                if let Some(line) = sub.deliver(&topic, &value, state, now, mode, seq, &mut out) {
+                    self.ledger.send(mode, seq, vec![sub.entry.id.clone()], line, &mut out);
+                }
+            }
+        }
+        let batch_seq = self.ledger.next();
         let mut block = Vec::new();
+        let mut held_by = Vec::new();
         let mut since = u64::MAX;
         for sub in self.subs.iter_mut().filter(|s| s.due_ms.is_some_and(|due| due <= now)) {
             for (topic, (value, state)) in sub.take_pending() {
-                let Some(line) = sub.deliver(&topic, &value, state, now, &mut out) else { continue };
-                if sub.entry.batch_s.is_none() {
-                    out.lines.push(line);
-                    continue;
-                }
+                let Some(line) = sub.deliver(&topic, &value, state, now, mode, batch_seq, &mut out) else { continue };
                 since = since.min(sub.since_ms);
                 block.push(line);
+                if !held_by.contains(&sub.entry.id) {
+                    held_by.push(sub.entry.id.clone());
+                }
             }
         }
         if !block.is_empty() {
             let header = render::batch_line(block.len(), since);
             block.insert(0, header);
-            out.lines.push(block.join("\n"));
+            self.ledger.send(mode, batch_seq, held_by, block.join("\n"), &mut out);
         }
         out
     }
 
-    /// Fires each due timer, once, while someone is `listening`; an unheard one stays due.
-    pub fn fire_due(&mut self, listening: bool) -> Out {
+    /// Fires each due timer, once, unless there is [`Mode::Nobody`], for which it stays due.
+    pub fn fire_due(&mut self, mode: Mode) -> Out {
         let mut out = Out::default();
-        if !listening {
+        if mode == Mode::Nobody {
             return out;
         }
         let now = self.now_ms();
         let mut spent = Vec::new();
-        for (at, sub) in self.subs.iter().enumerate() {
-            if let Some(due) = sub.entry.at_ms.filter(|due| *due <= now) {
-                out.lines.push(render::at_line(&sub.entry.id, due, &sub.entry.note));
+        for (at, sub) in self.subs.iter_mut().enumerate() {
+            let Some(due) = sub.entry.at_ms.filter(|due| *due <= now && sub.spent_by.is_none()) else { continue };
+            let seq = self.ledger.next();
+            let line = render::at_line(&sub.entry.id, due, &sub.entry.note);
+            self.ledger.send(mode, seq, vec![sub.entry.id.clone()], line, &mut out);
+            if sub.spend(mode, seq) {
                 spent.push(at);
             }
         }
         self.discard(&spent, &mut out);
         out
+    }
+
+    /// Whether the line `seq` is still waiting for its ack.
+    pub fn awaits(&self, seq: u64) -> bool {
+        self.ledger.unacked.contains_key(&seq)
+    }
+
+    /// The lines waiting for an ack.
+    pub fn unacked(&self) -> usize {
+        self.ledger.unacked.len()
+    }
+
+    /// The lines waiting for an ack that carry something of `id`'s.
+    pub(crate) fn unacked_of(&self, id: &str) -> usize {
+        self.ledger.unacked.values().filter(|subs| subs.iter().any(|s| s == id)).count()
+    }
+
+    /// The line `seq` reached its reader: what it gave is now given, and what it spent is
+    /// dropped. Nothing happens for a seq that is not waiting.
+    pub fn ack(&mut self, seq: u64) -> Out {
+        let mut out = Out::default();
+        let Some(subs) = self.ledger.unacked.remove(&seq) else { return out };
+        let mut spent = Vec::new();
+        for (at, sub) in self.subs.iter_mut().enumerate().filter(|(_, s)| subs.contains(&s.entry.id)) {
+            let delivered = &mut sub.entry.delivered;
+            sub.unacked_given.retain(|topic, (by, digest)| {
+                if *by != seq {
+                    return true;
+                }
+                delivered.insert(topic.clone(), std::mem::take(digest));
+                out.changed = true;
+                false
+            });
+            if sub.spent_by == Some(seq) {
+                spent.push(at);
+            }
+        }
+        self.discard(&spent, &mut out);
+        out
+    }
+
+    /// The acking reader went: every line it had not acked is forgotten. Nothing was recorded
+    /// for them, so the next [`Core::attach`] gives again what can be given again.
+    pub fn released(&mut self) {
+        self.ledger.unacked.clear();
+        for sub in &mut self.subs {
+            sub.unacked_given.clear();
+            sub.spent_by = None;
+        }
     }
 
     /// The `list` screen.
@@ -568,11 +728,11 @@ mod tests {
 
     /// A state publish: retained.
     fn say(c: &mut Core, topic: &str, value: Value) -> Out {
-        c.message(topic, value.to_string().as_bytes(), true, true)
+        c.message(topic, value.to_string().as_bytes(), true, Mode::Spending)
     }
 
     fn chat(c: &mut Core, topic: &str, value: Value) -> Out {
-        c.message(topic, value.to_string().as_bytes(), false, true)
+        c.message(topic, value.to_string().as_bytes(), false, Mode::Spending)
     }
 
     #[test_id(t8oxs9z)]
@@ -580,15 +740,15 @@ mod tests {
     fn a_malformed_filter_is_refused_and_one_matching_nothing_published_is_taken_with_a_warning() {
         let (mut c, _) = core();
         for bad in ["a/#/b", ""] {
-            let why = c.add(bad, "", false, true).unwrap_err();
+            let why = c.add(bad, "", false, Mode::Spending).unwrap_err();
             assert!(why.contains(&format!("{bad:?}")), "{why}");
         }
         assert!(c.is_empty());
-        let (_, out) = c.add("nosuch/#", "", false, true).unwrap();
+        let (_, out) = c.add("nosuch/#", "", false, Mode::Spending).unwrap();
         assert_eq!(out.warning.as_deref(), Some(r#"filter "nosuch/#" matches no topic ever published; subscribed anyway"#));
-        assert_eq!(c.add("round/#", "", false, true).unwrap().1.warning, None, "positive control");
+        assert_eq!(c.add("round/#", "", false, Mode::Spending).unwrap().1.warning, None, "positive control");
         c.topics_unread();
-        let warning = c.add("round/#", "", false, true).unwrap().1.warning.unwrap();
+        let warning = c.add("round/#", "", false, Mode::Spending).unwrap().1.warning.unwrap();
         assert!(warning.contains("cannot check the filter against the record"), "{warning}");
     }
 
@@ -596,7 +756,7 @@ mod tests {
     #[test]
     fn the_delivered_retain_flag_alone_says_whether_an_equal_value_is_news() {
         let (mut c, _) = core();
-        c.add("unlisted/x", "", false, true).unwrap();
+        c.add("unlisted/x", "", false, Mode::Spending).unwrap();
         assert_eq!(say(&mut c, "unlisted/x", json!({"n": 1})).lines.len(), 1);
         assert!(say(&mut c, "unlisted/x", json!({"n": 1})).lines.is_empty(), "retained: state");
         for _ in 0..2 {
@@ -609,19 +769,19 @@ mod tests {
     fn a_resident_named_by_the_record_going_follows_its_familys_last_value() {
         let clock = VirtualClock::new(1_000_000);
         let mut c = Core::new(Arc::new(clock), Saved::default());
-        c.add("bead/+/state", "", false, true).unwrap();
+        c.add("bead/+/state", "", false, Mode::Spending).unwrap();
         assert_eq!(say(&mut c, "bead/sp-a/state", json!({"state": "WORKING"})).lines, ["[sub:s1] bead/sp-a/state state=WORKING"]);
         assert!(say(&mut c, "publisher/lc-serve", json!({"state": "gone"})).lines.is_empty(), "no record, no resident");
         c.set_topics(vec![row("bead/+/state", &["lc-serve"])]);
-        assert_eq!(c.gone_notices().lines, ["[sub:s1] publisher/lc-serve state=gone"]);
-        assert!(c.gone_notices().lines.is_empty(), "told once");
+        assert_eq!(c.gone_notices(Mode::Spending).lines, ["[sub:s1] publisher/lc-serve state=gone"]);
+        assert!(c.gone_notices(Mode::Spending).lines.is_empty(), "told once");
     }
 
     #[test_id(t4nc54b)]
     #[test]
     fn a_publisher_back_up_before_the_record_is_read_makes_its_next_going_news() {
         let (mut before, clock) = core();
-        before.add("bead/+/state", "", false, true).unwrap();
+        before.add("bead/+/state", "", false, Mode::Spending).unwrap();
         assert_eq!(say(&mut before, "publisher/lc-serve", json!({"state": "gone"})).lines.len(), 1, "positive control");
         let mut c = Core::new(Arc::new(clock), before.saved());
         say(&mut c, "publisher/lc-serve", json!({"state": "up", "since_ms": 2}));
@@ -633,17 +793,17 @@ mod tests {
     #[test]
     fn fields_print_in_the_payloads_key_order_with_nulls_left_out() {
         let (mut c, _) = core();
-        c.add("bead/+/state", "", false, true).unwrap();
+        c.add("bead/+/state", "", false, Mode::Spending).unwrap();
         // Neither sorted nor any declared order, so only the bytes can have given it.
         let said = br#"{"from":"READY","state":"WORKING","actor":null,"at":100}"#;
-        assert_eq!(c.message("bead/sp-a/state", said, true, true).lines, ["[sub:s1] bead/sp-a/state from=READY state=WORKING at=100"]);
+        assert_eq!(c.message("bead/sp-a/state", said, true, Mode::Spending).lines, ["[sub:s1] bead/sp-a/state from=READY state=WORKING at=100"]);
     }
 
     #[test_id(tfa7rf1)]
     #[test]
     fn once_drops_the_subscription_after_one_delivery() {
         let (mut c, _) = core();
-        let (id, _) = c.add("bead/+/state", "landed?", true, true).unwrap();
+        let (id, _) = c.add("bead/+/state", "landed?", true, Mode::Spending).unwrap();
         let first = say(&mut c, "bead/sp-a/state", json!({"state": "LANDED"}));
         assert_eq!(first.lines, [format!("[sub:{id}] bead/sp-a/state state=LANDED — landed?")]);
         assert_eq!(first.unsubscribe, ["bead/+/state"]);
@@ -655,10 +815,10 @@ mod tests {
     #[test]
     fn once_waits_for_a_reader_and_is_spent_by_the_replay() {
         let (mut c, _) = core();
-        c.add("bead/sp-a/state", "", true, false).unwrap();
-        let unheard = c.message("bead/sp-a/state", br#"{"state":"LANDED"}"#, true, false);
+        c.add("bead/sp-a/state", "", true, Mode::Nobody).unwrap();
+        let unheard = c.message("bead/sp-a/state", br#"{"state":"LANDED"}"#, true, Mode::Nobody);
         assert!(unheard.lines.is_empty() && c.len() == 1, "{unheard:?}");
-        assert_eq!(c.attach().lines, ["[sub:s1] bead/sp-a/state state=LANDED"]);
+        assert_eq!(c.attach(Mode::Spending).lines, ["[sub:s1] bead/sp-a/state state=LANDED"]);
         assert!(c.is_empty());
     }
 
@@ -670,11 +830,11 @@ mod tests {
         let (id, _) = c.add_at(at, "look again");
         assert_eq!(c.next_due_ms(), Some(at));
         clock.advance_to(at - 1);
-        assert_eq!(c.fire_due(true), Out::default());
+        assert_eq!(c.fire_due(Mode::Spending), Out::default());
         clock.advance_to(at);
-        assert_eq!(c.fire_due(true).lines, [format!("[sub:{id}] at 1970-01-01T00:17:40Z — look again")]);
+        assert_eq!(c.fire_due(Mode::Spending).lines, [format!("[sub:{id}] at 1970-01-01T00:17:40Z — look again")]);
         clock.advance(60_000);
-        assert_eq!(c.fire_due(true), Out::default());
+        assert_eq!(c.fire_due(Mode::Spending), Out::default());
         assert_eq!(c.next_due_ms(), None);
     }
 
@@ -683,8 +843,8 @@ mod tests {
     fn a_timer_due_with_no_reader_is_delivered_when_one_attaches() {
         let (mut c, clock) = core();
         c.add_at(clock.now_ms(), "n");
-        assert_eq!(c.fire_due(false), Out::default());
-        assert_eq!(c.attach().lines.len(), 1);
+        assert_eq!(c.fire_due(Mode::Nobody), Out::default());
+        assert_eq!(c.attach(Mode::Spending).lines.len(), 1);
         assert!(c.is_empty());
     }
 
@@ -692,7 +852,7 @@ mod tests {
     #[test]
     fn an_equal_retained_value_is_not_delivered_again_and_a_changed_one_is() {
         let (mut c, _) = core();
-        c.add("release/active", "", false, true).unwrap();
+        c.add("release/active", "", false, Mode::Spending).unwrap();
         assert_eq!(say(&mut c, "release/active", json!({"release": "r1"})).lines.len(), 1);
         assert!(say(&mut c, "release/active", json!({"release": "r1"})).lines.is_empty());
         assert_eq!(say(&mut c, "release/active", json!({"release": "r2"})).lines, ["[sub:s1] release/active release=r2"]);
@@ -702,9 +862,9 @@ mod tests {
     #[test]
     fn a_second_subscription_is_handed_a_value_the_first_already_had() {
         let (mut c, _) = core();
-        c.add("release/active", "one", false, true).unwrap();
+        c.add("release/active", "one", false, Mode::Spending).unwrap();
         say(&mut c, "release/active", json!({"release": "r1"}));
-        c.add("release/#", "two", false, true).unwrap();
+        c.add("release/#", "two", false, Mode::Spending).unwrap();
         assert_eq!(say(&mut c, "release/active", json!({"release": "r1"})).lines, ["[sub:s2] release/active release=r1 — two"]);
     }
 
@@ -712,19 +872,19 @@ mod tests {
     #[test]
     fn chatter_is_delivered_every_time() {
         let (mut c, _) = core();
-        c.add("progress/+", "", false, true).unwrap();
+        c.add("progress/+", "", false, Mode::Spending).unwrap();
         for _ in 0..2 {
             assert_eq!(chat(&mut c, "progress/sp-a", json!({"note": "still compiling"})).lines, [r#"[sub:s1] progress/sp-a note="still compiling""#]);
         }
-        assert!(c.attach().lines.is_empty(), "chatter is not retained");
+        assert!(c.attach(Mode::Spending).lines.is_empty(), "chatter is not retained");
     }
 
     #[test_id(t8ua73w)]
     #[test]
     fn the_copies_of_one_chatter_message_sent_for_overlapping_filters_are_one_delivery() {
         let (mut c, _) = core();
-        c.add("progress/+", "", false, true).unwrap();
-        c.add("progress/#", "", false, true).unwrap();
+        c.add("progress/+", "", false, Mode::Spending).unwrap();
+        c.add("progress/#", "", false, Mode::Spending).unwrap();
         let said = json!({"note": "n"});
         for publish in 0..2 {
             assert_eq!(chat(&mut c, "progress/sp-a", said.clone()).lines.len(), 2, "publish {publish}: one line each");
@@ -736,8 +896,8 @@ mod tests {
     #[test]
     fn a_resident_publisher_going_is_told_to_its_familys_subscriptions_once_per_going() {
         let (mut c, _) = core();
-        c.add("bead/+/state", "n", true, true).unwrap();
-        c.add("release/active", "", false, true).unwrap();
+        c.add("bead/+/state", "n", true, Mode::Spending).unwrap();
+        c.add("release/active", "", false, Mode::Spending).unwrap();
         let gone = json!({"state": "gone"});
         let first = say(&mut c, "publisher/lc-serve", gone.clone());
         assert_eq!(first.lines, ["[sub:s1] publisher/lc-serve state=gone — n"]);
@@ -752,7 +912,7 @@ mod tests {
     #[test]
     fn host_pressure_subscribers_are_told_that_watchtower_went() {
         let (mut c, _) = core();
-        c.add("host/pressure", "n", false, true).unwrap();
+        c.add("host/pressure", "n", false, Mode::Spending).unwrap();
         let out = say(&mut c, "publisher/watchtower", json!({"state": "gone"}));
         assert_eq!(out.lines, ["[sub:s1] publisher/watchtower state=gone — n"]);
     }
@@ -762,7 +922,7 @@ mod tests {
     fn a_subscription_added_after_the_publisher_went_is_told_at_once() {
         let (mut c, _) = core();
         say(&mut c, "publisher/lc-serve", json!({"state": "gone"}));
-        let (_, out) = c.add("bead/sp-a/state", "", false, true).unwrap();
+        let (_, out) = c.add("bead/sp-a/state", "", false, Mode::Spending).unwrap();
         assert_eq!(out.lines, ["[sub:s1] publisher/lc-serve state=gone"]);
     }
 
@@ -770,8 +930,8 @@ mod tests {
     #[test]
     fn a_dropped_subscription_is_silent_and_a_shared_filter_is_kept() {
         let (mut c, _) = core();
-        c.add("round/#", "", false, true).unwrap();
-        c.add("round/#", "", false, true).unwrap();
+        c.add("round/#", "", false, Mode::Spending).unwrap();
+        c.add("round/#", "", false, Mode::Spending).unwrap();
         assert!(c.remove("s1").unwrap().unsubscribe.is_empty());
         assert_eq!(c.remove("s2").unwrap().unsubscribe, ["round/#"]);
         assert!(say(&mut c, "round/r/1", json!({"event": "green"})).lines.is_empty());
@@ -782,27 +942,27 @@ mod tests {
     #[test]
     fn the_saved_set_holds_subscriptions_and_never_reuses_an_id() {
         let (mut c, clock) = core();
-        c.add("round/#", "n", false, true).unwrap();
+        c.add("round/#", "n", false, Mode::Spending).unwrap();
         say(&mut c, "round/r/1", json!({"event": "SECRET"}));
-        c.add("gate/#", "", false, true).unwrap();
+        c.add("gate/#", "", false, Mode::Spending).unwrap();
         c.remove("s2").unwrap();
         let text = serde_json::to_string(&c.saved()).unwrap();
         assert!(!text.contains("SECRET"), "the set file holds no message: {text}");
         let mut again = recorded(&clock, serde_json::from_str(&text).unwrap());
         assert_eq!(again.filters().into_iter().collect::<Vec<_>>(), ["round/#"]);
-        assert_eq!(again.add("gate/#", "", false, true).unwrap().0, "s3");
+        assert_eq!(again.add("gate/#", "", false, Mode::Spending).unwrap().0, "s3");
     }
 
     const TEN_MINUTES: Option<u64> = Some(600);
 
     fn batched(c: &mut Core, filter: &str) -> String {
-        c.add_classed(filter, "", false, TEN_MINUTES, true).unwrap().0
+        c.add_classed(filter, "", false, TEN_MINUTES, Mode::Spending).unwrap().0
     }
 
     /// Moves the clock to the pending batch's instant and flushes it.
     fn at_due(c: &mut Core, clock: &VirtualClock) -> Out {
         clock.advance_to(c.next_due_ms().expect("a batch is pending"));
-        c.flush_due(true)
+        c.flush_due(Mode::Spending)
     }
 
     #[test_id(trd8907)]
@@ -818,7 +978,7 @@ mod tests {
         assert_eq!(c.next_due_ms(), Some(1_200_000), "a multiple of the interval");
         assert!(c.list("concierge", true, 1).contains("batch 10m, 1 pending"));
         clock.advance_to(1_199_999);
-        assert_eq!(c.flush_due(true), Out::default());
+        assert_eq!(c.flush_due(Mode::Spending), Out::default());
         assert_eq!(at_due(&mut c, &clock).lines, ["[batch] n=1 since 1970-01-01T00:16:40Z\n[sub:s1] bead/sp-a/state state=S10"]);
         assert_eq!(c.next_due_ms(), None);
         assert!(!c.list("concierge", true, 1).contains("pending"));
@@ -855,11 +1015,11 @@ mod tests {
     fn an_unheard_batch_keeps_gathering_and_is_given_to_the_next_reader() {
         let (mut c, clock) = core();
         batched(&mut c, "progress/+");
-        c.message("progress/sp-a", br#"{"note":"one"}"#, false, false);
+        c.message("progress/sp-a", br#"{"note":"one"}"#, false, Mode::Nobody);
         clock.advance(3_600_000);
-        assert_eq!(c.flush_due(false), Out::default());
-        c.message("progress/sp-a", br#"{"note":"two"}"#, false, false);
-        assert_eq!(c.attach().lines, ["[batch] n=1 since 1970-01-01T00:16:40Z\n[sub:s1] progress/sp-a note=two"]);
+        assert_eq!(c.flush_due(Mode::Nobody), Out::default());
+        c.message("progress/sp-a", br#"{"note":"two"}"#, false, Mode::Nobody);
+        assert_eq!(c.attach(Mode::Spending).lines, ["[batch] n=1 since 1970-01-01T00:16:40Z\n[sub:s1] progress/sp-a note=two"]);
     }
 
     #[test_id(t6c8cpc)]
@@ -868,11 +1028,11 @@ mod tests {
         let (mut c, _) = core();
         batched(&mut c, "progress/+");
         batched(&mut c, "release/active");
-        c.message("progress/sp-a", br#"{"note":"held"}"#, false, false);
-        c.message("release/active", br#"{"release":"r1"}"#, true, false);
-        assert!(c.set_class("s1", None, false).unwrap().lines.is_empty());
-        assert!(c.set_class("s2", None, false).unwrap().lines.is_empty());
-        assert_eq!(c.attach().lines, ["[sub:s2] release/active release=r1", "[sub:s1] progress/sp-a note=held"]);
+        c.message("progress/sp-a", br#"{"note":"held"}"#, false, Mode::Nobody);
+        c.message("release/active", br#"{"release":"r1"}"#, true, Mode::Nobody);
+        assert!(c.set_class("s1", None, Mode::Nobody).unwrap().lines.is_empty());
+        assert!(c.set_class("s2", None, Mode::Nobody).unwrap().lines.is_empty());
+        assert_eq!(c.attach(Mode::Spending).lines, ["[sub:s2] release/active release=r1", "[sub:s1] progress/sp-a note=held"]);
         assert_eq!(c.next_due_ms(), None);
     }
 
@@ -880,19 +1040,19 @@ mod tests {
     #[test]
     fn a_state_value_republished_with_its_keys_reordered_is_not_news() {
         let (mut c, _) = core();
-        c.add("release/active", "", false, true).unwrap();
-        assert_eq!(c.message("release/active", br#"{"a":1,"b":{"c":2,"d":3}}"#, true, true).lines.len(), 1);
-        assert!(c.message("release/active", br#"{"b":{"d":3,"c":2},"a":1}"#, true, true).lines.is_empty());
+        c.add("release/active", "", false, Mode::Spending).unwrap();
+        assert_eq!(c.message("release/active", br#"{"a":1,"b":{"c":2,"d":3}}"#, true, Mode::Spending).lines.len(), 1);
+        assert!(c.message("release/active", br#"{"b":{"d":3,"c":2},"a":1}"#, true, Mode::Spending).lines.is_empty());
     }
 
     #[test_id(tqfvk56)]
     #[test]
     fn a_value_that_arrived_unheard_before_batching_still_reaches_a_batch() {
         let (mut c, clock) = core();
-        c.add("release/active", "", false, false).unwrap();
-        c.message("release/active", br#"{"release":"r1"}"#, true, false);
-        c.set_class("s1", TEN_MINUTES, false).unwrap();
-        assert!(c.attach().lines.is_empty(), "it waits for its batch");
+        c.add("release/active", "", false, Mode::Nobody).unwrap();
+        c.message("release/active", br#"{"release":"r1"}"#, true, Mode::Nobody);
+        c.set_class("s1", TEN_MINUTES, Mode::Nobody).unwrap();
+        assert!(c.attach(Mode::Spending).lines.is_empty(), "it waits for its batch");
         assert_eq!(at_due(&mut c, &clock).lines.len(), 1);
     }
 
@@ -902,11 +1062,11 @@ mod tests {
         let (mut c, clock) = core();
         batched(&mut c, "release/active");
         say(&mut c, "release/active", json!({"release": "r1"}));
-        assert!(!c.message("release/active", b"", true, true).changed);
+        assert!(!c.message("release/active", b"", true, Mode::Spending).changed);
         assert_eq!(c.next_due_ms(), None);
         say(&mut c, "release/active", json!({"release": "r1"}));
         assert_eq!(at_due(&mut c, &clock).lines.len(), 1);
-        assert!(c.message("release/active", b"", true, true).changed, "what was given is forgotten on disk too");
+        assert!(c.message("release/active", b"", true, Mode::Spending).changed, "what was given is forgotten on disk too");
         assert!(c.saved().subs[0].delivered.is_empty());
     }
 
@@ -924,30 +1084,30 @@ mod tests {
         let (mut c, clock) = core();
         let id = batched(&mut c, "release/active");
         say(&mut c, "release/active", json!({"release": "r1"}));
-        let out = c.set_class(&id, None, true).unwrap();
+        let out = c.set_class(&id, None, Mode::Spending).unwrap();
         assert_eq!(out.lines, ["[sub:s1] release/active release=r1"]);
         assert!(out.changed && out.unsubscribe.is_empty());
         assert_eq!(c.next_due_ms(), None);
         assert_eq!(say(&mut c, "release/active", json!({"release": "r2"})).lines.len(), 1);
-        assert!(c.set_class(&id, TEN_MINUTES, true).unwrap().lines.is_empty());
+        assert!(c.set_class(&id, TEN_MINUTES, Mode::Spending).unwrap().lines.is_empty());
         clock.advance(1000);
         assert!(say(&mut c, "release/active", json!({"release": "r3"})).lines.is_empty());
-        c.set_class(&id, Some(60), true).unwrap();
+        c.set_class(&id, Some(60), Mode::Spending).unwrap();
         assert_eq!(c.next_due_ms(), Some(1_020_000), "a pending batch takes the new interval");
-        assert!(c.set_class("s9", None, true).unwrap_err().contains("no subscription \"s9\""));
+        assert!(c.set_class("s9", None, Mode::Spending).unwrap_err().contains("no subscription \"s9\""));
     }
 
     #[test_id(tpw9cb7)]
     #[test]
     fn a_restarted_core_does_not_repeat_what_the_saved_set_says_was_given() {
         let (mut c, clock) = core();
-        c.add("release/active", "", false, true).unwrap();
+        c.add("release/active", "", false, Mode::Spending).unwrap();
         assert!(say(&mut c, "release/active", json!({"release": "SECRET"})).changed, "what was given must be written");
         let text = serde_json::to_string(&c.saved()).unwrap();
         assert!(!text.contains("SECRET"), "{text}");
         let mut again = Core::new(Arc::new(clock), serde_json::from_str(&text).unwrap());
-        assert!(again.message("release/active", br#"{"release":"SECRET"}"#, true, false).lines.is_empty());
-        assert!(again.attach().lines.is_empty());
+        assert!(again.message("release/active", br#"{"release":"SECRET"}"#, true, Mode::Nobody).lines.is_empty());
+        assert!(again.attach(Mode::Spending).lines.is_empty());
         assert_eq!(say(&mut again, "release/active", json!({"release": "r2"})).lines.len(), 1);
     }
 
@@ -963,13 +1123,13 @@ mod tests {
     #[test]
     fn batch_with_once_or_on_a_timer_is_refused_and_changes_nothing() {
         let (mut c, clock) = core();
-        let why = c.add_classed("release/active", "", true, TEN_MINUTES, true).unwrap_err();
+        let why = c.add_classed("release/active", "", true, TEN_MINUTES, Mode::Spending).unwrap_err();
         assert!(why.contains("--batch") && why.contains("--once"), "{why}");
         assert!(c.is_empty());
-        c.add("release/active", "", true, true).unwrap();
+        c.add("release/active", "", true, Mode::Spending).unwrap();
         c.add_at(clock.now_ms() + 1000, "n");
-        assert!(c.set_class("s1", TEN_MINUTES, true).unwrap_err().contains("--once"));
-        assert!(c.set_class("s2", TEN_MINUTES, true).unwrap_err().contains("--at"));
+        assert!(c.set_class("s1", TEN_MINUTES, Mode::Spending).unwrap_err().contains("--once"));
+        assert!(c.set_class("s2", TEN_MINUTES, Mode::Spending).unwrap_err().contains("--at"));
         assert!(c.saved().subs.iter().all(|s| s.batch_s.is_none()));
     }
 
@@ -977,8 +1137,8 @@ mod tests {
     #[test]
     fn the_list_screen_fits_a_phone_and_says_which_publishers_are_up() {
         let (mut c, clock) = core();
-        c.add("bead/+/state", &"a long note ".repeat(12), true, true).unwrap();
-        c.add("session/+/age/+", "", false, true).unwrap();
+        c.add("bead/+/state", &"a long note ".repeat(12), true, Mode::Spending).unwrap();
+        c.add("session/+/age/+", "", false, Mode::Spending).unwrap();
         c.add_at(clock.now_ms() + 1000, "later");
         say(&mut c, "publisher/lc-serve", json!({"state": "up", "since_ms": 1}));
         say(&mut c, "session/sp-a/age/15m", json!({"sessions": 1}));
@@ -994,7 +1154,7 @@ mod tests {
     #[test]
     fn a_new_connection_forgets_which_publishers_were_up() {
         let (mut c, _) = core();
-        c.add("bead/+/state", "", false, true).unwrap();
+        c.add("bead/+/state", "", false, Mode::Spending).unwrap();
         say(&mut c, "publisher/lc-serve", json!({"state": "up", "since_ms": 1}));
         assert!(c.list("concierge", true, 1).contains("lc-serve up"), "positive control");
         c.reconnected();
@@ -1006,8 +1166,8 @@ mod tests {
     #[test]
     fn a_topic_not_heard_again_loses_its_digest_and_replay_value_and_a_heard_one_keeps_them() {
         let (mut c, _) = core();
-        c.add("release/active", "", false, true).unwrap();
-        c.add("host/pressure", "", false, true).unwrap();
+        c.add("release/active", "", false, Mode::Spending).unwrap();
+        c.add("host/pressure", "", false, Mode::Spending).unwrap();
         say(&mut c, "release/active", json!({"release": "r1"}));
         say(&mut c, "host/pressure", json!({"level": "ok"}));
 
@@ -1019,8 +1179,8 @@ mod tests {
         let saved = c.saved();
         assert!(saved.subs[0].delivered.is_empty(), "{saved:?}");
         assert!(saved.subs[1].delivered.contains_key("host/pressure"), "{saved:?}");
-        c.add("release/#", "", false, false).unwrap();
-        assert!(c.attach().lines.is_empty(), "the cleared value is not replayed");
+        c.add("release/#", "", false, Mode::Nobody).unwrap();
+        assert!(c.attach(Mode::Spending).lines.is_empty(), "the cleared value is not replayed");
         assert!(say(&mut c, "host/pressure", json!({"level": "ok"})).lines.is_empty());
         assert_eq!(say(&mut c, "release/active", json!({"release": "r1"})).lines.len(), 2);
     }
@@ -1046,11 +1206,203 @@ mod tests {
     #[test]
     fn a_topic_cleared_after_it_was_heard_is_not_counted_as_heard() {
         let (mut c, _) = core();
-        c.add("release/active", "", false, false).unwrap();
-        c.message("release/active", br#"{"release":"r1"}"#, true, false);
-        c.message("release/active", b"", true, false);
+        c.add("release/active", "", false, Mode::Nobody).unwrap();
+        c.message("release/active", br#"{"release":"r1"}"#, true, Mode::Nobody);
+        c.message("release/active", b"", true, Mode::Nobody);
         c.synced();
-        assert!(c.attach().lines.is_empty());
+        assert!(c.attach(Mode::Spending).lines.is_empty());
         assert!(c.heard.is_empty());
+    }
+
+    /// A state publish heard only by a reader that acks.
+    fn say_acking(c: &mut Core, topic: &str, value: Value) -> Out {
+        c.message(topic, value.to_string().as_bytes(), true, Mode::Acking)
+    }
+
+    fn only_seq(out: &Out) -> u64 {
+        assert_eq!(out.receipts.len(), 1, "{out:?}");
+        out.receipts[0].seq
+    }
+
+    #[test_id(t0oan8n)]
+    #[test]
+    fn an_acking_once_subscription_is_spent_by_the_ack_and_by_nothing_before_it() {
+        let (mut c, _) = core();
+        c.add("bead/+/state", "landed?", true, Mode::Acking).unwrap();
+
+        let sent = say_acking(&mut c, "bead/sp-a/state", json!({"state": "LANDED"}));
+
+        assert_eq!(sent.lines, ["[sub:s1] bead/sp-a/state state=LANDED — landed?"]);
+        assert_eq!(c.saved().subs.len(), 1, "no reader has confirmed anything");
+        assert!(sent.unsubscribe.is_empty() && !sent.changed, "{sent:?}");
+        let screen = c.list("concierge", true, 1);
+        assert!(screen.contains("1 undelivered"), "{screen}");
+        for state in ["LANDED", "DONE"] {
+            assert!(say_acking(&mut c, "bead/sp-a/state", json!({"state": state})).lines.is_empty(), "{state}: it waits to be spent");
+        }
+        assert!(say(&mut c, "bead/sp-b/state", json!({"state": "LANDED"})).lines.is_empty(), "nor does a follow that joins get more");
+
+        let acked = c.ack(only_seq(&sent));
+
+        assert_eq!(acked.unsubscribe, ["bead/+/state"]);
+        assert!(acked.changed && c.saved().subs.is_empty() && c.unacked() == 0, "{acked:?}");
+        assert_eq!(c.ack(only_seq(&sent)), Out::default(), "an ack counts once");
+    }
+
+    #[test_id(tsq80ao)]
+    #[test]
+    fn an_unacked_timer_is_not_woken_for_again_until_its_reader_goes() {
+        let (mut c, clock) = core();
+        c.add_at(clock.now_ms(), "look again");
+
+        let sent = c.fire_due(Mode::Acking);
+
+        assert_eq!(sent.lines, ["[sub:s1] at 1970-01-01T00:16:40Z — look again"]);
+        assert_eq!(c.next_due_ms(), None, "the timer thread would spin on it");
+        assert_eq!(c.fire_due(Mode::Acking), Out::default());
+        assert_eq!(c.saved().subs.len(), 1);
+
+        c.released();
+
+        assert_eq!(c.next_due_ms(), Some(clock.now_ms()));
+        let again = c.fire_due(Mode::Acking);
+        assert_eq!(again.lines, sent.lines);
+        assert!(only_seq(&again) > only_seq(&sent), "a seq rises");
+        assert!(c.ack(only_seq(&sent)) == Out::default() && c.saved().subs.len() == 1, "a released line's ack is nothing");
+        assert!(c.ack(only_seq(&again)).changed && c.saved().subs.is_empty());
+    }
+
+    #[test_id(tyqzplt)]
+    #[test]
+    fn a_state_value_counts_as_given_only_once_acked_and_an_unacked_one_is_replayed() {
+        let (mut c, _) = core();
+        c.add("release/active", "", false, Mode::Acking).unwrap();
+        let sent = say_acking(&mut c, "release/active", json!({"release": "r1"}));
+        assert!(c.saved().subs[0].delivered.is_empty());
+        assert!(say_acking(&mut c, "release/active", json!({"release": "r1"})).lines.is_empty(), "already on its way");
+        assert!(c.attach(Mode::Acking).lines.is_empty());
+
+        c.released();
+        let replayed = c.attach(Mode::Acking);
+        assert_eq!(replayed.lines, sent.lines);
+
+        assert!(c.ack(only_seq(&replayed)).changed);
+        assert!(c.saved().subs[0].delivered.contains_key("release/active"));
+        c.released();
+        assert!(c.attach(Mode::Acking).lines.is_empty(), "acked: not replayed");
+    }
+
+    #[test_id(tk1iqmn)]
+    #[test]
+    fn a_return_to_the_acked_value_is_sent_again_when_a_newer_one_was_never_acked() {
+        let (mut c, _) = core();
+        c.add("release/active", "", false, Mode::Acking).unwrap();
+        let first = say_acking(&mut c, "release/active", json!({"release": "a"}));
+        c.ack(only_seq(&first));
+        let newer = say_acking(&mut c, "release/active", json!({"release": "b"}));
+        assert!(newer.changed && c.saved().subs[0].delivered.is_empty(), "what the reader holds is unknown");
+        let back = say_acking(&mut c, "release/active", json!({"release": "a"}));
+        assert_eq!(back.lines.len(), 1);
+        c.ack(only_seq(&back));
+        c.ack(only_seq(&newer));
+        assert!(say_acking(&mut c, "release/active", json!({"release": "a"})).lines.is_empty(), "a late ack of an older line records nothing");
+    }
+
+    #[test_id(tnp56tx)]
+    #[test]
+    fn a_batch_gives_its_state_values_and_names_its_subscriptions_only_on_its_ack() {
+        let (mut c, clock) = core();
+        batched(&mut c, "release/active");
+        batched(&mut c, "bead/+/state");
+        say_acking(&mut c, "release/active", json!({"release": "r1"}));
+        say_acking(&mut c, "bead/sp-a/state", json!({"state": "LANDED"}));
+        clock.advance_to(c.next_due_ms().unwrap());
+
+        let sent = c.flush_due(Mode::Acking);
+
+        let seq = only_seq(&sent);
+        assert_eq!(sent.receipts[0].subs, ["s1", "s2"]);
+        assert_eq!((c.unacked(), c.unacked_of("s1"), c.unacked_of("s2")), (1, 1, 1));
+        let screen = c.list("pane", true, 1);
+        assert!(screen.replace("\n    ", "").starts_with("pane: broker up, readers 1, undelivered 1\n"), "{screen}");
+        assert!(screen.lines().all(|l| l.chars().count() <= 40), "{screen}");
+        assert!(c.saved().subs.iter().all(|s| s.delivered.is_empty()));
+        say_acking(&mut c, "release/active", json!({"release": "r1"}));
+        clock.advance_to(c.next_due_ms().unwrap());
+        assert!(c.flush_due(Mode::Acking).lines.is_empty(), "the same value is already on its way");
+
+        c.ack(seq);
+
+        assert!(c.saved().subs.iter().all(|s| s.delivered.len() == 1));
+        assert_eq!(c.unacked(), 0);
+    }
+
+    #[test_id(tqvltnl)]
+    #[test]
+    fn chatter_waits_for_an_ack_to_be_counted_and_is_not_replayed() {
+        let (mut c, _) = core();
+        c.add("progress/+", "", false, Mode::Acking).unwrap();
+        let sent = c.message("progress/sp-a", br#"{"note":"n"}"#, false, Mode::Acking);
+        assert_eq!((c.unacked(), sent.receipts[0].held), (1, true));
+        assert_eq!(c.ack(only_seq(&sent)), Out::default());
+        c.message("progress/sp-a", br#"{"note":"m"}"#, false, Mode::Acking);
+        c.released();
+        assert_eq!(c.unacked(), 0);
+        assert!(c.attach(Mode::Acking).lines.is_empty());
+    }
+
+    #[test_id(ttrdiph)]
+    #[test]
+    fn a_topic_cleared_while_its_value_is_unacked_is_news_when_said_again() {
+        let (mut c, _) = core();
+        c.add("release/active", "", false, Mode::Acking).unwrap();
+        let sent = say_acking(&mut c, "release/active", json!({"release": "r1"}));
+        c.message("release/active", b"", true, Mode::Acking);
+        assert_eq!(say_acking(&mut c, "release/active", json!({"release": "r1"})).lines.len(), 1);
+        c.reconnected();
+        c.synced();
+        c.ack(only_seq(&sent));
+        assert!(c.saved().subs[0].delivered.is_empty(), "an ack records nothing for a topic that was cleared");
+    }
+
+    #[test_id(t9j403s)]
+    #[test]
+    fn seqs_rise_down_the_stream_when_unbatched_chatter_falls_due_beside_a_batch() {
+        let (mut c, clock) = core();
+        batched(&mut c, "release/active");
+        batched(&mut c, "progress/+");
+        c.message("release/active", br#"{"release":"r1"}"#, true, Mode::Nobody);
+        c.message("progress/sp-a", br#"{"note":"held"}"#, false, Mode::Nobody);
+        c.set_class("s2", None, Mode::Nobody).unwrap();
+        clock.advance(600_000);
+
+        let out = c.flush_due(Mode::Acking);
+
+        assert_eq!(out.lines.len(), 2, "{out:?}");
+        assert!(out.lines[1].starts_with("[batch] "), "{out:?}");
+        assert!(out.receipts[0].seq < out.receipts[1].seq, "{out:?}");
+    }
+
+    #[test_id(tlody5v)]
+    #[test]
+    fn dropping_a_subscription_stops_its_lines_being_counted_as_undelivered() {
+        let (mut c, clock) = core();
+        batched(&mut c, "release/active");
+        batched(&mut c, "bead/+/state");
+        c.add_at(clock.now_ms(), "n");
+        say_acking(&mut c, "release/active", json!({"release": "r1"}));
+        say_acking(&mut c, "bead/sp-a/state", json!({"state": "LANDED"}));
+        let timer = c.fire_due(Mode::Acking);
+        clock.advance_to(c.next_due_ms().unwrap());
+        let batch = c.flush_due(Mode::Acking);
+        assert_eq!(c.unacked(), 2, "positive control");
+
+        c.remove("s3").unwrap();
+        c.remove("s1").unwrap();
+
+        assert_eq!((c.unacked(), c.awaits(only_seq(&timer))), (1, false));
+        assert!(c.ack(only_seq(&batch)).changed, "the shared batch is still acked for the one left");
+        assert!(c.saved().subs[0].delivered.contains_key("bead/sp-a/state"));
+        assert_eq!(c.unacked(), 0);
     }
 }

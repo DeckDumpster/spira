@@ -3,7 +3,8 @@
 #[macro_use]
 extern crate spira_test_id;
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -13,6 +14,8 @@ use std::time::Duration;
 use ports::{SeededRng, VirtualClock};
 use serde_json::{json, Value};
 use spira_pub::{Options, Publisher};
+use spira_sub::client::Receiving;
+use spira_sub::protocol::{Delivery, Reply, Request};
 use testkit::broker::{Broker, Process, Subscriber};
 use testkit::{ChildGuard, TempDir};
 
@@ -65,10 +68,43 @@ impl World {
 
     /// `run`, returned once `subscriber/concierge` reads up.
     fn run(&self, broker: &Path) -> ChildGuard {
+        self.spawn_run(broker, &mut self.command(&["run", "--as", "concierge"]))
+    }
+
+    /// [`run`](World::run), with what it logs.
+    fn run_noted(&self, broker: &Path) -> (ChildGuard, Receiver<String>) {
+        let mut command = self.command(&["run", "--as", "concierge"]);
+        command.stderr(Stdio::piped());
+        let mut run = self.spawn_run(broker, &mut command);
+        let logged = pipe(run.pipes().1.unwrap());
+        (run, logged)
+    }
+
+    fn spawn_run(&self, broker: &Path, command: &mut Command) -> ChildGuard {
         let mut watching = Subscriber::to(broker, &["subscriber/concierge"]);
-        let run = ChildGuard::spawn(&mut self.command(&["run", "--as", "concierge"]));
+        let run = ChildGuard::spawn(command);
         until(&mut watching, "up");
         run
+    }
+
+    fn receive(&self) -> Receiving {
+        spira_sub::client::receive(&spira_sub::run::socket_path(&self.dir.join("c"), "concierge")).unwrap()
+    }
+
+    /// An `--once` subscription and a due timer, with the value that fires the first.
+    fn add_one_of_each_to_spend(&self, broker: &Path) {
+        self.ok(&["add", "release/active", "--once"]);
+        self.ok(&["add", "--at", "2000-01-01T00:00:00Z", "--note", "n"]);
+        publish(&publisher("t", broker), "release/active", json!({"release": "r1"}));
+    }
+
+    /// Both of [`add_one_of_each_to_spend`](World::add_one_of_each_to_spend) are still held.
+    fn both_are_undelivered(&self) {
+        let screen = self.ok(&["list"]);
+        assert!(screen.replace("\n    ", "").lines().next().unwrap().ends_with("undelivered 2"), "{screen}");
+        assert_eq!(screen.replace("\n    ", "").matches(", 1 undelivered").count(), 2, "{screen}");
+        let saved = std::fs::read_to_string(self.set_file()).unwrap();
+        assert!(saved.contains("release/active") && saved.contains("at_ms"), "{saved}");
     }
 
     /// `follow`, returned once it says it is attached.
@@ -123,6 +159,31 @@ impl Follow {
             }
         }
     }
+}
+
+/// The next delivery, waited for no longer than [`FAILSAFE`].
+fn next_of(mut receiving: Receiving) -> (Receiving, Option<Delivery>) {
+    let (tx, rx) = channel();
+    std::thread::spawn(move || {
+        let next = receiving.next();
+        let _ = tx.send((receiving, next));
+    });
+    rx.recv_timeout(FAILSAFE).expect("no delivery arrived, and the stream stayed open")
+}
+
+/// The next two deliveries, in the order of their subscriptions.
+fn both(mut receiving: Receiving) -> (Receiving, Vec<Delivery>) {
+    let mut got = Vec::new();
+    for _ in 0..2 {
+        let (back, next) = next_of(receiving);
+        receiving = back;
+        got.push(next.expect("the stream ended"));
+    }
+    got.sort_by(|a, b| a.subs.cmp(&b.subs));
+    let said: Vec<(&[String], &str)> = got.iter().map(|d| (&d.subs[..], d.text.as_str())).collect();
+    let (once, at) = (["s1".to_string()], ["s2".to_string()]);
+    assert_eq!(said, [(&once[..], "[sub:s1] release/active release=r1"), (&at[..], "[sub:s2] at 2000-01-01T00:00:00Z — n")]);
+    (receiving, got)
 }
 
 /// Reads `watching` until `subscriber/concierge` says `state`.
@@ -588,7 +649,7 @@ fn deliveries_subscriptions_and_control_commands_reach_the_metrics_store() {
     publish(&publisher("t", broker.socket()), "release/active", json!({"release": "r1"}));
     follow.next();
 
-    sink.expect(&["spira_sub_deliveries", "spira_sub_subscriptions", "spira_sub_control_commands"], FAILSAFE);
+    sink.expect(&["spira_sub_deliveries", "spira_sub_subscriptions", "spira_sub_control_commands", "spira_sub_undelivered"], FAILSAFE);
 }
 
 #[test_id(tsbnmw0)]
@@ -606,4 +667,104 @@ fn a_change_the_set_file_cannot_hold_fails_and_says_what_is_live() {
     assert!(code == Some(1) && err.contains("s2 is set but not saved"), "{code:?} {err}");
     let (code, _, err) = world.call(&["drop", "s1"]);
     assert!(code == Some(1) && err.contains("s1 is dropped but not saved"), "{code:?} {err}");
+}
+
+#[test_id(t2zwe28)]
+#[test]
+fn what_a_receiving_reader_never_acks_is_sent_again_and_only_an_ack_spends_it() {
+    let broker = Broker::up();
+    let world = World::new(broker.socket());
+    let (_run, logged) = world.run_noted(broker.socket());
+    let first = world.receive();
+    world.add_one_of_each_to_spend(broker.socket());
+    let (first, _) = both(first);
+    world.both_are_undelivered();
+
+    drop(first);
+    let (mut again, got) = both(world.receive());
+    world.both_are_undelivered();
+    for delivery in &got {
+        again.ack(delivery.seq).unwrap();
+    }
+    // Acks are taken in order, so once this one is logged the two before it are done.
+    again.ack(u64::MAX).unwrap();
+    while !logged.recv_timeout(FAILSAFE).expect("run never logged the stray ack").contains(&u64::MAX.to_string()) {}
+
+    let screen = world.ok(&["list"]);
+    assert!(screen.contains("no subscriptions") && !screen.contains("undelivered"), "{screen}");
+    let saved = std::fs::read_to_string(world.set_file()).unwrap();
+    assert!(!saved.contains("release/active") && !saved.contains("at_ms"), "{saved}");
+}
+
+#[test_id(tp9g64m)]
+#[test]
+fn a_run_restarted_before_the_ack_sends_both_again() {
+    let broker = Broker::up();
+    let world = World::new(broker.socket());
+    let run = world.run(broker.socket());
+    let first = world.receive();
+    world.add_one_of_each_to_spend(broker.socket());
+    let (first, _) = both(first);
+
+    let mut watching = Subscriber::to(broker.socket(), &["subscriber/concierge"]);
+    drop(run);
+    until(&mut watching, "gone");
+    drop(first);
+    let _again = world.run(broker.socket());
+
+    let (_second, _) = both(world.receive());
+    world.both_are_undelivered();
+}
+
+#[test_id(tm8x9iu)]
+#[test]
+fn a_new_receiving_reader_cuts_off_the_one_before_and_anything_but_an_ack_ends_it() {
+    let broker = Broker::up();
+    let world = World::new(broker.socket());
+    let (_run, logged) = world.run_noted(broker.socket());
+    let first = world.receive();
+    world.add_one_of_each_to_spend(broker.socket());
+    let (first, _) = both(first);
+
+    let (second, _) = both(world.receive());
+
+    assert_eq!(next_of(first).1, None, "the earlier reader is cut off");
+    assert!(world.ok(&["list"]).replace("\n    ", "").contains("readers 1, undelivered 2"));
+    let socket = spira_sub::run::socket_path(&world.dir.join("c"), "concierge");
+    let refused = spira_sub::client::call(&socket, &Request::Ack { seq: 1 }).unwrap();
+    assert_eq!(refused, Reply::Refused("ack is sent on the receive stream that carried the delivery".to_string()));
+
+    let mut raw = UnixStream::connect(&socket).unwrap();
+    writeln!(raw, "{}", serde_json::to_string(&Request::Receive).unwrap()).unwrap();
+    writeln!(raw, r#"{{"cmd":"list"}}"#).unwrap();
+    raw.set_read_timeout(Some(FAILSAFE)).unwrap();
+    std::io::copy(&mut raw, &mut std::io::sink()).expect("run never closed the stream");
+    let named = format!("{:?}", r#"{"cmd":"list"}"#);
+    while !logged.recv_timeout(FAILSAFE).expect("run never named the line").contains(&named) {}
+    assert_eq!(next_of(second).1, None);
+}
+
+#[test_id(t8x8ocw)]
+#[test]
+fn a_gone_receivers_timer_goes_to_a_follow_which_spends_on_send_beside_a_new_receiver() {
+    let broker = Broker::up();
+    let world = World::new(broker.socket());
+    let _run = world.run(broker.socket());
+    let first = world.receive();
+    world.add_one_of_each_to_spend(broker.socket());
+    let (first, _) = both(first);
+    let follow = world.follow();
+    world.both_are_undelivered();
+
+    drop(first);
+
+    assert_eq!(follow.next(), "[sub:s2] at 2000-01-01T00:00:00Z — n");
+    let screen = world.ok(&["list"]);
+    assert!(screen.contains("s1 release/active") && !screen.contains("s2 ") && !screen.contains("undelivered"), "{screen}");
+
+    let (_second, replayed) = next_of(world.receive());
+
+    assert_eq!(replayed.expect("the stream ended").text, "[sub:s1] release/active release=r1");
+    assert_eq!(follow.next(), "[sub:s1] release/active release=r1");
+    assert!(world.ok(&["list"]).contains("no subscriptions"), "spent on send, though a receiver is attached");
 }

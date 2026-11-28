@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use spira_pub::link::{sleep_until_readable, LISTEN_PAUSE};
 use spira_pub::{SocketWatch, CONNECT_DEADLINE};
 
-use crate::protocol::{Reply, Request};
+use crate::protocol::{Delivery, Reply, Request};
 use crate::render;
 
 /// The most a command waits for its reply: past the longest the client waits for the broker.
@@ -29,6 +29,41 @@ pub fn call(socket: &Path, request: &Request) -> Result<Reply, String> {
     open(socket, request)
         .map(|(reply, _)| reply)
         .map_err(|e| format!("no answer on {}: {e}; is `spira-sub run` up?", socket.display()))
+}
+
+/// A `receive` stream: deliveries, each of them to be acked once it has reached whom it is for.
+pub struct Receiving {
+    stream: BufReader<UnixStream>,
+}
+
+/// Attaches to a `run` that is up as the reader that acks. An earlier such reader is cut off.
+pub fn receive(socket: &Path) -> Result<Receiving, String> {
+    match open(socket, &Request::Receive) {
+        Ok((Reply::Done { .. }, stream)) => {
+            stream.get_ref().set_read_timeout(None).map_err(|e| e.to_string())?;
+            Ok(Receiving { stream })
+        }
+        Ok((other, _)) => Err(format!("receive was refused: {other:?}")),
+        Err(e) => Err(format!("no answer on {}: {e}; is `spira-sub run` up?", socket.display())),
+    }
+}
+
+impl Receiving {
+    /// The next delivery, waited for; `None` once the stream has no more.
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> Option<Delivery> {
+        let mut line = String::new();
+        if !read_whole_line(&mut self.stream, &mut line) {
+            return None;
+        }
+        serde_json::from_str(&line).ok()
+    }
+
+    /// Says the delivery `seq` has arrived; only this spends it.
+    pub fn ack(&mut self, seq: u64) -> std::io::Result<()> {
+        let line = serde_json::to_string(&Request::Ack { seq })? + "\n";
+        self.stream.get_mut().write_all(line.as_bytes())
+    }
 }
 
 /// Appends one whole line to `into`; false once the stream has no more.

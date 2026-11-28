@@ -12,7 +12,7 @@ use heimdall::state::State;
 use inbox_rules::Bus;
 use ports::VirtualClock;
 use serde_json::{json, Value};
-use spira_sub::core::{Core, Saved};
+use spira_sub::core::{Core, Mode, Saved};
 use testkit::broker::{Broker, Subscriber};
 
 const T0: i64 = 1_800_000_000;
@@ -102,11 +102,11 @@ fn an_alert_that_keeps_firing_is_one_retained_value_a_subscriber_hears_once_unti
     let since = T0 + 120;
     let value = json!({ "text": format!("{UNIT} restarted 5 time(s) in the last 60m"), "since": since, "at": since });
     assert_eq!(alarms(&broker), vec![(RESTARTS.to_string(), value)]);
-    subscriber.add("alarm/+", "", false, true).unwrap();
+    subscriber.add("alarm/+", "", false, Mode::Spending).unwrap();
     let mut heard = Vec::new();
     for _ in 0..3 {
         let got = raw.recv();
-        heard.extend(subscriber.message(&got.topic, &got.payload, true, true).lines);
+        heard.extend(subscriber.message(&got.topic, &got.payload, true, Mode::Spending).lines);
     }
     assert_eq!(heard.len(), 1, "{heard:?}");
 
