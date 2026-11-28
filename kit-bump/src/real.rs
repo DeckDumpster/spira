@@ -69,7 +69,7 @@ fn git(path: &str, args: &[&str]) -> Result<String, String> {
 /// `git show <ref>:<file>` at a site, held under the ref's sha so a site whose ref has not moved starts no git.
 fn show(site: &Site, file: &str) -> Result<String, String> {
     let spec = format!("{}:{file}", site.git_ref);
-    let read = || git(&site.path, &["show", &spec]);
+    let read = || git(&site.path, &["show", &spec]); // BDQ_READ_CONSIDERED="git show of a site's file, no bead store"
     match spira_config::git_refs::sha_of(Path::new(&site.path), &site.git_ref) {
         Some(tip) => spira_config::git_refs::held(Path::new(&site.path), &format!("show {spec}"), &tip, read),
         None => read(),
