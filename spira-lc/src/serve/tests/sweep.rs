@@ -130,8 +130,13 @@ mod priced {
     pub(super) struct Seen {
         /// (revision asked for, head at that moment) of each `range` call.
         pub ranges: Vec<(u64, u64)>,
+        /// (revision asked for, revision of the `range` before it) of each page's lookups.
+        pub lookups: Vec<(u64, u64)>,
         /// Ends the `range` call that makes `ranges` this long.
         pub refuse_range: Option<usize>,
+        /// Ends this `get_many` call, counting from the first.
+        pub refuse_get_many: Option<usize>,
+        get_manys: usize,
     }
 
     /// A backend charging a virtual clock 1 ms per KiB it reads, ending a read charged over the limit.
@@ -165,6 +170,17 @@ mod priced {
             self.inner.get(key, at)
         }
         fn get_many(&self, keys: &[&str], at: u64) -> Result<Vec<Option<Version>>> {
+            let refused = {
+                let mut seen = self.seen.lock().unwrap();
+                seen.get_manys += 1;
+                if let (false, Some((page, _))) = (keys.iter().any(|k| k.contains("journal-meta")), seen.ranges.last().copied()) {
+                    seen.lookups.push((at, page));
+                }
+                seen.refuse_get_many == Some(seen.get_manys)
+            };
+            if refused {
+                return Err(ended());
+            }
             let v = self.inner.get_many(keys, at)?;
             self.charge(v.iter().flatten().map(|v| v.value.len()).sum())?;
             Ok(v)
@@ -237,6 +253,15 @@ mod priced {
             crate::journal::answer(crate::journal::run(&argv[1..], &self.store))
         }
 
+        /// Forgets what was seen so far and ends the numbered calls from here on.
+        pub(super) fn arm(&self, refuse_range: Option<usize>, refuse_get_many: Option<usize>) {
+            *self.seen.lock().unwrap() = Seen { refuse_range, refuse_get_many, ..Seen::default() };
+        }
+
+        pub(super) fn dry_effect_step(&self) -> (i32, String) {
+            self.call(&["journal", "sweep", "--dry-run", "--from", "effect:"].map(String::from))
+        }
+
         pub(super) fn keys_under(&self, table: &str) -> usize {
             self.raw.list(&[crate::control::keys::runtime_table(table).as_str()], &state_store::Selector::Everything).unwrap().0.len()
         }
@@ -272,13 +297,8 @@ fn the_journal_sweep_completes_when_a_read_is_priced_by_the_bytes_it_returns() {
 fn a_sweep_step_whose_later_read_is_ended_answers_the_pages_it_finished() {
     // Small enough that 25 rows fit inside the step's budget, so a second page is always asked.
     let f = priced::Fixture::closed_effects(60, 900);
-    *f.seen.lock().unwrap() = priced::Seen { ranges: Vec::new(), refuse_range: Some(2) };
-    let argv: Vec<String> = ["journal", "sweep", "--dry-run", "--from", "effect:"].iter().map(|a| a.to_string()).collect();
-    let (code, out) = f.call(&argv);
-    assert_eq!(code, 0, "{out}");
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v["deleted_effects"].as_u64(), Some(4), "{out}");
-    assert_eq!(v["next"].as_str(), Some(format!("effect:{}", priced::Fixture::effect_key(3)).as_str()), "{out}");
+    f.arm(Some(2), None);
+    assert_kept_the_first_page(&f.dry_effect_step());
 }
 
 #[test_id(to0e3dj)]
@@ -288,6 +308,35 @@ fn each_sweep_page_is_read_at_the_head_current_when_it_is_asked() {
     let (code, out) = crate::journal::sweep_until_done(&mut |argv| f.call(argv), false, None);
     assert_eq!(code, 0, "{out}");
     let seen = f.seen.lock().unwrap();
+    let split: Vec<&(u64, u64)> = seen.lookups.iter().filter(|(at, page)| at != page).collect();
+    assert!(seen.lookups.len() > 2 && split.is_empty(), "(lookup, page) revisions that differ: {split:?}");
     let stale: Vec<&(u64, u64)> = seen.ranges.iter().filter(|(at, head)| at != head).collect();
     assert!(seen.ranges.len() > 2 && stale.is_empty(), "(asked, head) of the stale reads: {stale:?}");
+}
+
+fn assert_kept_the_first_page((code, out): &(i32, String)) {
+    assert_eq!(*code, 0, "{out}");
+    let v: serde_json::Value = serde_json::from_str(out).unwrap();
+    assert_eq!(v["deleted_effects"].as_u64(), Some(4), "{out}");
+    assert_eq!(v["next"].as_str(), Some(format!("effect:{}", priced::Fixture::effect_key(3)).as_str()), "{out}");
+}
+
+#[test_id(tf80wq4)]
+#[test]
+fn a_sweep_step_whose_later_lookup_is_ended_answers_only_the_pages_it_finished() {
+    let f = priced::Fixture::closed_effects(60, 900);
+    // The step's first `get_many` is the indexed mark, then one per page.
+    f.arm(None, Some(3));
+    assert_kept_the_first_page(&f.dry_effect_step());
+}
+
+#[test_id(tcejh2p)]
+#[test]
+fn a_sweep_step_whose_first_page_read_is_ended_answers_the_error() {
+    for (range, get_many) in [(Some(1), None), (None, Some(2))] {
+        let f = priced::Fixture::closed_effects(60, 900);
+        f.arm(range, get_many);
+        let (code, out) = f.dry_effect_step();
+        assert!(code != 0 && out.contains(state_store::READ_ENDED), "range {range:?}, get_many {get_many:?}: {code} {out}");
+    }
 }

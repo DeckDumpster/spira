@@ -7,6 +7,7 @@
 use serde_json::{json, Value};
 use spira_lc::effect_ledger::{self, DONE, OPEN_EFFECT};
 use state_store::{Backend, Compare, Object, Request, Result, Selector, Txn};
+use state_store_sqlite::is_read_ended;
 
 use super::keys;
 use super::store::Store;
@@ -171,10 +172,6 @@ pub struct Swept {
     pub indexed_effects: usize,
     pub deleted_effects: usize,
     pub deleted_markers: usize,
-}
-
-fn is_read_ended(e: &state_store::Error) -> bool {
-    matches!(e, state_store::Error::Backend(m) if m.starts_with(state_store::READ_ENDED))
 }
 
 fn effect_of(v: &Value) -> EffectRow {
