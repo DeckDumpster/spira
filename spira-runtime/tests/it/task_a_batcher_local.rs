@@ -2367,6 +2367,25 @@ fn a_red_round_whose_record_names_no_base_is_not_attributed() {
     assert!(!effects(&acts).contains(&CORPUS), "{acts:?}");
 }
 
+#[test_id(t812yld)]
+#[test]
+fn the_observed_round_carries_the_base_of_the_queues_record() {
+    let listed = batcher_cut::io::OpenRound { base: "h1".into(), head: "h2".into(), ..Default::default() };
+    assert_eq!(edge::round_of(listed, false, None, vec![]).base, "h1");
+}
+
+#[test_id(t8kcovf)]
+#[test]
+fn no_orphan_is_adopted_while_the_landing_ref_is_unread() {
+    for (orphan, adopting) in [(red_orphan(), CORPUS), (green_orphan(), LAND)] {
+        let (carry, mut snap) = orphan;
+        assert!(effects(&decide(&carry, &snap).1).contains(&adopting), "control: with a readable ref it is adopted");
+        snap.repos.get_mut("spira").unwrap().base_sha.clear();
+        let (_, acts) = decide(&carry, &snap);
+        assert!(!effects(&acts).contains(&adopting), "{acts:?}");
+    }
+}
+
 #[test_id(t4rmls8)]
 #[test]
 fn sp_4odl0h_an_adopted_red_rounds_attribution_naming_one_member_certifies_the_survivor() {

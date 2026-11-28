@@ -500,3 +500,15 @@ fn a_round_whose_record_names_no_base_is_not_adopted() {
     assert!(carry.repos["spira"].above.is_empty());
     adopts_beside_ours(2);
 }
+
+#[test_id(tzy2hfz)]
+#[test]
+fn no_round_is_adopted_while_the_landing_ref_is_unread() {
+    let p = small(2);
+    let mut world = beside_ours(Round { base: "h1".into(), ..another_actors(30) });
+    world.repos.get_mut("spira").unwrap().base_sha.clear();
+    let (carry, acts) = decide_with(&p, &ours_certifying(&p), &world);
+    assert!(!names(&acts).contains(&CERTIFY), "{acts:?}");
+    assert!(carry.repos["spira"].above.is_empty());
+    adopts_beside_ours(2);
+}
