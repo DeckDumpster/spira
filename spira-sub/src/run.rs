@@ -2,6 +2,7 @@
 //! Nothing here wakes on a timer while no `--at` or batch is pending and the broker answers.
 
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
+use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
@@ -19,8 +20,8 @@ use spira_pub::link::{sleep_until_readable, Dial};
 use spira_pub::SocketWatch;
 use spira_store::lc_call::LcClient;
 
-use crate::core::{Core, Out, Saved, TopicRow, LIVENESS};
-use crate::protocol::{Reply, Request};
+use crate::core::{Core, Mode, Out, Saved, TopicRow, LIVENESS};
+use crate::protocol::{Delivery, Reply, Request};
 
 /// The most a command waits for the broker to acknowledge what it asked of it.
 const ACK_DEADLINE: Duration = Duration::from_secs(3);
@@ -39,6 +40,7 @@ const BACKLOG: usize = 1 << 16;
 pub const DELIVERIES: &str = "spira_sub_deliveries";
 pub const SUBSCRIPTIONS: &str = "spira_sub_subscriptions";
 pub const COMMANDS: &str = "spira_sub_control_commands";
+pub const UNDELIVERED: &str = "spira_sub_undelivered";
 
 pub struct Options {
     pub name: String,
@@ -56,9 +58,18 @@ pub fn set_path(control_dir: &Path, name: &str) -> PathBuf {
     control_dir.join(format!("{name}.subs"))
 }
 
-enum Sample {
-    Delivered(usize, usize),
-    Command(&'static str, usize),
+enum Happened {
+    Delivered(usize),
+    Command(&'static str),
+    /// Only the gauges moved.
+    Held,
+}
+
+/// One thing that happened, and what was held once it had.
+struct Sample {
+    what: Happened,
+    subscriptions: usize,
+    unacked: usize,
 }
 
 /// Pushes from its own thread, woken only by a sample, so a slow store delays no delivery.
@@ -67,13 +78,16 @@ fn telemetry(sink: Option<MetricsSink>, name: String) -> Option<SyncSender<Sampl
     let (tx, rx) = sync_channel::<Sample>(1024);
     let spawned = std::thread::Builder::new().name("spira-sub-otel".into()).spawn(move || {
         for sample in rx {
-            let (point, held, command) = match sample {
-                Sample::Delivered(n, held) => (Point::Count { name: DELIVERIES, value: n as u64 }, held, None),
-                Sample::Command(command, held) => (Point::Count { name: COMMANDS, value: 1 }, held, Some(command)),
+            let (count, command) = match sample.what {
+                Happened::Delivered(n) => (Some(Point::Count { name: DELIVERIES, value: n as u64 }), None),
+                Happened::Command(command) => (Some(Point::Count { name: COMMANDS, value: 1 }), Some(command)),
+                Happened::Held => (None, None),
             };
             let mut labels = vec![("subscriber", name.as_str())];
             labels.extend(command.map(|c| ("command", c)));
-            sink.push(&[point, Point::Gauge { name: SUBSCRIPTIONS, value: held as f64 }], &labels);
+            let gauges = [(SUBSCRIPTIONS, sample.subscriptions), (UNDELIVERED, sample.unacked)];
+            let points: Vec<Point> = count.into_iter().chain(gauges.map(|(name, held)| Point::Gauge { name, value: held as f64 })).collect();
+            sink.push(&points, &labels);
         }
     });
     spawned.ok().map(|_| tx)
@@ -81,7 +95,12 @@ fn telemetry(sink: Option<MetricsSink>, name: String) -> Option<SyncSender<Sampl
 
 struct Reader {
     id: u64,
+    /// Each element is written as it is, with a newline.
     lines: SyncSender<String>,
+    /// Whether it acks: a `receive` rather than a `follow`.
+    receiving: bool,
+    /// The socket of a receiving reader, closed when a newer one takes its place.
+    socket: Option<UnixStream>,
 }
 
 struct State {
@@ -170,6 +189,32 @@ impl State {
         State { core, client: None, connection: 0, up: None, kept: false, asked: 0, acked: 0, readers: Vec::new(), next_reader: 0, record_failing: false }
     }
 
+    /// A plain `follow` spends on send whoever else is attached.
+    fn mode(&self) -> Mode {
+        if self.readers.iter().any(|r| !r.receiving) {
+            Mode::Spending
+        } else if self.readers.is_empty() {
+            Mode::Nobody
+        } else {
+            Mode::Acking
+        }
+    }
+
+    /// Removes the readers `goes` picks. With a receiving one goes all it had not acked.
+    fn remove_readers(&mut self, mut goes: impl FnMut(&Reader) -> bool) -> bool {
+        let (mut removed, mut receiving) = (false, false);
+        self.readers.retain(|r| {
+            let gone = goes(r);
+            removed |= gone;
+            receiving |= gone && r.receiving;
+            !gone
+        });
+        if receiving {
+            self.core.released();
+        }
+        removed
+    }
+
     /// Sends one SUBSCRIBE or UNSUBSCRIBE and returns the acknowledgement it waits for.
     fn ask(&mut self, filter: &str, subscribe: bool) -> Option<(u64, u64)> {
         let client = self.client.as_ref()?;
@@ -193,9 +238,9 @@ impl Server {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn sample(&self, sample: Sample) {
+    fn sample(&self, state: &State, what: Happened) {
         if let Some(tx) = &self.telemetry {
-            let _ = tx.try_send(sample);
+            let _ = tx.try_send(Sample { what, subscriptions: state.core.len(), unacked: state.core.unacked() });
         }
     }
 
@@ -211,10 +256,27 @@ impl Server {
         }
         // Queued only once saved: a `run` killed after a reader has a value must not resend it.
         if !out.lines.is_empty() {
-            for line in &out.lines {
-                state.readers.retain(|r| r.lines.try_send(line.clone()).is_ok());
+            let mut cut = Vec::new();
+            for (text, receipt) in out.lines.iter().zip(&out.receipts) {
+                let numbered = Delivery { seq: receipt.seq, subs: receipt.subs.clone(), text: text.clone() };
+                for reader in &state.readers {
+                    if cut.contains(&reader.id) {
+                        continue;
+                    }
+                    let wire = match reader.receiving {
+                        true => serde_json::to_string(&numbered).expect("strings and a number serialise"),
+                        false => text.clone(),
+                    };
+                    if reader.lines.try_send(wire).is_err() {
+                        cut.push(reader.id);
+                    }
+                }
             }
-            self.sample(Sample::Delivered(out.lines.len(), state.core.len()));
+            // After the last line, so none is held for a reader that has just been released.
+            state.remove_readers(|r| cut.contains(&r.id));
+            // A held line is counted by its ack.
+            let sent = out.receipts.iter().filter(|r| !r.held).count();
+            self.sample(state, if sent > 0 { Happened::Delivered(sent) } else { Happened::Held });
         }
         let mut ticket = None;
         for filter in &out.unsubscribe {
@@ -240,10 +302,9 @@ impl Server {
             Ok(rows) => {
                 state.record_failing = false;
                 state.core.set_topics(rows);
-                if !state.readers.is_empty() {
-                    let out = state.core.gone_notices();
-                    self.apply(&mut state, out);
-                }
+                let mode = state.mode();
+                let out = state.core.gone_notices(mode);
+                self.apply(&mut state, out);
                 None
             }
             Err(why) => {
@@ -269,11 +330,11 @@ impl Server {
         }
         let mut unchecked = None;
         let mut state = self.lock();
-        self.sample(Sample::Command(request.name(), state.core.len()));
+        self.sample(&state, Happened::Command(request.name()));
         let (printed, ticket) = match request {
             Request::Add { filter, note, once, batch_s } => {
-                let listening = !state.readers.is_empty();
-                match state.core.add_classed(&filter, &note, once, batch_s, listening) {
+                let mode = state.mode();
+                match state.core.add_classed(&filter, &note, once, batch_s, mode) {
                     Ok((id, mut out)) => {
                         unchecked = out.warning.take();
                         // Asked even when the filter is already held: that is what resends the
@@ -309,8 +370,8 @@ impl Server {
                 Err(why) => return Reply::Refused(why),
             },
             Request::Set { id, batch_s } => {
-                let listening = !state.readers.is_empty();
-                return match state.core.set_class(&id, batch_s, listening) {
+                let mode = state.mode();
+                return match state.core.set_class(&id, batch_s, mode) {
                     Ok(out) => match self.apply(&mut state, out).unsaved {
                         Some(why) => unsaved(&format!("{id} is changed"), &why),
                         None => Reply::Done { out: String::new(), warning: None },
@@ -322,7 +383,8 @@ impl Server {
                 let screen = state.core.list(&self.name, state.client.is_some(), state.readers.len());
                 return Reply::Done { out: screen, warning: None };
             }
-            Request::Follow => return Reply::Refused("follow is not a one-reply command".to_string()),
+            Request::Follow | Request::Receive => return Reply::Refused(format!("{} is not a one-reply command", request.name())),
+            Request::Ack { .. } => return Reply::Refused("ack is sent on the receive stream that carried the delivery".to_string()),
         };
         let confirmed = match ticket {
             Some(ticket) => self.acknowledged(state, ticket),
@@ -334,38 +396,82 @@ impl Server {
         Reply::Done { out: printed, warning }
     }
 
-    /// Registers a reader with its replay already queued ahead of anything newer.
-    fn attach(&self) -> (u64, Receiver<String>) {
+    /// Registers a `follow` or a `receive` with its replay already queued ahead of anything
+    /// newer. There is one receiving reader at a time: a new one cuts off the one before it.
+    fn attach(&self, request: Request, socket: Option<UnixStream>) -> (u64, Receiver<String>) {
         let (tx, rx) = sync_channel(BACKLOG);
+        let receiving = request == Request::Receive;
         let mut state = self.lock();
-        self.sample(Sample::Command(Request::Follow.name(), state.core.len()));
+        self.sample(&state, Happened::Command(request.name()));
+        if receiving {
+            for socket in state.readers.iter().filter_map(|r| r.socket.as_ref()) {
+                let _ = socket.shutdown(Shutdown::Both);
+            }
+            state.remove_readers(|r| r.receiving);
+        }
         state.next_reader += 1;
         let id = state.next_reader;
-        let replay = state.core.attach();
         // What the replay holds has been given to nobody, so every reader gets it.
-        state.readers.push(Reader { id, lines: tx });
+        state.readers.push(Reader { id, lines: tx, receiving, socket });
+        let mode = state.mode();
+        let replay = state.core.attach(mode);
         self.apply(&mut state, replay);
         (id, rx)
     }
 
     fn detach(&self, id: u64) {
-        self.lock().readers.retain(|r| r.id != id);
+        let mut state = self.lock();
+        if state.remove_readers(|r| r.id == id) {
+            self.sample(&state, Happened::Held);
+            // A timer it had not acked is due again.
+            self.changed.notify_all();
+        }
+    }
+
+    fn ack(&self, seq: u64) {
+        let mut state = self.lock();
+        if !state.core.awaits(seq) {
+            say(&self.name, &format!("ignored an ack of {seq}, which is not waiting for one"));
+            return;
+        }
+        let out = state.core.ack(seq);
+        self.apply(&mut state, out);
+        self.sample(&state, Happened::Delivered(1));
+    }
+
+    /// Takes a receiving reader's acks until it goes or says anything else.
+    fn take_acks(&self, from: &mut impl BufRead) {
+        let mut line = String::new();
+        while matches!(from.read_line(&mut line), Ok(n) if n > 0) {
+            match serde_json::from_str(&line) {
+                Ok(Request::Ack { seq }) => self.ack(seq),
+                _ => return say(&self.name, &format!("dropping the receiving reader, which sent {:?}, not an ack", line.trim_end())),
+            }
+            line.clear();
+        }
     }
 
     fn serve(self: &Arc<Self>, mut stream: UnixStream) -> std::io::Result<()> {
         let mut line = String::new();
-        BufReader::new(stream.try_clone()?).read_line(&mut line)?;
+        let mut incoming = BufReader::new(stream.try_clone()?);
+        incoming.read_line(&mut line)?;
         let reply = |stream: &mut UnixStream, reply: &Reply| writeln!(stream, "{}", serde_json::to_string(reply)?);
         let request: Request = match serde_json::from_str(&line) {
             Ok(r) => r,
             Err(e) => return reply(&mut stream, &Reply::Refused(format!("unreadable request: {e}"))),
         };
-        if request != Request::Follow {
-            let answer = self.command(request);
-            return reply(&mut stream, &answer);
-        }
-        let (id, lines) = self.attach();
-        reply(&mut stream, &Reply::Done { out: String::new(), warning: None })?;
+        let receiving = match request {
+            Request::Follow => false,
+            Request::Receive => true,
+            other => {
+                let answer = self.command(other);
+                return reply(&mut stream, &answer);
+            }
+        };
+        let socket = if receiving { Some(stream.try_clone()?) } else { None };
+        let (id, lines) = self.attach(request, socket);
+        // A reader that never hears this must not keep holding what it was to ack.
+        reply(&mut stream, &Reply::Done { out: String::new(), warning: None }).inspect_err(|_| self.detach(id))?;
         let mut writing = stream.try_clone()?;
         let server = self.clone();
         std::thread::Builder::new().name("spira-sub-reader".into()).spawn(move || {
@@ -375,12 +481,17 @@ impl Server {
                 }
             }
             // Cut off or gone: the closed socket ends the read below.
-            let _ = writing.shutdown(std::net::Shutdown::Both);
+            let _ = writing.shutdown(Shutdown::Both);
             server.detach(id);
         })?;
-        // A reader says nothing more, so the end of this read is its going.
-        let mut sink = [0u8; 64];
-        while matches!(stream.read(&mut sink), Ok(n) if n > 0) {}
+        if receiving {
+            self.take_acks(&mut incoming);
+            let _ = stream.shutdown(Shutdown::Both);
+        } else {
+            // A follow says nothing more, so the end of this read is its going.
+            let mut sink = [0u8; 64];
+            while matches!(incoming.read(&mut sink), Ok(n) if n > 0) {}
+        }
         self.detach(id);
         Ok(())
     }
@@ -390,11 +501,14 @@ impl Server {
     fn timers(&self) {
         let mut state = self.lock();
         loop {
-            let due = state.core.next_due_ms().filter(|_| !state.readers.is_empty());
+            let due = state.core.next_due_ms().filter(|_| state.mode() != Mode::Nobody);
             let now = state.core.now_ms();
             state = match due {
                 Some(at) if at <= now => {
-                    for out in [state.core.flush_due(true), state.core.fire_due(true)] {
+                    for step in [Core::flush_due, Core::fire_due] {
+                        // Asked each time: applying a step can cut off a reader.
+                        let mode = state.mode();
+                        let out = step(&mut state.core, mode);
                         self.apply(&mut state, out);
                     }
                     state
@@ -464,8 +578,8 @@ impl Server {
                     if topic == self.own_topic() {
                         self.end_of_retained(&mut state, &p.payload, p.retain);
                     }
-                    let listening = !state.readers.is_empty();
-                    let out = state.core.message(&topic, &p.payload, p.retain, listening);
+                    let mode = state.mode();
+                    let out = state.core.message(&topic, &p.payload, p.retain, mode);
                     self.apply(&mut state, out);
                 }
                 Ok(Ok(Event::Incoming(Packet::SubAck(_) | Packet::UnsubAck(_)))) => {
@@ -596,6 +710,10 @@ mod tests {
         }
     }
 
+    fn follow(server: &Server) -> (u64, Receiver<String>) {
+        server.attach(Request::Follow, None)
+    }
+
     // Only an attach that beats the timer thread to a due batch replays to a standing reader,
     // so no timer thread runs here.
     #[test_id(tzdad0i)]
@@ -604,13 +722,13 @@ mod tests {
         let dir = TempDir::new("sub-attach");
         let clock = VirtualClock::new(1_000_000);
         let mut core = Core::new(Arc::new(clock.clone()), Saved::default());
-        core.add_classed("release/active", "", false, Some(60), true).unwrap();
+        core.add_classed("release/active", "", false, Some(60), Mode::Spending).unwrap();
         let server = server(&dir, core);
-        let (_, standing) = server.attach();
-        server.lock().core.message("release/active", br#"{"release":"r1"}"#, true, true);
+        let (_, standing) = follow(&server);
+        server.lock().core.message("release/active", br#"{"release":"r1"}"#, true, Mode::Spending);
         clock.advance(60_000);
 
-        let (_, newcomer) = server.attach();
+        let (_, newcomer) = follow(&server);
 
         for reader in [standing, newcomer] {
             let delivery = reader.try_recv().unwrap();
@@ -623,8 +741,8 @@ mod tests {
     fn only_a_broker_that_held_this_subscriber_before_up_came_back_prunes() {
         let dir = TempDir::new("sub-kept");
         let mut core = Core::new(Arc::new(VirtualClock::new(1_000_000)), Saved::default());
-        core.add_classed("release/active", "", false, None, true).unwrap();
-        core.message("release/active", br#"{"release":"r1"}"#, true, true);
+        core.add_classed("release/active", "", false, None, Mode::Spending).unwrap();
+        core.message("release/active", br#"{"release":"r1"}"#, true, Mode::Spending);
         let server = server(&dir, core);
         let mut state = server.lock();
         let digests = |state: &State| state.core.saved().subs[0].delivered.len();
@@ -661,8 +779,8 @@ mod tests {
     fn every_page_of_the_record_is_read_and_a_resident_on_the_last_is_announced_once_it_reads() {
         let dir = TempDir::new("sub-record");
         let mut core = Core::new(Arc::new(VirtualClock::new(1_000_000)), Saved::default());
-        core.add("bead/+/state", "", false, false).unwrap();
-        core.message("publisher/lc-serve", br#"{"state":"gone"}"#, true, false);
+        core.add("bead/+/state", "", false, Mode::Nobody).unwrap();
+        core.message("publisher/lc-serve", br#"{"state":"gone"}"#, true, Mode::Nobody);
         let store = Arc::new(Pages::default());
         // Rows as `spira-lc topics` records them.
         let row = |family: &str, resident: &[&str], next: serde_json::Value| {
@@ -679,7 +797,7 @@ mod tests {
         ]);
         let mut server = server(&dir, core);
         server.store = Ok(LcClient::over(store.clone(), false));
-        let (_, reader) = server.attach();
+        let (_, reader) = follow(&server);
 
         let logged = server.read_record().expect("the first failure of a streak is logged");
         assert!(logged.starts_with("spira-sub: cannot read the topic record: ") && logged.contains("down"), "{logged}");
@@ -700,9 +818,9 @@ mod tests {
     fn a_value_reaches_no_reader_before_the_set_file_is_written_with_it_as_given() {
         let dir = TempDir::new("sub-order");
         let mut core = Core::new(Arc::new(VirtualClock::new(1_000_000)), Saved::default());
-        core.add_classed("release/active", &"n".repeat(1 << 20), false, None, true).unwrap();
+        core.add_classed("release/active", &"n".repeat(1 << 20), false, None, Mode::Spending).unwrap();
         let server = server(&dir, core);
-        let (_, reader) = server.attach();
+        let (_, reader) = follow(&server);
         let temp = std::ffi::CString::new(format!("{}/.t.subs.tmp.{}", dir.display(), std::process::id())).unwrap();
         // SAFETY: a plain mkfifo(3) on a path this test just built.
         assert_eq!(unsafe { libc::mkfifo(temp.as_ptr(), 0o600) }, 0);
@@ -710,7 +828,7 @@ mod tests {
         let (early, written) = std::thread::scope(|scope| {
             scope.spawn(|| {
                 let mut state = server.lock();
-                let out = state.core.message("release/active", br#"{"release":"r1"}"#, true, true);
+                let out = state.core.message("release/active", br#"{"release":"r1"}"#, true, Mode::Spending);
                 server.apply(&mut state, out);
             });
             // Opening returns once the writer has the other end.

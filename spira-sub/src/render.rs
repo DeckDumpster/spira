@@ -84,7 +84,12 @@ fn wrap(out: &mut String, lead: &str, text: &str) {
 pub(crate) fn list(core: &Core, name: &str, connected: bool, readers: usize) -> String {
     let mut out = String::new();
     let broker = if connected { "up" } else { "DOWN" };
-    wrap(&mut out, "", &format!("{name}: broker {broker}, readers {readers}"));
+    let undelivered = |n: usize| if n == 0 { String::new() } else { format!(", {n} undelivered") };
+    let waiting = match core.unacked() {
+        0 => String::new(),
+        n => format!(", undelivered {n}"),
+    };
+    wrap(&mut out, "", &format!("{name}: broker {broker}, readers {readers}{waiting}"));
     if core.is_empty() {
         out.push_str("no subscriptions\n");
         return out;
@@ -100,7 +105,8 @@ pub(crate) fn list(core: &Core, name: &str, connected: bool, readers: usize) -> 
         let once = if sub.entry.once && sub.entry.filter.is_some() { ", once" } else { "" };
         let batch = sub.entry.batch_s.map_or(String::new(), |s| format!(", batch {}", span(s)));
         let pending = if sub.pending.is_empty() { String::new() } else { format!(", {} pending", sub.pending.len()) };
-        wrap(&mut out, "  ", &format!("fired {fired}{once}{batch}{pending}"));
+        let unacked = undelivered(core.unacked_of(&sub.entry.id));
+        wrap(&mut out, "  ", &format!("fired {fired}{once}{batch}{pending}{unacked}"));
         if !sub.entry.note.is_empty() {
             wrap(&mut out, "  ", &sub.entry.note);
         }
