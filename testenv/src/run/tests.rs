@@ -462,7 +462,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
     fn round_run_leaves_a_round_row(prebuilt: bool) -> bool {
         let bins = testkit::TempDir::new("testenv-prebuilt");
         for name in crate::prebuilt::FLOOR {
-            testkit::write_exe(&bins.join(name), "#!/bin/sh\n");
+            testkit::write_exe(bins.join(name), "#!/bin/sh\n");
         }
         let dir = bins.path().display().to_string();
         let mut flags = vec!["--suites", "test-a.sh"];
