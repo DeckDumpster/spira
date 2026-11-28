@@ -8,7 +8,7 @@ use spira_runtime::tasks::a::kit;
 use spira_runtime::watchers::pr_notify::*;
 use spira_runtime::pr_topics::PrTopics;
 use spira_runtime::watchers::INBOX_APPEND;
-use testkit::broker::Broker;
+use testkit::broker::{Broker, Subscriber};
 
 /// The effect's real runner, publishing to the broker at `socket`.
 fn topics(socket: &std::path::Path) -> Arc<PrTopics> {
@@ -125,4 +125,18 @@ fn with_the_broker_stopped_the_notifier_asks_for_what_it_asked_for_before() {
     let down = asked(rig_publishing_through(move |input| publisher.publish(input)));
     assert!(down.iter().any(|(name, line, _)| name == INBOX_APPEND && line.ends_with("MERGED #7 t7 [r]")), "{down:?}");
     assert_eq!(down, asked(pr_tracked_then_merged()));
+}
+
+#[test_id(twxjsg0)]
+#[test]
+fn a_pr_topic_is_published_as_resident_pr_notifys() {
+    let broker = Broker::up();
+    let out = topics(broker.socket());
+    let mut watching = Subscriber::to_v5(broker.socket(), &["pr/r/7"]);
+
+    out.publish(r#"{"pr/r/7":{"state":"GREEN","sha":"","at":60}}"#).unwrap();
+
+    let mut stamp = watching.recv().user_properties;
+    stamp.sort_unstable();
+    assert_eq!(stamp, [("spira-publisher".to_string(), "pr-notify".to_string()), ("spira-resident".to_string(), "true".to_string())]);
 }

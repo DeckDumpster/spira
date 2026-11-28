@@ -23,6 +23,7 @@ impl PrTopics {
     pub fn new(publisher: Publisher) -> PrTopics {
         let held = Arc::new(Mutex::new(Topics::new()));
         let republish = held.clone();
+        publisher.resident();
         publisher.on_connect(move |again| {
             for (topic, payload) in lock(&republish).iter() {
                 // A refusal is the publisher's to log; nothing here can mend it.

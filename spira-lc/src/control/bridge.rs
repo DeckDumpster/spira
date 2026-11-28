@@ -191,6 +191,7 @@ pub(crate) fn serve<B: Backend + Send + Sync + 'static>(store: &Arc<Store<B>>) {
 fn start<B: Backend + Send + Sync + 'static>(store: &Arc<Store<B>>, publisher: Publisher, metrics: MetricsSink) -> Result<(), String> {
     let shared = Arc::new(Shared::default());
     let (weak, hooked, metrics) = (Arc::downgrade(store), shared.clone(), Arc::new(metrics));
+    publisher.resident();
     publisher.on_connect(move |again| republish(&weak, &hooked, again, &metrics));
     let (tx, rx) = sync_channel::<(u64, Message)>(BACKLOG);
     std::thread::Builder::new()

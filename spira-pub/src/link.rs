@@ -6,11 +6,14 @@ use std::os::fd::RawFd;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use rumqttc::v5;
 use rumqttc::{Client, Connection, ConnectionError, Event, LastWill, MqttOptions, NetworkOptions, Packet, QoS, Transport};
 
 use crate::{CONNECT_DEADLINE, MAX_PAYLOAD};
 
 const MAX_PACKET: usize = MAX_PAYLOAD + (4 << 10);
+/// rumqttc's MQTT 5 client has no way to turn keep-alive off; this is the longest the wire holds.
+const V5_KEEP_ALIVE: Duration = Duration::from_secs(u16::MAX as u64);
 /// Between connects while a broker that has just made its socket is not yet listening on it.
 pub const LISTEN_PAUSE: Duration = Duration::from_millis(5);
 
@@ -23,6 +26,11 @@ pub struct Lost {
 impl Lost {
     fn from(e: ConnectionError) -> Lost {
         let refused = matches!(&e, ConnectionError::Io(io) if nothing_listening(io));
+        Lost { why: e.to_string(), refused }
+    }
+
+    fn from_v5(e: v5::ConnectionError) -> Lost {
+        let refused = matches!(&e, v5::ConnectionError::Io(io) if nothing_listening(io));
         Lost { why: e.to_string(), refused }
     }
 }
@@ -56,8 +64,12 @@ pub struct Dial<'a> {
 }
 
 impl Dial<'_> {
+    fn path(&self) -> Result<&str, Lost> {
+        self.socket.to_str().ok_or_else(|| Lost { why: format!("socket path {} is not UTF-8", self.socket.display()), refused: false })
+    }
+
     fn once(&self, within: Duration) -> Result<(Client, Connection), Lost> {
-        let socket = self.socket.to_str().ok_or_else(|| Lost { why: format!("socket path {} is not UTF-8", self.socket.display()), refused: false })?;
+        let socket = self.path()?;
         let mut options = MqttOptions::new(self.client_id, socket, 0);
         options.set_transport(Transport::Unix);
         // Liveness is the socket: a dead client's closes, and the broker publishes its will.
@@ -74,6 +86,39 @@ impl Dial<'_> {
             Ok(Err(e)) => Err(Lost::from(e)),
             Err(e) => Err(Lost { why: format!("no CONNACK: {e:?}"), refused: false }),
         }
+    }
+
+    fn once_v5(&self, within: Duration, will_properties: &[(String, String)]) -> Result<(v5::Client, v5::Connection), Lost> {
+        use v5::mqttbytes::v5::{LastWill, LastWillProperties, Packet};
+        let mut options = v5::MqttOptions::new(self.client_id, self.path()?, 0);
+        options.set_transport(Transport::Unix);
+        options.set_keep_alive(V5_KEEP_ALIVE);
+        options.set_max_packet_size(Some(MAX_PACKET as u32));
+        options.set_connection_timeout(CONNECT_DEADLINE.as_secs());
+        let properties = LastWillProperties {
+            delay_interval: None,
+            payload_format_indicator: None,
+            message_expiry_interval: None,
+            content_type: None,
+            response_topic: None,
+            correlation_data: None,
+            user_properties: will_properties.to_vec(),
+        };
+        let will = LastWill::new(self.will_topic.clone(), gone().to_string(), v5::mqttbytes::QoS::AtLeastOnce, true, Some(properties));
+        options.set_last_will(will);
+        let (client, mut connection) = v5::Client::new(options, self.capacity);
+        match connection.recv_timeout(within) {
+            Ok(Ok(v5::Event::Incoming(Packet::ConnAck(_)))) => Ok((client, connection)),
+            Ok(Ok(other)) => Err(Lost { why: format!("expected CONNACK, got {other:?}"), refused: false }),
+            Ok(Err(e)) => Err(Lost::from_v5(e)),
+            Err(e) => Err(Lost { why: format!("no CONNACK: {e:?}"), refused: false }),
+        }
+    }
+
+    /// [`connect`](Dial::connect) over MQTT 5, with `will_properties` as the last will's user
+    /// properties.
+    pub fn connect_v5(&self, announced: bool, will_properties: &[(String, String)]) -> Result<(v5::Client, v5::Connection), Lost> {
+        wait_out_refusal(announced, |within| self.once_v5(within, will_properties), |lost| lost.refused)
     }
 
     /// A connection within [`CONNECT_DEADLINE`]. `announced` says the broker's socket has just

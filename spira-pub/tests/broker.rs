@@ -20,6 +20,7 @@ const FAILSAFE: Duration = Duration::from_secs(30);
 const NOW_MS: u64 = 7_000;
 const CHILD_SOCKET: &str = "SPIRA_PUB_TEST_CHILD_SOCKET";
 const CHILD_UP: &str = "child-publisher-is-up";
+const RESIDENT_CHILD_SOCKET: &str = "SPIRA_PUB_TEST_RESIDENT_CHILD_SOCKET";
 
 fn value(d: Delivered) -> (String, Value, bool) {
     (d.topic, serde_json::from_slice(&d.payload).unwrap(), d.retain)
@@ -195,14 +196,33 @@ fn a_killed_publishers_will_says_gone_with_no_keep_alive_to_wait_out() {
     assert_eq!(retained(broker.socket(), "publisher/t"), json!({"state": "gone"}));
 }
 
-/// The child's name as libtest filters on it, test id included.
 fn child_test_name() -> String {
+    test_name("child_process_holding_a_publisher")
+}
+
+/// This binary running the child test `name`, returned once its publisher is connected.
+fn child_up(name: &str, socket_variable: &str, socket: &Path) -> std::process::Child {
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", "--nocapture", "--test-threads=1"])
+        .arg(test_name(name))
+        .env(socket_variable, socket)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped());
+    let mut child = command.spawn().unwrap();
+    let up = BufReader::new(child.stdout.take().unwrap()).lines().map_while(Result::ok).any(|l| l == CHILD_UP);
+    assert!(up, "the child never connected");
+    child
+}
+
+/// A test's name as libtest filters on it, test id included.
+fn test_name(prefix: &str) -> String {
     let me = Command::new(std::env::current_exe().unwrap()).arg("--list").output().unwrap();
     String::from_utf8(me.stdout)
         .unwrap()
         .lines()
         .filter_map(|l| l.strip_suffix(": test"))
-        .find(|l| l.starts_with("child_process_holding_a_publisher"))
+        .find(|l| l.starts_with(prefix))
         .expect("the child test is listed")
         .to_string()
 }
@@ -365,4 +385,93 @@ fn the_configured_endpoint_receives_the_clis_run_and_the_librarys_series() {
 
     assert_eq!(code, Some(0), "{err}");
     sink.expect(&["spira_pub_publishes", "spira_pub_queue_depth", "spira_component_runs"], FAILSAFE);
+}
+
+/// The two user properties as a subscriber reads them: all there are, sorted by name.
+fn stamp(d: &Delivered) -> Vec<(&str, &str)> {
+    let mut found: Vec<(&str, &str)> = d.user_properties.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    found.sort_unstable();
+    found
+}
+
+fn stamped(resident: &'static str) -> Vec<(&'static str, &'static str)> {
+    vec![("spira-publisher", "t"), ("spira-resident", resident)]
+}
+
+#[test_id(t9r2nul)]
+#[test]
+fn every_message_and_the_greeting_say_who_published_and_whether_it_is_resident() {
+    let broker = Broker::up();
+    let mut watching = Subscriber::to_v5(broker.socket(), &["publisher/t", "nosuch/topic"]);
+    let p = publisher("t", broker.socket());
+
+    p.publish(Class::State, "nosuch/topic", &json!({"a": 1})).unwrap();
+
+    for topic in ["publisher/t", "nosuch/topic"] {
+        let got = watching.recv();
+        assert_eq!((got.topic.as_str(), stamp(&got)), (topic, stamped("false")));
+    }
+    p.resident();
+    p.publish(Class::Chatter, "nosuch/topic", &json!({"a": 2})).unwrap();
+    p.clear("nosuch/topic").unwrap();
+    for _ in 0..2 {
+        let got = watching.recv();
+        assert_eq!((got.topic.as_str(), stamp(&got)), ("nosuch/topic", stamped("true")));
+    }
+}
+
+#[test_id(t7yy44g)]
+#[test]
+fn a_publisher_declared_resident_before_it_connects_says_so_in_its_greeting_and_on_every_connect() {
+    let mut broker = Broker::up();
+    let p = publisher("t", broker.socket());
+    p.resident();
+    p.on_connect(|again| again.publish(Class::State, "release/active", &json!({})).unwrap());
+    p.connect().unwrap();
+    p.flush(FAILSAFE).unwrap();
+
+    for restarted in [false, true] {
+        if restarted {
+            broker.restart();
+        }
+        for topic in ["publisher/t", "release/active"] {
+            let got = Subscriber::to_v5(broker.socket(), &[topic]).recv();
+            assert_eq!(stamp(&got), stamped("true"), "{topic}, restarted={restarted}");
+        }
+    }
+}
+
+/// Not a test of its own: the resident process the next one kills.
+#[test_id(t0n8rmc)]
+#[test]
+fn child_process_holding_a_resident_publisher() {
+    let Some(socket) = std::env::var_os(RESIDENT_CHILD_SOCKET) else { return };
+    let p = publisher("t", Path::new(&socket));
+    p.resident();
+    p.connect().unwrap();
+    p.flush(FAILSAFE).unwrap();
+    println!("\n{CHILD_UP}");
+    // Ends only when killed, or when the parent is gone and its end of the pipe closes.
+    let _ = std::io::stdin().read_line(&mut String::new());
+}
+
+#[test_id(tuzvc8i)]
+#[test]
+fn a_killed_publishers_will_carries_its_name_and_residency() {
+    for (child, variable, resident) in [
+        ("child_process_holding_a_publisher", CHILD_SOCKET, "false"),
+        ("child_process_holding_a_resident_publisher", RESIDENT_CHILD_SOCKET, "true"),
+    ] {
+        let broker = Broker::up();
+        let mut running = child_up(child, variable, broker.socket());
+        let mut watching = Subscriber::to_v5(broker.socket(), &["publisher/t"]);
+        assert_eq!(stamp(&watching.recv()), stamped(resident), "the greeting of {child}");
+
+        running.kill().unwrap();
+        running.wait().unwrap();
+
+        let will = watching.recv();
+        assert_eq!(stamp(&will), stamped(resident), "the will of {child}");
+        assert_eq!(value(will).1, json!({"state": "gone"}));
+    }
 }

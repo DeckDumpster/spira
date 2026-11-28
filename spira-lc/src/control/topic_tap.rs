@@ -14,7 +14,7 @@ use rumqttc::v5::{Client, ConnectionError, Event, MqttOptions};
 use rumqttc::Transport;
 use serde::{Deserialize, Serialize};
 use spira_pub::link::{nothing_listening, sleep_until_readable, wait_out_refusal};
-use spira_pub::{topics, SocketWatch, CONNECT_DEADLINE};
+use spira_pub::{topics, SocketWatch, CONNECT_DEADLINE, PUBLISHER_PROPERTY, RESIDENT_PROPERTY};
 use state_store::{limits, Backend, Contract, Object, Request, Selector, Txn};
 
 use super::store::Store;
@@ -29,8 +29,6 @@ const NAMES: usize = 16;
 const CHUNK: usize = limits::MAX_TXN_OPS - 2;
 /// A bypassing producer's payload has no cap of its own; the broker withholds a larger one.
 const MAX_PACKET: u32 = 16 << 20;
-const USER_PUBLISHER: &str = "spira-publisher";
-const USER_RESIDENT: &str = "spira-resident";
 
 /// What the store knows of one topic family.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -204,7 +202,7 @@ fn start<B: Backend + Send + Sync + 'static>(store: &Arc<Store<B>>, socket: Path
                 let property = |name: &str| user.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str());
                 let topic = String::from_utf8_lossy(&p.topic);
                 let now = clocked.contract().wall_ms();
-                lock(&registry).saw(&topic, p.retain, property(USER_PUBLISHER), property(USER_RESIDENT) == Some("true"), now);
+                lock(&registry).saw(&topic, p.retain, property(PUBLISHER_PROPERTY), property(RESIDENT_PROPERTY) == Some("true"), now);
             })
         }),
     )
