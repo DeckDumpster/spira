@@ -561,8 +561,7 @@ impl<'a> Lib for RealLib<'a> {
         self.content_on_base_checked(id, proof)
     }
     fn reap_landed(&self, id: &str, branch: &str, repo: &Path, why: &str) -> Result<(), String> {
-        let status_file = std::env::var("SPIRA_STATUS_FILE").ok();
-        crate::land_verify::hel_reap(status_file.as_deref(), id, branch, &repo.to_string_lossy(), why)
+        crate::land_verify::hel_reap(id, branch, &repo.to_string_lossy(), why)
     }
     fn prune_worktrees(&self, repo: &Path) {
         let _ = hel::reap::prune_worktrees(&hel::real::reaplog_path_in(&self.s.run), repo);
