@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex};
 use runtime::taskrig::{effects_runnable, TaskRig};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::d::watch_perf::*;
-use spira_runtime::watchers::INBOX_APPEND;
+use spira_runtime::watch_topics::Change;
+use spira_runtime::watchers::{INBOX_APPEND, WATCH_PUBLISH};
 
 const MIN: u64 = 60_000;
 
@@ -41,7 +42,8 @@ fn rig(seed: u64, world: World) -> TaskRig {
         .double(INBOX_APPEND, |l| Ok(l.into()))
         .double(LOG, |l| Ok(l.into()))
         .double(SLOW_SAMPLE, |l| Ok(l.into()))
-        .double(METRICS, |_| Ok("{}".into()));
+        .double(METRICS, |_| Ok("{}".into()))
+        .double(WATCH_PUBLISH, |l| Ok(l.into()));
     r.tick(stream, kind).unwrap();
     acc::assert_healthy(&r, STREAM);
     r
@@ -125,6 +127,50 @@ fn t5_the_lines_are_the_ones_perf_watch_wrote() {
     assert_eq!(said(&r), ["1970-01-01T00:00:00Z [watch:perf-watch] PERF UNRUNNABLE lc-show: exit status: 1 (after 40ms; phases unreported)"]);
     let logged: Vec<&str> = r.requested().iter().filter(|q| q.name == LOG).map(|q| q.input.as_str()).collect();
     assert_eq!(logged, ["PERF UNRUNNABLE lc-show: exit status: 1 (after 40ms; phases unreported)"], "the log carries the bare alarm");
+}
+
+fn published(r: &TaskRig) -> Vec<Change> {
+    r.requested().iter().filter(|q| q.name == WATCH_PUBLISH).map(|q| serde_json::from_str(&q.input).unwrap()).collect()
+}
+
+#[test_id(td41rgu)]
+#[test]
+fn a_slow_probe_held_across_three_passes_is_set_once_and_cleared_once_and_probes_are_distinct_subjects() {
+    let mut two = slow("lc-list", 900);
+    two.timings.iter_mut().filter(|t| t.name == "lc-show").for_each(|t| *t = timing("lc-show", 700));
+    let world = Arc::new(Mutex::new(two));
+    let mut r = rig(1, world.clone());
+    for millis in [950, 990] {
+        world.lock().unwrap().timings[0] = timing("lc-list", millis);
+        r.advance(CADENCE_MS).unwrap();
+    }
+    let held = published(&r);
+    let [set] = held.as_slice() else { panic!("one set: {held:?}") };
+    assert_eq!((set.row.as_str(), set.set.keys().map(String::as_str).collect::<Vec<_>>(), set.clear.len()), (INBOX_TAG, vec!["lc-list", "lc-show"], 0));
+    assert_eq!(set.set["lc-list"].text, "PERF SLOW lc-list 900ms (limit 500ms) phases unreported; top callers: unknown");
+    assert_eq!(set.set["lc-list"].level, "P2");
+
+    *world.lock().unwrap() = slow("lc-show", 700);
+    r.advance(CADENCE_MS).unwrap();
+    r.advance(CADENCE_MS).unwrap();
+    let all = published(&r);
+    assert_eq!(all.len(), 2, "{all:?}");
+    assert_eq!((all[1].set.len(), all[1].clear.clone()), (0, vec!["lc-list".to_string()]));
+    acc::assert_healthy(&r, STREAM);
+}
+
+#[test_id(tzrq160)]
+#[test]
+fn a_reminder_says_the_value_again_and_keeps_when_the_alarm_began() {
+    let world = Arc::new(Mutex::new(slow("lc-list", 900)));
+    let mut r = rig(1, world.clone());
+    *world.lock().unwrap() = slow("lc-list", 950);
+    r.advance(61 * MIN).unwrap();
+    let held = published(&r);
+    assert_eq!(held.len(), 2, "{held:?}");
+    let again = &held[1].set["lc-list"];
+    assert!(again.text.contains("950ms"), "{again:?}");
+    assert_eq!(again.since, held[0].set["lc-list"].since);
 }
 
 fn standing_alarm() -> TaskRig {

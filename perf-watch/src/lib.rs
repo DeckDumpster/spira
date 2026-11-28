@@ -262,7 +262,13 @@ impl Health {
     }
 }
 
-fn alarm_key(line: &str) -> String {
+/// The probe an alarm line names.
+pub fn alarm_probe(line: &str) -> Option<&str> {
+    line.split_whitespace().nth(2).map(|w| w.trim_end_matches(':'))
+}
+
+/// What makes two alarm lines the same alarm, whatever their times read.
+pub fn alarm_key(line: &str) -> String {
     line.split_whitespace().take(3).collect::<Vec<_>>().join(" ").trim_end_matches(':').to_string()
 }
 
@@ -315,6 +321,8 @@ pub fn append_line(path: &str, line: &str) {
 
 pub struct Pass {
     pub lines: Vec<String>,
+    /// Every alarm this pass found, printed or inside its remind interval.
+    pub standing: Vec<String>,
     pub slow: Vec<String>,
     pub timings: Vec<Timing>,
     pub health: Health,
@@ -368,6 +376,7 @@ pub fn settle(cfg: &Settings, prior: &Health, now: u64, timings: Vec<Timing>, cu
         None => (health.sample_at, health.sample) = (prior.sample_at, prior.sample.clone()),
     }
     let mut lines = Vec::new();
+    let standing = all.clone();
     for l in all {
         let key = alarm_key(&l);
         let printed = match prior.alarms.get(&key) {
@@ -380,7 +389,7 @@ pub fn settle(cfg: &Settings, prior: &Health, now: u64, timings: Vec<Timing>, cu
         health.alarms.insert(key, printed);
     }
     let slow = slow_samples(now, &timings, cfg.budget_ms, &callers);
-    Pass { lines, slow, timings, health }
+    Pass { lines, standing, slow, timings, health }
 }
 
 // The probe runs in its own transient scope, outside this unit's CPU quota, and times itself

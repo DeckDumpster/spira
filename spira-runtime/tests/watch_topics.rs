@@ -1,4 +1,4 @@
-// covers: spira-runtime/src/watch_topics.rs spira-runtime/src/watchers/claim_count.rs spira-runtime/src/tasks/e/watch_ami_stale.rs spira-runtime/src/tasks/e/watch_throughput.rs spira-runtime/src/tasks/e/watch_transitions.rs
+// covers: spira-runtime/src/watch_topics.rs spira-runtime/src/watchers/claim_count.rs spira-runtime/src/tasks/e/watch_ami_stale.rs spira-runtime/src/tasks/e/watch_throughput.rs spira-runtime/src/tasks/e/watch_transitions.rs spira-runtime/src/watchers/bead_sweep.rs spira-runtime/src/watchers/supersede_duty.rs spira-runtime/src/tasks/d/watch_perf.rs
 //! The watch rows' topics on a real broker: each row's handler on the task rig, its
 //! `watch.publish` run by the service's own effect runner.
 #[macro_use]
@@ -13,11 +13,14 @@ use runtime::ports::{SeededRng, VirtualClock};
 use runtime::taskrig::TaskRig;
 use serde_json::{json, Value};
 use spira_pub::{Options, Publisher};
+use spira_runtime::tasks::d::watch_perf as perf;
 use spira_runtime::tasks::e::watch_ami_stale as ami;
 use spira_runtime::tasks::e::watch_throughput as throughput;
 use spira_runtime::tasks::e::watch_transitions as transitions;
 use spira_runtime::watch_topics::WatchTopics;
+use spira_runtime::watchers::bead_sweep as sweep;
 use spira_runtime::watchers::claim_count as claims;
+use spira_runtime::watchers::supersede_duty as supersede;
 use spira_runtime::watchers::{INBOX_APPEND, WATCH_PUBLISH};
 use spira_runtime::Effects;
 use testkit::broker::{Broker, Delivered, Subscriber};
@@ -58,6 +61,11 @@ impl Row {
             .double(INBOX_APPEND, |l| Ok(l.into()))
             .double(transitions::LOG_APPEND, |l| Ok(l.into()))
             .double(throughput::FILE, |_| Ok("filed".into()))
+            // The other writes of a row that has any; its conditions are what is asserted here.
+            .double(supersede::ACT, |_| Ok(String::new()))
+            .double(perf::LOG, |l| Ok(l.into()))
+            .double(perf::SLOW_SAMPLE, |l| Ok(l.into()))
+            .double(perf::METRICS, |_| Ok("{}".into()))
             .double(WATCH_PUBLISH, move |input| runner.lock().unwrap().run("k", &EffectSpec::keyed(WATCH_PUBLISH, "k", input, 10_000)));
         rig.clock.advance_to(START_S * 1000);
         rig.tick(boot.1, boot.2).unwrap();
@@ -98,6 +106,37 @@ fn claim_world(rows: &[(&str, u32)]) -> String {
 fn claim_row(fx: Arc<Effects>) -> Row {
     let task = claims::ClaimCount { interval_ms: 60_000, every: 4 };
     Row::boot(claims::NAME, claims::OBSERVE, 60_000, task.registration(), claims::ClaimCount::boot(), claim_world(&[]), fx)
+}
+
+fn sweep_world(rows: &[&str]) -> String {
+    let rows = rows.iter().map(|id| sweep::Row { id: id.to_string(), state: "READY".into(), holds: vec!["poison".into()], ..Default::default() }).collect();
+    serde_json::to_string(&sweep::Snapshot { rows, ..Default::default() }).unwrap()
+}
+
+fn sweep_row(fx: Arc<Effects>) -> Row {
+    let task = sweep::BeadSweep { interval_ms: 60_000, ask_label: "ask".into(), home_repo: "spira".into(), hold_min: 30, rework_min: 5, cert_min: 5, wait_min: 45, batch_min: 60, stop_review_secs: 3600 };
+    Row::boot(sweep::NAME, sweep::OBSERVE, 60_000, task.registration(), sweep::BeadSweep::boot(), sweep_world(&[]), fx)
+}
+
+fn perf_world(lc_list_ms: u64) -> String {
+    let timings = vec![perf::Timing { name: "lc-list".into(), micros: lc_list_ms * 1000, millis: lc_list_ms, ..Default::default() }];
+    serde_json::to_string(&perf::Snapshot { timings, ..Default::default() }).unwrap()
+}
+
+fn perf_row(fx: Arc<Effects>) -> Row {
+    let config = perf::Config { budget_ms: 500, interval_secs: 300, remind_secs: 3600, inbox: "q/inbox".into(), metrics_endpoint: "127.0.0.1:9".into(), run: "r".into() };
+    Row::boot(perf::INBOX_TAG, perf::OBSERVE, perf::CADENCE_MS, perf::WatchPerf::new(config).registration(), perf::WatchPerf::boot(), perf_world(40), fx)
+}
+
+fn supersede_world(requested: bool) -> String {
+    let reading = supersede::Reading::Request { succ: "sp-new".into(), own: "HELD".into(), succ_state: "LANDED".into() };
+    let held = requested.then(|| supersede::Held { id: "sp-old".into(), version: "3".into(), reading });
+    serde_json::to_string(&supersede::Snapshot { held: held.into_iter().collect() }).unwrap()
+}
+
+fn supersede_row(fx: Arc<Effects>) -> Row {
+    let task = supersede::SupersedeDuty { interval_ms: 60_000 };
+    Row::boot(supersede::NAME, supersede::OBSERVE, 60_000, task.registration(), supersede::SupersedeDuty::boot(), supersede_world(false), fx)
 }
 
 fn payload(held: &str) -> Value {
@@ -210,6 +249,36 @@ fn a_landing_stall_is_one_retained_value_for_its_repo_while_it_holds_and_none_on
     let watching = Subscriber::to(broker.socket(), &["watch/#"]);
     let row = throughput_row(service(&broker));
     holds_once_then_clears(row, &broker, watching, &throughput_world(true), &throughput_world(false), Said { topic: "watch/throughput/spira", level: "P0", text_has: "P0 spira: landing stalled" });
+}
+
+#[test_id(t7uj3b4)]
+#[test]
+fn a_suspect_is_one_retained_value_while_the_sweep_finds_it_and_none_once_it_does_not() {
+    let _env = testkit::env_read();
+    let broker = Broker::up();
+    let watching = Subscriber::to(broker.socket(), &["watch/#"]);
+    let row = sweep_row(service(&broker));
+    holds_once_then_clears(row, &broker, watching, &sweep_world(&["sp-a"]), &sweep_world(&[]), Said { topic: "watch/bead-sweep/sp-a", level: "P2", text_has: "SUSPECT sp-a READY POISONED" });
+}
+
+#[test_id(t3y07dl)]
+#[test]
+fn a_slow_probe_is_one_retained_value_while_it_is_slow_and_none_once_it_is_not() {
+    let _env = testkit::env_read();
+    let broker = Broker::up();
+    let watching = Subscriber::to(broker.socket(), &["watch/#"]);
+    let row = perf_row(service(&broker));
+    holds_once_then_clears(row, &broker, watching, &perf_world(900), &perf_world(40), Said { topic: "watch/perf-watch/lc-list", level: "P2", text_has: "PERF SLOW lc-list 900ms" });
+}
+
+#[test_id(twjn1qc)]
+#[test]
+fn a_supersede_request_is_one_retained_value_while_it_stands_and_none_once_it_is_gone() {
+    let _env = testkit::env_read();
+    let broker = Broker::up();
+    let watching = Subscriber::to(broker.socket(), &["watch/#"]);
+    let row = supersede_row(service(&broker));
+    holds_once_then_clears(row, &broker, watching, &supersede_world(true), &supersede_world(false), Said { topic: "watch/supersede-duty/sp-old", level: "P2", text_has: "SUPERSEDE REQUEST sp-old: successor sp-new" });
 }
 
 /// Restarts the broker, which keeps nothing, and requires every value `row` held to come back.

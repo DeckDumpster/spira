@@ -15,6 +15,8 @@ use spira_pub::{Class, Publisher};
 use crate::watchers::{answered_spec, lost_at_restart, WATCH_PUBLISH};
 
 const PUBLISH_DEADLINE_MS: u64 = 10_000;
+/// One effect's input, well under the store's 65,535-byte column once journaled.
+const CHANGE_BYTES: usize = 16 * 1024;
 /// How long the broker is given to take a clear before it is kept to be sent again.
 const CLEAR_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -133,6 +135,29 @@ pub fn settle(row: &str, published: &Published, conditions: BTreeMap<String, Str
 pub fn effect(change: &Change, now_ms: u64) -> EffectSpec {
     let input = serde_json::to_string(change).unwrap_or_default();
     EffectSpec::keyed(WATCH_PUBLISH, format!("watch/{}/{now_ms}/{:016x}", change.row, fnv1a(&input)), input, PUBLISH_DEADLINE_MS)
+}
+
+/// `change` as effects whose inputs each fit [`CHANGE_BYTES`]; one value past it goes alone.
+pub fn effects(change: Change, now_ms: u64) -> Vec<EffectSpec> {
+    let bytes = |v: &serde_json::Value| v.to_string().len() + 1;
+    let (mut out, mut part, mut spent) = (vec![], Change { row: change.row.clone(), ..Change::default() }, 0);
+    let mut room_for = |part: &mut Change, cost: usize| {
+        if spent > 0 && spent + cost > CHANGE_BYTES {
+            out.push(effect(part, now_ms));
+            (part.set, part.clear, spent) = (Published::new(), vec![], 0);
+        }
+        spent += cost;
+    };
+    for (subject, value) in change.set {
+        room_for(&mut part, bytes(&json!(subject)) + bytes(&json!(value)));
+        part.set.insert(subject, value);
+    }
+    for subject in change.clear {
+        room_for(&mut part, bytes(&json!(subject)));
+        part.clear.push(subject);
+    }
+    out.push(effect(&part, now_ms));
+    out
 }
 
 /// The effect again when `ev` says a `watch.publish` was lost with a stopping process, less
@@ -279,6 +304,26 @@ impl WatchTopics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(trtmpm8)]
+    #[test]
+    fn a_change_past_one_effects_bound_is_split_and_loses_nothing() {
+        let lines = (0..300).map(|n| (format!("sp-{n}"), "x".repeat(200))).collect();
+        let (_, change) = settle("r", &Published::new(), lines, 1000);
+        let mut whole = change.unwrap();
+        whole.clear = (0..2000).map(|n| format!("sp-gone-{n:020}")).collect();
+        let specs = effects(whole.clone(), 1000);
+        assert!(specs.len() > 1 && specs.iter().all(|s| s.input.len() <= CHANGE_BYTES + 100), "{}", specs.len());
+        let keys: BTreeSet<&str> = specs.iter().map(|s| s.key.as_str()).collect();
+        assert_eq!(keys.len(), specs.len());
+        let mut back = Change { row: "r".into(), ..Change::default() };
+        for s in &specs {
+            let part: Change = serde_json::from_str(&s.input).unwrap();
+            back.set.extend(part.set);
+            back.clear.extend(part.clear);
+        }
+        assert_eq!(back, whole);
+    }
 
     #[test_id(tk2kbpc)]
     #[test]

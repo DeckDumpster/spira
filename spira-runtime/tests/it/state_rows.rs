@@ -46,7 +46,7 @@ mod bead_sweep {
     fn each_seen_mark_is_its_own_row() {
         let mut r = rig(Arc::new(Mutex::new(vec![poisoned("sp-a"), poisoned("sp-b")])));
         start(&mut r);
-        assert_eq!(rows_of(&r, NAME), ["seen/SUSPECT sp-a READY POISONED ()", "seen/SUSPECT sp-b READY POISONED ()"]);
+        assert_eq!(rows_of(&r, NAME), ["published/sp-a", "published/sp-b", "seen/SUSPECT sp-a READY POISONED ()", "seen/SUSPECT sp-b READY POISONED ()"]);
     }
 
     #[test_id(tf7hcbr)]

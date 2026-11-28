@@ -116,6 +116,7 @@ mod world_inbox_announce;
 mod world_claim_count;
 mod world_supersede;
 mod watcher_asks;
+mod watcher_bead_sweep;
 mod watcher_brain_dirty;
 mod watcher_design_asks;
 mod watcher_overrides;
