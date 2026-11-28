@@ -753,3 +753,15 @@ fn the_complete_fixture_reads_under_the_testkit_loaded_host_allowance() {
     let read = doc.spira.as_ref().expect("the fixture has a spira section").get_u64("SPIRA_LC_MAX_READ_MS").unwrap();
     assert_eq!(read, Some(testkit::LOADED_HOST_MAX_READ_MS));
 }
+
+#[test_id(t5v7sro)]
+#[test]
+fn every_export_key_is_registered() {
+    // `resolve` computes these itself; no registry file declares them.
+    const COMPUTED: &[&str] = &["SPIRA_GATE_NOVERDICT", "SPIRA_GATE_BASEFAIL"];
+    let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    let registry = registry::Registry::from_dirs(&home).unwrap();
+    assert!(registry.get("SPIRA_OTEL_KEEP_DAYS").is_some(), "control: the tree's registry was read");
+    let unregistered: Vec<&str> = resolve::EXPORT_KEYS.iter().copied().filter(|k| !COMPUTED.contains(k) && registry.get(k).is_none()).collect();
+    assert!(unregistered.is_empty(), "EXPORT_KEYS names keys the registry does not declare: {unregistered:?}");
+}

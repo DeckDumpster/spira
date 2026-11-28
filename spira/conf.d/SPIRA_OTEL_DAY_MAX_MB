@@ -1,6 +1,0 @@
-TYPE=u32
-GROUP=lifecycle
-DOC=Megabytes one UTC day's span file (<run>/otel/<service>.<UTC date>.jsonl) may reach; spans past it are dropped and counted.
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    : "${SPIRA_OTEL_DAY_MAX_MB:=2048}"
-SPIRA_CONF_DEFAULT_EOF
