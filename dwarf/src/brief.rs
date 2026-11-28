@@ -879,7 +879,7 @@ mod tests {
         assert!(on.contains("work file-followup"));
         assert!(on.contains("work split"));
         assert!(on.contains("work split … --prerequisite"));
-        let finish = finish_brief("sp-a", &exits(&["SUBMITTED", "ask", "park", "hold"]));
+        let finish = finish_brief("sp-a", &crate::ports::s(&["SUBMITTED", "ask", "park", "hold"]));
         assert!(finish.contains("work split … --prerequisite"));
         for brief in [&on, &finish] {
             for said in ["small fix-up", "its own commit", "work note", "cannot ride", "P3", "--blocks", "--defect", "law-a-second-defect-gets-its-own-bead"] {
@@ -1020,25 +1020,21 @@ mod tests {
     #[test_id(tef2apb)]
     #[test]
     fn finish_is_the_work_verbs() {
-        let on = finish_brief("sp-a", &exits(&["SUBMITTED", "ask", "park", "hold"]));
+        let on = finish_brief("sp-a", &crate::ports::s(&["SUBMITTED", "ask", "park", "hold"]));
         assert!(on.contains("**You have no `bd`.**"));
         assert!(on.contains("this one: `sp-a`"));
         assert!(on.contains("    work submit\n"));
         assert!(!on.contains("bd -C"));
     }
 
-    fn exits(xs: &[&str]) -> Vec<String> {
-        xs.iter().map(|x| x.to_string()).collect()
-    }
-
     #[test_id(tc45zqo)]
     #[test]
     fn finish_offers_only_the_exits_the_rune_declares() {
-        let builder = finish_brief("sp-a", &exits(&["SUBMITTED", "ask", "park", "hold"]));
+        let builder = finish_brief("sp-a", &crate::ports::s(&["SUBMITTED", "ask", "park", "hold"]));
         assert!(!builder.contains("work done"), "{builder}");
         assert!(builder.contains("    work submit\n"), "{builder}");
         assert!(builder.contains("your rune cannot close the bead. Ask with `work blocked` that it be closed, naming what you delivered and where it lives."), "{builder}");
-        let closer = finish_brief("sp-a", &exits(&["DONE", "ask", "park", "hold"]));
+        let closer = finish_brief("sp-a", &crate::ports::s(&["DONE", "ask", "park", "hold"]));
         assert!(closer.contains("work done --delivers"), "{closer}");
         assert!(!closer.contains("    work submit\n"), "{closer}");
         assert!(!closer.contains("your rune cannot close the bead"), "{closer}");

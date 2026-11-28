@@ -1293,7 +1293,7 @@ impl<'a> Run<'a> {
         Ok(())
     }
 
-    fn write_prompt(&mut self, work: &Path, fixture_ms: u64, resume: &str, slain: &str, rebase: &str, dirty: &[String]) -> Result<(), Abort> {
+    pub(crate) fn write_prompt(&mut self, work: &Path, fixture_ms: u64, resume: &str, slain: &str, rebase: &str, dirty: &[String]) -> Result<(), Abort> {
         let bead = self.s.bead.clone();
         let wdisp = work.display().to_string();
         let overlay = self.conf.overlay();

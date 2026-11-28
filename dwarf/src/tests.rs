@@ -1620,6 +1620,40 @@ pub(crate) mod verdict_run {
         assert!(task.contains("- sp-gone state cannot tell (rc=2: down)"), "{task}");
     }
 
+    /// `write_prompt` for a rune whose file is `rune_file` and whose template is `{{FINISH}}`.
+    fn finish_over(rune_file: &str) -> Result<String, String> {
+        let dir = testkit::TempDir::new("dwarf-finish-brief");
+        let runes = dir.path().join("runes");
+        std::fs::create_dir_all(&runes).unwrap();
+        std::fs::write(runes.join("builder.rune"), rune_file).unwrap();
+        let _env = testkit::env(&[("SPIRA_RUNES_DIR", Some(runes.to_str().unwrap()))]);
+        let mut vars = super::complete_vars();
+        vars.insert("SPIRA_RUN".into(), dir.path().display().to_string());
+        vars.insert("SPIRA_RUNES_OVERLAY".into(), dir.path().join("overlay").display().to_string());
+        std::fs::create_dir_all(dir.path().join("overlay")).unwrap();
+        std::fs::write(dir.path().join("overlay/builder.md"), "{{FINISH}}\n").unwrap();
+        let (seam, sink) = (Seams(Default::default()), Mute::default());
+        with_run_sink(vars, &NoBd, Dirty(vec![]), &Lc, &|| 0, &seam, &sink, "", |r| match r.write_prompt(Path::new("w"), 0, "", "", "", &[]) {
+            Ok(()) => Ok(["system", "task"].iter().map(|f| std::fs::read_to_string(dir.path().join(format!("sp-x.{f}.md"))).unwrap()).collect()),
+            Err(crate::run::Abort::Die(why)) => Err(why),
+            Err(_) => Err("an abort that names no cause".into()),
+        })
+    }
+
+    #[test_id(ttgihus)]
+    #[test]
+    fn the_rendered_brief_offers_the_exits_the_running_runes_file_declares() {
+        let brief = finish_over("RUNE_WORKING_EXITS=\"DONE ask\"\n").unwrap();
+        assert!(brief.contains("work done --delivers") && !brief.contains("    work submit\n"), "{brief}");
+    }
+
+    #[test_id(t8hjggo)]
+    #[test]
+    fn a_rune_that_declares_no_exits_aborts_the_session_with_the_resolvers_reason() {
+        let why = finish_over("RUNE_NAME=builder\n").unwrap_err();
+        assert!(why.contains("RUNE_WORKING_EXITS is not declared"), "{why}");
+    }
+
     static OTEL: Mutex<()> = Mutex::new(());
 
     struct NoCommits;
