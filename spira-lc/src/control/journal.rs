@@ -7,6 +7,7 @@
 use serde_json::{json, Value};
 use spira_lc::effect_ledger::{self, DONE, OPEN_EFFECT};
 use state_store::{Backend, Compare, Object, Request, Result, Selector, Txn};
+use state_store_sqlite::is_read_ended;
 
 use super::keys;
 use super::store::Store;
@@ -26,8 +27,12 @@ const ATTEMPTS: usize = 8;
 /// Rows one sweep step reads at most: the store's page.
 pub const SWEEP_STEP: usize = 1_000;
 pub const STATE_PAGE: usize = 1_000;
-/// Rows one sweep page reads and writes before the step checks its budget.
+/// Rows one sweep page asks for at most.
 pub const SWEEP_PAGE: usize = 25;
+/// Rows a step's first page asks for, before it has seen how large they are.
+pub const SWEEP_FIRST_PAGE: usize = 4;
+/// Value bytes a later page aims to read, sized by the largest value the step has seen.
+pub const SWEEP_PAGE_BYTES: usize = 32 * 1024;
 /// Milliseconds a sweep step spends before it stops after a page: half the store's 100 ms target.
 pub const SWEEP_BUDGET_MS: u64 = 50;
 
@@ -373,14 +378,15 @@ impl<B: Backend> Store<B> {
         Ok(rows)
     }
 
-    /// One bounded step of the sweep: reads pages of [`SWEEP_PAGE`] rows after `from` until
-    /// [`SWEEP_STEP`] rows are read or [`SWEEP_BUDGET_MS`] is spent, and for each page deletes the
+    /// One bounded step of the sweep: reads pages of about [`SWEEP_PAGE_BYTES`], at most
+    /// [`SWEEP_PAGE`] rows, after `from` until [`SWEEP_STEP`] rows are read or [`SWEEP_BUDGET_MS`] is spent, and for each page deletes the
     /// schedule rows stored without an id and the [`LEGACY`] rows, indexes the open rows an older release stored
     /// without one, and deletes each closed effect row, with its marker, unless it changed since the step read
     /// it. In an indexed store a row is open only if its index names it; before that, only a marker closes one.
     /// The step that exhausts the effects marks the store indexed; the markers left are then deleted, and the
-    /// step that exhausts them answers no cursor. A page whose write is refused for the deadline after an
-    /// earlier page committed ends the step with what committed. Every write is idempotent, so a step that
+    /// step that exhausts them answers no cursor. Each page and its lookups are read at the head current
+    /// when the page is asked. After an earlier page, an ended read or a write refused for the deadline
+    /// ends the step with what the finished pages did. Every write is idempotent, so a step that
     /// fails is run again from the same cursor.
     /// With `dry_run` it counts and writes nothing.
     pub fn journal_sweep_step(&self, from: Option<&SweepCursor>, dry_run: bool, actor: &str) -> Result<(Swept, Option<SweepCursor>)> {
@@ -399,9 +405,16 @@ impl<B: Backend> Store<B> {
         let mut out = Swept::default();
         let mut after = start_after;
         let mut read = 0;
+        let (mut ask, mut largest) = (SWEEP_FIRST_PAGE, 0);
         let exhausted = loop {
-            let page = contract.range_at(&keys::runtime_table(table), after.as_deref(), SWEEP_PAGE, head)?;
-            let exhausted = page.len() < SWEEP_PAGE;
+            // A read below the head costs the whole range's history, and each page's deletes move the head.
+            let head = contract.head()?;
+            let page = match contract.range_at(&keys::runtime_table(table), after.as_deref(), ask, head) {
+                Err(e) if read > 0 && is_read_ended(&e) => break false,
+                page => page?,
+            };
+            let exhausted = page.len() < ask;
+            largest = page.iter().map(|item| serde_json::to_vec(&item.value.data).map_or(0, |v| v.len())).fold(largest, usize::max);
             let mut ops: Vec<state_store::Op> = Vec::new();
             let mut closed: Vec<(Txn, bool)> = Vec::new();
             let mut counts = Swept::default();
@@ -418,7 +431,11 @@ impl<B: Backend> Store<B> {
                 SweepPhase::Legacy | SweepPhase::Resolved => Vec::new(),
             };
             let refs: Vec<&str> = looked_up.iter().map(String::as_str).collect();
-            let found = if refs.is_empty() { Vec::new() } else { contract.get_many_at(&refs, head)? };
+            let looked = if refs.is_empty() { Ok(Vec::new()) } else { contract.get_many_at(&refs, head) };
+            let found = match looked {
+                Err(e) if read > 0 && is_read_ended(&e) => break false,
+                found => found?,
+            };
             let mut fired = found.iter();
             for (n, item) in page.iter().enumerate() {
                 let v = &item.value.data;
@@ -462,6 +479,7 @@ impl<B: Backend> Store<B> {
                 }
             }
             read += page.len();
+            ask = (SWEEP_PAGE_BYTES / largest.max(1)).clamp(1, SWEEP_PAGE).min(SWEEP_STEP.saturating_sub(read));
             let last = page.last().map(|i| i.key.clone());
             let finishing = exhausted && phase == SweepPhase::Effect;
             if finishing {

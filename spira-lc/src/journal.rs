@@ -1138,7 +1138,7 @@ mod tests {
     #[test_id(ts8n1bx)]
     #[test]
     fn a_step_whose_later_write_is_refused_for_the_deadline_answers_the_pages_that_committed() {
-        use crate::control::journal::SWEEP_PAGE;
+        use crate::control::journal::{SWEEP_FIRST_PAGE, SWEEP_PAGE};
         let (s, raw, _clock, armed) = costed_store();
         let ev = |n: usize| crate::control::keys::runtime("event", &[&format!("e{n:05}")]);
         for n in 0..3 * SWEEP_PAGE {
@@ -1149,11 +1149,14 @@ mod tests {
         drop(state_store::phases::deadline_scoped(std::time::Instant::now()));
         assert_eq!(code, 0, "{out}");
         let v: Value = serde_json::from_str(&out).unwrap();
-        assert_eq!((v["legacy_deleted"].clone(), v["next"].clone()), (json!(SWEEP_PAGE), json!(format!("legacy:{}", ev(SWEEP_PAGE - 1)))), "{v}");
-        let (code, out) = call(&s, &["sweep", "--from", v["next"].as_str().unwrap()]);
-        assert_eq!(code, 0, "{out}");
-        let rest: Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(rest["legacy_deleted"], json!(2 * SWEEP_PAGE), "{rest}");
+        assert_eq!((v["legacy_deleted"].clone(), v["next"].clone()), (json!(SWEEP_FIRST_PAGE), json!(format!("legacy:{}", ev(SWEEP_FIRST_PAGE - 1)))), "{v}");
+        let (mut cursor, mut rest) = (v["next"].as_str().unwrap().to_string(), 0);
+        while cursor.starts_with("legacy:runtime/event/") {
+            let step = parsed(&s, &["sweep", "--from", &cursor]);
+            rest += step["legacy_deleted"].as_u64().unwrap() as usize;
+            cursor = step["next"].as_str().unwrap().to_string();
+        }
+        assert_eq!(rest, 3 * SWEEP_PAGE - SWEEP_FIRST_PAGE);
     }
 
     #[test_id(tdp2kc2)]
