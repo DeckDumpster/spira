@@ -165,6 +165,17 @@ mod published {
         }
     }
 
+    /// Refuses the first publish only.
+    struct RefusingOnce(Arc<Service>, std::sync::atomic::AtomicBool);
+
+    impl Transport for RefusingOnce {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, d: Duration) -> Result<Reply, String> {
+            let r = self.0.exchange(argv, stdin, d)?;
+            let first = argv[0] == "publish-readiness" && !self.1.swap(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(if first { Reply { code: 3, out: String::new(), err: "refused: no payload".into(), read_ended: false } } else { r })
+        }
+    }
+
     trait Pipe: Sized {
         fn pipe<T>(self, f: impl FnOnce(Self) -> T) -> T {
             f(self)
@@ -174,7 +185,7 @@ mod published {
 
     fn judged(control_store: bool, publish: bool) -> (Vec<Vec<String>>, Vec<verdicts::Entry>) {
         let svc = Arc::new(Service(Mutex::new(Vec::new())));
-        let st = Store { lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
+        let st = Store { lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None, readiness_alert: Default::default() };
         let mut stdin = std::io::empty();
         let none = |_: &str| None;
         let config = Config { control_store, run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), ..Config::default() };
@@ -246,7 +257,7 @@ mod published {
     }
 
     fn store_over(t: Arc<dyn Transport>) -> Store {
-        Store { lc: LcClient::over(t, true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None }
+        Store { lc: LcClient::over(t, true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None, readiness_alert: Default::default() }
     }
 
     fn judge_over(t: Arc<dyn Transport>) {
@@ -270,21 +281,111 @@ mod published {
         assert!(!seen.iter().any(|c| c[0] == "condition" && c[1] == "clear"));
     }
 
-    #[test_id(ti1sbs0)]
+    fn clears(seen: &[Vec<String>]) -> usize {
+        seen.iter().filter(|c| c[0] == "condition" && c[1] == "clear" && c[2] == store::READINESS_ALERT).count()
+    }
+
+    fn pass_over(st: &Store) {
+        let mut stdin = std::io::empty();
+        let none = |_: &str| None;
+        let config = Config { control_store: true, run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), ..Config::default() };
+        let env = Env { stdin: &mut stdin, config, lookup: &none };
+        judge_rows(&Args::parse(&[]).unwrap(), &env, st, None, true).unwrap();
+    }
+
+    #[test_id(t2bvwx6)]
     #[test]
-    fn an_accepted_readiness_publish_clears_the_alert() {
+    fn accepted_publishes_with_no_alert_raised_send_no_condition_clear() {
         let svc = Arc::new(Service(Mutex::new(Vec::new())));
-        judge_over(svc.clone());
+        let st = store_over(svc.clone());
+        pass_over(&st);
+        pass_over(&st);
         let seen = svc.0.lock().unwrap().clone();
-        assert!(seen.iter().any(|c| c[0] == "condition" && c[1] == "clear" && c[2] == store::READINESS_ALERT), "{seen:?}");
-        assert!(!seen.iter().any(|c| c[0] == "condition" && c[1] == "set"));
+        assert_eq!(seen.iter().filter(|c| c[0] == "publish-readiness").count(), 2);
+        assert_eq!(clears(&seen), 0, "{seen:?}");
+    }
+
+    #[test_id(tr63xb9)]
+    #[test]
+    fn a_refused_publish_followed_by_accepted_ones_clears_the_alert_once() {
+        let svc = Arc::new(Service(Mutex::new(Vec::new())));
+        let refusing = store_over(Arc::new(RefusingOnce(svc.clone(), std::sync::atomic::AtomicBool::new(false))));
+        pass_over(&refusing);
+        pass_over(&refusing);
+        pass_over(&refusing);
+        assert_eq!(clears(&svc.0.lock().unwrap()), 1);
+    }
+
+    #[test_id(ty0tfiu)]
+    #[test]
+    fn a_clear_the_store_does_not_take_is_sent_again_by_the_next_accepted_publish() {
+        struct ClearFails(Arc<Service>, std::sync::atomic::AtomicUsize);
+        impl Transport for ClearFails {
+            fn exchange(&self, argv: &[String], stdin: Option<&str>, d: Duration) -> Result<Reply, String> {
+                let r = self.0.exchange(argv, stdin, d)?;
+                let failed = argv[0] == "condition" && argv[1] == "clear" && self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0;
+                Ok(if failed { Reply { code: 2, out: String::new(), err: "cannot tell".into(), read_ended: false } } else { r })
+            }
+        }
+        let svc = Arc::new(Service(Mutex::new(Vec::new())));
+        let st = store_over(Arc::new(ClearFails(svc.clone(), Default::default())));
+        st.alert_readiness_refused("refused").unwrap();
+        pass_over(&st);
+        pass_over(&st);
+        pass_over(&st);
+        assert_eq!(clears(&svc.0.lock().unwrap()), 2);
+    }
+
+    /// A watched view of a store whose only condition is the readiness alert, at `status`.
+    fn watched_alert(status: &str) -> (Arc<store_view::Projection>, Arc<Service>) {
+        struct Held(Arc<Service>, String);
+        impl Transport for Held {
+            fn exchange(&self, argv: &[String], stdin: Option<&str>, d: Duration) -> Result<Reply, String> {
+                self.0.exchange(argv, stdin, d)?;
+                let out = match argv[0].as_str() {
+                    "rc" => r#"{"ok":{"items":[],"list_rev":3}}"#.to_string(),
+                    "condition" => format!(r#"{{"rev":3,"conditions":[{{"key":"{}","owner":"heimdall","status":"{}"}}]}}"#, store::READINESS_ALERT, self.1),
+                    _ => "[]".to_string(),
+                };
+                Ok(Reply { code: 0, out, err: String::new(), read_ended: false })
+            }
+        }
+        let svc = Arc::new(Service(Mutex::new(Vec::new())));
+        let client = LcClient::over(Arc::new(Held(svc.clone(), status.into())), true);
+        let view = Arc::new(store_view::Projection::new(client, Duration::from_secs(60), Arc::new(std::time::Instant::now)));
+        view.load().unwrap();
+        (view, svc)
+    }
+
+    #[test_id(tti704w)]
+    #[test]
+    fn an_alert_the_watched_view_shows_firing_is_cleared_by_a_process_that_did_not_raise_it() {
+        let (view, _held) = watched_alert("True");
+        let _watching = view.hold_watching();
+        let svc = Arc::new(Service(Mutex::new(Vec::new())));
+        let st = Store { views: Some(view.clone()), ..store_over(svc.clone()) };
+        st.settle_readiness_alert().unwrap();
+        assert_eq!(clears(&svc.0.lock().unwrap()), 1);
+    }
+
+    #[test_id(tr3b2as)]
+    #[test]
+    fn an_alert_the_watched_view_shows_cleared_is_not_cleared_again_and_is_read_once() {
+        let (view, held) = watched_alert("False");
+        let _watching = view.hold_watching();
+        let svc = Arc::new(Service(Mutex::new(Vec::new())));
+        let st = Store { views: Some(view.clone()), ..store_over(svc.clone()) };
+        st.settle_readiness_alert().unwrap();
+        st.settle_readiness_alert().unwrap();
+        assert!(svc.0.lock().unwrap().is_empty(), "{:?}", svc.0.lock().unwrap());
+        assert_eq!(held.0.lock().unwrap().iter().filter(|c| c[0] == "condition").count(), 1);
     }
 
     #[test_id(tyw5x3f)]
     #[test]
     fn republish_dependents_judges_and_publishes_only_the_records_that_wait_on_or_descend_from_the_changed() {
         let svc = Arc::new(Service(Mutex::new(Vec::new())));
-        let st = Store { lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
+        let st = Store { lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None, readiness_alert: Default::default() };
         let mut stdin = std::io::empty();
         let none = |_: &str| None;
         let config = Config { control_store: true, run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), ..Config::default() };
@@ -301,7 +402,7 @@ mod published {
     #[test]
     fn republish_dependents_judges_the_changed_record_itself_when_nothing_waits_on_it() {
         let svc = Arc::new(Service(Mutex::new(Vec::new())));
-        let st = Store { lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
+        let st = Store { lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None, readiness_alert: Default::default() };
         let mut stdin = std::io::empty();
         let none = |_: &str| None;
         let config = Config { control_store: true, run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), ..Config::default() };
@@ -379,7 +480,7 @@ mod claim_view_read {
 
     fn setup(view_code: i32) -> (Arc<Double>, Store) {
         let svc = Arc::new(Double { seen: Mutex::new(Vec::new()), view_code });
-        let st = Store { lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
+        let st = Store { lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None, readiness_alert: Default::default() };
         (svc, st)
     }
 
@@ -468,7 +569,7 @@ mod claim_view_read {
         let tree = run.join("worktree/sp-rw");
         std::fs::create_dir_all(&tree).unwrap();
         let mut holder = std::process::Command::new("sleep").arg("60").current_dir(&tree).spawn().unwrap();
-        let st = Store { lc: LcClient::over(Arc::new(ReworkAndFresh), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
+        let st = Store { lc: LcClient::over(Arc::new(ReworkAndFresh), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None, readiness_alert: Default::default() };
         let mut stdin = std::io::empty();
         let none = |_: &str| None;
         let config = Config { control_store: true, run: run.display().to_string(), queue_dir: "nonexistent/queue".into(), ..Config::default() };
@@ -678,7 +779,7 @@ mod skuld_waits {
     }
 
     fn store(blocker_state: &'static str) -> Store {
-        Store { lc: LcClient::over(Arc::new(Blocker(blocker_state)), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None }
+        Store { lc: LcClient::over(Arc::new(Blocker(blocker_state)), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None, readiness_alert: Default::default() }
     }
 
     fn judged(blocker_state: &'static str, config: Config) -> (Vec<String>, Vec<verdicts::Entry>) {
@@ -766,7 +867,7 @@ mod provisional_blocker {
 
     fn over(blocker_state: &'static str, blocker_reason: Option<&'static str>) -> Store {
         let svc = Arc::new(Rows { blocker_state, blocker_reason });
-        Store { lc: LcClient::over(svc, true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None }
+        Store { lc: LcClient::over(svc, true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None, readiness_alert: Default::default() }
     }
 
     fn env<R>(f: impl FnOnce(&mut Env) -> R) -> R {

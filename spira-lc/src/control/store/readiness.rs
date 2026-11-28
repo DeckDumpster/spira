@@ -33,6 +33,17 @@ pub struct Pass {
     pub judged_at_rev: Option<u64>,
 }
 
+/// Whether two readings differ only in when they were judged.
+fn same_judgement(a: &Readiness, b: &Readiness) -> bool {
+    let unstamped = |r: &Readiness| Readiness {
+        judged_at: None,
+        judged_at_planning_watermark: None,
+        judged_at_rev: 0,
+        ..r.clone()
+    };
+    unstamped(a) == unstamped(b)
+}
+
 impl<B: Backend> Store<B> {
     /// The READY and REWORK records the dispatcher's last pass judged claimable, each with that
     /// judgement, from one revision, and how many no pass has judged yet.
@@ -56,7 +67,8 @@ impl<B: Backend> Store<B> {
         Ok((claimable, unjudged))
     }
 
-    /// Publishes each judgement onto `readiness/<id>`. A record that does not exist gets none.
+    /// Publishes each judgement onto `readiness/<id>`. A record that does not exist gets none,
+    /// and one judged as it already reads is not written: its `judged_at*` stay the last write's.
     pub fn publish_readiness(&self, judged: &[Judged], pass: &Pass, req: &Request) -> Result<u64> {
         self.merge_readiness(
             judged,
@@ -91,8 +103,9 @@ impl<B: Backend> Store<B> {
         })
     }
 
-    /// Merges each item into its record's readiness, in chunks within the op limit. Each put
-    /// compares the readiness it merged into, and a chunk that lost a race is merged again.
+    /// Merges each item into its record's readiness, in chunks within the op limit, putting
+    /// only what the merge changed. Each put compares the readiness it merged into, and a chunk
+    /// that lost a race is merged again.
     pub(super) fn merge_readiness<T>(
         &self,
         items: &[T],
@@ -128,19 +141,17 @@ impl<B: Backend> Store<B> {
                 }
                 let key = keys::readiness(id);
                 let prior = self.read::<Readiness>(&key, Some(head))?;
-                t = t.when(Compare::ModRev(
-                    key.clone(),
-                    prior.as_ref().map(|(r, _)| r.mod_rev),
-                ));
-                let (mut r, value) = match prior {
-                    Some((r, item)) => (r.value, item.value),
-                    None => (
-                        Readiness::default(),
-                        Object::default().with_owners(&[owner.as_str()]),
-                    ),
+                let unread = Compare::ModRev(key.clone(), prior.as_ref().map(|(r, _)| r.mod_rev));
+                let (prior, value) = match prior {
+                    Some((r, item)) => (Some(r.value), item.value),
+                    None => (None, Object::default().with_owners(&[owner.as_str()])),
                 };
+                let mut r = prior.clone().unwrap_or_default();
                 merge(&mut r, item, head);
-                t = t.put(
+                if prior.is_some_and(|p| same_judgement(&p, &r)) {
+                    continue;
+                }
+                t = t.when(unread).put(
                     &key,
                     Object {
                         data: encode(&r)?,

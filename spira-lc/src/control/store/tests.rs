@@ -118,6 +118,90 @@ fn a_readiness_pass_between_a_read_and_a_claim_does_not_conflict_the_claim() {
     assert_eq!(r.judged_at.as_deref(), Some("2026-10-31T12:00:00Z"));
 }
 
+fn publish_at(s: &Store<MemBackend>, judged: &[Judged], at: &str, request: &str) -> u64 {
+    let pass = Pass { judged_at: at.into(), planning_watermark: Some(at.into()), ..Default::default() };
+    s.publish_readiness(judged, &pass, &req(request)).unwrap()
+}
+
+fn two_judged(s: &Store<MemBackend>) -> Vec<Judged> {
+    ["sp-a", "sp-b"]
+        .map(|id| {
+            created(s, id);
+            Judged { id: id.into(), claimable: true, ..Default::default() }
+        })
+        .into()
+}
+
+fn readiness_mod_revs(s: &Store<MemBackend>) -> Vec<u64> {
+    ["sp-a", "sp-b"].map(|id| s.readiness(id).unwrap().unwrap().mod_rev.main).into()
+}
+
+#[test_id(tp61hwe)]
+#[test]
+fn a_pass_that_changes_no_judgement_leaves_the_head_and_every_readiness_key_alone() {
+    let (s, _, _) = fresh();
+    let judged = two_judged(&s);
+    publish_at(&s, &judged, "2026-10-31T12:00:00Z", "pass-1");
+    let (head, keys) = (s.contract().head().unwrap(), readiness_mod_revs(&s));
+    let rev = publish_at(&s, &judged, "2026-10-31T12:00:09Z", "pass-2");
+    assert_eq!((rev, s.contract().head().unwrap()), (head, head));
+    assert_eq!(readiness_mod_revs(&s), keys);
+}
+
+#[test_id(t97denn)]
+#[test]
+fn a_pass_puts_exactly_the_record_whose_claim_fields_changed() {
+    let gate = spira_config::edges::gate(BeadState::Working, None, false);
+    let changes: [(&str, Box<dyn Fn(&mut Judged)>); 4] = [
+        ("claimable", Box::new(|j| j.claimable = false)),
+        ("blocked_by", Box::new(|j| j.blocked_by = vec!["sp-z".into()])),
+        ("verdict", Box::new(|j| j.verdict = Some("held".into()))),
+        ("gates", Box::new(move |j| j.gates = [("sp-z".to_string(), Some(gate.clone()))].into())),
+    ];
+    for (field, change) in changes {
+        let (s, _, _) = fresh();
+        let mut judged = two_judged(&s);
+        publish_at(&s, &judged, "2026-10-31T12:00:00Z", "pass-1");
+        let before = readiness_mod_revs(&s);
+        change(&mut judged[1]);
+        let rev = publish_at(&s, &judged, "2026-10-31T12:00:09Z", "pass-2");
+        assert_eq!(readiness_mod_revs(&s), vec![before[0], rev], "{field}");
+        let put = s.readiness("sp-b").unwrap().unwrap().value;
+        assert_eq!(put.judged_at.as_deref(), Some("2026-10-31T12:00:09Z"), "{field}");
+    }
+}
+
+#[test_id(tmjrgus)]
+#[test]
+fn the_first_claim_judgement_of_a_record_is_written_even_when_it_matches_the_defaults() {
+    let (s, _, _) = fresh();
+    created(&s, "sp-a");
+    let judged = [Judged { id: "sp-a".into(), ..Default::default() }];
+    publish_at(&s, &judged, "2026-10-31T12:00:00Z", "pass-1");
+    assert!(s.readiness("sp-a").unwrap().unwrap().value.judged_for_claim);
+}
+
+#[test_id(tjo77m8)]
+#[test]
+fn a_claim_on_a_judgement_an_earlier_pass_wrote_applies_and_records_that_writes_rev() {
+    let (s, _, _) = fresh();
+    created(&s, "sp-a");
+    let gates = [("sp-gone".to_string(), None)].into();
+    let judged = [Judged { id: "sp-a".into(), claimable: true, gates, ..Default::default() }];
+    publish_at(&s, &judged, "2026-10-31T12:00:00Z", "pass-1");
+    let written_at = s.readiness("sp-a").unwrap().unwrap().value.judged_at_rev;
+    created(&s, "sp-b");
+    publish_at(&s, &judged, "2026-10-31T12:00:09Z", "pass-2");
+    let (out, _) = s
+        .claim("sp-a", &ev(BeadState::Ready, 0, claim("dwarf-1", 160), "dwarf-1", 100), &req("claim-1"))
+        .unwrap();
+    let Outcome::Applied { rev, .. } = out else {
+        panic!("{out:?}")
+    };
+    let (_, audits) = audits_at(&s, rev);
+    assert_eq!(audits[0].evidence["Claim"]["judged"]["judged_at_rev"], written_at);
+}
+
 #[test_id(tc1w5hb)]
 #[test]
 fn a_transition_is_one_txn_on_the_records_mod_rev_audited_in_its_events_key() {
