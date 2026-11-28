@@ -68,6 +68,15 @@ acknowledged every filter; a retained message delivered between acknowledgements
 `recv()`, which hands back the next message. `Broker::retained(filter)`
 returns each retained `(topic, payload)` a new subscriber would be handed.
 
+`testkit::bin_exe(name)` returns the built binary beside the test executable. It builds and
+runs nothing. It panics when the binary is undeclared, not built, or older than what builds it:
+`cargo test -p <crate>` does not rebuild another crate's binary, and a stale one fails a test
+later with a wrong cause. The inputs are `Cargo.toml` and `src/**` of the crate that builds the
+binary and of its non-dev `path =` dependencies. Where cargo's `<name>.d` beside the binary
+lists any of them, only the listed ones count: cargo does not relink for a file it left out
+(a `cfg(test)` module, a manifest edit), so no rebuild could clear such a refusal. The verdict
+is computed once per binary per process.
+
 **The rule that holds every crate to it:** spira-lint's `tmp-leak` refuses a call to
 `temp_dir()` in test code anywhere outside testkit (see spira-lint/DESIGN.md). Test code
 that wants scratch space takes a `TempDir`; there is no second helper to forget to clean.

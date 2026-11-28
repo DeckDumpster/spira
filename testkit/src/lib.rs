@@ -5,13 +5,16 @@
 extern crate spira_test_id;
 pub mod broker;
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::io::Write;
 use std::ops::Deref;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+use std::time::SystemTime;
 
 /// A fresh scratch directory under the system temp dir, removed with everything under it
 /// when dropped — including when a failing test unwinds. The only way test code in this
@@ -322,25 +325,38 @@ fn bin_beside(test_exe: &Path, name: &str) -> PathBuf {
 /// and nextest differ on it, and there is one way to find the binary.
 ///
 /// A binary that is neither the crate's own nor in its `[package.metadata.spira] test-bins` is refused,
-/// because nothing builds it for the test.
+/// because nothing builds it for the test, and so is one older than the sources it is built from.
 pub fn bin_exe(name: &str) -> PathBuf {
     let dir = manifest_dir();
     if let Err(why) = declared_bin(&dir, name) {
         panic!("{why}");
     }
-    built_beside(&std::env::current_exe().expect("current_exe"), name)
+    built_beside(&dir, &std::env::current_exe().expect("current_exe"), name)
+}
+
+fn read_manifest(dir: &Path, name: &str) -> Result<toml::Value, String> {
+    let manifest = dir.join("Cargo.toml");
+    let text = std::fs::read_to_string(&manifest).map_err(|e| format!("binary {name}: cannot read {}: {e}", manifest.display()))?;
+    text.parse().map_err(|e| format!("binary {name}: {} is not TOML: {e}", manifest.display()))
+}
+
+fn package_name(doc: &toml::Value) -> Option<&str> {
+    doc.get("package").and_then(|p| p.get("name")).and_then(|n| n.as_str())
+}
+
+/// Whether the crate at `dir` has a `[[bin]]` or `src/bin` target called `name`.
+fn names_bin_target(dir: &Path, doc: &toml::Value, name: &str) -> bool {
+    doc.get("bin").and_then(|b| b.as_array()).is_some_and(|b| b.iter().any(|b| b.get("name").and_then(|n| n.as_str()) == Some(name)))
+        || std::fs::read_dir(dir.join("src/bin")).into_iter().flatten().flatten().any(|e| {
+            let p = e.path();
+            p.file_stem().and_then(|s| s.to_str()) == Some(name) && (p.is_dir() || p.extension().is_some_and(|x| x == "rs"))
+        })
 }
 
 fn declared_bin(manifest_dir: &Path, name: &str) -> Result<(), String> {
     let manifest = manifest_dir.join("Cargo.toml");
-    let text = std::fs::read_to_string(&manifest).map_err(|e| format!("binary {name}: cannot read {}: {e}", manifest.display()))?;
-    let doc: toml::Value = text.parse().map_err(|e| format!("binary {name}: {} is not TOML: {e}", manifest.display()))?;
-    let own = doc.get("package").and_then(|p| p.get("name")).and_then(|n| n.as_str()) == Some(name)
-        || doc.get("bin").and_then(|b| b.as_array()).is_some_and(|b| b.iter().any(|b| b.get("name").and_then(|n| n.as_str()) == Some(name)))
-        || std::fs::read_dir(manifest_dir.join("src/bin")).into_iter().flatten().flatten().any(|e| {
-            let p = e.path();
-            p.file_stem().and_then(|s| s.to_str()) == Some(name) && (p.is_dir() || p.extension().is_some_and(|x| x == "rs"))
-        });
+    let doc = read_manifest(manifest_dir, name)?;
+    let own = package_name(&doc) == Some(name) || names_bin_target(manifest_dir, &doc, name);
     let declared = doc
         .get("package")
         .and_then(|p| p.get("metadata"))
@@ -358,14 +374,158 @@ fn declared_bin(manifest_dir: &Path, name: &str) -> Result<(), String> {
     }
 }
 
-fn built_beside(test_exe: &Path, name: &str) -> PathBuf {
+fn built_beside(manifest_dir: &Path, test_exe: &Path, name: &str) -> PathBuf {
     let bin = bin_beside(test_exe, name);
     assert!(
         bin.is_file(),
         "binary {name} is not built at {}: build it with cargo before running this test",
         bin.display()
     );
+    if let Some(why) = staleness(manifest_dir, &bin, name) {
+        let test = std::thread::current().name().unwrap_or("<test name>").to_string();
+        panic!("{why}, or run the test through `testenv --tests {test}`");
+    }
     bin
+}
+
+/// [`stale_why`], judged once per binary per process.
+fn staleness(manifest_dir: &Path, bin: &Path, name: &str) -> Option<String> {
+    static SEEN: Mutex<BTreeMap<PathBuf, Option<String>>> = Mutex::new(BTreeMap::new());
+    let seen = || SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(verdict) = seen().get(bin) {
+        return verdict.clone();
+    }
+    let verdict = stale_why(manifest_dir, bin, name);
+    seen().insert(bin.to_path_buf(), verdict.clone());
+    verdict
+}
+
+/// Why `bin` is older than what it is built from; None when it is not, or when no workspace
+/// member builds it. Reads file metadata only.
+fn stale_why(manifest_dir: &Path, bin: &Path, name: &str) -> Option<String> {
+    let (package, dir) = building_member(manifest_dir, name)?;
+    let built = modified(bin)?;
+    let mut files = build_inputs(&dir, name);
+    // cargo does not relink for a file it left out of the binary (a cfg(test) module, a manifest
+    // edit), so where its dep-info describes this tree, only the files listed there can be stale:
+    // otherwise the rebuild this refusal names would never clear it.
+    if let Ok(text) = std::fs::read_to_string(bin.with_extension("d")) {
+        let compiled = dep_info_inputs(&text);
+        if files.iter().any(|f| compiled.contains(f)) {
+            files.retain(|f| compiled.contains(f));
+        }
+    }
+    let (changed, file) = files.into_iter().filter_map(|f| Some((modified(&f)?, f))).max()?;
+    (changed > built).then(|| {
+        format!(
+            "binary {name} at {} was built {} and {} changed after it ({}): rebuild it with `cargo build -p {package} --bins`",
+            bin.display(),
+            utc(built),
+            file.display(),
+            utc(changed)
+        )
+    })
+}
+
+fn modified(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// The package name and directory of the workspace member that builds the binary `name`.
+fn building_member(manifest_dir: &Path, name: &str) -> Option<(String, PathBuf)> {
+    let (root, members) = manifest_dir.ancestors().find_map(|dir| {
+        let doc = read_manifest(dir, name).ok()?;
+        let members = doc.get("workspace")?.get("members")?.as_array()?.clone();
+        Some((dir.to_path_buf(), members))
+    })?;
+    let crates: Vec<(PathBuf, toml::Value)> = members
+        .iter()
+        .filter_map(|m| m.as_str())
+        .filter_map(|m| {
+            let dir = root.join(m);
+            let doc = read_manifest(&dir, name).ok()?;
+            Some((dir, doc))
+        })
+        .collect();
+    // A bin target outranks a package of the same name, which may build no binary.
+    crates
+        .iter()
+        .find(|(dir, doc)| names_bin_target(dir, doc, name))
+        .or_else(|| crates.iter().find(|(dir, doc)| package_name(doc) == Some(name) && dir.join("src/main.rs").is_file()))
+        .and_then(|(dir, doc)| Some((package_name(doc)?.to_string(), dir.clone())))
+}
+
+/// `Cargo.toml` and `src/**` of the crate at `dir` and of every crate it reaches through
+/// non-dev `path =` dependencies.
+fn build_inputs(dir: &Path, name: &str) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut crates = vec![dir.to_path_buf()];
+    while let Some(dir) = crates.pop() {
+        if !seen.insert(dir.clone()) {
+            continue;
+        }
+        let Ok(doc) = read_manifest(&dir, name) else { continue };
+        files.push(dir.join("Cargo.toml"));
+        files_under(&dir.join("src"), &mut files);
+        let targets = doc.get("target").and_then(|t| t.as_table()).into_iter().flat_map(|t| t.values());
+        for scope in std::iter::once(&doc).chain(targets) {
+            for kind in ["dependencies", "build-dependencies"] {
+                let deps = scope.get(kind).and_then(|d| d.as_table()).into_iter().flat_map(|d| d.values());
+                crates.extend(deps.filter_map(|d| d.get("path")?.as_str()).map(|p| normal(&dir.join(p))));
+            }
+        }
+    }
+    files
+}
+
+fn files_under(dir: &Path, into: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        match entry.file_type() {
+            Ok(t) if t.is_dir() => files_under(&entry.path(), into),
+            Ok(_) => into.push(entry.path()),
+            Err(_) => {}
+        }
+    }
+}
+
+/// `path` with `.` and `..` resolved by name, as cargo writes paths in dep-info.
+fn normal(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// The inputs of a `<target>: <input> <input>` dep-info file; a space in a path is `\ `.
+fn dep_info_inputs(text: &str) -> BTreeSet<PathBuf> {
+    let inputs = text.lines().filter_map(|l| l.split_once(": ")).map(|(_, inputs)| inputs.replace("\\ ", "\0"));
+    inputs
+        .flat_map(|l| l.split_whitespace().map(|p| PathBuf::from(p.replace('\0', " "))).collect::<Vec<_>>())
+        .collect()
+}
+
+fn utc(at: SystemTime) -> String {
+    let secs = at.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) as libc::time_t;
+    // SAFETY: gmtime_r writes only the zeroed tm it is handed.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { libc::gmtime_r(&secs, &mut tm) };
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec
+    )
 }
 
 #[cfg(test)]
@@ -497,7 +657,108 @@ mod tests {
         let t = TempDir::new("testkit-bin");
         std::fs::create_dir_all(t.join("debug/deps")).unwrap();
         std::fs::write(t.join("debug/a"), b"").unwrap();
-        assert_eq!(built_beside(&t.join("debug/deps/x-1"), "a"), t.join("debug/a"));
+        assert_eq!(built_beside(&t, &t.join("debug/deps/x-1"), "a"), t.join("debug/a"));
+    }
+
+    fn age(path: &Path, secs: u64) {
+        let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+        std::fs::File::options().write(true).open(path).unwrap().set_modified(at).unwrap();
+    }
+
+    /// A workspace whose `tool` binary (package `me`) links the path dependency `dep`, with every
+    /// source at time 100 and the binary built at 200.
+    fn built_workspace() -> TempDir {
+        let t = crate_with("[workspace]\nmembers = [\"me\", \"dep\", \"dev\"]\n", &[]);
+        let me = "[package]\nname = \"me\"\n[[bin]]\nname = \"tool\"\npath = \"src/main.rs\"\n\
+                  [dependencies]\ndep = { path = \"../dep\" }\n[dev-dependencies]\ndev = { path = \"../dev\" }\n";
+        for (rel, body) in [
+            ("me/Cargo.toml", me),
+            ("me/src/main.rs", ""),
+            ("me/src/deep/tests.rs", ""),
+            ("dep/Cargo.toml", "[package]\nname = \"dep\"\n"),
+            ("dep/src/lib.rs", ""),
+            ("dev/Cargo.toml", "[package]\nname = \"dev\"\n"),
+            ("dev/src/lib.rs", ""),
+            ("target/debug/tool", ""),
+        ] {
+            let p = t.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, body).unwrap();
+            age(&p, if rel.starts_with("target") { 200 } else { 100 });
+        }
+        t
+    }
+
+    fn built_tool(t: &Path) -> PathBuf {
+        built_beside(&t.join("me"), &t.join("target/debug/deps/x-1"), "tool")
+    }
+
+    fn refusal(t: &Path) -> String {
+        let why = std::panic::catch_unwind(|| built_tool(t)).expect_err("a stale binary is refused");
+        why.downcast_ref::<String>().expect("a formatted panic").clone()
+    }
+
+    fn assert_stale(changed: &str) {
+        let t = built_workspace();
+        age(&t.join(changed), 300);
+        let why = refusal(&t);
+        for needle in [
+            "binary tool at ".to_string(),
+            t.join("target/debug/tool").display().to_string(),
+            "was built 1970-01-01T00:03:20Z".to_string(),
+            format!("{} changed after it (1970-01-01T00:05:00Z)", t.join(changed).display()),
+            "`cargo build -p me --bins`".to_string(),
+            "`testenv --tests ".to_string(),
+        ] {
+            assert!(why.contains(&needle), "{needle:?} missing from {why}");
+        }
+    }
+
+    #[test_id(t0a25gt)]
+    #[test]
+    fn a_binary_older_than_its_own_source_is_refused_naming_the_rebuild() {
+        assert_stale("me/src/deep/tests.rs");
+    }
+
+    #[test_id(tiddxlb)]
+    #[test]
+    fn a_binary_older_than_a_path_dependencys_source_is_refused() {
+        assert_stale("dep/src/lib.rs");
+    }
+
+    #[test_id(tjxl71t)]
+    #[test]
+    fn a_binary_older_than_a_manifest_is_refused_when_cargo_left_no_dep_info() {
+        assert_stale("dep/Cargo.toml");
+    }
+
+    #[test_id(t8qwhgj)]
+    #[test]
+    fn a_binary_newer_than_every_file_that_builds_it_is_returned() {
+        let t = built_workspace();
+        age(&t.join("dev/src/lib.rs"), 300);
+        assert_eq!(built_tool(&t), t.join("target/debug/tool"));
+    }
+
+    #[test_id(tedffl1)]
+    #[test]
+    fn dep_info_clears_a_newer_file_cargo_did_not_compile_into_the_binary() {
+        let t = built_workspace();
+        let dep_info = format!("{0}/target/debug/tool: {0}/me/src/main.rs {0}/dep/src/lib.rs\n", t.display());
+        std::fs::write(t.join("target/debug/tool.d"), dep_info).unwrap();
+        age(&t.join("me/src/deep/tests.rs"), 300);
+        age(&t.join("me/Cargo.toml"), 300);
+        assert_eq!(built_tool(&t), t.join("target/debug/tool"));
+    }
+
+    #[test_id(tswip0m)]
+    #[test]
+    fn dep_info_keeps_a_newer_compiled_source_refused() {
+        let t = built_workspace();
+        let dep_info = format!("{0}/target/debug/tool: {0}/me/src/main.rs {0}/dep/src/lib.rs\n", t.display());
+        std::fs::write(t.join("target/debug/tool.d"), dep_info).unwrap();
+        age(&t.join("dep/src/lib.rs"), 300);
+        assert!(refusal(&t).contains("dep/src/lib.rs"));
     }
 
     #[test_id(t3uc07s)]
