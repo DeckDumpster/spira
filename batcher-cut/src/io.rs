@@ -20,6 +20,7 @@ use std::time::Duration;
 use crate::pace::{CutError, CutKind};
 use batcher::core::{Member, MergeResult};
 use lifecycle::bead::{certifies_nothing, BeadState};
+use spira_config::round_reads;
 
 /// Where a repo's landed branch goes — `repo_land`'s `queue`/`queue.forge` alias normalizes
 /// to `Forge`; `queue.local` is `Local`. Carried on `Repo` so a caller never has to re-derive
@@ -2157,13 +2158,12 @@ pub fn deleted_suites(repo: &Repo, member_tip: &str, base_sha: &str) -> Vec<Stri
 }
 
 const CONF_REGISTRY: &str = "spira/conf.d/";
-const FIXTURE_CONFIG: &str = "spira/testlib/complete.toml";
 
 fn fixture_keys(text: &str) -> std::collections::BTreeSet<String> {
     let doc = match text.parse::<toml::Table>() {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("batcher: {FIXTURE_CONFIG} does not parse, its keys are not compared: {}", e.message());
+            eprintln!("batcher: {} does not parse, its keys are not compared: {}", round_reads::FIXTURE, e.message());
             return Default::default();
         }
     };
@@ -2189,7 +2189,7 @@ pub fn config_key_changes(repo: &Repo, base_sha: &str, tip: &str) -> (Vec<String
         }
     }
     let fork = git(&["merge-base", base_sha, tip]).map(|m| m.trim().to_string()).unwrap_or_else(|_| base_sha.to_string());
-    let show = |rev: &str| fixture_keys(&say(git(&["show", &format!("{rev}:{FIXTURE_CONFIG}")])));
+    let show = |rev: &str| fixture_keys(&say(git(&["show", &format!("{rev}:{}", round_reads::FIXTURE)])));
     let (before, after) = (show(&fork), show(tip));
     added.extend(after.difference(&before).cloned());
     retired.extend(before.difference(&after).cloned());
@@ -3340,12 +3340,12 @@ pub fn integration_fix(
         }
     }
 
-    if wt.join("spira/plan-matrix.sh").is_file() {
+    if wt.join(round_reads::PLAN_MATRIX).is_file() {
         // batch-job: runs a gate, build or forge script that takes as long as its work
         // FORK-EDGE: the round tree's own plan-matrix.sh (that tree's version, not the release's)
         run(
             Command::new("bash")
-                .arg(wt.join("spira/plan-matrix.sh"))
+                .arg(wt.join(round_reads::PLAN_MATRIX))
                 .current_dir(wt),
             "plan-matrix.sh",
         )?;

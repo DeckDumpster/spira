@@ -84,6 +84,7 @@ pub mod results_retention;
 pub mod rebase_check;
 pub mod recipe;
 pub mod round_ended;
+pub mod round_reads;
 pub mod rename;
 pub mod registry;
 pub mod release_env;

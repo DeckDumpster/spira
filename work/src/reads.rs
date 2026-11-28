@@ -1,17 +1,24 @@
 //! The submit fence for a removal the active release still reads: the round that judges a branch
 //! is run by that release, so what it reads leaves the tree only after a release stops reading it.
 
-use spira_config::recipe;
+use spira_config::{recipe, round_reads};
 use std::path::Path;
 
 /// The tree paths this binary's release declares it reads; `work` ships with that release.
-pub const DECLARED: [&str; 9] = union();
+pub const DECLARED: [&str; 14] = union();
 
 const fn union<const N: usize>() -> [&'static str; N] {
     let mut out = [""; N];
     let (mut len, mut i) = (0, 0);
-    while i < recipe::PATHS.len() + recipe::TAG_INPUTS.len() {
-        let path = if i < recipe::PATHS.len() { recipe::PATHS[i] } else { recipe::TAG_INPUTS[i - recipe::PATHS.len()] };
+    let tagged = recipe::PATHS.len() + recipe::TAG_INPUTS.len();
+    while i < tagged + round_reads::TREE_READS.len() {
+        let path = if i < recipe::PATHS.len() {
+            recipe::PATHS[i]
+        } else if i < tagged {
+            recipe::TAG_INPUTS[i - recipe::PATHS.len()]
+        } else {
+            round_reads::TREE_READS[i - tagged]
+        };
         let (mut j, mut seen) = (0, false);
         while j < len {
             seen |= same(out[j].as_bytes(), path.as_bytes());
@@ -116,10 +123,23 @@ mod tests {
 
     #[test_id(tnhzy59)]
     #[test]
-    fn declared_is_exactly_the_recipe_and_tag_inputs_once_each() {
-        let want: std::collections::BTreeSet<&str> = recipe::PATHS.iter().chain(&recipe::TAG_INPUTS).copied().collect();
+    fn declared_is_exactly_the_recipe_tag_inputs_and_round_tree_reads_once_each() {
+        let want: std::collections::BTreeSet<&str> = recipe::PATHS.iter().chain(&recipe::TAG_INPUTS).chain(&round_reads::TREE_READS).copied().collect();
         let got: std::collections::BTreeSet<&str> = DECLARED.iter().copied().collect();
         assert_eq!(got, want);
         assert_eq!(DECLARED.len(), want.len(), "a path is listed twice");
+    }
+
+    #[test_id(tvxiu89)]
+    #[test]
+    fn deleting_a_file_the_round_opens_by_name_is_refused_naming_each() {
+        let e = refusal(deleted("spira/coverage-round.sh\ntools/test-sandbox/runner\n"), &DECLARED, "abc").unwrap_err();
+        assert!(e.contains("spira/coverage-round.sh") && e.contains("tools/test-sandbox/runner"), "{e}");
+    }
+
+    #[test_id(t436qf7)]
+    #[test]
+    fn deleting_a_suite_passes_because_the_corpus_is_read_from_the_branch() {
+        assert_eq!(refusal(deleted("spira/test-foo.sh\n"), &DECLARED, "abc"), Ok(()));
     }
 }

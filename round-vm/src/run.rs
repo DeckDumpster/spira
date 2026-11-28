@@ -12,6 +12,7 @@ use std::process::Stdio;
 use std::time::Instant;
 
 use serde_json::Value;
+use spira_config::round_reads;
 
 use crate::config::{Config, PveEnv};
 use crate::template::Record;
@@ -3737,7 +3738,7 @@ fn record_coverage(args: &RunArgs, state_dir: &Path, results_dir: &Path, round: 
     if !green {
         return;
     }
-    let script = args.tree_dir.join("spira").join("coverage-round.sh");
+    let script = args.tree_dir.join(round_reads::COVERAGE_ROUND);
     let out = command("bash")
         .arg(&script)
         .arg(&args.tree_dir)
@@ -4687,6 +4688,19 @@ mod tests {
     fn a_config_delta_that_does_not_apply_ends_the_pass_red_not_as_a_harness_fault() {
         let stage = REMOTE_SCRIPT.lines().find(|l| l.contains("release config-stage")).expect("the stage line");
         assert!(stage.contains("CONFIG-DELTA: RED") && stage.ends_with("exit 4; }"), "{stage}");
+    }
+
+    #[test_id(tn0yq5e)]
+    #[test]
+    fn the_remote_script_names_the_tree_files_declared_in_round_reads() {
+        let commands: String = REMOTE_SCRIPT.lines().filter(|l| !l.trim_start().starts_with('#')).map(|l| format!("{l}\n")).collect();
+        for used in [
+            format!("bash {}", round_reads::CONF_GEN),
+            format!("$HOME/round-work/{}:", round_reads::FIXTURE),
+            format!("{} --around cargo", round_reads::SANDBOX_RUNNER),
+        ] {
+            assert!(commands.contains(&used), "no REMOTE_SCRIPT command contains `{used}`, a path round_reads declares");
+        }
     }
 
     #[test_id(t8bs28x)]
