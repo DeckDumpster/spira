@@ -57,16 +57,18 @@ back by the batch is not).
 
 `drain_spool` is the one drain: the CLI, `persona.ops` and the `incident.drain` task (every
 `SPIRA_RUNTIME_INCIDENT_DRAIN_SECS`) all call it. It groups entries by bounded reference, oldest
-group first, and files each of the first `SPIRA_INCIDENT_DRAIN_BATCH` groups once, from its newest
+group first, and files at most `SPIRA_INCIDENT_DRAIN_BATCH` groups, each once, from its newest
 event, whose body then opens with the group's count and stamp range. That filing settles the whole
 group: an outage's backlog is one item per cause, not a recurrence per event. A failed group keeps
-every entry. Every filer looks for the entry, files it and removes what the filing settles under
-one hold of the incident lock, so concurrent drains file it once. Entries are renamed into place
-(`spool::write_entry`), so a drain never reads a half-written one; a partial older than five
-minutes lost its writer and is drained as it stands. A scheduler halt holds the task's drain, a
-store write, until the resume. The task notes an entry stuck for more than two cadences as
-`incident:spool-stuck` through `alarm::note`: one inbox line a day, with no store needed. A
-lane-refused entry stays by design and so is such a condition.
+every entry and uses one of the batch's slots, except a lane-refused reference, which uses no
+slot. The store is asked about a lane-refused destination (the repo and lane `decide::route`
+names, not the declared repo) once per pass; later groups bound there are reported stuck with the same reason, uncalled. Every filer looks for the entry, files
+it and removes what the filing settles under one hold of the incident lock, so concurrent drains
+file it once. Entries are renamed into place (`spool::write_entry`), so a drain never reads a
+half-written one; a partial older than five minutes lost its writer and is drained as it stands. A
+scheduler halt holds the task's drain, a store write, until the resume. The task notes an entry
+stuck for more than two cadences as `incident:spool-stuck` through `alarm::note`: one inbox line a
+day, with no store needed. A lane-refused entry stays by design and so is such a condition.
 
 ## Retired (rule one: retire rather than port)
 

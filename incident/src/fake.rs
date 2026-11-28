@@ -24,6 +24,8 @@ pub(crate) struct FakeBd {
     pub(crate) fact_fails: bool,
     /// `bd create` refuses with this text.
     pub(crate) create_error: Option<String>,
+    /// `bd create` calls made, refused ones included.
+    pub(crate) creates: RefCell<usize>,
     /// Repo-map text: when set, `create` applies the filing door's repo, build-spec and lane refusals.
     pub(crate) admits: Option<String>,
     pub(crate) created: RefCell<Vec<(String, String)>>,
@@ -80,6 +82,7 @@ impl Bd for FakeBd {
             .collect())
     }
     fn create(&self, _db: &str, title: &str, _kind: &str, _priority: &str, labels: &str, external_ref: &str, _body: &str, _actor: Option<&str>) -> Result<String, String> {
+        *self.creates.borrow_mut() += 1;
         if let Some(e) = &self.create_error {
             return Err(e.clone());
         }

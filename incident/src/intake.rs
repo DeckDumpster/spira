@@ -338,7 +338,7 @@ pub fn with_incident_lock<R>(lock_path: &std::path::Path, wait_s: u64, f: impl F
 
 /// `Err` is why the entry stays spooled.
 pub fn drain_one(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, path: &std::path::Path) -> Result<Option<String>, String> {
-    match drain_entry(env, bd, mailer, clock, path, &[], None)? {
+    match drain_entry(env, bd, mailer, clock, path, &[], None).map_err(Unsettled::into_reason)? {
         Settled::Here(id) => Ok(id),
         Settled::Elsewhere => Ok(None),
     }
@@ -351,12 +351,27 @@ enum Settled {
     Elsewhere,
 }
 
+/// Why an entry stays spooled.
+enum Unsettled {
+    /// The destination does not admit the lane, so every filing sent there would be refused.
+    LaneRefused(String),
+    Other(String),
+}
+
+impl Unsettled {
+    fn into_reason(self) -> String {
+        match self {
+            Unsettled::LaneRefused(why) | Unsettled::Other(why) => why,
+        }
+    }
+}
+
 /// `drain_one`, with `preface` opening the filed body and `also` the entries the same filing settles.
-fn drain_entry(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, path: &std::path::Path, also: &[std::path::PathBuf], preface: Option<&str>) -> Result<Settled, String> {
+fn drain_entry(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, path: &std::path::Path, also: &[std::path::PathBuf], preface: Option<&str>) -> Result<Settled, Unsettled> {
     let raw = match std::fs::read(path) {
         Ok(raw) => raw,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Settled::Elsewhere),
-        Err(e) => return Err(format!("{}: {e}", path.display())),
+        Err(e) => return Err(Unsettled::Other(format!("{}: {e}", path.display()))),
     };
     let Some(mut entry) = spool::parse_entry(&raw) else {
         ilog(env, &format!("spool entry with no REF: {} — moved aside", path.display()));
@@ -405,7 +420,7 @@ fn drain_entry(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, p
         let held = format!("another intake held {} for {}s — {} stays spooled, drain will retry", env.lock_path.display(), env.lock_wait_s, entry.reference);
         ilog(env, &held);
         record_attempt(env, "incident-file", "incident", &entry.reference, tsd::alarm::Outcome::Failed { reason: "another intake held the lock; the event stays spooled".into() }, Some(note_of(&entry.title, &entry.body)));
-        return Err(held);
+        return Err(Unsettled::Other(held));
     };
     let Some(outcome) = outcome else { return Ok(Settled::Elsewhere) };
     for l in &log {
@@ -424,8 +439,8 @@ fn drain_entry(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, p
     match outcome {
         FileOutcome::Filed(id) => Ok(Settled::Here(Some(id))),
         FileOutcome::Skew => Ok(Settled::Here(None)),
-        FileOutcome::Unread(_) | FileOutcome::Refused => Err(log.pop().unwrap_or_else(|| format!("{} was not filed", entry.reference))),
-        FileOutcome::LaneRefused(reason) => Err(format!("{reason}; {} stays spooled until the repo admits the lane", path.display())),
+        FileOutcome::Unread(_) | FileOutcome::Refused => Err(Unsettled::Other(log.pop().unwrap_or_else(|| format!("{} was not filed", entry.reference)))),
+        FileOutcome::LaneRefused(reason) => Err(Unsettled::LaneRefused(format!("{reason}; {} stays spooled until the repo admits the lane", path.display()))),
     }
 }
 
@@ -446,9 +461,10 @@ pub struct DrainReport {
     pub filed: usize,
     /// The other entries those filings settled.
     pub duplicates: usize,
-    /// Entries a filing was tried for and that stay, oldest reference first, each with why.
+    /// Entries the pass could not settle, tried or skipped for a lane-refused destination, oldest
+    /// reference first, each with why.
     pub stuck: Vec<(std::path::PathBuf, String)>,
-    /// References past the pass's batch, left for the next one.
+    /// References found after the pass's batch was used up, left for the next one.
     pub held_back: usize,
     /// The entries of those references.
     pub held_entries: usize,
@@ -464,8 +480,8 @@ impl DrainReport {
     }
 }
 
-/// One pass: each of the oldest `batch` references is filed once, from its newest event, and
-/// that filing settles every entry of the reference.
+/// One pass: references are tried oldest first, each filed once from its newest event, and that
+/// filing settles every entry of the reference. A lane refusal uses none of the `batch` slots.
 pub fn drain_spool(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, batch: usize) -> DrainReport {
     let mut report = DrainReport::default();
     let paths = match spool::entries(&env.spool_dir) {
@@ -477,7 +493,8 @@ pub fn drain_spool(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Cloc
             return report;
         }
     };
-    let mut groups: Vec<Vec<std::path::PathBuf>> = Vec::new();
+    // Each reference's entries, with where its newest one would be filed.
+    let mut groups: Vec<(Option<decide::Route>, Vec<std::path::PathBuf>)> = Vec::new();
     let mut group_of = std::collections::HashMap::new();
     for p in paths {
         let raw = match std::fs::read(&p) {
@@ -498,28 +515,45 @@ pub fn drain_spool(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Cloc
             continue;
         };
         let at = *group_of.entry(decide::bound_ref(&entry.reference)).or_insert_with(|| {
-            groups.push(Vec::new());
+            groups.push((None, Vec::new()));
             groups.len() - 1
         });
-        groups[at].push(p);
+        let mut cfg = env.file_config("");
+        cfg.repo_declared = entry.repo.as_deref().or(env.repo.as_deref());
+        groups[at].0 = Some(run::destination(&cfg, &entry.reference, &env.labels));
+        groups[at].1.push(p);
     }
-    for (i, group) in groups.into_iter().enumerate() {
-        if i >= batch {
+    let mut used = 0;
+    let mut lane_refused: std::collections::HashMap<Option<decide::Route>, String> = std::collections::HashMap::new();
+    for (route, group) in groups {
+        if used >= batch {
             report.held_back += 1;
             report.held_entries += group.len();
+            continue;
+        }
+        if let Some(why) = lane_refused.get(&route) {
+            report.stuck.extend(group.into_iter().map(|p| (p, why.clone())));
             continue;
         }
         let Some((oldest, newest)) = group.first().zip(group.last()) else { continue };
         let stamp = |p: &std::path::Path| spool::stamp_of(p).unwrap_or("an unrecorded time").to_string();
         let preface = (group.len() > 1).then(|| format!("{} events of this reference were spooled from {} to {}; this is the newest.", group.len(), stamp(oldest), stamp(newest)));
-        match drain_entry(env, bd, mailer, clock, newest, &group[..group.len() - 1], preface.as_deref()) {
+        let settled = drain_entry(env, bd, mailer, clock, newest, &group[..group.len() - 1], preface.as_deref());
+        if !matches!(settled, Err(Unsettled::LaneRefused(_))) {
+            used += 1;
+        }
+        match settled {
             Ok(Settled::Here(_)) => {
                 report.filed += 1;
                 report.duplicates += group.len() - 1;
             }
             // Whoever removed the newest settles the rest, or the next pass does.
             Ok(Settled::Elsewhere) => {}
-            Err(why) => report.stuck.extend(group.into_iter().map(|p| (p, why.clone()))),
+            Err(Unsettled::LaneRefused(why)) => {
+                report.stuck.extend(group.into_iter().map(|p| (p, why.clone())));
+                lane_refused.insert(route, why);
+            }
+            Err(Unsettled::Other(why)) => report.stuck.extend(group.into_iter().map(|p| (p, why.clone()))),
         }
     }
     if report.held_back > 0 {
@@ -747,10 +781,8 @@ mod tests {
     }
 
     fn entry(reference: &str) -> String {
-        let e = SpoolEntry { reference: reference.into(), title: "t".into(), unit: "u".into(), incident_path: "p".into(), cause: "c".into(), repo: None, body: b"payload".to_vec() };
-        String::from_utf8(format_entry(&e)).unwrap()
+        entry_of(reference, None)
     }
-
 
     #[test_id(tid9pph)]
     #[test]
@@ -1032,6 +1064,150 @@ mod tests {
         assert_eq!(report.stuck.iter().map(|s| s.0.clone()).collect::<Vec<_>>(), [a.clone(), b.clone()]);
         assert!(report.stuck[0].1.contains("repo:walled"), "{report:?}");
         assert!(a.exists() && b.exists());
+    }
+
+    const WALLED_MAP: &str = "spira | /r/spira | push | origin/main | | true | plan,incident\nwalled | /r/walled | push | origin/main | | true | groom\nfenced | /r/fenced | push | origin/main | | true | groom\n";
+
+    fn walled_env(dir: &std::path::Path) -> Env {
+        Env { known_repos: vec!["spira".into(), "walled".into(), "fenced".into()], plan_labels: Some("spira,plan".into()), ..env_in(dir) }
+    }
+
+    /// A product repo's landing-ref red, which is filed against that repo.
+    fn red_of(repo: &str, tag: &str) -> String {
+        format!("basefail-local:{repo}:{tag}")
+    }
+
+    fn walled_entry(tag: &str) -> String {
+        entry_of(&red_of("walled", tag), Some("walled"))
+    }
+
+    fn entry_of(reference: &str, repo: Option<&str>) -> String {
+        let e = SpoolEntry { reference: reference.into(), title: "t".into(), unit: "u".into(), incident_path: "p".into(), cause: "c".into(), repo: repo.map(str::to_string), body: b"payload".to_vec() };
+        String::from_utf8(format_entry(&e)).unwrap()
+    }
+
+    fn walled_bd() -> FakeBd {
+        FakeBd { admits: Some(WALLED_MAP.into()), ..FakeBd::new() }
+    }
+
+    #[test_id(ticbah7)]
+    #[test]
+    fn a_batch_of_lane_refused_references_does_not_starve_a_newer_one() {
+        let dir = testkit::TempDir::new("incident-drain-starve");
+        let env = walled_env(&dir);
+        let a = spool(&env, "20260101T000000Z-a", &walled_entry("a"));
+        let b = spool(&env, "20260101T000001Z-b", &walled_entry("b"));
+        spool(&env, "20260101T000002Z-c", &entry("incident:admitted"));
+        let bd = walled_bd();
+        let report = drain_spool(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), 2);
+        let created: Vec<String> = bd.created.borrow().iter().map(|c| c.1.clone()).collect();
+        assert_eq!(created, ["incident:admitted"], "{report:?}");
+        assert_eq!((report.filed, report.held_back), (1, 0), "{report:?}");
+        assert_eq!(report.stuck.iter().map(|s| s.0.clone()).collect::<Vec<_>>(), [a.clone(), b.clone()]);
+        assert!(report.stuck.iter().all(|s| s.1.contains("repo:walled")), "{report:?}");
+        assert!(a.exists() && b.exists());
+    }
+
+    #[test_id(tu4dinx)]
+    #[test]
+    fn a_pass_asks_the_store_once_about_a_lane_refused_repo() {
+        let dir = testkit::TempDir::new("incident-drain-ask-once");
+        let env = walled_env(&dir);
+        let paths = [
+            spool(&env, "20260101T000000Z-a", &walled_entry("a")),
+            spool(&env, "20260101T000001Z-b", &walled_entry("b")),
+            spool(&env, "20260101T000002Z-c", &walled_entry("c")),
+            spool(&env, "20260101T000003Z-a", &walled_entry("a")),
+        ];
+        let bd = walled_bd();
+        let report = drain_spool(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), 2);
+        assert_eq!(*bd.creates.borrow(), 1, "{report:?}");
+        let mut stuck: Vec<_> = report.stuck.iter().map(|s| s.0.clone()).collect();
+        stuck.sort();
+        assert_eq!(stuck, paths);
+        assert!(report.stuck[0].1.contains("bead: repo:walled does not admit lane plan"), "{report:?}");
+        assert!(report.stuck.iter().all(|s| s.1 == report.stuck[0].1), "{report:?}");
+        assert!(paths.iter().all(|p| p.exists()));
+    }
+
+    #[test_id(tnig9gb)]
+    #[test]
+    fn a_refused_call_uses_no_batch_slot() {
+        let dir = testkit::TempDir::new("incident-drain-refused-slot");
+        let env = walled_env(&dir);
+        spool(&env, "20260101T000000Z-a", &walled_entry("a"));
+        spool(&env, "20260101T000001Z-b", &entry_of(&red_of("fenced", "a"), Some("fenced")));
+        spool(&env, "20260101T000002Z-c", &entry("incident:admitted-a"));
+        spool(&env, "20260101T000003Z-d", &entry("incident:admitted-b"));
+        let bd = walled_bd();
+        let report = drain_spool(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), 2);
+        assert_eq!((report.filed, report.stuck.len(), report.held_back), (2, 2, 0), "{report:?}");
+    }
+
+    #[test_id(trs5zf1)]
+    #[test]
+    fn a_skipped_reference_uses_no_batch_slot() {
+        let dir = testkit::TempDir::new("incident-drain-skip-slot");
+        let env = walled_env(&dir);
+        spool(&env, "20260101T000000Z-a", &walled_entry("a"));
+        spool(&env, "20260101T000001Z-b", &walled_entry("b"));
+        spool(&env, "20260101T000002Z-c", &entry("incident:admitted-a"));
+        spool(&env, "20260101T000003Z-d", &entry("incident:admitted-b"));
+        let report = drain_spool(&env, &walled_bd(), &FakeMailer::default(), &FixedClock(1_000_000), 2);
+        assert_eq!((report.filed, report.stuck.len(), report.held_back), (2, 2, 0), "{report:?}");
+    }
+
+    #[test_id(t8ofksq)]
+    #[test]
+    fn an_entry_naming_no_repo_shares_the_default_repos_refusal() {
+        let dir = testkit::TempDir::new("incident-drain-default-repo");
+        let env = Env { repo: Some("walled".into()), ..walled_env(&dir) };
+        spool(&env, "20260101T000000Z-a", &entry(&red_of("walled", "unnamed-a")));
+        spool(&env, "20260101T000001Z-b", &walled_entry("named"));
+        spool(&env, "20260101T000002Z-c", &entry(&red_of("walled", "unnamed-b")));
+        let bd = walled_bd();
+        let report = drain_spool(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), BATCH);
+        assert_eq!((*bd.creates.borrow(), report.stuck.len()), (1, 3), "{report:?}");
+    }
+
+    #[test_id(te1sah7)]
+    #[test]
+    fn a_refused_plan_filing_does_not_skip_a_home_filing_that_names_the_same_repo() {
+        let dir = testkit::TempDir::new("incident-drain-same-repo-other-route");
+        let env = walled_env(&dir);
+        spool(&env, "20260101T000000Z-a", &walled_entry("a"));
+        spool(&env, "20260101T000001Z-b", &entry_of("land-deploy-fault:walled:abc123", Some("walled")));
+        let bd = walled_bd();
+        let report = drain_spool(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), BATCH);
+        let created: Vec<String> = bd.created.borrow().iter().map(|c| c.1.clone()).collect();
+        assert_eq!(created, ["land-deploy-fault:walled:abc123"], "{report:?}");
+        assert_eq!((report.filed, report.stuck.len()), (1, 1), "{report:?}");
+    }
+
+    #[test_id(tn494by)]
+    #[test]
+    fn a_refused_home_repo_is_asked_once_whatever_repos_its_harness_faults_name() {
+        let dir = testkit::TempDir::new("incident-drain-home-refused");
+        let env = walled_env(&dir);
+        spool(&env, "20260101T000000Z-a", &entry_of("land-deploy-fault:walled:a", Some("walled")));
+        spool(&env, "20260101T000001Z-b", &entry_of("land-deploy-fault:fenced:b", Some("fenced")));
+        spool(&env, "20260101T000002Z-c", &entry("incident:own"));
+        let bd = FakeBd { admits: Some("spira | /r/spira | push | origin/main | | true | plan\n".into()), ..FakeBd::new() };
+        let report = drain_spool(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), BATCH);
+        assert_eq!((*bd.creates.borrow(), report.stuck.len()), (1, 3), "{report:?}");
+    }
+
+    #[test_id(th9bkzm)]
+    #[test]
+    fn an_unreachable_store_is_tried_for_at_most_a_batch_of_references() {
+        let dir = testkit::TempDir::new("incident-drain-down-batch");
+        let env = env_in(&dir);
+        for (i, r) in ["incident:one", "incident:two", "incident:three"].iter().enumerate() {
+            spool(&env, &format!("20260101T00000{i}Z-a"), &entry(r));
+        }
+        let down = FakeBd { reachable: false, ..FakeBd::new() };
+        let report = drain_spool(&env, &down, &FakeMailer::default(), &FixedClock(1_000_000), 2);
+        assert_eq!((report.stuck.len(), report.held_back, report.held_entries), (2, 1, 1), "{report:?}");
     }
 
     #[test_id(tclfp9y)]

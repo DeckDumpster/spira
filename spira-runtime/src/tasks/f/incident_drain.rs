@@ -6,10 +6,10 @@
 //! Every `SPIRA_RUNTIME_INCIDENT_DRAIN_SECS`. `incident.drain.observe` counts the spool's
 //! entries and reads no store; an empty or unreadable spool ends the tick. Otherwise
 //! `incident.drain.drain` runs `incident::intake::drain_spool` over at most
-//! `SPIRA_INCIDENT_DRAIN_BATCH` references. An entry it could not file that is older than two
-//! cadences is noted in the Concierge inbox, once a day. It has no world-halt guard of its own;
-//! a scheduler halt holds the drain, a store write, until the resume, as it holds
-//! `incident.settle`'s writes.
+//! `SPIRA_INCIDENT_DRAIN_BATCH` references; a lane-refused reference uses no slot. An entry it
+//! could not file that is older than two cadences is noted in the Concierge inbox, once a day.
+//! It has no world-halt guard of its own; a scheduler halt holds the drain, a store write, until
+//! the resume, as it holds `incident.settle`'s writes.
 //!
 //! # Act
 //!

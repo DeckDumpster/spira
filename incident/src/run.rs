@@ -286,6 +286,19 @@ fn bump_and_note(
     FileOutcome::Filed(id.to_string())
 }
 
+/// `incident_labels` puts the scope first, so the plan label itself is the last one.
+fn plan_label<'a>(cfg: &FileConfig<'a>) -> &'a str {
+    cfg.plan_labels.and_then(|l| l.rsplit(',').next()).unwrap_or_default()
+}
+
+/// The repo and lane a new filing of `reference` goes to, which is what the door admits or refuses.
+pub(crate) fn destination(cfg: &FileConfig, reference: &str, labels: &str) -> decide::Route {
+    match labels.split(',').find_map(|l| l.trim().strip_prefix("repo:")) {
+        Some(repo) => decide::Route { repo: repo.to_string(), lane: Lane::Incident },
+        None => decide::route(reference, labels, cfg.repo_declared, cfg.home_repo, cfg.known_repos, plan_label(cfg)),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn file_new(
     bd: &dyn Bd,
@@ -316,12 +329,11 @@ fn file_new(
     // dwarf-filed title does not re-spool forever (sp-nredi).
     let clipped: String = title.chars().take(490).collect();
     let title = clipped.as_str();
-    // `incident_labels` puts the scope first, so the plan label itself is the last one.
-    let plan_label = cfg.plan_labels.and_then(|l| l.rsplit(',').next()).unwrap_or_default();
+    let plan_label = plan_label(cfg);
     let (create_labels, body, lane) = if labels.split(',').any(|l| l.trim().starts_with("repo:")) {
         (labels.to_string(), body, Lane::Incident)
     } else {
-        let route = decide::route(reference, labels, cfg.repo_declared, cfg.home_repo, cfg.known_repos, plan_label);
+        let route = destination(cfg, reference, labels);
         let repo = route.repo;
         match route.lane {
             Lane::Plan => {
