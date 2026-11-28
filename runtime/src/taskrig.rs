@@ -397,4 +397,32 @@ mod tests {
         assert_eq!(effects_runnable(&["a", "b"], &["a", "b"], &["a"]), Err("b: sim".into()));
         assert_eq!(effects_runnable(&[PLANTED_UNKNOWN], &[], &[]), Err(format!("{PLANTED_UNKNOWN}: real, {PLANTED_UNKNOWN}: sim")));
     }
+
+    /// Refuses, as a task does, when it hears an effect failed or timed out.
+    struct Refuser;
+
+    impl Handler for Refuser {
+        fn interests(&self) -> &[EventKindTag] {
+            &[TICK, EFFECT_TIMED_OUT]
+        }
+        fn handle(&self, ctx: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+            if ev.kind.tag == TICK {
+                return vec![Command::Effect(EffectSpec { name: "say".into(), input: String::new(), deadline_ms: 100, key: "say".into() })];
+            }
+            ctx.event().set("toy.refused", "lost");
+            vec![]
+        }
+    }
+
+    #[test_id(tv9sgwx)]
+    #[test]
+    fn a_wide_field_set_after_a_reopen_is_seen() {
+        let reg = || Registration::new("toy", Refuser);
+        let mut r = TaskRig::new(1, reg()).unwrap().hanging("say");
+        r.tick(S, EventKind::new(TICK, "")).unwrap();
+        assert!(!r.wide_set("toy.refused"));
+        r.reopen(reg()).unwrap();
+        r.run_until_idle().unwrap();
+        assert!(r.wide_set("toy.refused"));
+    }
 }

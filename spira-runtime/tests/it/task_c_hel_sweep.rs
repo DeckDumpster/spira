@@ -522,3 +522,16 @@ fn every_leg_failing_past_twice_the_budget_is_recorded_and_counted() {
     assert_eq!(c.refused.keys().collect::<Vec<_>>(), ["spira:spira/sp-a", "spira:spira/sp-b"], "{c:?}");
     assert_eq!(c.tally.failed, 2);
 }
+
+#[test_id(tu47da4)]
+#[test]
+fn a_lost_send_is_charged_to_the_leg_it_was_asked_for() {
+    let h = t::handler::<H>(SET);
+    let observing = Carry { phase: Phase::Observing, ..Carry::default() };
+    let two = Snapshot { branches: vec![branch("sp-a", true), branch("sp-b", true)], rows: [("sp-a".to_string(), "SUBMITTED".to_string()), ("sp-b".to_string(), "SUBMITTED".to_string())].into(), ..keep() };
+    let (acting, acts) = task::decide(&h.cfg, &observing, &Input::Observed(two), AT_35).unwrap();
+    assert_eq!(names(&acts), [task::SEND, task::SEND]);
+    let (next, _) = task::decide(&h.cfg, &acting, &Input::Lost(acts[1].clone()), AT_35 + 1_000).unwrap();
+    assert_eq!(next.refused.keys().collect::<Vec<_>>(), ["spira:spira/sp-b"]);
+    assert_eq!(next.jobs.keys().collect::<Vec<_>>(), ["spira:spira/sp-a:abc123"]);
+}
