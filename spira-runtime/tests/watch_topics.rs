@@ -405,6 +405,7 @@ fn a_restarted_runtime_says_the_carried_stale_image_again_to_a_broker_that_kept_
 /// A new process on a broker that kept nothing, handed `row`'s own observe with what the row
 /// asks it. The observe's answer needs a world the test does not give; what it was asked with is
 /// published either way. Returns the new process's answer.
+#[allow(clippy::too_many_arguments)]
 fn says_its_carried_value_again(mut row: Row, broker: &mut Broker, held: &str, observe: &str, registration: Registration, boot: (&str, &str, EventKind), world: World) -> Result<String, String> {
     row.pass(held);
     let before = broker.retained(&row.filter());
@@ -490,6 +491,7 @@ fn a_restarted_runtime_says_its_carried_request_again_and_reads_no_known_hold_tw
 
 /// The process that is about to stop had `subject` of `row` on the broker, and its clear is
 /// still in flight when it stops.
+#[allow(clippy::too_many_arguments)]
 fn asks_for_a_lost_clear_again(row: &str, subject: &str, registration: impl Fn() -> Registration, boot: (&str, &str, EventKind), observe: &str, held_world: String, gone: String, cadence_ms: u64) {
     let broker = Broker::up();
     let fx = service(&broker);
