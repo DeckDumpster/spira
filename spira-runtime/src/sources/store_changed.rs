@@ -414,7 +414,7 @@ mod tests {
         let source = Box::new(StoreChanged { views: views.clone(), table: Arc::new(ChangeTable::default()), socket: server._dir.path().join("absent.sock") });
         let running = tokio::spawn(source.run(tx));
         *now.lock().unwrap() += Duration::from_secs(120);
-        while !matches!(views.ready_counts(), Err(LcError::Refused(m)) if m.contains("the watch is lost: store not running")) {
+        while !matches!(views.ready_counts(), Err(LcError::NotRunning(m)) if m.contains("the watch is lost: store not running")) {
             tokio::task::yield_now().await;
         }
         assert_eq!(views.watch_argv(), Some(before));

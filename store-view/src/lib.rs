@@ -311,6 +311,8 @@ pub type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
 /// The in-memory views and the watch that keeps them current. A read refuses once the last
 /// confirmation is older than the configured staleness, plus one watch hold ([`WATCH_HOLD_MS`])
 /// while that confirmation was a watch answer; a load, or a poll that failed, gets no extension.
+/// The error is [`LcError::NotRunning`] when the last poll found no store running, else
+/// [`LcError::Refused`].
 pub struct Projection {
     client: LcClient,
     stale_after: Duration,
@@ -320,7 +322,7 @@ pub struct Projection {
     terminal: Mutex<Terminal>,
     watching: AtomicBool,
     /// Why the last poll failed; cleared by one that applied.
-    lost: Mutex<Option<String>>,
+    lost: Mutex<Option<LcError>>,
     /// Prefixes watched beside the fixed ones this view applies; their events are only reported.
     extra: Vec<String>,
 }
@@ -355,7 +357,7 @@ pub fn held_list(argv: &[&str]) -> Option<Result<String, LcError>> {
 
 /// Any read this process's projection holds (a `list` or a read [`classes_of`] names), as the
 /// store prints it; `None` for any other read or when it keeps no projection. A stale view
-/// answers `Some(Err)`: the caller must not fall back to the store.
+/// answers `Some(Err)`, of the kind [`Projection`] gives: the caller must not fall back to the store.
 pub fn held_read(argv: &[&str]) -> Option<Result<String, LcError>> {
     Some(held_reply(argv)?.and_then(|r| match r.code {
         0 => Ok(r.out),
@@ -419,7 +421,7 @@ pub fn ids_only(argv: &[&str]) -> Option<Vec<String>> {
 }
 
 /// `argv` answered by this process's projection when it holds the read, else by `client`. A stale
-/// view is an error, never a fall back to the store.
+/// view is an error (its text only, the kind dropped), never a fall back to the store.
 pub fn call_held(client: &LcClient, argv: &[&str]) -> Result<Reply, String> {
     match held_read(argv) {
         Some(held) => held.map(|out| Reply { code: 0, out, err: String::new(), read_ended: false }).map_err(|e| e.to_string()),
@@ -712,7 +714,7 @@ impl Projection {
             self.lock().watched = false;
             self.end_held(GRAPH);
         }
-        *self.lost.lock().unwrap_or_else(|e| e.into_inner()) = polled.as_ref().err().map(ToString::to_string);
+        *self.lost.lock().unwrap_or_else(|e| e.into_inner()) = polled.as_ref().err().cloned();
         polled
     }
 
@@ -826,12 +828,13 @@ impl Projection {
         let age = (self.clock)().saturating_duration_since(at);
         let bound = if s.watched { self.stale_after + Duration::from_millis(WATCH_HOLD_MS) } else { self.stale_after };
         if age > bound {
-            let lost = self.lost.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|why| format!("; the watch is lost: {why}")).unwrap_or_default();
-            return Err(LcError::Refused(format!(
-                "stale past {}ms: the views hold revision {rev}, last confirmed {}ms ago{lost}",
-                bound.as_millis(),
-                age.as_millis()
-            )));
+            let lost = self.lost.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let why = lost.as_ref().map(|why| format!("; the watch is lost: {why}")).unwrap_or_default();
+            let stale = format!("stale past {}ms: the views hold revision {rev}, last confirmed {}ms ago{why}", bound.as_millis(), age.as_millis());
+            return Err(match lost {
+                Some(LcError::NotRunning(_)) => LcError::NotRunning(stale),
+                _ => LcError::Refused(stale),
+            });
         }
         Ok(Read { rev, value: f(&s)? })
     }
@@ -1020,7 +1023,7 @@ impl Projection {
     /// The store's answer to a read [`classes_of`] names: held until a change the watch delivers
     /// could alter it, else asked of the store once and held. A process without a watch, or whose
     /// watch does not name the read's prefixes, asks the store each time; one whose watch fell
-    /// behind is refused.
+    /// behind gets the stale error.
     pub fn answer(&self, argv: &[&str]) -> Result<Read<Reply>, LcError> {
         self.answer_aged(argv, clock_moves(argv).then_some(WINDOW_HOLD))
     }

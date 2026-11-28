@@ -28,8 +28,7 @@ fn unwaiting(c: LcClient) -> LcClient {
 
 /// [`answer_on`] with a store that is not running told apart from any other failure.
 pub fn answer_kind(client: &LcClient, args: &[&str]) -> Result<String, crate::probes::lc::Gone> {
-    use crate::probes::lc::Gone;
-    client.answer(args).map_err(|e| if matches!(e, LcError::NotRunning(_)) { Gone::NotRunning } else { Gone::Failed })
+    client.answer(args).map_err(|e| crate::probes::lc::gone_of(&e))
 }
 
 /// `args`'s stdout when the store applied it (exit 0).
