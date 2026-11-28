@@ -162,8 +162,7 @@ pub struct RowQuery<'a> {
     pub express: bool,
 }
 
-/// The longest a `--window` answer is held: rounds leave a window by the clock alone, which no
-/// watch event reports.
+/// The longest an answer the clock can move ([`clock_moves`]) is held: no watch event reports it.
 pub const WINDOW_HOLD: Duration = Duration::from_secs(60);
 
 #[derive(Default)]
@@ -177,57 +176,114 @@ struct State {
     beads: Option<BTreeMap<String, Bead>>,
 }
 
-/// The kinds of change that end a held answer: a planning write (it moves the planning watermark)
-/// and a change to a round or its history.
-const CONTENT: u8 = 1;
-const ROUNDS: u8 = 2;
-/// A watcher's condition set or cleared.
-const CONDITIONS: u8 = 4;
-const ALL: u8 = CONTENT | ROUNDS | CONDITIONS;
+/// The kinds of change that end a held answer, one bit each; [`ENDED_BY`] names the store keys
+/// of each. [`GRAPH`] has none: it is the serving binary's, so a lost watch or a reload ends it.
+const CONTENT: u16 = 1;
+const ROUNDS: u16 = 2;
+const CONDITIONS: u16 = 1 << 2;
+const ASKED: u16 = 1 << 3;
+const MENDING: u16 = 1 << 4;
+const RECORDS: u16 = 1 << 5;
+const LANDINGS: u16 = 1 << 6;
+const EDGE_TALLY: u16 = 1 << 7;
+const STAY_TALLY: u16 = 1 << 8;
+const SECTIONS: u16 = 1 << 9;
+const GRAPH: u16 = 1 << 10;
+const CLASSES: usize = 11;
+const ALL: u16 = (1 << CLASSES) - 1;
 /// The watch prefix of the conditions each watcher keeps (`spira_lc::keys::conditions`).
 pub const CONDITIONS_PREFIX: &str = "conditions/";
 
+/// The key prefixes whose change ends a kind (`spira_lc::keys`, `spira_desired_state::section`).
+const ENDED_BY: &[(u16, &str)] = &[
+    (CONTENT, PLANNING),
+    (ROUNDS, BATCHES),
+    (CONDITIONS, CONDITIONS_PREFIX),
+    (ASKED, "asks/"),
+    (MENDING, "mendings/"),
+    (RECORDS, LIFECYCLE),
+    (RECORDS, READINESS),
+    (LANDINGS, "landed/"),
+    (EDGE_TALLY, "edges/"),
+    (STAY_TALLY, "stays/"),
+    (SECTIONS, "telemetry/sections/"),
+    (SECTIONS, "telemetry/reconciler/"),
+    (SECTIONS, "intents/"),
+    (SECTIONS, "knobs/"),
+];
+
 /// The reads [`Projection::answer`] holds, with the changes that end each; `None` for any other.
-fn classes_of(argv: &[&str]) -> Option<u8> {
+fn classes_of(argv: &[&str]) -> Option<u16> {
     match argv {
-        ["content", "list" | "show", ..] | ["plan", "items" | "edges" | "children" | "watermark", ..] => Some(CONTENT),
+        ["content", "list" | "show" | "state", ..] | ["plan", "items" | "edges" | "children" | "watermark" | "repo-labels", ..] => Some(CONTENT),
         ["show-batch", _] => Some(ROUNDS),
         ["condition", "list", ..] => Some(CONDITIONS),
         ["list", rest @ ..] if rest.contains(&"--batches") => Some(ROUNDS | CONTENT),
+        ["list-asks", ..] => Some(ASKED | CONTENT),
+        ["mending", "list", ..] => Some(MENDING),
+        ["ops-view", "ops_live", ..] => Some(RECORDS | CONTENT),
+        ["ops-view", "ops_round", ..] => Some(ROUNDS | CONTENT),
+        ["ops-view", "ops_recent", ..] => Some(LANDINGS | CONTENT),
+        ["ops-view", "ops_edges", ..] => Some(EDGE_TALLY),
+        ["ops-view", "ops_dwell", ..] => Some(RECORDS | STAY_TALLY | CONTENT),
+        ["ops-view", "ops_dwell_p95", ..] => Some(STAY_TALLY),
+        ["ops-graph", ..] => Some(GRAPH),
+        ["section", "snapshot"] => Some(SECTIONS),
+        ["claimable", ..] => Some(RECORDS | CONTENT),
         _ => None,
     }
 }
+
+/// Whether the clock alone can move `argv`'s answer, which no watch event reports, so it is held
+/// no longer than [`WINDOW_HOLD`]. `ops_recent` is not one: a landing leaving its day is a key
+/// the store deletes.
+fn clock_moves(argv: &[&str]) -> bool {
+    argv.contains(&"--window")
+        || matches!(argv, ["claimable", ..] | ["section", "snapshot"] | ["ops-view", "ops_edges" | "ops_dwell" | "ops_dwell_p95", ..])
+}
+
+/// The most answers held: an argv naming a moving instant is new each time, so the set is
+/// dropped whole at the bound.
+const HELD_MAX: usize = 256;
 
 /// The store's answers held under the changes that would end them. A generation per kind only
 /// rises, so a read that started before a change cannot be kept after it.
 #[derive(Default)]
 struct Memo {
-    held: HashMap<String, (u8, Reply, Instant)>,
-    generation: [u64; 3],
+    held: HashMap<String, (u16, Reply, Instant)>,
+    generation: [u64; CLASSES],
 }
 
 impl Memo {
-    fn seen(&self, classes: u8) -> u64 {
-        (0..3).filter(|i| classes & (1 << i) != 0).map(|i| self.generation[i]).sum()
+    fn seen(&self, classes: u16) -> u64 {
+        (0..CLASSES).filter(|i| classes & (1 << i) != 0).map(|i| self.generation[i]).sum()
     }
 
-    fn end(&mut self, classes: u8) {
-        for i in (0..3).filter(|i| classes & (1 << i) != 0) {
+    fn end(&mut self, classes: u16) {
+        for i in (0..CLASSES).filter(|i| classes & (1 << i) != 0) {
             self.generation[i] += 1;
         }
         self.held.retain(|_, (held, ..)| *held & classes == 0);
+    }
+
+    fn keep(&mut self, key: String, classes: u16, reply: Reply, at: Instant) {
+        if self.held.len() >= HELD_MAX && !self.held.contains_key(&key) {
+            self.held.clear();
+        }
+        self.held.insert(key, (classes, reply, at));
     }
 }
 
 /// The most terminal rows kept: at the bound the set is dropped whole and refilled by what is asked next.
 const TERMINAL_KEPT: usize = 4_096;
 
-/// The terminal rows the store was asked for, kept until a change names them or the views reload:
-/// the live set never holds one, and a reader that names one would otherwise ask the store each time.
+/// The ids outside the live set the store was asked for, kept until a change names them or the
+/// views reload: a terminal row, or `None` for an id with no row at all. A reader that names one
+/// would otherwise ask the store each time.
 #[derive(Default)]
 struct Terminal {
     generation: u64,
-    rows: HashMap<String, Value>,
+    rows: HashMap<String, Option<Value>>,
 }
 
 impl Terminal {
@@ -287,19 +343,26 @@ pub fn held_list(argv: &[&str]) -> Option<Result<String, LcError>> {
     shared()?.list_answer(argv)
 }
 
-/// Any read this process's projection holds (a `list` or a memoised content, planning or round
-/// read), as the store prints it; `None` for any other read or when it keeps no projection. A
-/// stale view answers `Some(Err)`: the caller must not fall back to the store.
+/// Any read this process's projection holds (a `list` or a read [`classes_of`] names), as the
+/// store prints it; `None` for any other read or when it keeps no projection. A stale view
+/// answers `Some(Err)`: the caller must not fall back to the store.
 pub fn held_read(argv: &[&str]) -> Option<Result<String, LcError>> {
+    Some(held_reply(argv)?.and_then(|r| match r.code {
+        0 => Ok(r.out),
+        _ => Err(LcError::Fault(r.why())),
+    }))
+}
+
+/// [`held_read`] with the exit code the store answered with kept.
+pub fn held_reply(argv: &[&str]) -> Option<Result<Reply, LcError>> {
     let p = shared()?;
-    if argv.first() == Some(&"list") {
-        return p.list_answer(argv).or_else(|| ids_only(argv).map(|ids| p.ids_answer(&ids).map(|r| Value::Array(r.value).to_string())));
+    let applied = |out| Reply { code: 0, out, err: String::new(), read_ended: false };
+    if argv.first() == Some(&"list") && !argv.contains(&"--batches") {
+        let listed = p.list_answer(argv).or_else(|| ids_only(argv).map(|ids| p.ids_answer(&ids).map(|r| Value::Array(r.value).to_string())))?;
+        return Some(listed.map(applied));
     }
     classes_of(argv)?;
-    Some(p.answer(argv).and_then(|r| match r.value.code {
-        0 => Ok(r.value.out),
-        _ => Err(LcError::Fault(r.value.why())),
-    }))
+    Some(p.answer(argv).map(|r| r.value))
 }
 
 /// The ids of a `list --ids a,b` that names nothing else.
@@ -409,22 +472,14 @@ fn batches_of(items: Vec<Value>) -> BTreeMap<String, Batch> {
         .collect()
 }
 
-/// What a watch delivery ends among the held answers: a planning write, a change to a round, or a
-/// history entry of one (a bead's history ends nothing held).
-fn ended_by(s: &State, events: &[Value]) -> u8 {
+/// What a watch delivery ends among the held answers: the kinds [`ENDED_BY`] names for a key,
+/// and the rounds for a history entry of one (a bead's history ends nothing held).
+fn ended_by(s: &State, events: &[Value]) -> u16 {
     let rounds: Vec<String> = s.batches.values().filter_map(|b| text(&b.data, "batch_id")).collect();
     events.iter().fold(0, |ended, e| {
         let key = e.get("key").and_then(Value::as_str).unwrap_or_default();
-        ended
-            | if key.starts_with(PLANNING) {
-                CONTENT
-            } else if key.starts_with(CONDITIONS_PREFIX) {
-                CONDITIONS
-            } else if key.starts_with(BATCHES) || key.strip_prefix(HISTORY).is_some_and(|h| rounds.iter().any(|r| h.strip_prefix(r.as_str()).is_some_and(|rest| rest.starts_with('/')))) {
-                ROUNDS
-            } else {
-                0
-            }
+        let of_round = key.strip_prefix(HISTORY).is_some_and(|h| rounds.iter().any(|r| h.strip_prefix(r.as_str()).is_some_and(|rest| rest.starts_with('/'))));
+        ENDED_BY.iter().filter(|(_, p)| key.starts_with(p)).fold(ended | if of_round { ROUNDS } else { 0 }, |ended, (class, _)| ended | class)
     })
 }
 
@@ -533,7 +588,7 @@ impl Projection {
         self.terminal.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn end_held(&self, classes: u8) {
+    fn end_held(&self, classes: u16) {
         self.memo.lock().unwrap_or_else(|e| e.into_inner()).end(classes);
     }
 
@@ -610,6 +665,7 @@ impl Projection {
         let polled = self.apply_once(from);
         if polled.is_err() {
             self.lock().watched = false;
+            self.end_held(GRAPH);
         }
         *self.lost.lock().unwrap_or_else(|e| e.into_inner()) = polled.as_ref().err().map(ToString::to_string);
         polled
@@ -620,6 +676,12 @@ impl Projection {
         let mut all = vec![BATCHES, LIFECYCLE, READINESS, PLANNING, HISTORY, CONDITIONS_PREFIX];
         all.extend(self.extra.iter().map(String::as_str));
         all
+    }
+
+    /// Whether the watch names every prefix a change to `classes` can arrive under.
+    fn watches(&self, classes: u16) -> bool {
+        let watched = self.watch_prefixes();
+        ENDED_BY.iter().filter(|(class, _)| classes & class != 0).all(|(_, p)| watched.iter().any(|w| p.starts_with(w)))
     }
 
     fn apply_once(&self, answer: Option<Result<String, LcError>>) -> Result<Polled, LcError> {
@@ -838,13 +900,11 @@ impl Projection {
             (r.rev, r.value.0, r.value.1)
         };
         let mut rows = held;
-        let (remembered, generation) = {
+        let (asked, generation) = {
             let t = self.terminal();
-            (unheld.iter().filter_map(|id| t.rows.get(id).cloned()).collect::<Vec<_>>(), t.generation)
+            rows.extend(unheld.iter().filter_map(|id| t.rows.get(id).cloned().flatten()));
+            (unheld.iter().filter(|id| !t.rows.contains_key(*id)).cloned().collect::<Vec<_>>(), t.generation)
         };
-        let known: BTreeSet<&str> = remembered.iter().filter_map(|r| r["bead_id"].as_str()).collect();
-        let asked: Vec<String> = unheld.iter().filter(|id| !known.contains(id.as_str())).cloned().collect();
-        rows.extend(remembered.iter().cloned());
         let mut learned = Vec::new();
         for chunk in asked.chunks(IDS_PER_READ) {
             let text = self.client.answer(&["list", "--ids", &chunk.join(",")])?;
@@ -856,13 +916,16 @@ impl Projection {
         {
             let mut t = self.terminal();
             if t.generation == generation {
-                for row in learned.iter().filter(|r| r["state"].as_str().is_some_and(lc_state::is_terminal)) {
+                let found: BTreeMap<&str, &Value> = learned.iter().filter_map(|r| Some((r["bead_id"].as_str()?, r))).collect();
+                for id in &asked {
+                    let row = found.get(id.as_str()).map(|r| (*r).clone());
+                    if row.as_ref().is_some_and(|r| !r["state"].as_str().is_some_and(lc_state::is_terminal)) {
+                        continue;
+                    }
                     if t.rows.len() >= TERMINAL_KEPT {
                         t.rows.clear();
                     }
-                    if let Some(id) = row["bead_id"].as_str() {
-                        t.rows.insert(id.to_string(), row.clone());
-                    }
+                    t.rows.insert(id.clone(), row);
                 }
             }
         }
@@ -909,19 +972,20 @@ impl Projection {
         Some(self.rows(&q)?.map(|r| Value::Array(r.value).to_string()))
     }
 
-    /// The store's answer to a content, planning, `show-batch` or `list --batches` read: held until
-    /// a change the watch delivers could alter it, else asked of the store once and held. A process
-    /// without a watch asks the store each time; one whose watch fell behind is refused.
+    /// The store's answer to a read [`classes_of`] names: held until a change the watch delivers
+    /// could alter it, else asked of the store once and held. A process without a watch, or whose
+    /// watch does not name the read's prefixes, asks the store each time; one whose watch fell
+    /// behind is refused.
     pub fn answer(&self, argv: &[&str]) -> Result<Read<Reply>, LcError> {
         let classes = classes_of(argv).ok_or_else(|| LcError::Refused(format!("`{}` is not a read the views hold", argv.join(" "))))?;
-        if !self.watching() {
+        if !self.watching() || !self.watches(classes) {
             return Ok(Read { rev: 0, value: self.client.call(argv)? });
         }
         let fresh = self.read(|_| Ok(()))?;
         let key = argv.join("\u{1f}");
         let before = {
             let m = self.memo.lock().unwrap_or_else(|e| e.into_inner());
-            let aged_out = |at: &Instant| argv.contains(&"--window") && (self.clock)().saturating_duration_since(*at) > WINDOW_HOLD;
+            let aged_out = |at: &Instant| clock_moves(argv) && (self.clock)().saturating_duration_since(*at) > WINDOW_HOLD;
             if let Some((_, reply, _)) = m.held.get(&key).filter(|(_, _, at)| !aged_out(at)) {
                 return Ok(Read { rev: fresh.rev, value: reply.clone() });
             }
@@ -931,7 +995,7 @@ impl Projection {
         if reply.code == 0 {
             let mut m = self.memo.lock().unwrap_or_else(|e| e.into_inner());
             if m.seen(classes) == before {
-                m.held.insert(key, (classes, reply.clone(), (self.clock)()));
+                m.keep(key, classes, reply.clone(), (self.clock)());
             }
         }
         Ok(Read { rev: fresh.rev, value: reply })
@@ -977,5 +1041,174 @@ mod tests {
             }
         }
         assert_eq!(OPEN_STATES.len() + ENDED_STATES.len(), words.len() * 2);
+    }
+
+    /// Answers every read with its call number, and each watch with the next scripted answer.
+    #[derive(Default)]
+    struct Counting {
+        calls: Mutex<Vec<Vec<String>>>,
+        watches: Mutex<Vec<Result<String, String>>>,
+        by_id: std::sync::atomic::AtomicUsize,
+    }
+
+    impl spira_store::lc_call::Transport for Counting {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+            let ok = |out: String| Ok(Reply { code: 0, out, err: String::new(), read_ended: false });
+            match argv[0].as_str() {
+                "rc" => ok(r#"{"ok":{"items":[],"list_rev":4}}"#.into()),
+                "watch" => self.watches.lock().unwrap().pop().expect("a scripted watch").and_then(ok),
+                "list" if argv.iter().any(|a| a == "--ids") => {
+                    self.by_id.fetch_add(1, Ordering::Relaxed);
+                    ok("[]".into())
+                }
+                "list" if argv.iter().any(|a| a == "--live") => ok("[]".into()),
+                _ => {
+                    let mut calls = self.calls.lock().unwrap();
+                    calls.push(argv.to_vec());
+                    ok(format!("answer {}", calls.len()))
+                }
+            }
+        }
+    }
+
+    const COCKPIT_PREFIXES: &[&str] = &["asks/", "mendings/", "landed/", "edges/", "stays/", "telemetry/sections/", "telemetry/reconciler/", "intents/", "knobs/"];
+
+    struct Held {
+        store: Arc<Counting>,
+        p: Projection,
+        now: Arc<Mutex<Instant>>,
+    }
+
+    fn held_on(prefixes: &[&str]) -> Held {
+        let store = Arc::new(Counting::default());
+        let now = Arc::new(Mutex::new(Instant::now()));
+        let clock = now.clone();
+        struct Shared(Arc<Counting>);
+        impl spira_store::lc_call::Transport for Shared {
+            fn exchange(&self, argv: &[String], stdin: Option<&str>, d: Duration) -> Result<Reply, String> {
+                self.0.exchange(argv, stdin, d)
+            }
+        }
+        let p = Projection::new(LcClient::over(Arc::new(Shared(store.clone())), true), Duration::from_secs(600), Arc::new(move || *clock.lock().unwrap())).with_prefixes(prefixes);
+        p.poll().unwrap();
+        Held { store, p, now }
+    }
+
+    impl Held {
+        fn read(&self, argv: &[&str]) -> String {
+            self.p.answer(argv).unwrap_or_else(|e| panic!("{argv:?}: {e}")).value.out
+        }
+        fn calls(&self) -> usize {
+            self.store.calls.lock().unwrap().len()
+        }
+        fn changed(&self, key: &str) {
+            let answer = json!({ "events": [{ "key": key, "rev": { "main": 9, "sub": 0 }, "value": null }], "through": 9, "rows": [] });
+            self.store.watches.lock().unwrap().push(Ok(answer.to_string()));
+            self.p.poll().unwrap();
+        }
+    }
+
+    /// Each cockpit read and one key under each prefix whose change ends it.
+    const ENDERS: &[(&[&str], &[&str])] = &[
+        (&["list-asks"], &["asks/sp-ask", "planning/watermark"]),
+        (&["mending", "list", "--live"], &["mendings/b-1"]),
+        (&["ops-view", "ops_live"], &["lifecycle/sp-a", "readiness/sp-a", "planning/watermark"]),
+        (&["ops-view", "ops_round"], &["batches/spira/b-1", "planning/watermark"]),
+        (&["ops-view", "ops_recent", "--epics"], &["landed/at/0000000009/sp-a", "planning/watermark"]),
+        (&["ops-view", "ops_edges"], &["edges/0000000009"]),
+        (&["ops-view", "ops_dwell"], &["lifecycle/sp-a", "stays/READY/0000000001", "planning/watermark"]),
+        (&["ops-view", "ops_dwell_p95"], &["stays/READY/0000000001"]),
+        (&["section", "snapshot"], &["telemetry/sections/Lifecycle/all", "telemetry/reconciler/pass", "intents/Host/h", "knobs/k"]),
+        (&["plan", "repo-labels", "--valid", "a,b"], &["planning/watermark"]),
+        (&["claimable"], &["lifecycle/sp-a", "planning/watermark"]),
+        (&["content", "state", "sp-a", "rune"], &["planning/watermark"]),
+    ];
+
+    #[test_id(tgdicd8)]
+    #[test]
+    fn each_cockpit_read_is_asked_once_while_nothing_it_depends_on_changes() {
+        for (argv, keys) in ENDERS {
+            let h = held_on(COCKPIT_PREFIXES);
+            let _watching = h.p.hold_watching();
+            let first = h.read(argv);
+            assert_eq!((h.read(argv), h.calls()), (first.clone(), 1), "{argv:?} with no change");
+            h.changed("conditions/heimdall/disk");
+            h.changed("work-requests/r1");
+            assert_eq!((h.read(argv), h.calls()), (first, 1), "{argv:?} after a change it does not depend on");
+            for (n, key) in keys.iter().enumerate() {
+                let before = h.read(argv);
+                h.changed(key);
+                assert_ne!(h.read(argv), before, "{argv:?} after {key}");
+                assert_eq!(h.calls(), n + 2, "{argv:?} after {key}: one more store call");
+            }
+        }
+    }
+
+    #[test_id(ttqql0r)]
+    #[test]
+    fn a_read_whose_prefixes_the_watch_does_not_name_is_never_held() {
+        let h = held_on(&[]);
+        let _watching = h.p.hold_watching();
+        for argv in [&["list-asks"][..], &["mending", "list", "--live"], &["ops-view", "ops_edges"], &["section", "snapshot"]] {
+            assert_ne!(h.read(argv), h.read(argv), "{argv:?}: no change to it could reach this view");
+        }
+    }
+
+    #[test_id(twn6j39)]
+    #[test]
+    fn the_graph_is_held_across_changes_and_ended_by_a_lost_watch_or_a_reload() {
+        let h = held_on(&[]);
+        let _watching = h.p.hold_watching();
+        let argv = ["ops-graph", "--machine", "bead"];
+        let first = h.read(&argv);
+        h.changed("lifecycle/sp-a");
+        assert_eq!((h.read(&argv), h.calls()), (first.clone(), 1));
+        h.store.watches.lock().unwrap().push(Err("the service restarted".into()));
+        assert!(h.p.poll().is_err());
+        let second = h.read(&argv);
+        assert_ne!(second, first, "a restarted service may draw another graph");
+        h.p.load().unwrap();
+        assert_ne!(h.read(&argv), second, "a reload ends it");
+    }
+
+    #[test_id(t6xnd3p)]
+    #[test]
+    fn an_answer_the_clock_can_move_ages_out_and_one_only_a_write_can_move_does_not() {
+        let aged: &[&[&str]] = &[&["claimable"], &["section", "snapshot"], &["ops-view", "ops_edges"], &["ops-view", "ops_dwell"], &["ops-view", "ops_dwell_p95"], &["list", "--batches", "--window", "5"]];
+        let kept: &[&[&str]] = &[&["list-asks"], &["mending", "list", "--live"], &["ops-view", "ops_recent", "--epics"], &["plan", "repo-labels", "--valid", "a"], &["ops-graph"]];
+        for (argv, ages) in aged.iter().map(|a| (a, true)).chain(kept.iter().map(|a| (a, false))) {
+            let h = held_on(COCKPIT_PREFIXES);
+            let _watching = h.p.hold_watching();
+            let first = h.read(argv);
+            *h.now.lock().unwrap() += WINDOW_HOLD;
+            assert_eq!(h.read(argv), first, "{argv:?} within the hold");
+            *h.now.lock().unwrap() += Duration::from_secs(1);
+            assert_eq!(h.read(argv) != first, ages, "{argv:?} past the hold");
+        }
+    }
+
+    #[test_id(tio7gn3)]
+    #[test]
+    fn the_held_answers_are_bounded_when_each_read_names_a_new_window() {
+        let h = held_on(COCKPIT_PREFIXES);
+        let _watching = h.p.hold_watching();
+        for n in 0..HELD_MAX * 2 {
+            h.read(&["content", "list", "--updated-after", &n.to_string()]);
+        }
+        assert!(h.p.memo.lock().unwrap().held.len() <= HELD_MAX);
+    }
+
+    #[test_id(t23jwee)]
+    #[test]
+    fn an_id_the_store_holds_no_row_for_is_asked_once_until_a_change_names_it() {
+        let h = held_on(&[]);
+        let asks = |h: &Held| {
+            assert!(h.p.ids_answer(&["sp-epic".to_string()]).unwrap().value.is_empty());
+            h.store.by_id.load(Ordering::Relaxed)
+        };
+        assert_eq!((asks(&h), asks(&h)), (1, 1));
+        h.changed("lifecycle/sp-epic");
+        let after_wake = h.store.by_id.load(Ordering::Relaxed);
+        assert_eq!(asks(&h), after_wake + 1, "a bead a change names is asked again");
     }
 }
