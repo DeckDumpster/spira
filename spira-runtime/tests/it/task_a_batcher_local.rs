@@ -1783,7 +1783,7 @@ impl spira_store::lc_call::Transport for RoundStore {
     fn exchange(&self, argv: &[String], _stdin: Option<&str>, _deadline: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
         let base = self.0.lock().unwrap().clone().ok_or("store down")?;
         let out = match argv[0].as_str() {
-            "rc" => serde_json::json!({ "ok": { "list_rev": 1, "items": [{ "key": "batches/spira/r9", "value": { "data": { "batch_id": "r9", "repo": "spira", "state": "Open", "base": base } }, "create_rev": { "main": 1, "sub": 0 } }] } }).to_string(),
+            "rc" => serde_json::json!({ "ok": { "list_rev": 1, "items": [{ "key": "batches/spira/r9", "value": { "data": { "batch_id": "r9", "repo": "spira", "state": "Open", "base": "outer", "round": { "base": base } } }, "create_rev": { "main": 1, "sub": 0 } }] } }).to_string(),
             other => return Err(format!("unscripted {other}")),
         };
         Ok(spira_store::lc_call::Reply { code: 0, out, err: String::new(), read_ended: false })
@@ -1795,13 +1795,17 @@ impl spira_store::lc_call::Transport for RoundStore {
 fn the_rebuilt_base_is_read_from_the_store_afresh_and_an_unread_record_fails_the_leg() {
     let store = std::sync::Arc::new(RoundStore(std::sync::Mutex::new(Some("b1".into()))));
     let client = spira_store::lc_call::LcClient::over(store.clone(), true).not_running_wait(std::time::Duration::ZERO);
-    let views = store_view::Projection::new(client, std::time::Duration::from_secs(60), std::sync::Arc::new(std::time::Instant::now));
-    views.refresh_batches().unwrap();
+    let views = || store_view::Projection::new(client.clone(), std::time::Duration::from_secs(60), std::sync::Arc::new(std::time::Instant::now));
+    let loaded = views();
+    loaded.refresh_batches().unwrap();
     *store.0.lock().unwrap() = Some("h8".into());
-    assert_eq!(edge::rebuilt_record_base(&views, "spira", "r9"), Ok("h8".into()), "the views still hold b1");
+    let landed = edge::base_moved_landed(Ok(loaded), "spira", "r9");
+    assert_eq!(landed, Ok(Landed { base_moved: Some("h8".into()), ..Landed::default() }), "the views held b1");
     *store.0.lock().unwrap() = None;
-    let err = edge::rebuilt_record_base(&views, "spira", "r9").unwrap_err();
-    assert!(err.contains("r9") && err.contains("carries no base") && err.contains("store down"), "{err}");
+    for (unread, cause) in [(Ok(views()), "store down"), (Err("not configured".to_string()), "not configured")] {
+        let err = edge::base_moved_landed(unread, "spira", "r9").unwrap_err();
+        assert!(err.contains("r9") && err.contains("carries no base") && err.contains(cause), "{err}");
+    }
 }
 
 /// The activation restart re-drives LAND on a round that already landed; the queue answers it

@@ -3830,11 +3830,15 @@ pub mod edge {
         format!("round {batch} was refused base-moved and its record carries no base")
     }
 
-    /// [`rebuilt_base`] of the records read now. `views` is read afresh because a watched
-    /// projection may not yet hold what `round land` has just written, and would not refuse.
-    pub fn rebuilt_record_base(views: &store_view::Projection, repo: &str, batch: &str) -> Result<String, String> {
-        let view = views.refresh_batches().and_then(|()| views.round_view(repo)).map_err(|e| format!("{}: {e}", no_rebuilt_base(batch)))?;
-        rebuilt_base(&view.value.rounds.iter().map(|r| io::open_round_of(r, 0)).collect::<Vec<_>>(), batch)
+    /// What [`land`] answers to a base-moved refusal: [`rebuilt_base`] of the records read now.
+    /// `views` is read afresh because a watched projection may not yet hold what `round land` has
+    /// just written, and would not refuse.
+    pub fn base_moved_landed(views: Result<store_view::Projection, String>, repo: &str, batch: &str) -> Result<Landed, String> {
+        let unread = |e: String| format!("{}: {e}", no_rebuilt_base(batch));
+        let views = views.map_err(unread)?;
+        let view = views.refresh_batches().and_then(|()| views.round_view(repo)).map_err(|e| unread(e.to_string()))?;
+        let rounds: Vec<_> = view.value.rounds.iter().map(|r| io::open_round_of(r, 0)).collect();
+        Ok(Landed { base_moved: Some(rebuilt_base(&rounds, batch)?), ..Landed::default() })
     }
 
     /// `queue round land`, retried while another operation holds the lock; a refusal is an `Err`.
@@ -3845,8 +3849,8 @@ pub mod edge {
         if io::land_base_moved(run.code) {
             eprintln!("{} {}: queue round land refused base-moved for {} ({}) — certifying it again", super::NAME, repo.name, leg.batch, run.refusal);
             // A private projection: refreshing the shared watched one would drop its held bead rows.
-            let views = spira_store::lc_call::LcClient::configured().and_then(store_view::Projection::configured).map_err(|e| format!("{}: {e}", no_rebuilt_base(&leg.batch)))?;
-            return json(&Landed { base_moved: Some(rebuilt_record_base(&views, &repo.name, &leg.batch)?), ..Landed::default() });
+            let views = spira_store::lc_call::LcClient::configured().and_then(store_view::Projection::configured);
+            return json(&base_moved_landed(views, &repo.name, &leg.batch)?);
         }
         match run.outcome {
             io::LandOutcome::Refused => Err(run.refusal),
