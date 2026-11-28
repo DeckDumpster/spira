@@ -13,7 +13,8 @@ use spira_runtime::tasks::a::landing::{PrRead, PrStatus, Waits};
 use spira_runtime::tasks::a::{batcher_forge, batcher_local};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_transitions::*;
-use spira_runtime::watchers::INBOX_APPEND;
+use spira_runtime::watch_topics::Change;
+use spira_runtime::watchers::{INBOX_APPEND, WATCH_PUBLISH};
 
 const MIN: u64 = 60;
 const HOUR: u64 = 3_600;
@@ -316,6 +317,13 @@ fn every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
 fn two_days_replay_identically() {
     let r = assert_deterministic(|_| rig(Arc::new(Mutex::new(healthy(T0)))), 7, 2);
     acc::assert_healthy(&r, STREAM);
+}
+
+#[test_id(tt8vajt)]
+#[test]
+fn two_days_of_a_standing_stall_replay_identically() {
+    let r = assert_deterministic(|_| standing_rig(Arc::new(Mutex::new(unsubmitted(&["spira"])))), 7, 2);
+    assert!(!changes(&r).is_empty());
 }
 
 #[test_id(tne8maw)]
@@ -2083,4 +2091,123 @@ fn an_ask_the_store_cannot_date_pages_blind_once_per_episode_and_a_beating_owner
     *w.lock().unwrap() = dwell_with_an_undated_ask(T0, false);
     r.advance(300_000).unwrap();
     assert_eq!(pages(&r), 2, "undatable again after recovery: one more page");
+}
+
+/// A rig whose world's times stand still while the clock runs, so its evidence ages pass by pass.
+fn standing_rig(world: Arc<Mutex<Snapshot>>) -> TaskRig {
+    let (_, stream, kind) = WatchTransitions::boot();
+    let mut r = TaskRig::new(1, WatchTransitions::new(config()).registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap())).double(INBOX_APPEND, |_| Ok("appended".into())).double(LOG_APPEND, |_| Ok("appended".into())).double(WATCH_PUBLISH, |_| Ok("published".into()));
+    r.clock.advance_to(T0 * 1000);
+    r.tick(stream, kind).unwrap();
+    r
+}
+
+fn changes(r: &TaskRig) -> Vec<Change> {
+    r.requested().iter().filter(|q| q.name == WATCH_PUBLISH).map(|q| serde_json::from_str(&q.input).unwrap()).collect()
+}
+
+fn subjects(c: &Change) -> (Vec<&str>, Vec<&str>) {
+    (c.set.keys().map(String::as_str).collect(), c.clear.iter().map(String::as_str).collect())
+}
+
+/// Two builders per repo, none old enough to be over the row bound, and no Submit in three hours.
+fn unsubmitted(repos: &[&str]) -> Snapshot {
+    let mut s = healthy(T0);
+    s.beads = repos.iter().flat_map(|r| (1..=2).map(move |i| bead(&format!("sp-{r}{i}"), r, "WORKING", T0 - 40 * MIN))).collect();
+    s.last = repos.iter().flat_map(|r| last(r, &[("Submit", T0 - 3 * HOUR), ("Delivered", T0 - 3 * MIN)])).collect();
+    s
+}
+
+#[test_id(t5fzs9e)]
+#[test]
+fn a_stall_held_over_three_passes_is_one_publish_and_the_clearing_pass_clears_it() {
+    let w = Arc::new(Mutex::new(unsubmitted(&["spira"])));
+    let mut r = standing_rig(w.clone());
+    r.advance(2 * 300_000).unwrap();
+    let said = changes(&r);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert_eq!((said[0].row.as_str(), subjects(&said[0])), ("transitions", (vec!["spira"], vec![])));
+    let v = &said[0].set["spira"];
+    assert!(v.text.starts_with("P0 STALL WORKING→SUBMITTED (spira): "), "{v:?}");
+    assert_eq!((v.level.as_str(), v.since, v.at), ("P0", T0, T0));
+    r.advance(12 * 300_000 - 2 * 300_000).unwrap();
+    assert_eq!(stalls(&r).len(), 1, "{:?}", lines(&r));
+    assert!(changes(&r).iter().skip(1).all(|c| !c.set.contains_key("spira")), "an hour on it is still the one value: {:?}", changes(&r));
+    let before = changes(&r).len();
+    *w.lock().unwrap() = healthy(r.now() / 1000);
+    r.advance(300_000).unwrap();
+    let after = changes(&r);
+    assert_eq!(after.len(), before + 1, "{after:?}");
+    assert!(after.last().unwrap().clear.contains(&"spira".to_string()), "{after:?}");
+}
+
+#[test_id(tdpjdv8)]
+#[test]
+fn two_stalled_repos_are_two_subjects_and_one_clearing_leaves_the_other() {
+    let w = Arc::new(Mutex::new(unsubmitted(&["spira", "dumpstar"])));
+    let mut r = standing_rig(w.clone());
+    r.advance(2 * 300_000).unwrap();
+    let said = changes(&r);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert_eq!(subjects(&said[0]), (vec!["dumpstar", "spira"], vec![]));
+    *w.lock().unwrap() = unsubmitted(&["spira"]);
+    r.advance(300_000).unwrap();
+    let said = changes(&r);
+    assert_eq!(said.len(), 2, "{said:?}");
+    assert_eq!(subjects(&said[1]), (vec![], vec!["dumpstar"]));
+}
+
+#[test_id(tjmmflj)]
+#[test]
+fn the_all_repos_scope_is_all_and_joins_its_lines_in_order_under_the_most_urgent_level() {
+    let mut s = healthy(T0);
+    s.beads = vec![bead("sp-a", "alpha", "WORKING", T0 - 2 * HOUR), bead("sp-b", "beta", "WORKING", T0 - 2 * HOUR)];
+    s.last = last("alpha", &[("Submit", T0 - 2 * HOUR)]);
+    let r = standing_rig(Arc::new(Mutex::new(s)));
+    let said = changes(&r);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert_eq!(subjects(&said[0]), (vec!["all"], vec![]));
+    let v = &said[0].set["all"];
+    assert!(v.text.starts_with("OVER WORKING 2h00m (bound 1h30m); P0 STALL WORKING→SUBMITTED (all repos): "), "{v:?}");
+    assert_eq!(v.level, "P0");
+    assert!(!v.text.contains("WAIT "), "the period's table is no condition: {v:?}");
+}
+
+#[test_id(t8bqlri)]
+#[test]
+fn blind_is_a_condition_on_all_that_keeps_the_standing_ones_and_a_restart_wait_is_none() {
+    let w = Arc::new(Mutex::new(unsubmitted(&["spira"])));
+    let mut r = standing_rig(w.clone());
+    *w.lock().unwrap() = unreadable_during(Some(spira_runtime::watchers::Activation { sha: "0123456789abcdef".into(), since: T0 }));
+    r.advance(300_000).unwrap();
+    assert_eq!(changes(&r).len(), 1, "WAIT BLIND is no condition: {:?}", changes(&r));
+    *w.lock().unwrap() = unreadable_during(None);
+    r.advance(3 * 300_000).unwrap();
+    let said = changes(&r);
+    assert_eq!(said.len(), 2, "{said:?}");
+    assert_eq!(subjects(&said[1]), (vec!["all"], vec![]), "the stall it can no longer see is not cleared");
+    assert!(said[1].set["all"].text.starts_with("P0 BLIND: the lifecycle control store cannot be read"), "{said:?}");
+    *w.lock().unwrap() = unsubmitted(&["spira"]);
+    r.advance(300_000).unwrap();
+    let said = changes(&r);
+    assert_eq!(said.len(), 3, "{said:?}");
+    assert_eq!(subjects(&said[2]), (vec![], vec!["all"]));
+}
+
+#[test_id(tl6uzxy)]
+#[test]
+fn a_restarted_row_publishes_nothing_again_and_asks_its_observe_with_what_it_published() {
+    let w = Arc::new(Mutex::new(unsubmitted(&["spira"])));
+    let mut r = standing_rig(w);
+    r.reopen(registration()).unwrap();
+    let mark = r.requested().len();
+    let (_, stream, kind) = WatchTransitions::boot();
+    r.tick(stream, kind).unwrap();
+    let asked = &r.requested()[mark..];
+    assert!(asked.iter().all(|q| q.name != WATCH_PUBLISH), "{asked:?}");
+    let observe = asked.iter().find(|q| q.name == OBSERVE).expect("the boot observes");
+    let input: serde_json::Value = serde_json::from_str(&observe.input).unwrap();
+    assert_eq!(input["row"], "transitions");
+    assert!(input["published"]["spira"]["text"].as_str().unwrap().contains("P0 STALL"), "{input}");
+    assert!(input["now"].is_u64(), "{input}");
 }

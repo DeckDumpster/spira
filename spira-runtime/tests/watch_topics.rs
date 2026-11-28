@@ -1,4 +1,4 @@
-// covers: spira-runtime/src/watch_topics.rs spira-runtime/src/watchers/claim_count.rs spira-runtime/src/tasks/e/watch_ami_stale.rs
+// covers: spira-runtime/src/watch_topics.rs spira-runtime/src/watchers/claim_count.rs spira-runtime/src/tasks/e/watch_ami_stale.rs spira-runtime/src/tasks/e/watch_throughput.rs spira-runtime/src/tasks/e/watch_transitions.rs
 //! The watch rows' topics on a real broker: each row's handler on the task rig, its
 //! `watch.publish` run by the service's own effect runner.
 #[macro_use]
@@ -14,6 +14,8 @@ use runtime::taskrig::TaskRig;
 use serde_json::{json, Value};
 use spira_pub::{Options, Publisher};
 use spira_runtime::tasks::e::watch_ami_stale as ami;
+use spira_runtime::tasks::e::watch_throughput as throughput;
+use spira_runtime::tasks::e::watch_transitions as transitions;
 use spira_runtime::watch_topics::WatchTopics;
 use spira_runtime::watchers::claim_count as claims;
 use spira_runtime::watchers::{INBOX_APPEND, WATCH_PUBLISH};
@@ -54,7 +56,10 @@ impl Row {
             .unwrap()
             .double(observe, move |_| Ok(seen.lock().unwrap().clone()))
             .double(INBOX_APPEND, |l| Ok(l.into()))
+            .double(transitions::LOG_APPEND, |l| Ok(l.into()))
+            .double(throughput::FILE, |_| Ok("filed".into()))
             .double(WATCH_PUBLISH, move |input| runner.lock().unwrap().run("k", &EffectSpec::keyed(WATCH_PUBLISH, "k", input, 10_000)));
+        rig.clock.advance_to(START_S * 1000);
         rig.tick(boot.1, boot.2).unwrap();
         Row { rig, world, fx, name, cadence_ms }
     }
@@ -103,15 +108,42 @@ fn is_clear(d: &Delivered, topic: &str) -> bool {
     d.topic == topic && d.payload.is_empty()
 }
 
+/// The epoch second every row's rig starts at: the flow rows judge ages against it.
+const START_S: u64 = 10 * 86_400;
+
+fn transitions_world(unsubmitted: bool) -> String {
+    let bead = |id: &str| transitions::Bead { id: id.into(), repo: "spira".into(), state: "WORKING".into(), since: START_S - 600, ..Default::default() };
+    let beads = if unsubmitted { vec![bead("sp-w1"), bead("sp-w2")] } else { vec![] };
+    let last = [("spira".to_string(), [("Submit".to_string(), START_S - 3 * 3_600)].into())].into();
+    serde_json::to_string(&transitions::Snapshot { readable: true, horizon: START_S - 6 * 3_600, beads, last, ..Default::default() }).unwrap()
+}
+
+fn transitions_row(fx: Arc<Effects>) -> Row {
+    let config = transitions::Config { period_s: 300, working_min: 2, submit_bound_s: 5_400, cut_bound_s: 2_700, pr_bound_s: 900, gate_timeout_s: 2_700, certify_par: 2, deliver_bound_s: 3_600, activate_bound_s: 900, ask_bound_s: 3_600, release_repo: "spira".into(), heartbeat_bound_s: 120, task_bound_s: 600, round_max_open: 1, releases: "rel".into(), repo_map: "map".into(), activation_bound_s: 75, run: "run".into() };
+    Row::boot("transitions", transitions::OBSERVE, 300_000, transitions::WatchTransitions::new(config).registration(), transitions::WatchTransitions::boot(), transitions_world(false), fx)
+}
+
+fn throughput_world(stalled: bool) -> String {
+    let waiting = throughput::Waiting { bead: "sp-x".into(), since: Some(START_S - 3_600) };
+    let landing = throughput::RepoLanding { repo: "spira".into(), hourly: vec![0; 24], last_landing: START_S - 3_600, waiting: 1, oldest: Some(waiting), ..Default::default() };
+    serde_json::to_string(&throughput::Snapshot { readable: true, landings: if stalled { vec![landing] } else { vec![] }, ..Default::default() }).unwrap()
+}
+
+fn throughput_row(fx: Arc<Effects>) -> Row {
+    let config = throughput::Config { stall_s: 600, abandon_count: 5, abandon_window_s: 7_200, ratio_min_pct: 40, ratio_min_runs: 6, passed_grace_s: 300, activation_bound_s: 75 };
+    Row::boot("throughput", throughput::OBSERVE, throughput::CADENCE_MS, throughput::WatchThroughput::new(config).registration(), throughput::WatchThroughput::boot(), throughput_world(false), fx)
+}
+
 /// What the one retained value of a holding condition reads as.
 struct Said {
     topic: &'static str,
+    level: &'static str,
     text_has: &'static str,
 }
 
 /// Three passes over a holding condition, then the pass where it stops.
 fn holds_once_then_clears(mut row: Row, broker: &Broker, mut watching: Subscriber, held: &str, gone: &str, said: Said) {
-    let Said { topic, text_has } = said;
+    let Said { topic, level, text_has } = said;
     for _ in 0..3 {
         row.pass(held);
     }
@@ -120,7 +152,7 @@ fn holds_once_then_clears(mut row: Row, broker: &Broker, mut watching: Subscribe
     assert_eq!(at_topic, topic);
     let value = payload(value);
     assert!(value["text"].as_str().unwrap().contains(text_has) && !value["text"].as_str().unwrap().contains("[watch:"), "{value}");
-    assert_eq!(value["level"], "P2");
+    assert_eq!(value["level"], level);
     assert!(value["since"].is_u64() && value["at"].is_u64(), "{value}");
     assert_eq!(value.as_object().unwrap().len(), 4, "{value}");
     let first = watching.recv();
@@ -140,7 +172,7 @@ fn a_stale_image_is_one_retained_value_while_it_holds_and_none_once_it_reads_fre
     let broker = Broker::up();
     let watching = Subscriber::to(broker.socket(), &["watch/#"]);
     let row = ami_row(service(&broker));
-    holds_once_then_clears(row, &broker, watching, &stale(), &ami_world(ami::Verdict::Fresh), Said { topic: "watch/round-ami-stale/all", text_has: "ami-0abc is stale; EC2 rounds refuse" });
+    holds_once_then_clears(row, &broker, watching, &stale(), &ami_world(ami::Verdict::Fresh), Said { topic: "watch/round-ami-stale/all", level: "P2", text_has: "ami-0abc is stale; EC2 rounds refuse" });
 }
 
 #[test_id(tdcpf0f)]
@@ -151,7 +183,27 @@ fn an_over_claimed_item_is_one_retained_value_while_it_is_live_and_none_once_it_
     let watching = Subscriber::to(broker.socket(), &["watch/#"]);
     let row = claim_row(service(&broker));
     let held = claim_world(&[("sp-a", 5), ("sp-under", 3)]);
-    holds_once_then_clears(row, &broker, watching, &held, &claim_world(&[("sp-under", 3)]), Said { topic: "watch/claim-count/sp-a", text_has: "CLAIMS sp-a: claimed by a builder 5 times" });
+    holds_once_then_clears(row, &broker, watching, &held, &claim_world(&[("sp-under", 3)]), Said { topic: "watch/claim-count/sp-a", level: "P2", text_has: "CLAIMS sp-a: claimed by a builder 5 times" });
+}
+
+#[test_id(tgytcv9)]
+#[test]
+fn a_flow_stall_is_one_retained_value_for_its_repo_while_it_holds_and_none_once_it_clears() {
+    let _env = testkit::env_read();
+    let broker = Broker::up();
+    let watching = Subscriber::to(broker.socket(), &["watch/#"]);
+    let row = transitions_row(service(&broker));
+    holds_once_then_clears(row, &broker, watching, &transitions_world(true), &transitions_world(false), Said { topic: "watch/transitions/spira", level: "P0", text_has: "P0 STALL WORKING→SUBMITTED (spira)" });
+}
+
+#[test_id(tz70y6b)]
+#[test]
+fn a_landing_stall_is_one_retained_value_for_its_repo_while_it_holds_and_none_once_it_lands() {
+    let _env = testkit::env_read();
+    let broker = Broker::up();
+    let watching = Subscriber::to(broker.socket(), &["watch/#"]);
+    let row = throughput_row(service(&broker));
+    holds_once_then_clears(row, &broker, watching, &throughput_world(true), &throughput_world(false), Said { topic: "watch/throughput/spira", level: "P0", text_has: "P0 spira: landing stalled" });
 }
 
 /// Restarts the broker, which keeps nothing, and requires every value `row` held to come back.
