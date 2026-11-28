@@ -980,13 +980,14 @@ mod tests {
         assert_eq!(first_failure(&f), Some("registered"));
     }
 
+    fn fx_checkout(f: &Fx) -> String {
+        f._d.path().join("fx").display().to_string()
+    }
+
     fn registered(f: &Fx) -> Targets {
         std::fs::write(&f.map, "# rows\n").unwrap();
-        crate::set_paths_in_file(
-            &f.toml,
-            &[("repo.fixture", r#"{"path":"/srv/fx","mode":"queue.local","base":"local/main","format":"fmt","lanes":["plan"]}"#)],
-        )
-        .unwrap();
+        let table = serde_json::json!({"path": fx_checkout(f), "mode": "queue.local", "base": "local/main", "format": "fmt", "lanes": ["plan"]});
+        crate::set_paths_in_file(&f.toml, &[("repo.fixture", &table.to_string())]).unwrap();
         both(f)
     }
 
@@ -1006,7 +1007,7 @@ mod tests {
         assert_eq!(set("fixture", "format", "", &t).unwrap().0, "fmt");
         assert_eq!(crate::load(&f.toml).unwrap().repo["fixture"].format, None);
         assert_eq!(reg(&f).format("fixture").as_deref(), Some(""));
-        assert_eq!(reg(&f).root("fixture").as_deref(), Some("/srv/fx"));
+        assert_eq!(reg(&f).root("fixture"), Some(fx_checkout(&f)));
     }
 
     #[test_id(tgrkhb8)]

@@ -222,7 +222,7 @@
     #[test]
     fn import_moves_rows_into_the_tables_keeps_toml_only_keys_and_a_second_run_changes_nothing() {
         let (t, map) = map_holding(
-            "alpha | /srv/alpha | queue.local | local/main | cargo fmt |  | plan,incident\nnew | /srv/new | queue | origin/main | | | develop\nopen | /srv/open | push | origin/main | |\n",
+            "alpha | srv/alpha | queue.local | local/main | cargo fmt |  | plan,incident\nnew | /srv/new | queue | origin/main | | | develop\nopen | /srv/open | push | origin/main | |\n",
         );
         let toml = declaring(t.path(), &map, "[repo.alpha]\npath = \"/srv/old\"\nmode = \"push\"\nformat = \"stale\"\nlanes = [\"plan\"]\ngate_mode = \"fences\"\n");
         let targets = crate::repo_admin::Targets { map: Some(map.clone()), toml: Some(toml.clone()) };
@@ -231,7 +231,7 @@
         assert_eq!(doc.repo["alpha"].gate_mode, Some(crate::GateMode::Fences));
         let rows = parse(&std::fs::read_to_string(&map).unwrap());
         assert_eq!(rows, rows_from_toml(&doc));
-        assert_eq!(field(&rows, "alpha", Column::Path), "/srv/alpha");
+        assert_eq!(field(&rows, "alpha", Column::Path), "srv/alpha");
         assert_eq!(field(&rows, "alpha", Column::Base), "local/main");
         assert_eq!(field(&rows, "alpha", Column::Format), "cargo fmt");
         assert_eq!(field(&rows, "alpha", Column::Lanes), "plan,incident");

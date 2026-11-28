@@ -108,7 +108,7 @@ fn repo_set_gate_is_refused_as_a_retired_key() {
 fn a_set_the_map_cannot_mirror_is_refused_whole_until_import_then_goes_through() {
     let (_d, map) = fixture();
     let mut rows = std::fs::read_to_string(&map).unwrap();
-    rows.push_str("hand | /srv/hand | push | origin/main | | | plan\n");
+    rows.push_str("hand | srv/hand | push | origin/main | | | plan\n");
     std::fs::write(&map, rows).unwrap();
     let before = both_files(&map);
     let toml = config(&map);
@@ -120,7 +120,7 @@ fn a_set_the_map_cannot_mirror_is_refused_whole_until_import_then_goes_through()
 
     let o = run(&map, &["repo", "import"]);
     assert!(o.status.success(), "{o:?}");
-    assert_eq!(field(&map, "hand", "path"), "/srv/hand");
+    assert_eq!(field(&map, "hand", "path"), "srv/hand");
     assert!(run(&map, &args).status.success());
     assert_eq!(field(&map, "fx", "base"), "main");
 }
@@ -133,12 +133,12 @@ fn a_hand_edited_row_is_reported_on_stderr_and_still_served() {
     run(&map, &["repo", "import"]);
     let quiet = run(&map, &["repo", "field", "fx", "lanes"]);
     assert!(!String::from_utf8_lossy(&quiet.stderr).contains("differs"), "{quiet:?}");
-    let edited = std::fs::read_to_string(&map).unwrap().replace("| /srv/fx |", "| /srv/hand |");
+    let edited = std::fs::read_to_string(&map).unwrap().replace("| /srv/fx |", "| srv/hand |");
     std::fs::write(&map, edited).unwrap();
     let o = run(&map, &["repo", "field", "fx", "path"]);
     let said = String::from_utf8_lossy(&o.stderr).into_owned();
     assert!(said.contains("differs from [repo.*]") && said.contains("for fx;") && said.contains("spira-config repo import"), "{said}");
-    assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "/srv/hand");
+    assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "srv/hand");
 }
 
 #[test_id(tcnyva3)]
