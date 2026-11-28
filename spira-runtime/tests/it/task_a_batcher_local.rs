@@ -1731,6 +1731,83 @@ fn sp_tjrjca_a_green_round_refused_base_moved_is_certified_again_and_landed() {
     assert!(!acts.iter().any(|a| a.effect == ABANDON), "{acts:?}");
 }
 
+/// `carry`, refused base-moved onto `b2` and then certified red: the bases of the certify leg and
+/// of the attribution leg that follows it.
+fn bases_after_a_red_recertify(carry: &Carry) -> (String, String) {
+    let moved = serde_json::to_string(&Landed { base_moved: Some("b2".into()), ..Landed::default() }).unwrap();
+    let (carry, acts) = on_outcome(carry, LAND, true, &moved, &Leg { batch: "r9".into(), ..Leg::on("spira") }, NOW);
+    let certify: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == CERTIFY).unwrap_or_else(|| panic!("no certify: {acts:?}")).input).unwrap();
+    let mut r = carried(&carry);
+    let n = r.requested().len();
+    r.tick(STREAM, ended(&certify.unit, runtime::units::Exit::Code(1), THREE_REDS)).unwrap();
+    kit::assert_unpoisoned(&r, STREAM);
+    let after = asked_after(&r, n);
+    let attribute = &after.iter().find(|(e, l)| e == CORPUS && l.why == ATTRIBUTE).unwrap_or_else(|| panic!("no attribution: {after:?}")).1;
+    (certify.base, attribute.base.clone())
+}
+
+#[test_id(t9jr6va)]
+#[test]
+fn a_red_recertify_after_base_moved_is_attributed_against_the_rebuilt_base() {
+    assert_eq!(bases_after_a_red_recertify(&landing()), ("b2".into(), "b2".into()));
+}
+
+#[test_id(tsnwbmw)]
+#[test]
+fn an_adopted_rounds_red_recertify_is_attributed_against_the_rebuilt_base() {
+    let mut c = landing();
+    let rc = c.repos.get_mut("spira").unwrap();
+    rc.adopted = vec!["r9".into()];
+    rc.base = "bx".into();
+    rc.landing_base = "m1".into();
+    assert_eq!(bases_after_a_red_recertify(&c), ("b2".into(), "b2".into()));
+}
+
+#[test_id(tu764i9)]
+#[test]
+fn the_rebuilt_base_is_the_one_the_rounds_record_names_or_the_land_leg_fails() {
+    let round = |id: &str, base: &str| batcher_cut::io::OpenRound { id: id.into(), base: base.into(), ..Default::default() };
+    let rounds = [round("r8", "b1"), round("r9", "h8"), round("r10", "")];
+    assert_eq!(edge::rebuilt_base(&rounds, "r9"), Ok("h8".into()));
+    for batch in ["r10", "r11"] {
+        let err = edge::rebuilt_base(&rounds, batch).unwrap_err();
+        assert!(err.contains(batch) && err.contains("carries no base"), "{err}");
+    }
+}
+
+/// A store whose one open round of `spira`, `r9`, stands on the base it holds; `None` and it
+/// does not answer.
+struct RoundStore(std::sync::Mutex<Option<String>>);
+
+impl spira_store::lc_call::Transport for RoundStore {
+    fn exchange(&self, argv: &[String], _stdin: Option<&str>, _deadline: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+        let base = self.0.lock().unwrap().clone().ok_or("store down")?;
+        let out = match argv[0].as_str() {
+            "rc" => serde_json::json!({ "ok": { "list_rev": 1, "items": [{ "key": "batches/spira/r9", "value": { "data": { "batch_id": "r9", "repo": "spira", "state": "Open", "base": "outer", "round": { "base": base } } }, "create_rev": { "main": 1, "sub": 0 } }] } }).to_string(),
+            other => return Err(format!("unscripted {other}")),
+        };
+        Ok(spira_store::lc_call::Reply { code: 0, out, err: String::new(), read_ended: false })
+    }
+}
+
+#[test_id(t0a89yz)]
+#[test]
+fn the_rebuilt_base_is_read_from_the_store_afresh_and_an_unread_record_fails_the_leg() {
+    let store = std::sync::Arc::new(RoundStore(std::sync::Mutex::new(Some("b1".into()))));
+    let client = spira_store::lc_call::LcClient::over(store.clone(), true).not_running_wait(std::time::Duration::ZERO);
+    let views = || store_view::Projection::new(client.clone(), std::time::Duration::from_secs(60), std::sync::Arc::new(std::time::Instant::now));
+    let loaded = views();
+    loaded.refresh_batches().unwrap();
+    *store.0.lock().unwrap() = Some("h8".into());
+    let landed = edge::base_moved_landed(Ok(loaded), "spira", "r9");
+    assert_eq!(landed, Ok(Landed { base_moved: Some("h8".into()), ..Landed::default() }), "the views held b1");
+    *store.0.lock().unwrap() = None;
+    for (unread, cause) in [(Ok(views()), "store down"), (Err("not configured".to_string()), "not configured")] {
+        let err = edge::base_moved_landed(unread, "spira", "r9").unwrap_err();
+        assert!(err.contains("r9") && err.contains("carries no base") && err.contains(cause), "{err}");
+    }
+}
+
 /// The activation restart re-drives LAND on a round that already landed; the queue answers it
 /// ok, and that lands the round — no abandon, no red pause.
 #[test_id(tj6fhhj)]
