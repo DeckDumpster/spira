@@ -331,7 +331,7 @@ impl Run<'_> {
         let disposition_note = lc.as_ref().and_then(|r| r.disposition_note.clone()).unwrap_or_default();
         let logf = self.s.logf.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
 
-        let mut i = DispositionIn { status: st.clone(), session_rc: self.s.session_rc, committed: false, session_started: self.s.session_started, harness_red: self.s.harness_red.is_some(), ..Default::default() };
+        let mut i = DispositionIn { status: st.clone(), session_rc: self.s.session_rc, committed: false, session_started: self.s.session_started, harness_red: self.s.harness_red.is_some(), lease_refused: self.s.lease_refused.is_some(), ..Default::default() };
         let (mut reset, mut thrash_note, mut thrash_tip, mut streak) = (String::new(), String::new(), String::new(), 0i64);
         let (mut lapsed_quiet, mut lapsed_last, mut gw) = (String::new(), String::new(), String::new());
         let mut unlanded_reason = String::new();
@@ -546,6 +546,15 @@ impl Run<'_> {
                 self.note("Yield-headless: the session ended its turn waiting for a background task notification. This session runs headless — there is no notification channel, so the session terminated and its background tasks were killed. Attempt charged; commit before any long step rather than backgrounding and yielding.");
                 self.log(&format!("{f}: {id} yield-headless — ended turn waiting for background task, attempt charged"));
                 self.release();
+                return self.finish(rc, &status);
+            }
+            NoteKey::LeaseRefused => {
+                let why = self.s.lease_refused.clone().unwrap_or_default();
+                // The claim is already on the events trail; unexempted, the next one charges it.
+                self.bump_requeue(&cause);
+                self.release();
+                self.note(&format!("Released by dwarf: repo:{}'s build folders were all leased, so no session started. No attempt was charged and nothing about the work is implied; the bead is claimable again once a folder is released.", self.s.repo_name));
+                self.log(&format!("{f}: {id} {why} — released, no attempt charged"));
                 return self.finish(rc, &status);
             }
             NoteKey::HarnessRed => {

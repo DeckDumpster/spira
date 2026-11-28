@@ -49,6 +49,9 @@ pub enum Abort {
     /// The harness cannot start the session (config it needs is absent): the work is not at
     /// fault, so the teardown records a harness red and charges no attempt.
     Harness(String),
+    /// Every build folder of the bead's repository is leased: nothing is wrong with the work or
+    /// the harness, so the teardown releases the bead and parks nothing.
+    LeaseRefused(String),
 }
 
 pub struct Deps<'a> {
@@ -92,6 +95,7 @@ pub struct State {
     pub fixture_lib: Option<PathBuf>,
     pub session_started: bool,
     pub harness_red: Option<String>,
+    pub lease_refused: Option<String>,
     /// The claude session id this run launched or resumed (empty before launch).
     pub session_id: String,
     pub session_rc: i32,
@@ -319,11 +323,12 @@ impl<'a> Run<'a> {
         spira_otel::run::seconds("dwarf_after_submit_seconds", (self.now() - exited).max(0) as f64, &labels("teardown"));
     }
 
-    /// The last `n` `done` lines this bead has in the ledger, a held worktree excluded.
+    /// The last `n` `done` lines this bead has in the ledger, a held worktree and a refused
+    /// build folder lease excluded: neither says anything about the bead.
     pub(crate) fn recent_done_lines(&self, id: &str, n: usize) -> Vec<String> {
         let Ok(text) = std::fs::read_to_string(self.conf.ledger()) else { return vec![] };
         let needle = regex::Regex::new(&format!(r" done \S+ {} ", regex::escape(id))).unwrap();
-        let matches: Vec<&str> = text.lines().filter(|l| needle.is_match(l) && !l.contains(" status=worktree-held ")).collect();
+        let matches: Vec<&str> = text.lines().filter(|l| needle.is_match(l) && ![" status=worktree-held ", " status=lease-refused "].iter().any(|s| l.contains(s))).collect();
         matches[matches.len().saturating_sub(n)..].iter().map(|l| l.to_string()).collect()
     }
 
@@ -505,20 +510,8 @@ impl<'a> Run<'a> {
         spira_otel::run::event("call", &[("rune", self.f())]);
         // ---- armed: every exit from here runs the teardown ----
         let rc = std::thread::scope(|sc| {
-            let rc = match self.work(sc) {
-                Ok(()) => 0,
-                Err(Abort::Die(m)) => {
-                    self.die_line(&m);
-                    1
-                }
-                Err(Abort::Harness(m)) => {
-                    self.die_line(&m);
-                    self.s.harness_red = Some(m);
-                    1
-                }
-                Err(Abort::Exit(n)) => n,
-                Err(Abort::Signal(sig)) => 128 + sig,
-            };
+            let done = self.work(sc);
+            let rc = self.work_ended(done);
             let rc = self.teardown(rc);
             self.release_build_dir();
             rc
@@ -527,6 +520,28 @@ impl<'a> Run<'a> {
         // before the process exits.
         self.s.feed = None;
         rc
+    }
+
+    /// How the work phase ended, as the rc and state the teardown reads.
+    pub(crate) fn work_ended(&mut self, done: Result<(), Abort>) -> i32 {
+        match done {
+            Ok(()) => 0,
+            Err(Abort::Die(m)) => {
+                self.die_line(&m);
+                1
+            }
+            Err(Abort::Harness(m)) => {
+                self.die_line(&m);
+                self.s.harness_red = Some(m);
+                1
+            }
+            Err(Abort::LeaseRefused(m)) => {
+                self.s.lease_refused = Some(m);
+                0
+            }
+            Err(Abort::Exit(n)) => n,
+            Err(Abort::Signal(sig)) => 128 + sig,
+        }
     }
 
     /// The capacity / halted / draining / paused declines: Some(exit code) to stop.
@@ -1635,7 +1650,13 @@ impl<'a> Run<'a> {
                 return Err(Abort::Harness(format!("{} is not set — a building dwarf has no build directory; set dwarf_build_base in the config document", bd::BASE_ENV)));
             }
             let ceiling = spira_config::process::cfg_parse(bd::CEILING_ENV).map_err(Abort::Harness)?;
-            let mut lease = bd::lease_for(&bases, &self.s.bead, &self.s.repo_name, ceiling).map_err(|e| Abort::Harness(format!("cannot lease a build directory under {}: {e}", self.conf.s(bd::BASE_ENV))))?;
+            let mut lease = bd::lease_for(&bases, &self.s.bead, &self.s.repo_name, ceiling).map_err(|e| {
+                let why = format!("cannot lease a build directory under {}: {e}", self.conf.s(bd::BASE_ENV));
+                match e {
+                    bd::LeaseError::Ceiling { .. } => Abort::LeaseRefused(why),
+                    bd::LeaseError::BadRepository(_) | bd::LeaseError::Io(_) => Abort::Harness(why),
+                }
+            })?;
             for note in &lease.notes {
                 self.log(&format!("{f}: {note}"));
             }

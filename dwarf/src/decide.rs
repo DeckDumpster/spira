@@ -68,6 +68,7 @@ pub enum NoteKey {
     YieldHeadless,
     PreSession,
     HarnessRed,
+    LeaseRefused,
     Unlanded,
     NoProgress,
     NotJudged,
@@ -92,6 +93,7 @@ pub struct DispositionIn {
     pub yield_headless: bool,
     pub session_started: bool,
     pub harness_red: bool,
+    pub lease_refused: bool,
     pub outcome: Option<String>,
     pub submitted: bool,
     /// Did THIS session's own turn move the branch tip (sp-1zxru-2)? Distinct from
@@ -183,6 +185,9 @@ pub fn disposition(i: &DispositionIn) -> Disposition {
     }
     if i.harness_red {
         return d("harness-red", false, Some("unjudged-harness-red"), HarnessRed);
+    }
+    if i.lease_refused {
+        return d("lease-refused", false, Some("unjudged-lease-refused"), LeaseRefused);
     }
     if i.thrash {
         return if i.thrash_charged {

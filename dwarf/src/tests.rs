@@ -1135,6 +1135,126 @@ pub(crate) mod verdict_run {
         assert!(note.contains("this repeats until the harness config is fixed"), "{note}");
     }
 
+    const REFUSED_LINE: &str = "2026-11-18T09:38:46Z done builder sp-a rc=0 status=lease-refused wall_s=3 api_s=? turns=? in_tok=? cache_read_tok=? out_tok=? think_tok=? cost_usd=?\n";
+
+    #[derive(Debug)]
+    struct Refused {
+        mails: usize,
+        holds: Vec<Vec<String>>,
+        bd: Vec<Vec<String>>,
+        seam: Vec<(String, Vec<String>)>,
+        log: Vec<String>,
+        ledger: Vec<String>,
+        rcs: Vec<i32>,
+    }
+
+    /// `runs` builder starts of sp-a, each ending at the build folder lease while a gate holds
+    /// repo:spira's one allowed folder, over a ledger that begins as `prior`.
+    fn lease_refused_runs(prior: &str, runs: usize) -> Refused {
+        let dir = testkit::TempDir::new("dwarf-lease-refused");
+        let base = dir.path().join("builds");
+        let _gate = spira_config::build_dir::lease_for(std::slice::from_ref(&base), "gate sp-g.1", "spira", 1).unwrap();
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_DWARF_BUILD_FOLDERS_PER_REPO", "1")]);
+        let mut vars = crate::tests::complete_vars();
+        vars.insert("SPIRA_TOML".into(), toml.display().to_string());
+        vars.insert("SPIRA_RUN".into(), dir.path().display().to_string());
+        vars.insert("SPIRA_DWARF_BUILD_BASE".into(), base.display().to_string());
+        vars.insert("SPIRA_RAPID_RECUR_THRESHOLD".into(), "3".into());
+        let ledger = dir.path().join("dwarf-ledger.log");
+        std::fs::write(&ledger, prior).unwrap();
+        let (seam, exec) = (Seams(Default::default()), Calls(Default::default()));
+        let (bd, sink) = (Notes(Default::default()), Mute::default());
+        let mut rcs = Vec::new();
+        let _env = testkit::env(&[(spira_config::process::TOML_ENV, Some(toml.to_str().unwrap()))]);
+        spira_config::process::with_fresh(|| {
+            for _ in 0..runs {
+                rcs.push(with_run_sink(vars.clone(), &bd, Dirty(vec![]), &exec, &|| 0, &seam, &sink, "", |r| {
+                    r.ledger = Ledger { path: ledger.clone(), dry: false };
+                    r.s.bead = "sp-a".into();
+                    r.s.repo_name = "spira".into();
+                    r.hb_done.store(true, std::sync::atomic::Ordering::SeqCst);
+                    let refused = r.lease_build_dir(dir.path());
+                    let rc = r.work_ended(refused);
+                    r.teardown(rc)
+                }));
+            }
+        })
+        .unwrap();
+        let calls = exec.0.lock().unwrap();
+        let lc = |verb: &str| calls.iter().filter(|(p, a, _)| p == "spira-lc" && a.first().map(String::as_str) == Some(verb)).map(|(_, a, _)| a.clone()).collect::<Vec<_>>();
+        let mails = calls.iter().filter(|(p, a, _)| p == "env" && a.contains(&"mail".to_string())).count();
+        let holds = lc("hold");
+        let bd = bd.0.lock().unwrap().clone();
+        let seam = seam.0.lock().unwrap().clone();
+        let log = sink.0.lock().unwrap().clone();
+        let ledger = std::fs::read_to_string(&ledger).unwrap().lines().map(String::from).collect();
+        Refused { mails, holds, bd, seam, log, ledger, rcs }
+    }
+
+    fn assert_nothing_parked(got: &Refused) {
+        assert!(got.holds.is_empty() && got.mails == 0, "{got:?}");
+        assert!(!got.bd.iter().any(|a| a.iter().any(|w| w == "overseer") || a.iter().any(|w| w.contains("RAPID-RECUR"))), "{:?}", got.bd);
+    }
+
+    #[test_id(tlsxhy7)]
+    #[test]
+    fn a_start_refused_at_the_build_folder_lease_releases_the_bead_and_charges_and_parks_nothing() {
+        let got = lease_refused_runs(&REFUSED_LINE.repeat(2), 1);
+        assert_eq!(got.rcs, [0], "{got:?}");
+        let last = got.ledger.last().unwrap();
+        assert!(last.contains(" sp-a rc=0 status=lease-refused "), "{last}");
+        assert_nothing_parked(&got);
+        let seam = |f: &str| got.seam.iter().filter(|(g, _)| g == f).map(|(_, a)| a.clone()).collect::<Vec<_>>();
+        assert_eq!(seam("release_own_claim"), [["sp-a"]], "{:?}", got.seam);
+        // Without this the claim it made is charged at the next one.
+        assert_eq!(seam("bump_requeue"), [["sp-a", "unjudged-lease-refused"]], "{:?}", got.seam);
+        let why = "repo:spira already has 1 build folders leased, the most builds that can run at once (SPIRA_DWARF_BUILD_FOLDERS_PER_REPO)";
+        assert!(got.log.iter().any(|l| l.contains("cannot lease a build directory under") && l.contains(why)), "{:?}", got.log);
+        let notes: Vec<&str> = got.bd.iter().filter(|a| a[0] == "note").map(|a| a[2].as_str()).collect();
+        assert!(notes.len() == 1 && notes[0].contains("build folders were all leased") && notes[0].contains("No attempt was charged"), "{notes:?}");
+    }
+
+    #[test_id(ttpf6wy)]
+    #[test]
+    fn three_lease_refusals_in_a_row_hold_nothing_and_mail_nobody() {
+        let got = lease_refused_runs("", 3);
+        assert_eq!(got.ledger.iter().filter(|l| l.contains(" status=lease-refused ")).count(), 3, "{:?}", got.ledger);
+        assert_nothing_parked(&got);
+    }
+
+    #[test_id(tbnxohv)]
+    #[test]
+    fn a_lease_refusal_between_harness_reds_neither_counts_toward_a_streak_nor_ends_it() {
+        let dir = testkit::TempDir::new("dwarf-refused-streak");
+        let red = REFUSED_LINE.replace("status=lease-refused", "status=harness-red");
+        let ledger = dir.path().join("dwarf-ledger.log");
+        std::fs::write(&ledger, format!("{red}{REFUSED_LINE}{red}{REFUSED_LINE}")).unwrap();
+        let lines = with_run(&NoBd, &Seams(Default::default()), Dirty(vec![]), "", |r| {
+            r.conf = Conf::new(&Snapshot { vars: { let mut v = crate::tests::complete_vars(); v.insert("SPIRA_RUN".into(), dir.path().display().to_string()); v }, ..Default::default() }, Path::new("h/spira"));
+            r.recent_done_lines("sp-a", 3)
+        });
+        assert_eq!(lines, [red.trim_end(), red.trim_end()]);
+    }
+
+    #[test_id(tvg4ex4)]
+    #[test]
+    fn a_lease_refused_for_any_reason_but_the_ceiling_is_still_a_harness_red() {
+        let dir = testkit::TempDir::new("dwarf-lease-bad-repo");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[]);
+        let mut vars = crate::tests::complete_vars();
+        vars.insert("SPIRA_DWARF_BUILD_BASE".into(), dir.path().join("builds").display().to_string());
+        let _env = testkit::env(&[(spira_config::process::TOML_ENV, Some(toml.to_str().unwrap()))]);
+        let got = spira_config::process::with_fresh(|| {
+            with_run_sink(vars, &NoBd, Dirty(vec![]), &Lc, &|| 0, &Seams(Default::default()), &Mute::default(), "", |r| {
+                r.s.bead = "sp-a".into();
+                r.s.repo_name = ".hidden".into();
+                r.lease_build_dir(dir.path())
+            })
+        })
+        .unwrap();
+        assert!(matches!(&got, Err(crate::run::Abort::Harness(m)) if m.contains("cannot name a repository")), "{got:?}");
+    }
+
     struct Row(&'static str);
     impl Exec for Row {
         fn exec(&self, prog: &str, args: &[String], _: Option<Vec<u8>>, _: Option<&Path>) -> Out {

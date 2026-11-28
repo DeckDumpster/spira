@@ -539,6 +539,16 @@ fn claim(pinned: &BTreeMap<String, String>, args: &[String]) -> sentinel::claim:
     sentinel::claim::dispatch_in(args, &mut std::io::empty(), &lookup)
 }
 
+/// Whether an express bead carries `labels` and none of the `rune-exclude` answer's labels.
+fn any_express(labels: String, exclude: sentinel::claim::Outcome, count: impl FnOnce(&[String]) -> sentinel::claim::Outcome) -> bool {
+    // A refusal prints nothing, and counting with no exclusions would count everything.
+    if exclude.code != 0 {
+        return false;
+    }
+    let n = count(&["ready-count".into(), labels, exclude.out.trim().to_string(), "--express".into()]);
+    n.out.trim().parse::<i64>().unwrap_or(0) > 0
+}
+
 fn world_of(run: &Path) -> World {
     if run.join("world.halted").is_file() {
         World::Halted
@@ -706,8 +716,7 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
             return false;
         }
         let ex = claim(pinned, &["rune-exclude".into(), f.clone(), p.exclude_labels]);
-        let n = claim(pinned, &["ready-count".into(), p.labels, ex.out.trim().to_string(), "--express".into()]);
-        n.out.trim().parse::<i64>().unwrap_or(0) > 0
+        any_express(p.labels, ex, |args| claim(pinned, args))
     });
     snap.express_ready = Some(u32::from(express));
     snap.throttle = plan::ck7_throttled(run.join("queue-throttled").is_file(), pinned.get("SPIRA_QUEUE_THROTTLE_OVERRIDE").map_or("", String::as_str));
@@ -810,6 +819,19 @@ pub fn metric(e: &Effects, input: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(tlxtmi1)]
+    #[test]
+    fn a_refused_rune_exclude_leaves_nothing_express_and_counts_nothing() {
+        let said = |code, out: &str| sentinel::claim::Outcome { code, out: out.into(), err: String::new() };
+        assert!(!any_express("plan".into(), said(2, ""), |_| panic!("counted with no exclusions")));
+        let mut asked = Vec::new();
+        assert!(any_express("plan".into(), said(0, "repo:spira\n"), |a| {
+            asked = a.to_vec();
+            said(0, "1")
+        }));
+        assert_eq!(asked, ["ready-count", "plan", "repo:spira", "--express"]);
+    }
 
     #[test_id(twdkp6t)]
     #[test]
