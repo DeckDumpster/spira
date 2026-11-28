@@ -1351,22 +1351,13 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str) -> (i32, String) {
     let register = |new_id: &str| crate::plane::call(&[s("create-bead"), new_id.to_string(), s("--ready"), s("--repo"), repo.clone()]);
     let filing = Filing { verb, actor: &actor, title, persona: &persona, repo: &repo, bound: bead_id, after_landing, prerequisite, body: body.as_deref(), priority: rank.as_ref().map(|r| r.priority), statement: rank.as_ref().and_then(|r| r.statement.as_deref()) };
     let file = |f: &Filing, parent: Option<&str>, considered: Option<&str>| crate::bd::file_child(f.title, f.persona, f.repo, parent, f.body, considered, f.priority.map(|p| p.to_string()).as_deref());
-    let filed = file_and_bind(&filing, file, register, crate::bd::label_add, crate::bd::add_blocker);
-    if filed.0 != 0 {
+    let note = |id: &str, text: &str| crate::bd::note(id, text).map(|_| ());
+    let filed = file_and_bind(&filing, file, note, register, crate::bd::label_add, crate::bd::add_blocker);
+    if verb != "file-followup" || filed.0 != 0 || !lane_requires_skuld(&persona) {
         return filed;
     }
-    let followup = filed.1.clone();
-    let unrecorded = record_statement(&filing, &followup, |id, text| crate::bd::note(id, text).map(|_| ())).err();
-    let answer = if verb != "file-followup" || !lane_requires_skuld(&persona) {
-        filed
-    } else {
-        let priority = filing.priority.map(|p| p.to_string());
-        review_followup(&filing, &followup, |t, b| crate::bd::file_child(t, SKULD_PERSONA, &repo, None, Some(b), None, priority.as_deref()), crate::bd::add_blocker)
-    };
-    match unrecorded {
-        None => answer,
-        Some(why) => (CANNOT_TELL, format!("{}\n{why}", answer.1)),
-    }
+    let priority = filing.priority.map(|p| p.to_string());
+    review_followup(&filing, &filed.1, |t, b| crate::bd::file_child(t, SKULD_PERSONA, &repo, None, Some(b), None, priority.as_deref()), crate::bd::add_blocker)
 }
 
 /// What a `file-followup` files at, and the filer's reason when it names one.
@@ -1512,6 +1503,7 @@ fn binding<'a>(f: &Filing<'a>) -> Binding<'a> {
 fn file_and_bind(
     f: &Filing,
     file: impl FnOnce(&Filing, Option<&str>, Option<&str>) -> Result<String, String>,
+    note: impl FnOnce(&str, &str) -> Result<(), String>,
     register: impl FnOnce(&str) -> (i32, String),
     label: impl FnOnce(&str, &str) -> Result<(), String>,
     block: impl FnOnce(&str, &str) -> Result<(), String>,
@@ -1523,6 +1515,24 @@ fn file_and_bind(
         Ok(id) => id,
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
+    let unrecorded = record_statement(f, &new_id, note).err();
+    let bound = bind_filed(f, tie, new_id, register, label, block);
+    match unrecorded {
+        None => bound,
+        Some(why) => (CANNOT_TELL, format!("{}\n{why}", bound.1)),
+    }
+}
+
+/// Registers a new item and ties it to the bound bead.
+fn bind_filed(
+    f: &Filing,
+    tie: Binding,
+    new_id: String,
+    register: impl FnOnce(&str) -> (i32, String),
+    label: impl FnOnce(&str, &str) -> Result<(), String>,
+    block: impl FnOnce(&str, &str) -> Result<(), String>,
+) -> (i32, String) {
+    let bead_id = f.bound;
     let (code, e) = register(&new_id);
     if code != 0 {
         return (CANNOT_TELL, format!("LIFECYCLE: {new_id} was filed but has NO lifecycle row and cannot be claimed (do not file it again): {e}"));
@@ -2875,10 +2885,9 @@ mod tests {
         let rank = super::followup_rank(verb, &args)?;
         let f = super::Filing { verb, priority: rank.as_ref().map(|r| r.priority), statement: rank.as_ref().and_then(|r| r.statement.as_deref()), ..filing() };
         let seen = std::cell::Cell::new(None);
-        let (code, id) = super::file_and_bind(&f, |f, _, _| { seen.set(f.priority); Ok("sp-new".to_string()) }, |_| (0, String::new()), |_, _| Ok(()), |_, _| Ok(()));
-        assert_eq!(code, 0, "{id}");
         let mut notes = vec![];
-        super::record_statement(&f, &id, |on, text| { notes.push(format!("{on}: {text}")); Ok(()) }).unwrap();
+        let (code, id) = super::file_and_bind(&f, |f, _, _| { seen.set(f.priority); Ok("sp-new".to_string()) }, |on, text| { notes.push(format!("{on}: {text}")); Ok(()) }, |_| (0, String::new()), |_, _| Ok(()), |_, _| Ok(()));
+        assert_eq!(code, 0, "{id}");
         Ok((seen.get(), notes))
     }
 
@@ -2927,12 +2936,26 @@ mod tests {
         assert_eq!(filed_with("split", &["t", "--priority", "1", "--blocks", "nothing"]), Ok((None, vec![])));
     }
 
-    #[test_id(t3vnaxz)]
+    #[test_id(tyb9457)]
     #[test]
-    fn a_statement_that_cannot_be_noted_says_not_to_file_again() {
+    fn a_followup_whose_binding_fails_after_filing_still_carries_its_statement() {
+        let f = super::Filing { actor: "pilgrim", priority: Some(1), statement: Some("defect: x"), ..filing() };
+        for (registered, edge) in [((2, "down".to_string()), Ok(())), ((0, String::new()), Err("no".to_string()))] {
+            let mut notes = vec![];
+            let (code, out) = super::file_and_bind(&f, |_, _, _| Ok("sp-new".to_string()), |on, text| { notes.push(format!("{on}: {text}")); Ok(()) }, |_| registered, |_, _| Ok(()), |_, _| edge);
+            assert_eq!(code, super::CANNOT_TELL, "{out}");
+            assert_eq!(notes, ["sp-new: Filed at P1 by pilgrim from sp-b0: defect: x"], "{out}");
+        }
+    }
+
+    #[test_id(tt65k9o)]
+    #[test]
+    fn a_statement_that_cannot_be_noted_still_binds_the_item_and_says_not_to_file_again() {
         let f = super::Filing { priority: Some(1), statement: Some("defect: x"), ..filing() };
-        let why = super::record_statement(&f, "sp-new", |_, _| Err("boom".into())).unwrap_err();
-        assert!(why.contains("sp-new was filed") && why.contains("do not file it again") && why.contains("boom"), "{why}");
+        let mut registered = false;
+        let (code, out) = super::file_and_bind(&f, |_, _, _| Ok("sp-new".to_string()), |_, _| Err("boom".into()), |_| { registered = true; (0, String::new()) }, |_, _| Ok(()), |_, _| Ok(()));
+        assert_eq!(code, super::CANNOT_TELL);
+        assert!(registered && out.starts_with("sp-new\n") && out.contains("do not file it again") && out.contains("boom"), "{out}");
     }
 
     #[test_id(t8eduz9)]
@@ -3450,6 +3473,7 @@ mod tests {
                 said(format!("file parent={parent:?}"));
                 Ok("sp-new".to_string())
             },
+            |_, _| Ok(()),
             |_| (0, String::new()),
             |id, label| {
                 said(format!("label {id} {label}"));
