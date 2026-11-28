@@ -2362,15 +2362,15 @@ fn sp_4odl0h_an_adopted_red_rounds_attribution_naming_one_member_certifies_the_s
     assert_eq!(after[0].1.members, [("sp-b".to_string(), "t2".to_string())]);
 }
 
-#[test_id(tqve466)]
+#[test_id(t3a9t2c)]
 #[test]
-fn sp_4odl0h_an_undriven_round_with_no_red_pass_is_still_redriven() {
+fn sp_4odl0h_an_undriven_round_with_no_red_pass_is_certified_not_attributed() {
     let (carry, mut snap) = red_orphan();
     let round = snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap();
     round.red = false;
     round.phase = "opened".into();
     let (_, acts) = decide(&carry, &snap);
-    assert!(effects(&acts).contains(&REDRIVE) && !effects(&acts).contains(&CORPUS), "{acts:?}");
+    assert_eq!(effects(&acts), [CERTIFY], "{acts:?}");
 }
 
 // --- sp-k7ltss: a green round no pass drives is landed, not abandoned ---
