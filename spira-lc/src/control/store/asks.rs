@@ -56,8 +56,11 @@ impl<B: Backend> Store<B> {
             Ok(c) => {
                 if let (false, Some(bridge)) = (c.existed, self.bridge.get()) {
                     // A replayed request also answers `existed: false`, and its ask may have closed.
-                    if self.ask(id)?.is_some_and(|a| a.row.state == AskState::Open) {
-                        bridge.ask_opened(c.mod_rev.main, &rec);
+                    // The create has committed, so a failed read must not refuse it.
+                    match self.ask(id) {
+                        Ok(a) if a.as_ref().is_some_and(|a| a.row.state == AskState::Open) => bridge.ask_opened(c.mod_rev.main, &rec),
+                        Ok(_) => {}
+                        Err(e) => eprintln!("spira-lc serve: ask {id} is not published: {e}"),
                     }
                 }
                 Ok(())

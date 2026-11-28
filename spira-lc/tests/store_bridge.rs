@@ -138,11 +138,6 @@ fn next(sub: &mut Subscriber) -> (String, Value) {
     (d.topic, serde_json::from_slice(&d.payload).unwrap())
 }
 
-fn next_raw(sub: &mut Subscriber) -> (String, Vec<u8>) {
-    let d = sub.recv();
-    (d.topic, d.payload.to_vec())
-}
-
 /// The latest value of each topic, read until every one of `wanted` has arrived.
 fn until(sub: &mut Subscriber, wanted: &[&str]) -> BTreeMap<String, Value> {
     let mut got = BTreeMap::new();
@@ -374,7 +369,7 @@ fn a_restarted_broker_is_handed_every_open_ask_again_and_no_closed_one() {
     let mut before = Subscriber::to(broker.socket(), &["ask/#", "bead/sp-amark/state"]);
     server.create("sp-amark");
     server.claim("sp-amark");
-    while next_raw(&mut before).0 != "bead/sp-amark/state" {}
+    while before.recv().topic != "bead/sp-amark/state" {}
 
     broker.restart();
     wait_up(&broker);
@@ -384,9 +379,9 @@ fn a_restarted_broker_is_handed_every_open_ask_again_and_no_closed_one() {
     assert_eq!(code, 0, "{out}");
     let mut again = BTreeMap::new();
     while !again.contains_key("ask/sp-alast") {
-        let (topic, payload) = next_raw(&mut after);
-        if !payload.is_empty() {
-            again.insert(topic, serde_json::from_slice::<Value>(&payload).unwrap());
+        let d = after.recv();
+        if !d.payload.is_empty() {
+            again.insert(d.topic, serde_json::from_slice::<Value>(&d.payload).unwrap());
         }
     }
     assert_eq!(again.keys().collect::<Vec<_>>(), ["ask/sp-alast", "ask/sp-aone", "ask/sp-atwo"]);
