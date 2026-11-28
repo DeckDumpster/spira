@@ -443,7 +443,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
 
     /// Runs two suites, `test-a.sh` and `test-b.sh`, with `b_rc` the second's exit code; the
     /// run's last line and the `results.jsonl` it left, if any.
-    fn two_suite_run(b_rc: i32) -> (String, Option<String>) {
+    fn two_suite_run(b_rc: i32, deny: Option<&str>) -> (String, Option<String>) {
         let root_seen = std::sync::Mutex::new(PathBuf::new());
         let setup = |rt: &FakeRuntime, root: &Path| {
             *root_seen.lock().unwrap() = root.to_path_buf();
@@ -453,7 +453,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         let left = std::cell::RefCell::new(None);
         let after = || *left.borrow_mut() = find_file(&root_seen.lock().unwrap().join("run"), "results.jsonl").map(|p| fs::read_to_string(p).unwrap());
         let csv = "test-a.sh,test-b.sh";
-        let (last, ..) = run_flags_rt("none", csv, None, None, &["--suites", csv], "", &[], &setup, &after);
+        let (last, ..) = run_flags_rt("none", csv, deny, None, &["--suites", csv], "", &[], &setup, &after);
         (last, left.into_inner())
     }
 
@@ -491,7 +491,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
     #[test_id(taqqm5l)]
     #[test]
     fn a_green_run_leaves_results_jsonl_with_every_suites_cases() {
-        let (last, jsonl) = two_suite_run(0);
+        let (last, jsonl) = two_suite_run(0, None);
         assert!(last.starts_with("VERDICT GREEN ran=2"), "{last}");
         let jsonl = jsonl.expect("a green run leaves results.jsonl");
         let rows: Vec<(String, String, String)> = jsonl
@@ -506,10 +506,26 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert_eq!(rows, want.map(|(s, c)| (s.to_string(), c.to_string(), "pass".to_string())), "{jsonl}");
     }
 
+    #[test_id(t3gtvv8)]
+    #[test]
+    fn a_green_run_leaves_a_disabled_suite_a_skip_row_never_a_fail() {
+        let (last, jsonl) = two_suite_run(0, Some("disabled\tsuite:test-b.sh\tsp-1\t-\n"));
+        assert!(last.starts_with("VERDICT GREEN"), "{last}");
+        let jsonl = jsonl.expect("a green run leaves results.jsonl");
+        let rows: Vec<serde_json::Value> = jsonl.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert!(rows.iter().all(|r| r["status"] != "fail"), "{jsonl}");
+        let b: Vec<(&str, &str)> = rows
+            .iter()
+            .filter(|r| r["suite"] == "test-b.sh")
+            .map(|r| (r["case"].as_str().unwrap(), r["status"].as_str().unwrap()))
+            .collect();
+        assert_eq!(b, [("(suite)", "skip")], "{jsonl}");
+    }
+
     #[test_id(timr1qi)]
     #[test]
     fn a_red_run_leaves_results_jsonl_to_gate_diag() {
-        let (last, jsonl) = two_suite_run(1);
+        let (last, jsonl) = two_suite_run(1, None);
         assert!(last.starts_with("VERDICT RED"), "{last}");
         assert_eq!(jsonl, None, "no gate-diag runs here, so testenv itself wrote none");
     }
