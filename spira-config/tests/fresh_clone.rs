@@ -53,7 +53,10 @@ fn every_tracked_shell_script_and_rune_parses() {
     assert_eq!(unparseable(std::slice::from_ref(&planted)), [planted.display().to_string()], "the sweep must flag a planted syntax error before it is believed clean");
 
     let files = shipped_scripts(&root());
-    assert!(files.len() > 200, "the sweep found only {} scripts", files.len());
+    let tracked = testkit::git(&root(), &["ls-files", "--", "*.sh", "*.rune"]);
+    assert!(!tracked.is_empty(), "git lists no tracked script, so the sweep has nothing to be measured against");
+    let unswept: Vec<&str> = tracked.lines().filter(|t| !files.contains(&root().join(t))).collect();
+    assert_eq!(unswept, Vec::<&str>::new(), "the sweep missed tracked scripts");
     assert!(files.iter().any(|f| f.starts_with(root().join("spira/hooks"))), "the sweep skipped nested directories");
     assert!(files.iter().any(|f| f.extension().is_some_and(|e| e == "rune")), "the sweep skipped the runes");
     assert_eq!(unparseable(&files), Vec::<String>::new());
