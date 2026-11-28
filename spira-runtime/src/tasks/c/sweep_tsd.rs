@@ -169,7 +169,7 @@ fn phase_name(p: Phase) -> &'static str {
 }
 
 /// `tsd::prune::keep_days` per family; a prune only for a family whose oldest row is past it.
-pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     match input {
         Input::Fire => Ok((carry.clone(), vec![])),
         // Single-flight: a pass with a prune in flight does nothing.
@@ -208,6 +208,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
             Ok((next, vec![]))
         }
         Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} an outcome of {effect} is not expected", phase_name(carry.phase))),
+        Input::Lost(lost) => lost.as_failure(decide, cfg, carry, now_ms),
         Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase_name(carry.phase), r.handle)),
     }
 }

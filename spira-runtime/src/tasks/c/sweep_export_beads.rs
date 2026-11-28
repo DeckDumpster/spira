@@ -207,7 +207,7 @@ fn act(name: &str, key: String, input: String, deadline_ms: u64) -> Act {
 /// `Unchanged | Write(jsonl, manifest) | Refuse(reason)`, sorted by id, refusing without an
 /// `sp-` bead or below half the mirrored count. An unchanged render finishes a pass a failed
 /// commit or push left behind before it only touches the mirror.
-pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     match input {
         Input::Fire => Ok((carry.clone(), vec![])),
         Input::Observed(s) if s.disabled => Ok((carry.clone(), vec![])),
@@ -247,6 +247,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
         }
         Input::Outcome { effect, .. } if effect == TOUCH => Ok((carry.clone(), vec![])),
         Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} no outcome of {effect} is expected", phase_name(carry.phase))),
+        Input::Lost(lost) => lost.as_failure(decide, cfg, carry, now_ms),
         Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase_name(carry.phase), r.handle)),
     }
 }

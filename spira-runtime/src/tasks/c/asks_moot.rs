@@ -278,6 +278,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             Ok((next, vec![]))
         }
         Input::Outcome { effect, .. } => Err(format!("{NAME}: no outcome of {effect} is expected")),
+        Input::Lost(lost) => lost.as_failure(decide, cfg, carry, now_ms),
         Input::Ran(r) => Err(format!("{NAME}: no unit is expected, got {:?}", r.handle)),
     }
 }

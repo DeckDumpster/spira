@@ -209,7 +209,7 @@ pub fn plan(cfg: &Cfg, snap: &Snapshot) -> Result<Vec<Act>, String> {
     Ok(acts)
 }
 
-pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     match input {
         Input::Fire if carry.phase == Phase::Reclaiming => Err(format!("{NAME}: a tick in state reclaiming: the pass in flight has {} effect(s) without an outcome", carry.pending)),
         Input::Fire => Ok((Carry { phase: Phase::Observing, ..carry.clone() }, vec![])),
@@ -227,6 +227,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -
             Ok((if pending == 0 { Carry::default() } else { Carry { pending, ..carry.clone() } }, vec![]))
         }
         Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} an outcome of {effect} is not expected", phase_name(carry.phase))),
+        Input::Lost(lost) => lost.as_failure(decide, cfg, carry, now_ms),
         Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase_name(carry.phase), r.handle)),
     }
 }

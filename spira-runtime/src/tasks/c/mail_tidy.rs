@@ -177,7 +177,7 @@ fn phase_name(p: Phase) -> &'static str {
 
 /// The keep rule (`mail::tidy::keeps`); everything else is archived, in one batched effect. A
 /// snapshot error, or no open ask with a failing positive control, decides nothing.
-pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     match input {
         Input::Fire => Ok((Carry { phase: Phase::Observe }, vec![])),
         Input::Observed(s) => {
@@ -199,6 +199,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -
         }
         Input::Outcome { effect, ok, .. } if effect == ARCHIVE && carry.phase == Phase::Decided => Ok((Carry { phase: if *ok { Phase::Archived } else { Phase::Decided } }, vec![])),
         Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} no outcome of {effect} is expected", phase_name(carry.phase))),
+        Input::Lost(lost) => lost.as_failure(decide, cfg, carry, now_ms),
         Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase_name(carry.phase), r.handle)),
     }
 }

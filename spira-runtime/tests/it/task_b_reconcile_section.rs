@@ -91,3 +91,12 @@ fn a_boot_does_not_record_the_publish_a_second_time() {
     rig.tick(task::STREAM, runtime::event::EventKind::new(task::TICK, "")).unwrap();
     assert_eq!(recorded(&rig), 1, "the publish was recorded again after the restart");
 }
+
+#[test_id(ter5ddz)]
+#[test]
+fn decide_refuses_a_lost_effect_as_it_refuses_any_outcome() {
+    let h = t::handler::<H>(SET);
+    let lost = Input::Lost(spira_runtime::tasks::b::kit::Act { name: task::PUBLISH.into(), key: "k".into(), input: String::new(), deadline_ms: 1_000, probe: false });
+    let failed = Input::Outcome { effect: task::PUBLISH.into(), ok: false, body: "lost at restart".into() };
+    assert_eq!(task::decide(&h.cfg, &Carry::default(), &lost, MIN), task::decide(&h.cfg, &Carry::default(), &failed, MIN));
+}

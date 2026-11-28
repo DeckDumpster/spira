@@ -105,7 +105,7 @@ fn ask(kind: &str, effect: &str, dir: &str, q: &Queue, asked: Option<u64>, now_m
     (Some(now_ms), Some(Act { name: effect.into(), key: format!("lc.ship/{kind}/{}/{now_ms}", q.oldest), input: dir.into(), deadline_ms: DRAIN_DEADLINE_MS, probe: true }))
 }
 
-pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     match input {
         Input::Fire => Ok((carry.clone(), vec![])),
         Input::Observed(s) => {
@@ -116,6 +116,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
         Input::Outcome { effect, .. } if effect == DRAIN => Ok((Carry { revlog: None, ..carry.clone() }, vec![])),
         Input::Outcome { effect, .. } if effect == DRAIN_SNAPSHOT => Ok((Carry { snapshot: None, ..carry.clone() }, vec![])),
         Input::Outcome { effect, .. } => Err(format!("{NAME}: an outcome of {effect} is not expected")),
+        Input::Lost(lost) => lost.as_failure(decide, cfg, carry, now_ms),
         Input::Ran(r) => Err(format!("{NAME}: no unit is expected, got {:?}", r.handle)),
     }
 }

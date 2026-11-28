@@ -72,6 +72,17 @@
 //!   `content` verb (S7a). Until then the static scan allow-lists the runner module, not the task
 //!   module.
 //!
+//! Per bead:
+//!
+//! | State | Event | Next |
+//! |---|---|---|
+//! | open, failed | close | close_requested |
+//! | close_requested | close:ok | closed |
+//! | close_requested | close:failed | failed |
+//! | close_requested | close:lost (a restart; the next pass is full) | open |
+//!
+//! A `skew_check` lost at a restart is asked again, so the closes it holds are carried across.
+//!
 //! ## Silence
 //!
 //! A tick that finds the head unchanged emits nothing. The carry moves when the cursor moves:
@@ -162,7 +173,7 @@ pub enum Phase {
 }
 
 /// `state × event → state` per bead (T3). A second close on a closed id is refused by name.
-pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[(Phase::Open, "close", Phase::CloseRequested), (Phase::CloseRequested, "close:ok", Phase::Closed), (Phase::CloseRequested, "close:failed", Phase::Failed), (Phase::Failed, "close", Phase::CloseRequested)];
+pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[(Phase::Open, "close", Phase::CloseRequested), (Phase::CloseRequested, "close:ok", Phase::Closed), (Phase::CloseRequested, "close:failed", Phase::Failed), (Phase::CloseRequested, "close:lost", Phase::Open), (Phase::Failed, "close", Phase::CloseRequested)];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -266,6 +277,17 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             }
         }
         Input::Outcome { effect, .. } => Err(format!("{NAME}: no outcome of {effect} is expected")),
+        Input::Lost(a) if a.name == SKEW_CHECK => Ok((carry.clone(), vec![a.clone()])),
+        Input::Lost(a) if a.name == CLOSE => {
+            let c: Close = serde_json::from_str(&a.input).map_err(|e| format!("{NAME}: a lost close's input does not decode: {e}"))?;
+            let mut next = carry.clone();
+            if next.beads.get(&c.id) == Some(&Phase::CloseRequested) {
+                next.beads.insert(c.id, Phase::Open);
+                next.full_at = 0;
+            }
+            Ok((next, vec![]))
+        }
+        Input::Lost(_) => Ok((carry.clone(), vec![])),
         Input::Ran(r) => Err(format!("{NAME}: no unit is expected, got {r:?}")),
     }
 }
@@ -351,6 +373,6 @@ pub fn close(lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String,
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("through_seq"), runtime::rows::Part::Field("full_at"), runtime::rows::Part::Map { name: "beads", drop: &[] }, runtime::rows::Part::Field("skew_red_at")];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("through_seq"), runtime::rows::Part::Field("full_at"), runtime::rows::Part::Map { name: "beads", drop: &[] }, runtime::rows::Part::Field("pending"), runtime::rows::Part::Field("skew_red_at")];
 
 super::hosted!(ReconcileContent);

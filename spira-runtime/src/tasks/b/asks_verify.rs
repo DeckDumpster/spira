@@ -45,6 +45,8 @@
 //!
 //! Carried state: `mislabelled_seen`.
 //!
+//! A `close`, `withdraw` or `note` lost at a restart is asked again as it was.
+//!
 //! ## Act
 //!
 //! | Effect | Class | Deadline | Idempotency key | Refuses |
@@ -292,6 +294,8 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         }
         Input::Outcome { effect, .. } if effect == NOTE || effect == OBSERVE => {}
         Input::Outcome { effect, .. } => return Err(format!("{NAME}: no outcome of {effect} is expected")),
+        Input::Lost(a) if [CLOSE, WITHDRAW, NOTE].contains(&a.name.as_str()) => acts.push(a.clone()),
+        Input::Lost(_) => {}
         Input::Ran(r) => return Err(format!("{NAME}: no unit is expected, got {r:?}")),
     }
     Ok((next, acts))
@@ -346,6 +350,25 @@ pub fn observe_on(lc: &spira_store::lc_call::LcClient, label: &str) -> Result<St
     serde_json::to_string(&Snapshot { asks, mislabelled, work_states }).map_err(|e| e.to_string())
 }
 
+/// The runner of [`CLOSE`]. A close lost at a restart is asked again though it may have run,
+/// so a refused close of an ask whose bead reads closed is success.
+fn close(lc: &spira_store::lc_call::LcClient, j: &Job) -> Result<String, String> {
+    let r = lc.call_stdin(&["close", j.id.as_str(), "--reason-file", "-", "--actor", "claude"], &j.reason).map_err(|why| format!("{}: {why}", j.id))?;
+    if r.code == 0 || shows_closed(lc, &j.id) {
+        Ok(j.id.clone())
+    } else {
+        Err(format!("{}: close exited {}: {}", j.id, r.code, r.why()))
+    }
+}
+
+/// `content show`, not `show`: an ask has no lifecycle row.
+fn shows_closed(lc: &spira_store::lc_call::LcClient, id: &str) -> bool {
+    let Ok(text) = lc.answer(&["content", "show", id, "--json"]) else { return false };
+    let Ok(doc) = serde_json::from_str::<serde_json::Value>(&text) else { return false };
+    let row = doc.as_array().and_then(|a| a.first()).unwrap_or(&doc);
+    spira_config::nonwork::row_closed(spira_config::nonwork::Kind::Ask, row)
+}
+
 /// Every act's runner, by `spec.name`. The check is the one child that stays: the operator's
 /// `bash -c <cmd>`, bounded, through `runtime::ports::Proc`.
 pub fn run(e: &crate::Effects, spec: &runtime::EffectSpec) -> Result<String, String> {
@@ -363,14 +386,7 @@ pub fn run(e: &crate::Effects, spec: &runtime::EffectSpec) -> Result<String, Str
             };
             serde_json::to_string(&CheckOutcome { id: j.id, rc, output }).map_err(|e| e.to_string())
         }
-        CLOSE => {
-            let r = super::lc(e).call_stdin(&["close", j.id.as_str(), "--reason-file", "-", "--actor", "claude"], &j.reason).map_err(|why| format!("{}: {why}", j.id))?;
-            if r.code == 0 {
-                Ok(j.id)
-            } else {
-                Err(format!("{}: close exited {}: {}", j.id, r.code, r.why()))
-            }
-        }
+        CLOSE => close(&super::lc(e), &j),
         WITHDRAW => {
             let client = super::lc(e);
             let lc = mail::lc::Routed { client: Ok(&client), unserved: &mail::lc::LcProgram };
@@ -489,5 +505,32 @@ mod tests {
         let snap: Snapshot = serde_json::from_str(&observe_on(&LcClient::over(store.clone(), true), "needs-x").unwrap()).unwrap();
         assert_eq!(snap.asks.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["sp-open"]);
         assert!(store.requests().iter().all(|r| !spira_store::lc_call::reads_whole_history(r)), "{:?}", store.requests());
+    }
+
+    /// The content fake, with `close` refused.
+    struct RefusedClose(fake::Content);
+
+    impl spira_store::lc_call::Transport for RefusedClose {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, deadline: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+            if argv.first().is_some_and(|a| a == "close") {
+                return Ok(spira_store::lc_call::Reply { code: 3, out: String::new(), err: "refused\n".into(), read_ended: false });
+            }
+            self.0.exchange(argv, stdin, deadline)
+        }
+    }
+
+    // covers: UC-operator-channel-26
+    #[test_id(t0x96b3)]
+    #[test]
+    fn a_refused_close_succeeds_only_when_the_ask_shows_closed() {
+        for (status, closed) in [("closed", true), ("open", false)] {
+            let lc = LcClient::over(Arc::new(RefusedClose(fake::Content::new(vec![ask("sp-a", status)]))), true);
+            let got = close(&lc, &Job { id: "sp-a".into(), reason: "r".into(), ..Job::default() });
+            if closed {
+                assert_eq!(got, Ok("sp-a".into()));
+            } else {
+                assert_eq!(got, Err("sp-a: close exited 3: refused".into()));
+            }
+        }
     }
 }

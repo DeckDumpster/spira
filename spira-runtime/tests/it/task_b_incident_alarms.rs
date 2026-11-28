@@ -149,3 +149,55 @@ fn a_boot_does_not_page_again_inside_the_page_window() {
     let paged = json(&no_lever);
     t::assert_boot_matches_an_unstopped_run::<H>(SET, vec![paged.clone(), paged], |_| {});
 }
+
+fn below_floor(now: u64) -> Snapshot {
+    Snapshot { section_snapshot: serde_json::json!({ "sections": [alarms_section(now), lifecycle_below_floor(now)], "intents": [], "pass": pass(now.saturating_sub(30_000), &[], Some("Lifecycle/all")) }), ..idle(now) }
+}
+
+#[test_id(tuqufw0)]
+#[test]
+fn a_floor_ask_lost_at_a_restart_is_asked_again() {
+    let observed = json(&below_floor(0));
+    let mut rig = runtime::taskrig::TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().hanging(task::FLOOR_ASK).double(task::OBSERVE, move |_| Ok(observed.clone()));
+    let (_, stream, kind) = H::boot();
+    rig.tick(stream, kind).unwrap();
+    rig.reopen(t::handler::<H>(SET).registration()).unwrap();
+    rig = rig.hanging(task::FLOOR_ASK);
+    rig.run_until_idle().unwrap();
+    let carried = t::recorded::<H>(&rig).unwrap();
+    assert_eq!(carried.floors.get("Lifecycle/all"), Some(&Floor::Asking), "{carried:?}");
+    let asks: Vec<&str> = rig.requested().iter().filter(|q| q.name == task::FLOOR_ASK).map(|q| q.input.as_str()).collect();
+    assert_eq!(asks.len(), 2, "{asks:?}");
+    assert_eq!(asks[0], asks[1]);
+}
+
+fn lost(name: &str, input: &str) -> Input<Snapshot> {
+    Input::Lost(spira_runtime::tasks::b::kit::Act { name: name.into(), key: format!("key/{name}"), input: input.into(), deadline_ms: 1_000, probe: false })
+}
+
+fn asked_again(name: &str, input: &str) -> Vec<spira_runtime::tasks::b::kit::Act> {
+    match lost(name, input) {
+        Input::Lost(a) => vec![a],
+        _ => unreachable!(),
+    }
+}
+
+fn failed(effect: &str, body: &str) -> Input<Snapshot> {
+    Input::Outcome { effect: effect.into(), ok: false, body: body.into() }
+}
+
+#[test_id(t2kuija)]
+#[test]
+fn decide_asks_a_lost_floor_ask_again_and_still_reads_a_failed_one_as_asked() {
+    let h = t::handler::<H>(SET);
+    let floor = |f| Carry { floors: BTreeMap::from([("Lifecycle/all".to_string(), f)]), ..idle_carry() };
+    let asking = floor(Floor::Asking);
+    assert_eq!(task::decide(&h.cfg, &asking, &lost(task::FLOOR_ASK, "in"), NOW).unwrap(), (asking.clone(), asked_again(task::FLOOR_ASK, "in")));
+    for effect in [task::PAGE, task::NOTE, task::RETRY, task::KNOB_INIT, task::PUBLISH, task::ATTEMPT] {
+        assert_eq!(task::decide(&h.cfg, &asking, &lost(effect, "in"), NOW).unwrap(), (asking.clone(), vec![]), "{effect}");
+    }
+    let (next, acts) = task::decide(&h.cfg, &asking, &failed(task::FLOOR_ASK, "Lifecycle/all: why"), NOW).unwrap();
+    let mut asked = floor(Floor::Asked);
+    asked.floor_asks = next.floor_asks.clone();
+    assert_eq!((next, acts), (asked, vec![]));
+}

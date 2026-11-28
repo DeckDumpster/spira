@@ -571,6 +571,11 @@ fn drain(carry: &mut Carry, input: &Input<Snapshot>) {
 
 /// `disposition` and `act` over the snapshot rather than `World`.
 pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
+    if let Input::Lost(lost) = input {
+        let request = EffectSpec::keyed(lost.name.clone(), lost.key.clone(), lost.input.clone(), lost.deadline_ms);
+        let body = name_job(&request, runtime::engine::LOST_AT_RESTART);
+        return decide(cfg, carry, &Input::Outcome { effect: lost.name.clone(), ok: false, body }, now_ms);
+    }
     let in_pass = matches!(carry.phase, Phase::Acting | Phase::Observing) && carry.pass.is_some();
     if in_pass && !matches!(input, Input::Fire) {
         let started = carry.pass.as_ref().map_or(now_ms, |p| p.started);
@@ -634,6 +639,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             next.jobs = jobs;
             Ok((next, acts))
         }
+        Input::Lost(_) => unreachable!("a lost effect is a named failure before this match"),
         Input::Ran(r) => {
             let key = r.key_for(NAME).ok_or_else(|| format!("{NAME}: a unit that is not this task's: {:?}", r.handle))?;
             let Some(j) = carry.jobs.get(&key).cloned() else {

@@ -62,7 +62,7 @@ impl Default for RoundvmSection {
 /// Asks for the publish when `reading` is not the one the store holds from a publish younger
 /// than [`REPUBLISH_AFTER_MS`]. The carry moves only on a publish that succeeded, so a refused
 /// write (a section that moved under `--expect-rev`) is asked again on the next tick.
-pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     match input {
         Input::Fire => Ok((carry.clone(), vec![])),
         Input::Observed(reading) => {
@@ -78,6 +78,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
             Ok((Carry { published: Some(reading), published_at: Some(now_ms) }, vec![]))
         }
         Input::Outcome { effect, .. } => Err(format!("{NAME}: an outcome of {effect} is not expected")),
+        Input::Lost(lost) => lost.as_failure(decide, cfg, carry, now_ms),
         Input::Ran(r) => Err(format!("{NAME}: no unit is expected, got {:?}", r.handle)),
     }
 }

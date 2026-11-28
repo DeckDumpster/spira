@@ -178,3 +178,42 @@ fn a_backlog_is_published_and_carried_in_pieces_the_store_takes() {
     let joined: Carry = serde_json::from_str(&runtime::rows::join(&rows, <H as Stub>::ROWS)).unwrap();
     assert_eq!(joined, carry);
 }
+
+#[test_id(ttsnoih)]
+#[test]
+fn a_step_lost_at_a_restart_is_not_marked_failed_and_the_next_observe_asks_it_again() {
+    let observed = json(&Snapshot { replies: vec![reply("m1", "notice", &[])] });
+    let mut rig = runtime::taskrig::TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().hanging(task::NOTE).double(task::OBSERVE, move |_| Ok(observed.clone()));
+    let (_, stream, kind) = H::boot();
+    rig.tick(stream, kind).unwrap();
+    rig.reopen(t::handler::<H>(SET).registration()).unwrap();
+    rig.run_until_idle().unwrap();
+    assert!(!rig.requested().iter().any(|q| q.name == task::MARK), "{:?}", rig.requested());
+    rig.tick(task::STREAM, runtime::event::EventKind::new(task::TICK, "")).unwrap();
+    assert_eq!(rig.requested().iter().filter(|q| q.name == task::NOTE).count(), 2, "{:?}", rig.requested());
+    assert!(!rig.wide_set("mail.reconcile.refused"));
+}
+
+#[test_id(t7u586q)]
+#[test]
+fn decide_marks_nothing_for_a_lost_step_and_still_marks_a_failed_one() {
+    let h = t::handler::<H>(SET);
+    for effect in [task::NOTE, task::CLOSE, task::LIFT, task::ANSWER, task::INBOX, task::MARK] {
+        let step = Input::Lost(spira_runtime::tasks::b::kit::Act { name: effect.into(), key: "m1/step".into(), input: "{}".into(), deadline_ms: 1_000, probe: false });
+        assert_eq!(task::decide(&h.cfg, &Carry::default(), &step, MIN).unwrap(), (Carry::default(), vec![]), "{effect}");
+    }
+    assert_eq!(marked(&h.cfg, task::NOTE, false, "m1/note-orig: why"), "fail:note-orig");
+}
+
+#[test_id(tfv0a2r)]
+#[test]
+fn decide_marks_a_lost_publish_unknown_as_it_does_a_failed_one() {
+    let h = t::handler::<H>(SET);
+    let input = serde_json::json!({"prefix": "mail/operator", "set": {"m1": {"subject": "s"}}, "clear": ["m0"], "seq": 1}).to_string();
+    let lost = Input::Lost(spira_runtime::tasks::b::kit::Act { name: task::PUBLISH.into(), key: "k".into(), input: input.clone(), deadline_ms: 1_000, probe: false });
+    let (next, acts) = task::decide(&h.cfg, &Carry::default(), &lost, MIN).unwrap();
+    assert_eq!(next.published, BTreeMap::from([("operator/m0".to_string(), serde_json::Value::Null), ("operator/m1".to_string(), serde_json::Value::Null)]));
+    assert!(acts.is_empty(), "{acts:?}");
+    let failed = Input::Outcome { effect: task::PUBLISH.into(), ok: false, body: input };
+    assert_eq!(task::decide(&h.cfg, &Carry::default(), &failed, MIN).unwrap(), (next, acts));
+}

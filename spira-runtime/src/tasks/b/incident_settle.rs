@@ -74,6 +74,9 @@
 //! `note` then `label` are ordered: label only after note succeeds, as today (`settle_real.rs:120-125`).
 //! A failed note leaves no label, so the next tick retries.
 //!
+//! Lost at a restart: a `close` or `note` returns the incident to open, so the next observe
+//! settles it again (a note may then be written twice); a `label` is asked again.
+//!
 //! ## Silence
 //!
 //! Idle: no incident changes outcome. Nothing is emitted beyond the probe; carried state is emitted
@@ -391,6 +394,14 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         }
         Input::Outcome { effect, .. } if effect == LOG => {}
         Input::Outcome { effect, .. } => return Err(format!("{NAME}: no outcome of {effect} is expected")),
+        Input::Lost(a) => match a.name.as_str() {
+            CLOSE | NOTE => {
+                let j: Job = serde_json::from_str(&a.input).map_err(|e| format!("{NAME}: a lost act's input does not decode: {e}"))?;
+                next.incidents.insert(j.id, Phase::Open);
+            }
+            LABEL => acts.push(a.clone()),
+            _ => {}
+        },
         Input::Ran(r) => {
             let id = r.key_for(NAME).unwrap_or_default();
             let phase = carry.incidents.get(&id).copied().unwrap_or_default();

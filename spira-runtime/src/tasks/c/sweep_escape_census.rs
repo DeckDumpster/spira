@@ -143,7 +143,7 @@ pub fn line(snap: &Snapshot) -> String {
 }
 
 /// `"<n> mapping_gap, <n> gate_gap, <n> environment_gap, <n> flake"`, absent class → 0.
-pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     let phase = |p: Phase| if p == Phase::Idle { "idle" } else { "reported" };
     match input {
         Input::Fire => Ok((carry.clone(), vec![])),
@@ -157,6 +157,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
         }
         Input::Outcome { effect, .. } if effect == REPORT => Ok((carry.clone(), vec![])),
         Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} no outcome of {effect} is expected", phase(carry.phase))),
+        Input::Lost(lost) => lost.as_failure(decide, cfg, carry, now_ms),
         Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase(carry.phase), r.handle)),
     }
 }

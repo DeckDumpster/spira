@@ -192,6 +192,8 @@ impl Handler for Reconciler {
                 Ok(obs) => self.apply(ctx, view, ev, obs),
                 Err(_) => vec![],
             },
+            // At least once: a second operator mail is cheaper than an escalation that never goes.
+            (Some(MAIL), _) if super::lost_at_restart(ev) => self.unsent(view, ev),
             (Some(MAIL), EFFECT_FAILED | EFFECT_TIMED_OUT) => self.unsent(view, ev),
             _ => vec![],
         }

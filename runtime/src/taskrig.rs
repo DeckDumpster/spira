@@ -28,6 +28,7 @@ use crate::engine::{Engine, Executor, Outcome};
 use crate::event::*;
 use crate::journal::MemJournal;
 use crate::ports::{Clock, VirtualClock};
+use crate::wide::MemSink;
 use crate::Result;
 
 pub type Double = Box<dyn Fn(&str) -> std::result::Result<String, String> + Send + Sync>;
@@ -63,19 +64,21 @@ pub struct TaskRig {
     hung: BTreeSet<String>,
     parked: BTreeSet<String>,
     delivered: u64,
+    sink: Arc<MemSink>,
 }
 
 impl TaskRig {
     pub fn new(seed: u64, reg: Registration) -> Result<Self> {
         let journal = MemJournal::new();
         let clock = VirtualClock::new(0);
-        let engine = Engine::open(journal.clone(), Arc::new(clock.clone()), vec![reg], seed)?;
-        Ok(TaskRig { journal, clock, engine, doubles: BTreeMap::new(), requested: vec![], refused: vec![], ticks: BTreeMap::new(), read_to: 0, journaled_requests: BTreeSet::new(), timing_out: false, hung: BTreeSet::new(), parked: BTreeSet::new(), delivered: 0 })
+        let sink = MemSink::new();
+        let engine = Engine::open(journal.clone(), Arc::new(clock.clone()), vec![reg], seed)?.with_sink(sink.clone());
+        Ok(TaskRig { journal, clock, engine, doubles: BTreeMap::new(), requested: vec![], refused: vec![], ticks: BTreeMap::new(), read_to: 0, journaled_requests: BTreeSet::new(), timing_out: false, hung: BTreeSet::new(), parked: BTreeSet::new(), delivered: 0, sink })
     }
 
     /// Stop the engine and open a new one on the same journal and clock: a runtime restart.
     pub fn reopen(&mut self, reg: Registration) -> Result<()> {
-        self.engine = Engine::open(self.journal.clone(), Arc::new(self.clock.clone()), vec![reg], 0)?;
+        self.engine = Engine::open(self.journal.clone(), Arc::new(self.clock.clone()), vec![reg], 0)?.with_sink(self.sink.clone());
         self.parked.clear();
         self.hung.clear();
         Ok(())
@@ -188,6 +191,11 @@ impl TaskRig {
             spec: EffectSpec,
         }
         self.journaled().into_iter().filter(|e| e.kind.tag == EFFECT_SHADOWED).filter_map(|e| serde_json::from_str::<Body>(&e.kind.body).ok()).map(|b| b.spec).collect()
+    }
+
+    /// Whether any wide event, before or after a [`reopen`](Self::reopen), set `key`.
+    pub fn wide_set(&self, key: &str) -> bool {
+        self.sink.records().iter().any(|r| r.contains_key(key))
     }
 
     /// Effect names the handler asked for that had no double.

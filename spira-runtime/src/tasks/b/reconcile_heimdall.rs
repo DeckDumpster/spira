@@ -350,7 +350,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             next.broker.apply(&done);
             return Ok((next, vec![]));
         }
-        Input::Fire | Input::Outcome { .. } => return Ok((carry.clone(), vec![])),
+        Input::Fire | Input::Outcome { .. } | Input::Lost(_) => return Ok((carry.clone(), vec![])),
         Input::Ran(r) => return Err(format!("{NAME}: no unit is expected, got {r:?}")),
     };
     let (confirm, clear_n, refresh) = (num(cfg, "SPIRA_HEIMDALL_CONFIRM")?, num(cfg, "SPIRA_HEIMDALL_CLEAR")?, num(cfg, "SPIRA_HEIMDALL_REFRESH")?);

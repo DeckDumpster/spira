@@ -257,6 +257,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         // A prune answers after its pass ended, as does a removal that outlived its pass.
         Input::Outcome { effect, .. } if effect == PRUNE || effect == DESTROY_WORKTREE || effect == REMOVE_SCRATCH => Ok((carry.clone(), vec![])),
         Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} an outcome of {effect} is not expected", phase_name(carry.phase))),
+        Input::Lost(lost) => lost.as_failure(decide, cfg, carry, now_ms),
         Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase_name(carry.phase), r.handle)),
     }
 }

@@ -191,7 +191,7 @@ fn next_store(c: &mut Carry) -> Result<Option<Act>, String> {
 }
 
 /// The fast path: store a source with no index row, a size or mtime change, or no body.
-pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     let mut next = carry.clone();
     match input {
         Input::Fire => Ok((next, vec![])),
@@ -251,6 +251,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) 
             Ok((next, vec![]))
         }
         Input::Outcome { effect, .. } => Err(format!("{NAME}: no outcome of {effect} is expected")),
+        Input::Lost(lost) => lost.as_failure(decide, cfg, carry, now_ms),
         Input::Ran(r) => Err(format!("{NAME}: no unit is expected, got {:?}", r.handle)),
     }
 }

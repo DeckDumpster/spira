@@ -477,3 +477,15 @@ fn the_service_routes_hand_the_observe_its_broker_and_the_page_the_operators_mai
 fn json_of<T: serde::Serialize>(v: &T) -> String {
     serde_json::to_string(v).unwrap()
 }
+
+#[test_id(tvnuzt6)]
+#[test]
+fn decide_leaves_the_carry_alone_for_a_lost_write_as_for_a_failed_one() {
+    let h = t::handler::<H>(SET);
+    for effect in [task::RAISE, task::CLEAR, task::REFRESH, task::FALLBACK, task::ALARMS] {
+        let lost = Input::Lost(spira_runtime::tasks::b::kit::Act { name: effect.into(), key: "k".into(), input: "{}".into(), deadline_ms: 1_000, probe: false });
+        assert_eq!(task::decide(&h.cfg, &Carry::default(), &lost, 1).unwrap(), (Carry::default(), vec![]), "{effect}");
+        let failed = Input::Outcome { effect: effect.into(), ok: false, body: "k: why".into() };
+        assert_eq!(task::decide(&h.cfg, &Carry::default(), &failed, 1).unwrap(), (Carry::default(), vec![]), "{effect}");
+    }
+}

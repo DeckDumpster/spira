@@ -278,7 +278,7 @@ pub mod kit {
     use serde::de::DeserializeOwned;
     use serde::{Deserialize, Serialize};
 
-    use crate::watchers::{answered_effect, answered_spec, carried};
+    use crate::watchers::{answered_effect, answered_spec, carried, lost_at_restart};
     use crate::{Effects, Settings};
 
     /// A task's configured values, by key: every key of its row, read once at build.
@@ -372,6 +372,9 @@ pub mod kit {
         Observed(S),
         /// The outcome of one of the task's own effects.
         Outcome { effect: String, ok: bool, body: String },
+        /// An effect in flight at a restart, as it was asked: whether it ran is unknown, so it
+        /// is neither a success nor a refusal. A probe is never lost.
+        Lost(Act),
         /// A unit the task started has ended (P2 long legs, S6).
         Ran(UnitRan),
     }
@@ -386,6 +389,17 @@ pub mod kit {
         pub key: String,
         /// A memory-only read rather than a journaled effect.
         pub probe: bool,
+    }
+
+    impl Act {
+        fn asked(spec: EffectSpec) -> Act {
+            Act { name: spec.name, key: spec.key, input: spec.input, deadline_ms: spec.deadline_ms, probe: false }
+        }
+
+        /// `decide` over the failed outcome a lost effect is to a task that does not tell the two apart.
+        pub fn as_failure<S, C>(&self, decide: fn(&Cfg, &C, &Input<S>, u64) -> Decision<C>, cfg: &Cfg, carry: &C, now_ms: u64) -> Decision<C> {
+            decide(cfg, carry, &Input::Outcome { effect: self.name.clone(), ok: false, body: runtime::engine::LOST_AT_RESTART.into() }, now_ms)
+        }
     }
 
     pub type Decision<C> = Result<(C, Vec<Act>), String>;
@@ -525,6 +539,9 @@ pub mod kit {
         }
         if !spec.effects.contains(&asked.as_str()) {
             return vec![];
+        }
+        if let Some(request) = answered_spec(view, ev).filter(|_| lost_at_restart(ev)) {
+            return run(t, ctx, view, &stream, Input::Lost(Act::asked(request)), ev.at);
         }
         let ok = ev.kind.tag == EFFECT_SUCCEEDED;
         let body = answered_spec(view, ev).filter(|_| !ok).map_or_else(|| ev.kind.body.clone(), |request| T::failure_body(&request, &ev.kind.body));

@@ -150,3 +150,49 @@ fn a_no_probe_incident_whose_fix_was_ejected_stays_open() {
     assert_eq!(c.incidents.get("sp-i1"), Some(&Phase::Waiting));
     assert!(acts.iter().all(|a| a.name == task::LOG), "{acts:?}");
 }
+
+#[test_id(trqabfg)]
+#[test]
+fn a_close_lost_at_a_restart_leaves_the_incident_open() {
+    let landed = json(&Snapshot { incidents: vec![inc("sp-i1", vec![fix("sp-f1", "LANDED", Landing::InForce("abc123".into()))], Detector::Quiet)] });
+    let mut rig = runtime::taskrig::TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().hanging(task::CLOSE).double(task::OBSERVE, move |_| Ok(landed.clone()));
+    let (_, stream, kind) = H::boot();
+    rig.tick(stream, kind).unwrap();
+    assert_eq!(rig.requested().iter().filter(|q| q.name == task::CLOSE).count(), 1);
+    rig.reopen(t::handler::<H>(SET).registration()).unwrap();
+    rig.run_until_idle().unwrap();
+    let carried = t::recorded::<H>(&rig).unwrap();
+    assert_eq!(carried.incidents.get("sp-i1"), Some(&Phase::Open), "{carried:?}");
+    assert!(!rig.wide_set("incident.settle.refused"));
+}
+
+fn lost(name: &str, input: &str) -> Input<Snapshot> {
+    Input::Lost(spira_runtime::tasks::b::kit::Act { name: name.into(), key: format!("key/{name}"), input: input.into(), deadline_ms: 1_000, probe: false })
+}
+
+fn asked_again(name: &str, input: &str) -> Vec<spira_runtime::tasks::b::kit::Act> {
+    match lost(name, input) {
+        Input::Lost(a) => vec![a],
+        _ => unreachable!(),
+    }
+}
+
+fn failed(effect: &str, body: &str) -> Input<Snapshot> {
+    Input::Outcome { effect: effect.into(), ok: false, body: body.into() }
+}
+
+#[test_id(t0rsipn)]
+#[test]
+fn decide_reopens_a_lost_close_or_note_asks_a_lost_label_again_and_reads_a_failure_as_before() {
+    let h = t::handler::<H>(SET);
+    let carry = |phase| Carry { incidents: BTreeMap::from([("sp-i1".to_string(), phase)]), ..Carry::default() };
+    let job = serde_json::to_string(&task::Job { id: "sp-i1".into(), ..task::Job::default() }).unwrap();
+    for (effect, phase) in [(task::CLOSE, Phase::Closing), (task::NOTE, Phase::Persists)] {
+        assert_eq!(task::decide(&h.cfg, &carry(phase), &lost(effect, &job), TICK).unwrap(), (carry(Phase::Open), vec![]), "{effect}");
+        assert_eq!(task::decide(&h.cfg, &carry(phase), &failed(effect, "sp-i1: why"), TICK).unwrap(), (carry(Phase::Open), vec![]), "{effect}");
+    }
+    assert_eq!(task::decide(&h.cfg, &carry(Phase::Persists), &lost(task::LABEL, &job), TICK).unwrap(), (carry(Phase::Persists), asked_again(task::LABEL, &job)));
+    assert_eq!(task::decide(&h.cfg, &carry(Phase::Persists), &failed(task::LABEL, "sp-i1: why"), TICK).unwrap(), (carry(Phase::Open), vec![]));
+    assert_eq!(task::decide(&h.cfg, &carry(Phase::Waiting), &lost(task::LOG, &job), TICK).unwrap(), (carry(Phase::Waiting), vec![]));
+    assert_eq!(task::decide(&h.cfg, &carry(Phase::Waiting), &failed(task::LOG, "sp-i1: why"), TICK).unwrap(), (carry(Phase::Waiting), vec![]));
+}
