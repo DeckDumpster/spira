@@ -180,9 +180,9 @@ fn quiet_after_one_read(r: &Rig, t: Tier, verbs: &[&str]) {
 fn a_second_observe_of_an_unchanged_store_sends_it_nothing_and_an_ask_change_rereads_the_asks() {
     let r = rig("cockpit-tiers-idle");
 
-    quiet_after_one_read(&r, MINUTE, &["list", "claimable", "list-asks", "ops-graph", "ops-view ops_dwell", "ops-view ops_edges", "plan repo-labels", "section snapshot", "content list"]);
     quiet_after_one_read(&r, FIVE, &["list-asks", "mending list --live", "ops-view ops_recent"]);
 
+    quiet_after_one_read(&r, MINUTE, &["list", "claimable", "list-asks", "ops-graph", "ops-view ops_dwell", "ops-view ops_edges", "plan repo-labels", "section snapshot", "content list"]);
     let _watching = r.watch();
     r.observe(MINUTE.probes);
     r.observe(FIVE.probes);
