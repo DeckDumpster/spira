@@ -458,7 +458,8 @@ fn the_service_routes_hand_the_observe_its_broker_and_the_page_the_operators_mai
     use runtime::host::EffectRunner;
     let mut broker = testkit::broker::Broker::up();
     let dir = testkit::TempDir::new("heimdall-routes");
-    let fx = spira_runtime::Effects { broker: heimdall::broker::Bus::At(broker.socket().to_path_buf()), mail: Some(std::sync::Arc::new(page_env(dir.path()))), ..spira_runtime::Effects::default() };
+    let mut fx = spira_runtime::Effects { broker: heimdall::broker::Bus::At(broker.socket().to_path_buf()), mail: Some(std::sync::Arc::new(page_env(dir.path()))), ..spira_runtime::Effects::default() };
+    fx.world.run_dir = dir.path().to_path_buf();
     let run = |name: &str, input: &str| fx.run("key", &runtime::event::EffectSpec::probe(name, input, 30_000)).unwrap();
     let sock = dir.join("no-scheduler.sock");
     let seen = || serde_json::from_str::<Snapshot>(&run(task::OBSERVE, sock.to_str().unwrap())).unwrap().broker;
