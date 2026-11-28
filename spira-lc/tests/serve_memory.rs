@@ -254,3 +254,26 @@ fn a_request_answered_before_sigterm_has_its_span_at_the_collector_when_the_serv
     assert!(names.iter().any(|n| n == "list"), "no span for the request in {names:?}");
     assert_no_span_file(&server);
 }
+
+#[test_id(tqh7bnx)]
+#[test]
+fn serve_with_an_empty_collector_endpoint_exits_2_naming_the_key() {
+    let dir = testkit::TempDir::new("spira-lc-serve-no-collector");
+    let (d, sock) = (dir.display().to_string(), dir.join("lc.sock").display().to_string());
+    let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_WORKSPACES", &d), ("SPIRA_RUN", &d), ("SPIRA_LC_SOCKET", &sock), ("SPIRA_OTEL_COLLECTOR_ENDPOINT", "")]);
+    std::fs::create_dir_all(dir.join("release/bin")).unwrap();
+    // batch-job: a server that refuses to start exits at once
+    let out = Command::new(testkit::bin_exe("spira-lc"))
+        .arg("serve")
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("SPIRA_TOML", &toml)
+        .env("SPIRA_HOME", spira_config::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree"))
+        .env("SPIRA_RELEASE", dir.join("release"))
+        .env("HOME", dir.join("home"))
+        .output()
+        .expect("spira-lc serve runs");
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{said}");
+    assert!(said.contains("spira.otel_collector_endpoint"), "{said}");
+}

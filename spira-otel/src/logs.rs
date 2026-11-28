@@ -242,32 +242,12 @@ mod tests {
     #[test_id(txklxml)]
     #[test]
     fn every_file_tailing_receiver_polls_every_ten_seconds() {
-        let yaml = include_str!("../../spira/metrics/collector.yaml");
-        let mut blocks: Vec<(String, bool)> = Vec::new();
-        let mut in_receivers = false;
-        for line in yaml.lines() {
-            let indent = line.len() - line.trim_start().len();
-            let t = line.trim();
-            if indent == 0 && !t.is_empty() && !t.starts_with('#') {
-                in_receivers = t == "receivers:";
-                continue;
-            }
-            if !in_receivers {
-                continue;
-            }
-            if indent == 2 && t.starts_with("otlpjsonfile") && t.ends_with(':') {
-                blocks.push((t.to_string(), false));
-            } else if indent == 2 && !t.is_empty() && !t.starts_with('#') {
-                blocks.push((String::new(), true));
-            } else if t == "poll_interval: 10s" {
-                if let Some(b) = blocks.last_mut() {
-                    b.1 = true;
-                }
-            }
+        let paths = crate::test_yaml::paths(include_str!("../../spira/metrics/collector.yaml"));
+        let tailing: Vec<&str> = paths.iter().filter_map(|(k, _)| k.strip_prefix("receivers.")).filter(|r| r.starts_with("otlpjsonfile") && !r.contains('.')).collect();
+        assert_eq!(tailing.len(), 1, "{tailing:?}");
+        for name in tailing {
+            assert!(paths.contains(&(format!("receivers.{name}.poll_interval"), "10s".to_string())), "{name}");
         }
-        let tail: Vec<_> = blocks.iter().filter(|(n, _)| !n.is_empty()).collect();
-        assert_eq!(tail.len(), 1, "{tail:?}");
-        assert!(tail.iter().all(|(_, ok)| *ok), "{tail:?}");
     }
 
     #[test_id(tuzwc75)]

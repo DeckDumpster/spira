@@ -558,3 +558,17 @@ mod tests {
         assert_eq!(kind_name(&strukt), "Submit");
     }
 }
+
+#[cfg(test)]
+mod deadline_verb_tests {
+    #[test_id(t3t5px3)]
+    #[test]
+    fn the_deadline_verb_reads_the_configured_victorialogs() {
+        let logs = spira_otel::vlogs::fake::FakeLogs::start();
+        let dir = testkit::TempDir::new("lc-deadline-verb");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_VICTORIALOGS_URL", &logs.url())]);
+        let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
+        let (code, out) = crate::run_deadline("deadline-check", &["--ms".to_string(), "1000".to_string()]);
+        assert_eq!((code, logs.queries().len()), (crate::CANNOT_TELL, 1), "{out}");
+    }
+}

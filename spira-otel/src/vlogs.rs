@@ -101,7 +101,7 @@ impl Shipper {
     }
 }
 
-fn host_port(url: &str) -> String {
+pub(crate) fn host_port(url: &str) -> String {
     url.trim().trim_start_matches("http://").trim_end_matches('/').to_string()
 }
 

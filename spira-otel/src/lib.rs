@@ -131,8 +131,7 @@ impl Sink {
     }
 
     fn with_deadline(endpoint: &str, service: &str, deadline: Duration) -> Sink {
-        let addr = endpoint.trim().trim_start_matches("http://").trim_end_matches('/').to_string();
-        let inner = Arc::new(Inner { addr, service: service.to_string(), deadline, dropped: AtomicU64::new(0) });
+        let inner = Arc::new(Inner { addr: vlogs::host_port(endpoint), service: service.to_string(), deadline, dropped: AtomicU64::new(0) });
         let queue = Arc::new(Queue::default());
         let (i, q) = (inner.clone(), queue.clone());
         std::thread::Builder::new().name("otel-writer".into()).spawn(move || writer_loop(&i, &q)).expect("the span writer thread starts");
@@ -357,6 +356,27 @@ pub fn dir_of(run: &Path) -> PathBuf {
 }
 
 #[cfg(test)]
+mod test_yaml {
+    /// The indented keys of a YAML file as dotted paths, each with its inline value.
+    pub(crate) fn paths(yaml: &str) -> Vec<(String, String)> {
+        let mut stack: Vec<(usize, String)> = Vec::new();
+        let mut out = Vec::new();
+        for line in yaml.lines() {
+            let t = line.trim();
+            if t.is_empty() || t.starts_with('#') || t.starts_with('-') {
+                continue;
+            }
+            let indent = line.len() - line.trim_start().len();
+            let Some((key, value)) = t.split_once(':') else { continue };
+            stack.retain(|(i, _)| *i < indent);
+            stack.push((indent, key.to_string()));
+            out.push((stack.iter().map(|(_, k)| k.as_str()).collect::<Vec<_>>().join("."), value.trim().to_string()));
+        }
+        out
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::fixture::Collector;
@@ -533,28 +553,10 @@ mod tests {
         assert!(dropped() >= before + 5);
     }
 
-    /// The indented keys of a YAML file as dotted paths, each with its inline value.
-    fn yaml_paths(yaml: &str) -> Vec<(String, String)> {
-        let mut stack: Vec<(usize, String)> = Vec::new();
-        let mut out = Vec::new();
-        for line in yaml.lines() {
-            let t = line.trim();
-            if t.is_empty() || t.starts_with('#') || t.starts_with('-') {
-                continue;
-            }
-            let indent = line.len() - line.trim_start().len();
-            let Some((key, value)) = t.split_once(':') else { continue };
-            stack.retain(|(i, _)| *i < indent);
-            stack.push((indent, key.to_string()));
-            out.push((stack.iter().map(|(_, k)| k.as_str()).collect::<Vec<_>>().join("."), value.trim().to_string()));
-        }
-        out
-    }
-
     #[test_id(tbh79ot)]
     #[test]
     fn the_collector_takes_spans_over_otlp_only_and_forwards_logs_to_victorialogs() {
-        let paths = yaml_paths(include_str!("../../spira/metrics/collector.yaml"));
+        let paths = test_yaml::paths(include_str!("../../spira/metrics/collector.yaml"));
         let at = |p: &str| paths.iter().find(|(k, _)| k == p).map(|(_, v)| v.as_str()).unwrap_or_else(|| panic!("{p} is not in the collector config"));
         let list = |p: &str| at(p).trim_matches(['[', ']']).split(',').map(|s| s.trim().to_string()).collect::<Vec<_>>();
         assert_eq!(list("service.pipelines.traces.receivers"), ["otlp"]);

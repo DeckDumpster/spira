@@ -87,15 +87,19 @@ fn judge(verbs: &[VerbStats], ms: u64, scope: &Scope, hours: u64) -> Result<Stri
     Ok(format!("no call to {} took over {ms} ms in {hours} h ({calls} calls)", scope.label()))
 }
 
-/// The window's verdict as read from VictoriaLogs. A window holding no call at all proves
-/// nothing, so it cannot tell.
+/// The window's verdict as read from VictoriaLogs. A window holding no call the scope covers
+/// proves nothing, so it cannot tell.
 fn verdict(url: &str, ms: u64, scope: &Scope, hours: u64) -> (i32, String) {
     let verbs = match Logs::new(url).and_then(|logs| measure(&logs, ms, hours)) {
         Ok(verbs) => verbs,
         Err(e) => return (CANNOT_TELL, format!("spira-lc deadline: cannot read VictoriaLogs: {e}")),
     };
-    if verbs.iter().all(|v| v.total == 0) {
+    let recorded = |covered_by: &dyn Fn(&str) -> bool| verbs.iter().any(|v| v.total > 0 && covered_by(&v.verb));
+    if !recorded(&|_| true) {
         return (CANNOT_TELL, format!("spira-lc deadline: no spira-lc call recorded in VictoriaLogs in {hours} h"));
+    }
+    if !recorded(&|verb| scope.covers(verb)) {
+        return (CANNOT_TELL, format!("spira-lc deadline: no spira-lc call to {} recorded in VictoriaLogs in {hours} h", scope.label()));
     }
     match judge(&verbs, ms, scope, hours) {
         Ok(line) => (0, line),
@@ -272,10 +276,15 @@ mod tests {
     fn a_window_with_every_call_under_the_limit_passes_naming_the_call_count() {
         let f = lists(0);
         assert_eq!(check(&f, 1500, &default_scope_with(&[])), (0, "no call to a default-deadline verb took over 1500 ms in 24 h (4 calls)".to_string()));
-        let query = &f.queries()[0];
-        for part in ["service.name:spira-lc rpc.system:spira-lc _time:24h | stats by (rpc.method) count() total", "count() if (!spira.deadline_cut_ms:* spira.answer_us:>1500000) over", "max(spira.answer_us) if (!spira.deadline_cut_ms:*) max_us"] {
-            assert!(query.contains(part), "{part} not in {query}");
-        }
+        assert_eq!(
+            f.queries()[0],
+            "service.name:spira-lc rpc.system:spira-lc _time:24h | stats by (rpc.method) count() total, \
+             max(spira.answer_us) if (!spira.deadline_cut_ms:*) max_us, \
+             count() if (!spira.deadline_cut_ms:* spira.answer_us:>1500000) over, \
+             count() if (spira.deadline_cut_ms:*) cut, \
+             max(spira.deadline_cut_ms) cut_ms, \
+             count() if (!spira.deadline_cut_ms:* !spira.answer_us:*) unmeasured"
+        );
     }
 
     #[test_id(tr00bf7)]
@@ -285,6 +294,16 @@ mod tests {
         assert_eq!((code, out.as_str()), (CANNOT_TELL, "spira-lc deadline: no spira-lc call recorded in VictoriaLogs in 24 h"));
         let (code, _, calls) = lower(&store(&[]), &["--ms", "1000", "--file", "f.toml"]);
         assert_eq!(code, CANNOT_TELL);
+        assert!(calls.is_empty(), "{calls:?}");
+    }
+
+    #[test_id(twdu0ir)]
+    #[test]
+    fn a_window_holding_only_calls_outside_the_scope_cannot_tell() {
+        let others = || store(&[row("watch", 2, Some(5), 0, None, 0)]);
+        assert_eq!(check(&others(), 1000, &Scope::Verb("show".into())), (CANNOT_TELL, "spira-lc deadline: no spira-lc call to `show` recorded in VictoriaLogs in 24 h".to_string()));
+        let (code, out, calls) = lower(&others(), &["--ms", "1000", "--file", "f.toml"]);
+        assert_eq!((code, out.as_str()), (CANNOT_TELL, "spira-lc deadline: no spira-lc call to a default-deadline verb recorded in VictoriaLogs in 24 h"));
         assert!(calls.is_empty(), "{calls:?}");
     }
 
