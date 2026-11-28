@@ -525,7 +525,7 @@ mod tests {
     }
 
     fn pool(held: i64) -> TaskLimit {
-        TaskLimit { name: "pool".into(), limit: 6, held }
+        TaskLimit { name: "pool".into(), limit: 6, held, holders: vec![] }
     }
 
     #[test_id(tmquww1)]
