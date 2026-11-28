@@ -2973,8 +2973,9 @@ mod tests {
         fs::remove_file(d.path().join("bin/fail")).unwrap();
         fs::write(d.path().join("bin/failclean"), "").unwrap();
         fs::write(wt.join("a/src/lib.rs"), "pub fn f() { let _ = 2; }\n").unwrap();
-        // A workspace manifest change is what still runs cargo clean, so it is what can fail.
-        fs::write(wt.join("Cargo.toml"), format!("{}\n# changed\n", fs::read_to_string(wt.join("Cargo.toml")).unwrap())).unwrap();
+        // A cargo config change is what still runs cargo clean, so it is what can fail.
+        fs::create_dir_all(wt.join(".cargo")).unwrap();
+        fs::write(wt.join(".cargo/config.toml"), "# changed\n").unwrap();
         let builds = fs::read_to_string(&log).unwrap().matches("build -q").count();
         let err = RealScripts { home }.build_release(&wt, "hand-3", "spira").expect_err("a failing clean fails");
         assert!(err.contains("selective clean") && err.contains("emptied"), "{err}");

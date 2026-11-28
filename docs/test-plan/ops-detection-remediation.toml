@@ -24,7 +24,7 @@ statement = "The dedup lookup is label-keyed (`ref:<hash>`) and issues zero `bd 
 [[use_case]]
 id = "UC-ops-detection-remediation-05"
 tier = "T1"
-statement = "A declared `SPIRA_INCIDENT_REPO` is recorded as the bead's repo; an undeclared repo yields `needs-repo-triage` and a note naming the missing declaration."
+statement = "A declared product repo's landing-ref red, or its filing that asks for the plan lane, is filed against that repo in the plan lane with a `## Build` section; every other filing, undeclared included, is filed against the home repo in the incident lane."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-06"

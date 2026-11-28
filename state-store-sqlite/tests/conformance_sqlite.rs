@@ -1592,7 +1592,8 @@ fn no_commit_runs_a_wal_checkpoint() {
 fn a_checkpoint_completes_after_checkpoint_every_commits() {
     let dir = TempDir::new("sqlite-background-checkpoint");
     let path = dir.path().join("s.db");
-    let b = SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
+    let opts = Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, wal_line_bytes: u64::MAX, ..Options::default() };
+    let b = SqliteBackend::open(&path, opts).unwrap();
     for _ in 0..state_store_sqlite::CHECKPOINT_EVERY {
         put_next(&b);
     }
@@ -1889,7 +1890,7 @@ const CHECKPOINT_CAP: std::time::Duration = std::time::Duration::from_secs(60);
 /// background thread never takes a pass: the workload runs each interval's checkpoint itself
 /// when `checkpoint`, so host load cannot decide when it happens.
 fn bounded_wal_workload(path: &Path, checkpoint: bool) -> SqliteBackend {
-    let opts = Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, checkpoint_every: u64::MAX, readers: 4, ..Options::default() };
+    let opts = Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, checkpoint_every: u64::MAX, wal_line_bytes: u64::MAX, readers: 4, ..Options::default() };
     let b = SqliteBackend::open(path, opts).unwrap();
     let stop = Arc::new(AtomicBool::new(false));
     let reader = {
@@ -2274,6 +2275,32 @@ fn the_background_checkpointer_starts_a_pass_when_the_wal_reaches_the_line_whate
     }
     assert!(largest <= LINE + 2 * commit_bytes, "the WAL grew to {largest} B, past the line {LINE} B plus two commits");
     assert!(b.checkpoints_completed() >= 3, "only {} passes ran over 4 MiB at a 1 MiB line", b.checkpoints_completed());
+}
+
+#[test_id(t0n2lh3)]
+#[test]
+fn a_wal_past_half_its_line_is_reset_before_it_reaches_the_line() {
+    const LINE: u64 = 1 << 20;
+    let dir = TempDir::new("sqlite-wal-half-line-trigger");
+    let path = dir.path().join("s.db");
+    let wal = format!("{}-wal", path.display());
+    let opts = Options { checkpoint_every: u64::MAX, wal_line_bytes: LINE, max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() };
+    let b = SqliteBackend::open(&path, opts).unwrap();
+    let wal_len = || std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0);
+    let before = b.checkpoints_completed();
+    let mut largest = 0u64;
+    while largest < LINE / 2 && b.checkpoints_completed() == before {
+        put_next(&b);
+        largest = largest.max(wal_len());
+    }
+    // Under the checkpointer's 60 s idle timer, which would start the pass without any commit's wake.
+    let woken_cap = CHECKPOINT_CAP / 2;
+    assert!(
+        state_store_sqlite::bench::await_checkpoint(&b, before, woken_cap).is_some(),
+        "the WAL reached {largest} B, past half the line {LINE} B, and no pass ran"
+    );
+    largest = largest.max(wal_len());
+    assert!(largest < LINE, "the WAL grew to {largest} B, up to the line {LINE} B");
 }
 
 /// A [`VirtualClock`] that notes when the thread named `pass` first reads it: the restart reads

@@ -978,7 +978,7 @@ mod tests {
         let t = Tokens { single: vec![("REPO_NAME", "spira".into()), ("BEAD_ID", "sp-a".into()), ("WIKI_DIR", "wiki".into())], ..Default::default() };
         let p = render_prompt(runes, &t, None);
         assert!(p.contains("\n    work open-items --repo spira --exclude sp-a\n"), "{p}");
-        assert!(p.contains("Open: close this as a duplicate of"), "{p}");
+        assert!(p.contains("\n    ### Amend <survivor-id>: <title>\n"), "{p}");
         assert!(!p.contains("{{"), "{p}");
         let rune = include_str!("../../spira/runes/skuld.rune");
         let tools = rune.lines().find(|l| l.starts_with("RUNE_TOOLS=")).unwrap_or_default();

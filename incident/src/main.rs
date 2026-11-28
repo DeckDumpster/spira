@@ -112,7 +112,11 @@ fn cmd_list(env: &Env, bd: &incident::real::RealBd) -> ExitCode {
 
 /// Close the repo's open local-red incidents a green landing has outlived.
 fn cmd_supersede_red(bd: &RealBd, repo: &str, landing: &str) -> ExitCode {
-    let s = incident::supersede::RealSuperseder { bd, incident_label: env_or("SPIRA_INCIDENT_LABEL", "incident") };
+    let Some(plan_label) = incident::intake::env("SPIRA_PLAN_LABEL") else {
+        eprintln!("incident supersede-red: SPIRA_PLAN_LABEL is not set — the plan lane's reds cannot be listed");
+        return ExitCode::FAILURE;
+    };
+    let s = incident::supersede::RealSuperseder { bd, labels: vec![env_or("SPIRA_INCIDENT_LABEL", "incident"), plan_label] };
     let landed_at = spira_config::vtime::now_epoch() as i64;
     match incident::supersede::supersede(&s, repo, landing, landed_at) {
         Ok(outcomes) => {

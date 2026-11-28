@@ -237,28 +237,7 @@ pub fn unit_from_cgroup_line(line: &str) -> String {
 /// `_bdq_check_repo_label`: a `repo:<name>` in the create labels must be the home repo or
 /// a name the repository map carries. Returns the invalid name to report, or None (allowed).
 ///
-/// PORTED, NOT DROPPED. `incident.sh` never calls `bd` directly for `create` — every path
-/// goes through lib.sh's `bdq`, which applies this fence (plus the two below) underneath.
-/// This crate's `real.rs` shells to `bd` directly, so calling `bd create` without
-/// reimplementing these three checks here would be a real regression, not a
-/// simplification: an invalid `repo:` label, or a
-/// schema_migrations DELETE that `bdq` refuses today would go through silently.
-///
-/// COLLAPSED ONTO `bead::bdq` (sp-pwmlj, wave 4.15): the matching rules themselves —
-/// which repo values are allowed, what counts as a
-/// schema-migrations DELETE — now live in exactly one place (`bead::bdq`), shared with
-/// `bdq`'s own argv-parsing fences, rather than in a second hand-rolled copy here that could
-/// drift from it.
-pub fn invalid_repo_label(labels: &str, home_repo: &str, known_repos: &[String]) -> Option<String> {
-    let repo_val = labels.split(',').find_map(|l| l.strip_prefix("repo:"))?;
-    if bead::bdq::repo_label_allowed(repo_val, home_repo, known_repos) {
-        None
-    } else {
-        Some(repo_val.to_string())
-    }
-}
-
-/// `_bdq_check_schema_delete`: refused regardless of `needs-ryan` — approved three times
+/// `_bdq_check_schema_delete`, applied here because this crate does not file through `bdq`: refused regardless of `needs-ryan` — approved three times
 /// while still wrong (sp-1khst). Matching delegated to `bead::bdq::schema_delete_match`
 /// (sp-pwmlj) — this one already agreed with the real fence (both tolerate arbitrary
 /// whitespace between the three words), so the collapse is pure deduplication here, not a
@@ -278,6 +257,44 @@ pub fn incident_labels(supplied: Option<&str>, scope: Option<&str>, incident_lab
     } else {
         format!("{scope},{base}")
     }
+}
+
+/// Which lane a filing lands in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lane {
+    Plan,
+    Incident,
+}
+
+/// The repository a filing is filed against, and the lane there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Route {
+    pub repo: String,
+    pub lane: Lane,
+}
+
+/// A mapped product repo's own landing-ref red, or a caller asking for the plan lane, is a
+/// builder's work on that repo. Everything else is a harness fault: product repos admit no
+/// incident lane, so it goes to the home repo.
+pub fn route(reference: &str, labels: &str, repo_declared: Option<&str>, home_repo: &str, known_repos: &[String], plan_label: &str) -> Route {
+    let asks_plan = !plan_label.is_empty() && labels.split(',').any(|l| l == plan_label);
+    match repo_declared {
+        Some(r) if r != home_repo && known_repos.iter().any(|k| k == r) && (asks_plan || reference.starts_with(&crate::supersede::red_ref_prefix(r))) => {
+            Route { repo: r.to_string(), lane: Lane::Plan }
+        }
+        _ => Route { repo: home_repo.to_string(), lane: Lane::Incident },
+    }
+}
+
+/// `labels` for a filing routed to the incident lane: a plan request that did not route to a
+/// product repo is replaced, since the door judges a plan label as builder work.
+pub fn in_incident_lane(labels: &str, plan_label: &str) -> String {
+    if plan_label.is_empty() || !labels.split(',').any(|l| l == plan_label) {
+        return labels.to_string();
+    }
+    let incident = bead::lane_label(spira_config::Lane::Incident);
+    let kept = labels.split(',').filter(|l| *l != plan_label && *l != incident);
+    kept.chain([incident.as_str()]).collect::<Vec<_>>().join(",")
 }
 
 /// The `removed` keys a release's `config-delta.toml` lists, as `spira.<key>` paths.
@@ -564,29 +581,26 @@ mod tests {
         assert_eq!(incident_labels(None, Some(""), "incident"), "spira,incident");
     }
 
-    #[test_id(tfuazcd)]
+    // covers: UC-ops-detection-remediation-05
+    #[test_id(tsvql1l)]
     #[test]
-    fn invalid_repo_label_allows_home_repo_and_known_repos() {
-        let known = vec!["spira".to_string(), "brain".to_string()];
-        assert_eq!(invalid_repo_label("plan,repo:brain", "spira", &known), None);
-        assert_eq!(invalid_repo_label("plan,repo:spira", "spira", &known), None);
-        assert_eq!(invalid_repo_label("plan", "spira", &known), None, "no repo: label at all is allowed");
-    }
-
-    #[test_id(tz7nfgo)]
-    #[test]
-    fn invalid_repo_label_refuses_unknown_repo() {
-        let known = vec!["spira".to_string()];
-        assert_eq!(invalid_repo_label("plan,repo:nope", "spira", &known), Some("nope".to_string()));
-    }
-
-    // Pins the sp-pwmlj collapse: before it, a bare "repo:" (empty value) was refused here
-    // but allowed by `bdq`'s real fence (`repo_val.is_empty()` short-circuits there).
-    #[test_id(th8ylij)]
-    #[test]
-    fn invalid_repo_label_empty_value_is_allowed_same_as_bdq() {
-        let known = vec!["spira".to_string()];
-        assert_eq!(invalid_repo_label("plan,repo:", "spira", &known), None);
+    fn only_a_mapped_product_repos_red_or_plan_request_routes_to_the_plan_lane() {
+        let known = vec!["spira".to_string(), "dumpstar".to_string(), "other".to_string()];
+        let to = |reference: &str, labels: &str, repo: Option<&str>, plan: &str| route(reference, labels, repo, "spira", &known, plan);
+        let planned = Route { repo: "dumpstar".into(), lane: Lane::Plan };
+        let home = Route { repo: "spira".into(), lane: Lane::Incident };
+        assert_eq!(to("basefail-local:dumpstar:t:FAIL:1", "spira,incident", Some("dumpstar"), "plan"), planned);
+        assert_eq!(to("incident:base-red:main", "spira,plan", Some("dumpstar"), "plan"), planned);
+        for (reference, labels, repo, plan) in [
+            ("basefail-local:dumpstar:t:FAIL:1", "spira,incident", None, "plan"),
+            ("basefail-local:nope:t:FAIL:1", "spira,plan", Some("nope"), "plan"),
+            ("basefail-local:spira:t:FAIL:1", "spira,plan", Some("spira"), "plan"),
+            ("basefail-local:other:t:FAIL:1", "spira,incident", Some("dumpstar"), "plan"),
+            ("test-flip:dumpstar:t", "spira,incident,planning", Some("dumpstar"), "plan"),
+            ("test-flip:dumpstar:t", "spira,,incident", Some("dumpstar"), ""),
+        ] {
+            assert_eq!(to(reference, labels, repo, plan), home, "{reference} {labels} {repo:?}");
+        }
     }
 
     #[test_id(t2zt071)]

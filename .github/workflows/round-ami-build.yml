@@ -116,7 +116,9 @@ jobs:
           for _ in $(seq 1 240); do
             st="$(aws ssm get-command-invocation --command-id "$cid" --instance-id "$id" --query Status --output text 2>/dev/null || echo Pending)"
             case "$st" in
-              Success) break ;;
+              Success)
+                aws ssm get-command-invocation --command-id "$cid" --instance-id "$id" --query StandardOutputContent --output text
+                break ;;
               Pending|InProgress|Delayed) sleep 30 ;;
               *) aws ssm get-command-invocation --command-id "$cid" --instance-id "$id" --query '[StandardOutputContent,StandardErrorContent]' --output text | tail -n 100 >&2
                  echo "round image setup ended $st" >&2; exit 1 ;;

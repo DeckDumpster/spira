@@ -151,7 +151,12 @@ fn fifty_concurrent_loop_clients_leave_the_thread_names_as_they_were_at_ready() 
         }
     });
     let after = thread_names(server.pid);
-    assert_eq!(after, at_ready, "the loop's clients changed the server's threads");
+    // An unnamed thread takes the binary's name, and the server's one-shot helpers (dwell
+    // priming, a republish push) are unnamed and may exit during the clients: those may fall, never rise.
+    let split = |names: &[String]| (names.iter().filter(|n| *n != "spira-lc").cloned().collect::<Vec<_>>(), names.iter().filter(|n| *n == "spira-lc").count());
+    let ((named_after, unnamed_after), (named_at_ready, unnamed_at_ready)) = (split(&after), split(&at_ready));
+    assert_eq!(named_after, named_at_ready, "the loop's clients changed the server's named threads");
+    assert!(unnamed_after <= unnamed_at_ready, "the loop's clients left {} unnamed threads where ready had {unnamed_at_ready}", unnamed_after);
 }
 
 

@@ -57,7 +57,7 @@ pub fn resolved_config() -> &'static spira_config::resolve::Resolved {
 /// called with is NOT in `spira/conf.d` (an ad hoc override with no registry entry, same as
 /// it has always been for the bash function) and keeps the old env/registry/default chain.
 pub const REGISTERED: &[&str] =
-    &["SPIRA_RUN", "SPIRA_INCIDENT_LABEL", "SPIRA_DB", "SPIRA_WATCHER_INTERVAL_S", "SPIRA_INCIDENT_PRIORITY", "SPIRA_HOME_REPO", "SPIRA_ASK_LABEL", "SPIRA_REPO_MAP", "SPIRA_CONCIERGE_INBOX"];
+    &["SPIRA_RUN", "SPIRA_INCIDENT_LABEL", "SPIRA_DB", "SPIRA_WATCHER_INTERVAL_S", "SPIRA_INCIDENT_PRIORITY", "SPIRA_HOME_REPO", "SPIRA_ASK_LABEL", "SPIRA_REPO_MAP", "SPIRA_CONCIERGE_INBOX", "SPIRA_PLAN_LABEL"];
 
 /// The environment, then `spira_config::resolve()`'s in-process answer — never the
 /// reverse, so an explicit env override still wins exactly as it did before this bead.
@@ -117,6 +117,7 @@ pub struct Env {
     pub watcher_interval_s: i64,
     pub cause: String,
     pub labels: String,
+    pub plan_labels: Option<String>,
     pub repo: Option<String>,
     pub kind: String,
     pub priority: String,
@@ -150,6 +151,7 @@ impl Env {
             watcher_interval_s: env("SPIRA_WATCHER_INTERVAL_S").and_then(|v| v.parse().ok()).unwrap_or(1800),
             cause: decide::sanitize_cause(&env_or("SPIRA_INCIDENT_CAUSE", "unrecorded")),
             labels: decide::incident_labels(env("SPIRA_INCIDENT_LABELS").as_deref(), env("SPIRA_SCOPE_LABEL").as_deref(), &incident_label),
+            plan_labels: env("SPIRA_PLAN_LABEL").map(|p| decide::incident_labels(None, env("SPIRA_SCOPE_LABEL").as_deref(), &p)),
             repo: env("SPIRA_INCIDENT_REPO"),
             kind: env_or("SPIRA_INCIDENT_TYPE", "bug"),
             priority: priority_of(env("SPIRA_INCIDENT_PRIORITY")),
@@ -197,6 +199,7 @@ impl Env {
             dedup_lookback_days: self.dedup_lookback_days,
             repo_declared: self.repo.as_deref(),
             delivers_pref: self.delivers_pref.as_deref(),
+            plan_labels: self.plan_labels.as_deref(),
             sop_ledger: &self.sop_ledger,
             spira_run: &self.spira_run,
             home_repo: &self.home_repo,
@@ -336,15 +339,14 @@ pub fn retry_delay(tries: u32) -> i64 {
     (RETRY_FIRST_SECS << tries.min(6)).min(RETRY_MAX_SECS)
 }
 
-/// The repository a payload files into, whose lanes decide whether a refusal still stands.
-pub fn route_repo(home_repo: &str, known_repos: &[String], payload: &Payload) -> String {
+/// The repository `payload` files into, whose lanes decide whether a refusal still stands:
+/// a repository its labels name, else [`decide::route`]'s answer.
+pub fn route_repo(env: &Env, payload: &Payload) -> String {
     if let Some(labelled) = payload.labels.split(',').find_map(|l| l.trim().strip_prefix("repo:")) {
         return labelled.to_string();
     }
-    match &payload.repo {
-        Some(r) if r == home_repo || known_repos.contains(r) => r.clone(),
-        _ => home_repo.to_string(),
-    }
+    let plan_label = env.plan_labels.as_deref().and_then(|l| l.rsplit(',').next()).unwrap_or_default();
+    decide::route(&payload.reference, &payload.labels, payload.repo.as_deref(), &env.home_repo, &env.known_repos, plan_label).repo
 }
 
 fn payload_of(env: &Env, reference: &str, title: &str, body: &[u8], unit: &str, path: &str) -> Payload {
@@ -417,7 +419,7 @@ fn file_claimed(
     for l in &log {
         ilog(l);
     }
-    let lanes = || lanes_now(&route_repo(&env.home_repo, &env.known_repos, p));
+    let lanes = || lanes_now(&route_repo(env, p));
     let (recorded, answer) = match outcome {
         FileOutcome::Filed(id) => (Recorded::Filed { bead: Some(id.clone()) }, Ok(Some(id))),
         FileOutcome::Skew => (Recorded::Filed { bead: None }, Ok(None)),
@@ -509,7 +511,7 @@ pub fn file_pending(
             return report;
         }
     };
-    let due = listed.into_iter().filter(|(_, r)| eligible(r, lanes_now(&route_repo(&env.home_repo, &env.known_repos, &r.payload)).as_deref(), now));
+    let due = listed.into_iter().filter(|(_, r)| eligible(r, lanes_now(&route_repo(env, &r.payload)).as_deref(), now));
     for (i, (key, listed)) in due.enumerate() {
         if i >= batch {
             report.held_back += 1;
@@ -702,6 +704,7 @@ mod tests {
             watcher_interval_s: 1800,
             cause: "unrecorded".into(),
             labels: "spira,incident".into(),
+            plan_labels: None,
             repo: Some("spira".into()),
             kind: "bug".into(),
             priority: "3".into(),
@@ -1040,6 +1043,104 @@ mod tests {
         assert_eq!(parse_batch("20"), Ok(20));
         for bad in ["0", "", "many"] {
             assert!(parse_batch(bad).unwrap_err().contains("SPIRA_INCIDENT_DRAIN_BATCH"), "{bad:?}");
+        }
+    }
+    const LIVE_MAP: &str = "spira | /r/spira | push | origin/main | | true | plan,groom,spike,incident\ndumpstar | /r/dumpstar | push | origin/main | | true | plan\n";
+
+    /// Raise and file one event through a door that judges as the live one does.
+    fn file_one_event(tag: &str, reference: &str, repo: Option<&str>) -> FakeBd {
+        file_labelled(tag, reference, repo, "spira,incident")
+    }
+
+    fn file_labelled(tag: &str, reference: &str, repo: Option<&str>, labels: &str) -> FakeBd {
+        let dir = testkit::TempDir::new(tag);
+        let mut env = env_in(&dir);
+        env.repo = repo.map(str::to_string);
+        env.reference = Some(reference.into());
+        env.labels = labels.into();
+        env.known_repos = vec!["spira".into(), "dumpstar".into()];
+        env.plan_labels = Some("spira,plan".into());
+        let bd = FakeBd { admits: Some(LIVE_MAP.into()), ..FakeBd::new() };
+        let filed = file_event(&env, &bd, &FakeMailer::default(), &FixedClock(1_000_000), "t", b"payload");
+        assert!(matches!(filed, Ok(Some(_))), "{filed:?}");
+        assert!(bd.incidents.held.borrow().is_empty());
+        bd
+    }
+
+    fn only_create(bd: &FakeBd) -> (Vec<String>, String) {
+        let labels = bd.create_labels.borrow().values().next().expect("one create").split(',').map(str::to_string).collect();
+        (labels, bd.bodies.borrow().values().next().cloned().unwrap())
+    }
+
+    // covers: UC-ops-detection-remediation-05
+    #[test_id(tuk0q4t)]
+    #[test]
+    fn a_refused_product_red_records_and_waits_on_the_product_repos_lanes() {
+        let dir = testkit::TempDir::new("route-product-refused");
+        let mut env = env_in(&dir);
+        let map = dir.join("repos.psv");
+        std::fs::write(&map, "spira|/s|queue.local|main|||incident\ndumpstar|/d|queue.local|main|||groom\n").unwrap();
+        env.repo_map = Some(map);
+        env.repo = Some("dumpstar".into());
+        env.reference = Some("basefail-local:dumpstar:t:FAIL:1".into());
+        env.known_repos = vec!["spira".into(), "dumpstar".into()];
+        env.plan_labels = Some("spira,plan".into());
+        let bd = bd_refusing("bead: repo:dumpstar does not admit lane plan — does not admit lane");
+        assert!(!file_body(&env, &bd, &FakeMailer::default(), &FixedClock(NOW), "red", b"p".to_vec()));
+        assert_eq!(bd.incidents.only().lanes.as_deref(), Some("groom"));
+    }
+
+    // covers: UC-ops-detection-remediation-05
+    #[test_id(t26bog2)]
+    #[test]
+    fn a_product_repos_landing_ref_red_files_against_that_repo_in_the_plan_lane() {
+        let bd = file_one_event("route-product-red", "basefail-local:dumpstar:unit-tests:FAIL:1a2b3c4d", Some("dumpstar"));
+        let (labels, body) = only_create(&bd);
+        assert!(labels.contains(&"repo:dumpstar".to_string()) && labels.contains(&"plan".to_string()), "{labels:?}");
+        assert!(!labels.iter().any(|l| l == "incident" || l == "alarm"), "{labels:?}");
+        assert!(bead::has_build_spec(&body), "{body}");
+        let filed = bd.rows.borrow()[0].labels.clone();
+        assert!(!filed.iter().any(|l| l.starts_with("delivers:")), "builder work delivers a commit: {filed:?}");
+    }
+
+    // covers: UC-ops-detection-remediation-05
+    #[test_id(tit421s)]
+    #[test]
+    fn a_harness_ref_that_declares_no_repo_files_against_the_home_repo_in_the_incident_lane() {
+        let bd = file_one_event("route-undeclared", "incident:refused-ContentOnBase-from-LANDED--Terminal--by-landing-pass", None);
+        let (labels, _) = only_create(&bd);
+        assert!(labels.contains(&"repo:spira".to_string()) && labels.contains(&"incident".to_string()), "{labels:?}");
+        assert!(!bd.rows.borrow()[0].labels.iter().any(|l| l == "needs-repo-triage"), "{:?}", bd.rows.borrow()[0].labels);
+    }
+
+    // covers: UC-ops-detection-remediation-05
+    #[test_id(teiezgo)]
+    #[test]
+    fn a_harness_fault_naming_a_product_repo_files_on_the_home_repo_and_keeps_the_repo_it_concerns() {
+        let bd = file_one_event("route-concerns", "land-deploy-fault:dumpstar:abc123", Some("dumpstar"));
+        let (labels, body) = only_create(&bd);
+        assert!(labels.contains(&"repo:spira".to_string()) && labels.contains(&"incident".to_string()), "{labels:?}");
+        assert!(body.starts_with("Concerns repository: dumpstar\n\n"), "{body}");
+    }
+
+    // covers: UC-ops-detection-remediation-05
+    #[test_id(t0vhkmq)]
+    #[test]
+    fn a_home_repo_stall_naming_a_product_in_its_ref_stays_in_the_incident_lane() {
+        let bd = file_one_event("route-stall", "incident:throughput-stall:dumpstar:1795797689", Some("spira"));
+        let (labels, _) = only_create(&bd);
+        assert!(labels.contains(&"repo:spira".to_string()) && labels.contains(&"incident".to_string()), "{labels:?}");
+    }
+
+    // covers: UC-ops-detection-remediation-05
+    #[test_id(t8d805j)]
+    #[test]
+    fn a_plan_request_that_is_not_a_product_red_files_on_the_home_repo_in_the_incident_lane() {
+        for (tag, repo) in [("route-plan-undeclared", None), ("route-plan-home", Some("spira")), ("route-plan-unmapped", Some("nope"))] {
+            let bd = file_labelled(tag, "incident:base-red:gh-budget", repo, "spira,plan");
+            let (labels, _) = only_create(&bd);
+            assert!(labels.contains(&"repo:spira".to_string()) && labels.contains(&"incident".to_string()), "{labels:?}");
+            assert!(!labels.contains(&"plan".to_string()), "{labels:?}");
         }
     }
 }

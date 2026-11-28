@@ -123,7 +123,7 @@ pub fn run_observe(e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<Str
     let rows = incident::real::rows_listed(&reply.out)?
         .into_iter()
         .map(|(_, row)| {
-            let lanes_now = env.lanes_of(&intake::route_repo(&env.home_repo, &env.known_repos, &row.payload));
+            let lanes_now = env.lanes_of(&intake::route_repo(&env, &row.payload));
             Waiting { row: Row { payload: Payload { reference: row.payload.reference.clone(), ..Payload::default() }, reason: None, ..row }, lanes_now }
         })
         .collect();
