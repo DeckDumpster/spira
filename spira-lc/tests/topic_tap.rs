@@ -106,8 +106,19 @@ impl Server {
 
     fn call(&self, words: &[&str]) -> (i32, String) {
         let argv: Vec<String> = words.iter().map(|w| w.to_string()).collect();
-        let reply = spira_store::lc_call::exchange_once(spira_store::lc_call::connect(&self.socket).unwrap(), &argv, None).expect("serve answers");
+        let reply = spira_store::lc_call::connect_within(&self.socket, spira_store::lc_call::call_wait(&argv))
+            .and_then(|stream| spira_store::lc_call::exchange_once(stream, &argv, None))
+            .unwrap_or_else(|e| panic!("serve answers {words:?}: {e:?}\nthe server's stderr so far:\n{}", self.said_so_far()));
         (reply.code, reply.text())
+    }
+
+    /// Every stderr line the server has written by now, without waiting for another.
+    fn said_so_far(&self) -> String {
+        let mut said = self.said.borrow_mut();
+        while let Ok(line) = self.stderr.try_recv() {
+            said.push(line);
+        }
+        said.join("\n")
     }
 
     /// One `topics` answer.
@@ -259,4 +270,19 @@ fn the_bridges_publishes_and_stamped_names_are_recorded_across_a_broker_restart(
     publish_stamped(&broker, "stamped/sp-b", &[("spira-publisher", "alpha"), ("spira-resident", "true")]);
     let rows = server.listed(|r| row(r, "stamped/+").is_some_and(|s| s["publishers"] == json!(["alpha", "zeta"])));
     assert_eq!(row(&rows, "stamped/+").unwrap()["resident"], json!(["alpha"]));
+}
+
+#[test_id(thxw93z)]
+#[test]
+fn a_watch_with_nothing_to_report_is_held_for_its_whole_wait() {
+    let broker = Broker::up();
+    let home = Home::new();
+    let server = Server::start(&home, &broker, PINNED_NOW);
+    server.wait_said(SUBSCRIBED, 1);
+    let (code, out) = server.call(&["watch", "topics/", "--from-rev", &u64::MAX.to_string(), "--wait-ms", "0"]);
+    assert_eq!(code, 0, "{out}");
+    let head = serde_json::from_str::<Value>(&out).unwrap()["future_rev"]["head"].as_u64().expect("the head").to_string();
+
+    let (code, out) = server.call(&["watch", "topics/", "--from-rev", &head, "--wait-ms", "6000"]);
+    assert_eq!(code, 0, "{out}");
 }
