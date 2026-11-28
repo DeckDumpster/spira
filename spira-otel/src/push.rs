@@ -293,6 +293,19 @@ mod tests {
         assert!(script.arrived.recv_timeout(CAP).is_err_and(|e| e == std::sync::mpsc::RecvTimeoutError::Disconnected), "the writer ends without sending again");
     }
 
+    #[test_id(ta56okz)]
+    #[test]
+    fn a_tick_holds_the_next_send_until_a_drain_waits() {
+        let (push, script) = scripted(Bounds { tick: Some(Duration::from_secs(3600)), ..ANY }, None);
+        script.occupy(&push);
+        script.answer.send(true).unwrap();
+        push.emit(1, 1);
+        assert!(script.arrived.recv_timeout(Duration::from_millis(10)).is_err(), "the tick holds it");
+        script.answer.send(true).unwrap();
+        push.flush(CAP);
+        assert_eq!(script.arrived.try_recv(), Ok(vec![1]));
+    }
+
     #[test_id(tfijxy1)]
     #[test]
     fn close_returns_within_its_bound_while_a_send_never_returns() {
