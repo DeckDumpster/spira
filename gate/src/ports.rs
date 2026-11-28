@@ -121,6 +121,8 @@ pub trait World {
     fn show_blob(&self, repo: &Path, rev: &str, path: &str) -> Option<Vec<u8>>;
     /// `ls-tree -r --name-only <rev>`.
     fn ls_tree_all(&self, repo: &Path, rev: &str) -> String;
+    /// `git ls-tree -r -d <tree>` followed by `git ls-tree <tree>`: what the input hashes read.
+    fn input_trees(&self, repo: &Path, tree: &str) -> Result<String, String>;
     /// `ls-tree --name-only <rev> <path>` names `path`.
     fn ls_tree_has(&self, repo: &Path, rev: &str, path: &str) -> bool;
 
@@ -153,6 +155,10 @@ pub trait World {
     fn push_metrics(&self, _run: &crate::telemetry::GateRun) {}
     /// Publishes a finished trial's messages; a world with no broker publishes nothing.
     fn publish(&self, _messages: &[(String, serde_json::Value)]) {}
+    /// The Collector's OTLP/HTTP address; empty sends no `test.result` record.
+    fn otlp_endpoint(&self) -> String;
+    /// The host's one-minute load average; `None` where it cannot be read.
+    fn load1(&self) -> Option<f64>;
     /// This process's cgroup counters now; `None` where they cannot be read.
     fn cgroup_mark(&self) -> Option<spira_otel::cgroup::Mark> {
         None

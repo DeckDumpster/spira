@@ -47,6 +47,18 @@ pub struct Member {
     pub bins: Vec<String>,
 }
 
+impl From<&Member> for spira_config::input_hash::Member {
+    fn from(m: &Member) -> Self {
+        spira_config::input_hash::Member {
+            name: m.name.clone(),
+            dir: m.dir.clone(),
+            deps: m.deps.clone(),
+            build_deps: m.build_deps.clone(),
+            test_bins: m.test_bins.clone(),
+        }
+    }
+}
+
 /// What one changed path is, for composition.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Class {

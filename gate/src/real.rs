@@ -714,6 +714,10 @@ impl World for Real {
     fn ls_tree_all(&self, repo: &Path, rev: &str) -> String {
         Self::out(self.git(repo).args(["ls-tree", "-r", "--name-only", rev])).unwrap_or_default()
     }
+    fn input_trees(&self, repo: &Path, tree: &str) -> Result<String, String> {
+        let list = |args: &[&str]| Self::out(self.git(repo).args(args).arg(tree)).map_err(|(rc, e)| format!("git ls-tree {tree}: exit {rc}: {e}"));
+        Ok(list(&["ls-tree", "-r", "-d"])? + &list(&["ls-tree"])?)
+    }
     fn ls_tree_has(&self, repo: &Path, rev: &str, path: &str) -> bool {
         Self::out(self.git(repo).args(["ls-tree", "--name-only", rev, path]))
             .map(|s| s.lines().any(|l| l.contains(path)))
@@ -831,6 +835,12 @@ impl World for Real {
     }
     fn publish(&self, messages: &[(String, serde_json::Value)]) {
         crate::publish::send(spira_pub::Publisher::new("gate"), messages);
+    }
+    fn otlp_endpoint(&self) -> String {
+        spira_config::process::cfg("SPIRA_OTEL_COLLECTOR_ENDPOINT").unwrap_or_default()
+    }
+    fn load1(&self) -> Option<f64> {
+        std::fs::read_to_string(format!("{}/loadavg", system_paths::PROC)).ok()?.split_whitespace().next()?.parse().ok()
     }
     fn cgroup_mark(&self) -> Option<spira_otel::cgroup::Mark> {
         spira_otel::cgroup::Mark::own()

@@ -851,6 +851,15 @@ is read from the `stopped=` field ending testenv's last `VERDICT` line, and only
 that ran testenv; that field names the sender's program and unit, not its whole command or
 cgroup path. A failed publish is logged and changes no verdict.
 
+## One record per test (`test.result`)
+
+Each nextest status line of the branch's unit test phase, both tiers, is one OTLP log record to
+the Collector at `SPIRA_OTEL_COLLECTOR_ENDPOINT` (here empty sends nothing). `spira_otel::testresult` defines
+the record; `spira_config::input_hash` defines `input_hash`, equal while nothing the test's
+crate builds from changes. The base trial and the rerun of a red send none. No verdict reads
+them: the push is queued, the finishing gate waits at most a few seconds for the queue, and
+what was not delivered is counted on stderr.
+
 ## Boundaries (ports)
 
 `World` in `src/ports.rs`: git reads and the merge, the touched set (`diff_raw`), the mode

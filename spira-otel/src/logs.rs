@@ -4,13 +4,15 @@
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::common::v1::{any_value::Value, AnyValue, ArrayValue, InstrumentationScope, KeyValue};
 use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs, SeverityNumber};
 use opentelemetry_proto::tonic::resource::v1::Resource;
+use prost::Message;
 
 static DROPPED: AtomicU64 = AtomicU64::new(0);
 
@@ -21,10 +23,20 @@ pub fn dropped() -> u64 {
 
 static QUEUE_DROPPED: AtomicU64 = AtomicU64::new(0);
 
-/// Records refused by a full or closed `LogQueue` since this process started.
+/// Records refused by a full or closed queue (`LogQueue` or `LogPush`) since this process started.
 pub fn queue_dropped() -> u64 {
     QUEUE_DROPPED.load(Ordering::Relaxed)
 }
+
+static PUSH_FAILED: AtomicU64 = AtomicU64::new(0);
+
+/// Records a `LogPush` could not deliver since this process started.
+pub fn push_failed() -> u64 {
+    PUSH_FAILED.load(Ordering::Relaxed)
+}
+
+/// How many records one request carries at most.
+const BATCH: usize = 512;
 
 /// An OTLP attribute value: a scalar or an array of one scalar type.
 #[derive(Clone, Debug, PartialEq)]
@@ -206,6 +218,74 @@ impl LogQueue {
     }
 }
 
+/// Records pushed to the local OpenTelemetry Collector over OTLP/HTTP from one thread behind a
+/// bounded queue. `emit` never blocks; a record that cannot be queued or delivered is counted.
+pub struct LogPush {
+    queue: Option<(SyncSender<ExportLogsServiceRequest>, Receiver<()>)>,
+    service: String,
+    emitted: AtomicU64,
+    delivered: Arc<AtomicU64>,
+}
+
+impl LogPush {
+    /// `endpoint` is `http://host:port` (or `host:port`); empty disables the sink. `deadline`
+    /// bounds one request, `cap` the records waiting for the writer.
+    pub fn new(endpoint: &str, service: &str, deadline: Duration, cap: usize) -> LogPush {
+        let addr = crate::vlogs::host_port(endpoint.trim());
+        let delivered = Arc::new(AtomicU64::new(0));
+        let queue = (!addr.is_empty()).then(|| {
+            let (tx, rx) = sync_channel::<ExportLogsServiceRequest>(cap);
+            let (done_tx, done) = sync_channel(1);
+            let sent = delivered.clone();
+            // A writer that cannot start drops `rx`, so every emit counts as refused.
+            let _ = std::thread::Builder::new().name("otel-log-push".into()).spawn(move || {
+                while let Ok(first) = rx.recv() {
+                    push(&addr, first, &rx, deadline, &sent);
+                }
+                let _ = done_tx.send(());
+            });
+            (tx, done)
+        });
+        LogPush { queue, service: service.to_string(), emitted: AtomicU64::new(0), delivered }
+    }
+
+    pub fn emit(&self, body: &str, attrs: &[(String, Attr)]) {
+        let Some((tx, _)) = &self.queue else { return };
+        self.emitted.fetch_add(1, Ordering::Relaxed);
+        let request = LogSink::new(PathBuf::new(), &self.service).request(body, attrs, SystemTime::now());
+        if tx.try_send(request).is_err() {
+            QUEUE_DROPPED.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Stops taking records, waits at most `bound` for the queue to drain, and returns how many
+    /// emitted records were not delivered.
+    pub fn close(self, bound: Duration) -> u64 {
+        if let Some((tx, done)) = self.queue {
+            drop(tx);
+            let _ = done.recv_timeout(bound);
+        }
+        self.emitted.load(Ordering::Relaxed).saturating_sub(self.delivered.load(Ordering::SeqCst))
+    }
+}
+
+/// Sends `first` and whatever else is already queued, up to `BATCH` records, as one request.
+fn push(addr: &str, mut batch: ExportLogsServiceRequest, rx: &Receiver<ExportLogsServiceRequest>, deadline: Duration, delivered: &AtomicU64) {
+    let mut n = 1;
+    while n < BATCH {
+        let Ok(next) = rx.try_recv() else { break };
+        let records = next.resource_logs.into_iter().flat_map(|r| r.scope_logs).flat_map(|s| s.log_records);
+        if let Some(scope) = batch.resource_logs.first_mut().and_then(|r| r.scope_logs.first_mut()) {
+            scope.log_records.extend(records);
+        }
+        n += 1;
+    }
+    match crate::metrics::post(addr, crate::LOGS_PATH, &batch.encode_to_vec(), deadline) {
+        Ok(()) => delivered.fetch_add(n as u64, Ordering::SeqCst),
+        Err(_) => PUSH_FAILED.fetch_add(n as u64, Ordering::Relaxed),
+    };
+}
+
 /// Reads back every record a sink wrote into `dir` for `service`: the fixture collector of a test.
 pub fn read_all(dir: &std::path::Path, service: &str) -> Vec<Vec<(String, serde_json::Value)>> {
     let prefix = format!("{service}.logs.");
@@ -311,5 +391,67 @@ mod tests {
             s.write("x", &[], SystemTime::now()).unwrap();
         }
         assert_eq!(files(d.path()).len(), 1);
+    }
+
+    /// A cap on a wait for the fixture's own signal.
+    const CAP: Duration = Duration::from_secs(30);
+
+    fn attrs_of(n: i64) -> Vec<(String, Attr)> {
+        vec![("n".into(), Attr::Int(n)), ("s".into(), Attr::Str(format!("v{n}"))), ("f".into(), Attr::Float(1.5)), ("b".into(), Attr::Bool(true)), ("e".into(), Attr::Str(String::new()))]
+    }
+
+    #[test_id(t8o9ige)]
+    #[test]
+    fn the_push_sink_delivers_every_record_with_every_attribute() {
+        let fake = crate::fixture::Collector::start();
+        let sink = LogPush::new(fake.addr(), "svc", CAP, 4096);
+        for n in 0..700 {
+            sink.emit("ev", &attrs_of(n));
+        }
+        assert_eq!(sink.close(CAP), 0);
+        let got = fake.events();
+        assert_eq!(got.len(), 700, "more than one batch arrives whole");
+        for (n, r) in got.iter().enumerate() {
+            assert_eq!((r.service.as_str(), r.body.as_str()), ("svc", "ev"));
+            assert_eq!(r.attrs, attrs_of(n as i64));
+        }
+    }
+
+    #[test_id(thc8sx6)]
+    #[test]
+    fn a_collector_that_never_answers_costs_the_caller_nothing_and_counts_the_loss() {
+        let silent = crate::fixture::Collector::hanging();
+        // A request deadline past the test's own: an `emit` that waited on it would never return.
+        let patient = LogPush::new(silent.addr(), "svc", Duration::from_secs(3600), 16);
+        patient.emit("ev", &attrs_of(1));
+        assert!(silent.wait_until(|p| !p.is_empty(), CAP), "positive control: the request is on the wire");
+        assert_eq!(patient.close(Duration::from_millis(10)), 1, "close is bounded too, and what it left is lost");
+        let failed = push_failed();
+        let hurried = LogPush::new(silent.addr(), "svc", Duration::from_millis(20), 16);
+        hurried.emit("ev", &attrs_of(2));
+        assert_eq!(hurried.close(CAP), 1);
+        assert!(push_failed() > failed);
+    }
+
+    #[test_id(tot2cuf)]
+    #[test]
+    fn a_full_queue_drops_and_counts() {
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let sink = LogPush::new(&silent.local_addr().unwrap().to_string(), "svc", Duration::from_millis(100), 1);
+        let before = queue_dropped();
+        for n in 0..2000 {
+            sink.emit("ev", &attrs_of(n));
+        }
+        assert!(queue_dropped() > before);
+        assert_eq!(sink.close(Duration::from_secs(5)), 2000, "every record was lost, none twice");
+    }
+
+    #[test_id(t1sae8v)]
+    #[test]
+    fn an_empty_endpoint_sends_nothing_and_loses_nothing() {
+        let sink = LogPush::new("  ", "svc", Duration::from_millis(50), 1);
+        sink.emit("ev", &[]);
+        sink.emit("ev", &[]);
+        assert_eq!(sink.close(Duration::from_millis(50)), 0);
     }
 }
