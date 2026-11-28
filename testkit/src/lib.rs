@@ -383,7 +383,7 @@ fn built_beside(manifest_dir: &Path, test_exe: &Path, name: &str) -> PathBuf {
     );
     if let Some(why) = staleness(manifest_dir, &bin, name) {
         let test = std::thread::current().name().unwrap_or("<test name>").to_string();
-        panic!("{why}, or run the test through `testenv --tests {test}`");
+        panic!("{why}, or run the test through `testenv --tests {test} <branch>`");
     }
     bin
 }
@@ -400,11 +400,11 @@ fn staleness(manifest_dir: &Path, bin: &Path, name: &str) -> Option<String> {
     verdict
 }
 
-/// Why `bin` is older than what it is built from; None when it is not, or when no workspace
-/// member builds it. Reads file metadata only.
+/// Why `bin` is older than what it is built from; None when it is not. Reads file metadata only,
+/// and panics where it cannot tell, since a pass would run the binary unchecked.
 fn stale_why(manifest_dir: &Path, bin: &Path, name: &str) -> Option<String> {
-    let (package, dir) = building_member(manifest_dir, name)?;
-    let built = modified(bin)?;
+    let (package, dir) = building_member(manifest_dir, name);
+    let built = modified(bin).unwrap_or_else(|| panic!("binary {name}: cannot read the build time of {}", bin.display()));
     let mut files = build_inputs(&dir, name);
     // cargo does not relink for a file it left out of the binary (a cfg(test) module, a manifest
     // edit), so where its dep-info describes this tree, only the files listed there can be stale:
@@ -431,20 +431,27 @@ fn modified(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
+fn manifest_of(dir: &Path, name: &str) -> toml::Value {
+    read_manifest(dir, name).unwrap_or_else(|why| panic!("{why}"))
+}
+
 /// The package name and directory of the workspace member that builds the binary `name`.
-fn building_member(manifest_dir: &Path, name: &str) -> Option<(String, PathBuf)> {
-    let (root, members) = manifest_dir.ancestors().find_map(|dir| {
-        let doc = read_manifest(dir, name).ok()?;
-        let members = doc.get("workspace")?.get("members")?.as_array()?.clone();
-        Some((dir.to_path_buf(), members))
-    })?;
+fn building_member(manifest_dir: &Path, name: &str) -> (String, PathBuf) {
+    let (root, members) = manifest_dir
+        .ancestors()
+        .filter(|dir| dir.join("Cargo.toml").is_file())
+        .find_map(|dir| {
+            let members = manifest_of(dir, name).get("workspace")?.get("members")?.as_array()?.clone();
+            Some((dir.to_path_buf(), members))
+        })
+        .unwrap_or_else(|| panic!("binary {name}: no workspace holds {}, so its age cannot be judged", manifest_dir.display()));
     let crates: Vec<(PathBuf, toml::Value)> = members
         .iter()
         .filter_map(|m| m.as_str())
-        .filter_map(|m| {
+        .map(|m| {
             let dir = root.join(m);
-            let doc = read_manifest(&dir, name).ok()?;
-            Some((dir, doc))
+            let doc = manifest_of(&dir, name);
+            (dir, doc)
         })
         .collect();
     // A bin target outranks a package of the same name, which may build no binary.
@@ -453,6 +460,7 @@ fn building_member(manifest_dir: &Path, name: &str) -> Option<(String, PathBuf)>
         .find(|(dir, doc)| names_bin_target(dir, doc, name))
         .or_else(|| crates.iter().find(|(dir, doc)| package_name(doc) == Some(name) && dir.join("src/main.rs").is_file()))
         .and_then(|(dir, doc)| Some((package_name(doc)?.to_string(), dir.clone())))
+        .unwrap_or_else(|| panic!("binary {name}: no member of {} builds it, so its age cannot be judged", root.display()))
 }
 
 /// `Cargo.toml` and `src/**` of the crate at `dir` and of every crate it reaches through
@@ -465,7 +473,7 @@ fn build_inputs(dir: &Path, name: &str) -> Vec<PathBuf> {
         if !seen.insert(dir.clone()) {
             continue;
         }
-        let Ok(doc) = read_manifest(&dir, name) else { continue };
+        let doc = manifest_of(&dir, name);
         files.push(dir.join("Cargo.toml"));
         files_under(&dir.join("src"), &mut files);
         let targets = doc.get("target").and_then(|t| t.as_table()).into_iter().flat_map(|t| t.values());
@@ -654,10 +662,8 @@ mod tests {
     #[test_id(t0rq2lc)]
     #[test]
     fn a_binary_beside_the_test_exe_is_found() {
-        let t = TempDir::new("testkit-bin");
-        std::fs::create_dir_all(t.join("debug/deps")).unwrap();
-        std::fs::write(t.join("debug/a"), b"").unwrap();
-        assert_eq!(built_beside(&t, &t.join("debug/deps/x-1"), "a"), t.join("debug/a"));
+        let t = built_workspace();
+        assert_eq!(built_tool(&t), t.join("target/debug/tool"));
     }
 
     fn age(path: &Path, secs: u64) {
@@ -759,6 +765,88 @@ mod tests {
         std::fs::write(t.join("target/debug/tool.d"), dep_info).unwrap();
         age(&t.join("dep/src/lib.rs"), 300);
         assert!(refusal(&t).contains("dep/src/lib.rs"));
+    }
+
+    #[test_id(trmua45)]
+    #[test]
+    fn a_build_or_target_specific_path_dependency_makes_the_binary_stale() {
+        for table in ["build-dependencies", "target.'cfg(unix)'.dependencies", "target.'cfg(unix)'.build-dependencies"] {
+            let t = built_workspace();
+            let manifest = format!("[package]\nname = \"dep\"\n[{table}]\ndev = {{ path = \"../dev\" }}\n");
+            std::fs::write(t.join("dep/Cargo.toml"), manifest).unwrap();
+            age(&t.join("dep/Cargo.toml"), 100);
+            age(&t.join("dev/src/lib.rs"), 300);
+            assert!(refusal(&t).contains("dev/src/lib.rs"), "{table}");
+        }
+    }
+
+    #[test_id(tuk4uay)]
+    #[test]
+    fn a_package_named_binary_is_judged_by_the_member_that_has_its_main() {
+        let t = built_workspace();
+        std::fs::write(t.join("target/debug/dep"), "").unwrap();
+        age(&t.join("target/debug/dep"), 200);
+        std::fs::write(t.join("dep/src/main.rs"), "").unwrap();
+        age(&t.join("dep/src/main.rs"), 300);
+        let why = std::panic::catch_unwind(|| built_beside(&t.join("me"), &t.join("target/debug/deps/x-1"), "dep")).unwrap_err();
+        let why = why.downcast_ref::<String>().unwrap();
+        assert!(why.contains("dep/src/main.rs") && why.contains("`cargo build -p dep --bins`"), "{why}");
+    }
+
+    #[test_id(t5m47cn)]
+    #[test]
+    fn a_bin_target_outranks_an_earlier_package_of_the_same_name() {
+        let t = built_workspace();
+        std::fs::write(t.join("Cargo.toml"), "[workspace]\nmembers = [\"tool\", \"me\", \"dep\"]\n").unwrap();
+        std::fs::create_dir_all(t.join("tool/src")).unwrap();
+        std::fs::write(t.join("tool/Cargo.toml"), "[package]\nname = \"tool\"\n").unwrap();
+        std::fs::write(t.join("tool/src/main.rs"), "").unwrap();
+        age(&t.join("me/src/main.rs"), 300);
+        assert!(refusal(&t).contains("`cargo build -p me --bins`"));
+    }
+
+    #[test_id(tr1akxa)]
+    #[test]
+    fn dep_info_from_another_tree_does_not_clear_a_stale_binary() {
+        let t = built_workspace();
+        std::fs::write(t.join("target/debug/tool.d"), "/other/tool: /other/me/src/main.rs\n").unwrap();
+        age(&t.join("me/src/main.rs"), 300);
+        assert!(refusal(&t).contains("me/src/main.rs"));
+    }
+
+    #[test_id(td932ft)]
+    #[test]
+    fn dep_info_paths_may_hold_spaces() {
+        let inputs = dep_info_inputs("/t/a b: /s/with\\ space.rs /s/c.rs\n");
+        assert_eq!(inputs, BTreeSet::from([PathBuf::from("/s/with space.rs"), PathBuf::from("/s/c.rs")]));
+    }
+
+    #[test_id(thx7uke)]
+    #[test]
+    fn a_binary_is_judged_once_per_process() {
+        let t = built_workspace();
+        built_tool(&t);
+        age(&t.join("me/src/main.rs"), 300);
+        built_tool(&t);
+    }
+
+    #[test_id(t2qavqi)]
+    #[test]
+    #[should_panic(expected = "no member of")]
+    fn a_binary_no_member_builds_is_refused_not_passed() {
+        let t = built_workspace();
+        std::fs::write(t.join("target/debug/stray"), "").unwrap();
+        built_beside(&t.join("me"), &t.join("target/debug/deps/x-1"), "stray");
+    }
+
+    #[test_id(tbi73wh)]
+    #[test]
+    #[should_panic(expected = "cannot read")]
+    fn an_unreadable_path_dependency_is_refused_not_skipped() {
+        let t = built_workspace();
+        std::fs::write(t.join("Cargo.toml"), "[workspace]\nmembers = [\"me\"]\n").unwrap();
+        std::fs::remove_file(t.join("dep/Cargo.toml")).unwrap();
+        built_tool(&t);
     }
 
     #[test_id(t3uc07s)]

@@ -75,7 +75,8 @@ later with a wrong cause. The inputs are `Cargo.toml` and `src/**` of the crate 
 binary and of its non-dev `path =` dependencies. Where cargo's `<name>.d` beside the binary
 lists any of them, only the listed ones count: cargo does not relink for a file it left out
 (a `cfg(test)` module, a manifest edit), so no rebuild could clear such a refusal. The verdict
-is computed once per binary per process.
+is computed once per binary per process. Where it cannot judge (no workspace, no member that
+builds the binary, an unreadable manifest) it panics rather than pass.
 
 **The rule that holds every crate to it:** spira-lint's `tmp-leak` refuses a call to
 `temp_dir()` in test code anywhere outside testkit (see spira-lint/DESIGN.md). Test code
