@@ -1,7 +1,9 @@
 //! The broker check. A broker that fails two passes running is the `broker-down` condition and
 //! one operator mail for that outage. Neither goes through the broker.
 
-use std::sync::mpsc;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 pub use inbox_rules::Bus;
@@ -9,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use spira_pub::PubError;
 
 use crate::alerts;
+use crate::classify::Firing;
 use crate::conditions::Conditions;
 
 pub const KEY: &str = "broker-down";
@@ -141,8 +144,12 @@ pub fn perform(todos: &[Todo], ops: &dyn Conditions, pager: Pager, render_time: 
     done
 }
 
-/// The condition's evidence, and the fallback file's.
-pub fn evidence(down_since: &str, why: &str) -> String {
+/// The outage as the fallback file lists it.
+pub fn firing(down_since: &str, why: &str) -> Firing {
+    Firing { key: KEY.into(), title: TITLE.into(), evidence: evidence(down_since, why) }
+}
+
+fn evidence(down_since: &str, why: &str) -> String {
     format!("DOWN SINCE {down_since}\nLAST ERROR {why}")
 }
 
@@ -168,36 +175,67 @@ pub fn pager_env(mut env: mail::env::Env) -> mail::env::Env {
 pub fn send_page(env: Result<mail::env::Env, String>, subject: &str, body: String) -> Result<(), String> {
     let env = env?;
     let subject = subject.to_string();
-    within(MAIL_DEADLINE, move || {
+    within(MAIL_DEADLINE, move |claim| {
         let args = mail::cmds::SendArgs { mailbox: "operator", from: Some("Heimdall <heimdall@spira>"), subject: &subject, kind: "alert", default: "", class: "", bead: "", urgent: true, digest: false, dry_run: false, requested_by: "" };
-        mail::cmds::send(&mail::bead::BdCli { conn_retries: 1 }, &env, &args, body).map(drop)
+        let deliver = |dir: &Path, id: &str, text: &str, mute: bool| {
+            claim.take()?;
+            mail::cmds::deliver_to_maildir(dir, id, text, mute).inspect_err(|_| claim.give_back())
+        };
+        mail::cmds::send_with(&mail::bead::BdCli { conn_retries: 1 }, &env, &args, body, &deliver).map(drop)
     })
 }
 
-fn within(deadline: Duration, send: impl FnOnce() -> Result<(), String> + Send + 'static) -> Result<(), String> {
+/// Who has the delivery: a send reported as failed must never deliver afterwards, or the retry
+/// would be the outage's second mail.
+#[derive(Clone, Default)]
+struct Claim(Arc<AtomicBool>);
+
+impl Claim {
+    fn take(&self) -> Result<(), String> {
+        match self.0.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => Ok(()),
+            Err(_) => Err("the send passed its deadline and delivers nothing".into()),
+        }
+    }
+
+    fn give_back(&self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+fn within(deadline: Duration, send: impl FnOnce(&Claim) -> Result<(), String> + Send + 'static) -> Result<(), String> {
+    let claim = Claim::default();
+    let senders = claim.clone();
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new()
         .name("heimdall-page".into())
-        .spawn(move || drop(tx.send(send())))
+        .spawn(move || drop(tx.send(send(&senders))))
         .map_err(|e| format!("cannot start the send: {e}"))?;
-    rx.recv_timeout(deadline).unwrap_or_else(|_| Err(format!("the send did not finish within {deadline:?}")))
+    rx.recv_timeout(deadline).unwrap_or_else(|_| {
+        // Taken here, the send can no longer deliver. Held by the send, its write is under way.
+        let _ = claim.take();
+        Err(format!("the send did not finish within {deadline:?}"))
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test_id(tyaa5um)]
-    #[test]
-    fn a_send_that_outlives_its_deadline_is_a_failure() {
+        #[test_id(tocoage)]
+        #[test]
+    fn a_send_that_outlives_its_deadline_fails_and_can_no_longer_deliver() {
         let (release, held) = mpsc::channel::<()>();
-        let late = within(Duration::ZERO, move || {
+        let (said, heard) = mpsc::channel();
+        let late = within(Duration::ZERO, move |claim| {
             let _ = held.recv();
+            let _ = said.send(claim.take());
             Ok(())
         });
         assert!(late.unwrap_err().contains("did not finish"));
         drop(release);
-        assert_eq!(within(Duration::from_secs(30), || Ok(())), Ok(()));
+        assert!(heard.recv().unwrap().is_err(), "a late send would be a second mail");
+        assert_eq!(within(Duration::from_secs(30), |claim| claim.take()), Ok(()));
     }
 
     #[test_id(taaaazg)]

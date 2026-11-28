@@ -437,3 +437,42 @@ fn a_down_broker_is_paged_while_the_store_is_unreachable_and_a_raise_is_pending(
     assert!(names(&acts).contains(&task::BROKER), "{acts:?}");
     assert!(!names(&acts).contains(&task::RAISE));
 }
+
+#[test_id(t7ejqqh)]
+#[test]
+fn a_broker_outage_alone_with_the_store_unreachable_is_listed_in_the_fallback_from_its_second_pass() {
+    let h = t::handler::<H>(SET);
+    let now = 7_200_000;
+    let down = |at: u64| Input::Observed(Snapshot { db_reachable: false, broker: heimdall::broker::Reading::Down("refused".into()), ..quiet(at) });
+    let listed = |acts: &[spira_runtime::tasks::b::kit::Act]| acts.iter().find(|a| a.name == task::FALLBACK).expect("a fallback write").input.contains("broker-down");
+
+    let (carry, acts) = task::decide(&h.cfg, &Carry::default(), &down(now), now).unwrap();
+    assert!(!listed(&acts), "one failed pass is not an outage");
+    let (_, acts) = task::decide(&h.cfg, &carry, &down(now + TICK), now + TICK).unwrap();
+    assert!(listed(&acts), "{acts:?}");
+}
+
+#[test_id(t505raf)]
+#[test]
+fn the_service_routes_hand_the_observe_its_broker_and_the_page_the_operators_mail() {
+    use runtime::host::EffectRunner;
+    let mut broker = testkit::broker::Broker::up();
+    let dir = testkit::TempDir::new("heimdall-routes");
+    let fx = spira_runtime::Effects { broker: heimdall::broker::Bus::At(broker.socket().to_path_buf()), mail: Some(std::sync::Arc::new(page_env(dir.path()))), ..spira_runtime::Effects::default() };
+    let run = |name: &str, input: &str| fx.run("key", &runtime::event::EffectSpec::probe(name, input, 30_000)).unwrap();
+    let sock = dir.join("no-scheduler.sock");
+    let seen = || serde_json::from_str::<Snapshot>(&run(task::OBSERVE, sock.to_str().unwrap())).unwrap().broker;
+    assert_eq!(seen(), heimdall::broker::Reading::Up);
+    broker.stop();
+    assert!(matches!(seen(), heimdall::broker::Reading::Down(_)));
+
+    let page = json_of(&vec![heimdall::broker::Todo::Page { since: 120, why: "refused".into() }]);
+    let done: heimdall::broker::Done = serde_json::from_str(&run(task::BROKER, &page)).unwrap();
+
+    assert!(done.paged, "{done:?}");
+    assert_eq!(std::fs::read_dir(dir.join("mail/operator/new")).unwrap().count(), 1);
+}
+
+fn json_of<T: serde::Serialize>(v: &T) -> String {
+    serde_json::to_string(v).unwrap()
+}

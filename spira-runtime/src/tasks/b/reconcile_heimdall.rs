@@ -376,7 +376,11 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             }
             return Err(format!("{NAME}: the store is unreachable; the raise of {} is refused and waits for it", would.join(", ")));
         }
-        let doc = heimdall::fallback::build(now, false, None, &firing);
+        let mut listed = firing.clone();
+        if let (heimdall::broker::Reading::Down(why), Some(since), true) = (&snap.broker, outage.down_since, carry.broker.down_since.is_some()) {
+            listed.push(heimdall::broker::firing(&crate::watchers::iso8601(since.max(0) as u64), why));
+        }
+        let doc = heimdall::fallback::build(now, false, None, &listed);
         let mut acts = vec![act(FALLBACK, format!("heimdall/fallback/{now}"), &doc, HOST_DEADLINE_MS, true)?];
         acts.extend(announce);
         acts.extend(owed);

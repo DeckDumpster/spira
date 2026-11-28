@@ -187,7 +187,7 @@ pub fn run(inp: &PassInput, ops: &dyn Conditions, state: &mut State, paths: &Pas
     if fallback_needed {
         let mut listed = rep.firing.clone();
         if let (broker::Reading::Down(why), Some(since), true) = (&reading, outage.down_since, carried.down_since.is_some()) {
-            listed.push(Firing { key: broker::KEY.into(), title: broker::TITLE.into(), evidence: broker::evidence(&render(since), why) });
+            listed.push(broker::firing(&render(since), why));
         }
         let doc = fallback::build(now, db_reachable, rep.probe.write_ok, &listed);
         match fallback::write(&paths.fallback, &doc) {
