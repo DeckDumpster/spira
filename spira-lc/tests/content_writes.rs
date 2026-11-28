@@ -1697,10 +1697,10 @@ fn a_second_filing_of_a_waiting_outcome_is_folded_into_the_first_and_leaves_no_n
     let out = ok(&["work", &walk, "file-followup", "Fix x seen on a walk", "--for", "pilgrim", "--repo", "spira", "--body-file", "-", "--stdin", "## Build\nthe artifact, in spira-lc\n", "--actor", "pilgrim"], None);
     let defect = first_line(&out);
     let walked = out.lines().nth(1).and_then(|l| l.split_whitespace().next()).unwrap_or_else(|| panic!("no review filed: {out}")).to_string();
-    assert_eq!(blockers(&walk), [defect.clone()]);
+    assert_eq!(blockers(&walk), std::slice::from_ref(&defect));
     let (rc, out) = review(&walked, &format!("### Amend {f1}: Fix x seen on a walk\n\nseen on a walk\n"));
     assert_eq!(rc, 0, "{out}");
-    assert_eq!(blockers(&walk), [f1.clone()], "{defect} was folded, and the walk still waits for the defect");
+    assert_eq!(blockers(&walk), std::slice::from_ref(&f1), "{defect} was folded, and the walk still waits for the defect");
 
     // An --after-landing follow-up has an order of its own, which the survivor would not keep.
     let b2 = builder();
