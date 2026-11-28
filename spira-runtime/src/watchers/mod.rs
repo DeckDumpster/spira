@@ -1,6 +1,7 @@
 //! The watchers that used to poll as scripts, now handlers that subscribe to events. A handler
 //! here is pure: what the world looks like arrives as the outcome of an observe effect, and
-//! what it has to say leaves as an `inbox.append` effect.
+//! what it has to say leaves as an `inbox.append` effect, and the conditions it holds as
+//! `watch.publish`.
 
 pub mod asks;
 pub mod cr_cadence;
@@ -27,6 +28,7 @@ use runtime::event::*;
 use serde::de::DeserializeOwned;
 
 pub const INBOX_APPEND: &str = "inbox.append";
+pub const WATCH_PUBLISH: &str = "watch.publish";
 
 /// The body of the latest `tag` event on `stream`, or the default before the first.
 pub fn carried<T: DeserializeOwned + Default>(view: &Projection, stream: &StreamKey, tag: EventKindTag) -> T {

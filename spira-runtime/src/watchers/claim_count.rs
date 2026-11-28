@@ -1,6 +1,7 @@
 //! CLAIMS lines for the Concierge inbox: a live item reaching its 4th builder claim, and every
 //! fourth after, with how each kept earlier builder session ended. The watcher only reports; the
-//! count and the end reasons are the lifecycle row's, read through the store's live list.
+//! count and the end reasons are the lifecycle row's, read through the store's live list. Each
+//! live item at or past that first count is also held on `watch/claim-count/<id>`.
 
 use std::collections::BTreeMap;
 
@@ -8,14 +9,15 @@ use runtime::event::*;
 use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
-use super::{iso8601, INBOX_APPEND};
+use super::{carried, iso8601, INBOX_APPEND};
+use crate::watch_topics::{self, Change, Published};
 
 pub const STREAM: &str = "watch.claim-count";
 pub const TICK: EventKindTag = "claim-count.tick";
 pub const STATE: EventKindTag = "claim-count.state";
 pub const OBSERVE: &str = "claim-count.observe";
 pub const NAME: &str = "claim-count";
-const ROW_PARTS: &[Part] = &[Part::Field("seeded"), Part::Map { name: "paged", drop: &[] }];
+const ROW_PARTS: &[Part] = &[Part::Field("seeded"), Part::Map { name: "paged", drop: &[] }, Part::Map { name: "published", drop: &[] }];
 const OBSERVE_DEADLINE_MS: u64 = 30_000;
 const APPEND_DEADLINE_MS: u64 = 10_000;
 /// How many session ends a row keeps (`lifecycle::bead::SESSION_ENDS_KEPT`).
@@ -39,13 +41,14 @@ pub struct Snapshot {
     pub rows: Vec<Claims>,
 }
 
-/// Carried between ticks: whether the first pass has run, and each live item's claim count as of
-/// the last tick that saw it.
+/// Carried between ticks: whether the first pass has run, each live item's claim count as of
+/// the last tick that saw it, and what is held on the broker.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Carry {
     pub seeded: bool,
     pub paged: BTreeMap<String, u32>,
+    pub published: Published,
 }
 
 fn end_text(e: &serde_json::Value) -> String {
@@ -63,7 +66,7 @@ fn line(c: &Claims) -> String {
 pub fn decide(carry: &Carry, snap: &Snapshot, every: u32) -> (Carry, Vec<Claims>) {
     let seen: BTreeMap<String, u32> = snap.rows.iter().map(|r| (r.id.clone(), r.n)).collect();
     if !carry.seeded {
-        return (Carry { seeded: true, paged: seen }, vec![]);
+        return (Carry { seeded: true, paged: seen, published: carry.published.clone() }, vec![]);
     }
     let every = every.max(1);
     let mut paged = BTreeMap::new();
@@ -77,7 +80,13 @@ pub fn decide(carry: &Carry, snap: &Snapshot, every: u32) -> (Carry, Vec<Claims>
             paged.insert(r.id.clone(), *b);
         }
     }
-    (Carry { seeded: true, paged }, out)
+    (Carry { seeded: true, paged, published: carry.published.clone() }, out)
+}
+
+/// The pass's topics: every live item with at least `every` claims holds its page's line.
+pub fn topics(published: &Published, snap: &Snapshot, every: u32, now_ms: u64) -> (Published, Option<Change>) {
+    let over = snap.rows.iter().filter(|r| r.n >= every.max(1));
+    watch_topics::settle(NAME, published, over.map(|r| (r.id.clone(), line(r))).collect(), now_ms)
 }
 
 impl ClaimCount {
@@ -89,14 +98,11 @@ impl ClaimCount {
         ("claim-count/boot", STREAM, EventKind::new(TICK, ""))
     }
 
-    fn carry(view: &Projection, stream: &StreamKey) -> Carry {
-        view.events(stream).iter().rev().find(|e| e.kind.tag == STATE).and_then(|e| serde_json::from_str(&e.kind.body).ok()).unwrap_or_default()
-    }
 }
 
 impl Handler for ClaimCount {
     fn interests(&self) -> &[EventKindTag] {
-        &[TICK, EFFECT_SUCCEEDED]
+        &[TICK, EFFECT_SUCCEEDED, EFFECT_TIMED_OUT]
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
@@ -104,10 +110,15 @@ impl Handler for ClaimCount {
             return vec![];
         }
         if ev.kind.tag == TICK {
+            let held = watch_topics::carried(NAME, &carried::<Carry>(view, &ev.stream, STATE).published);
             return vec![
-                Command::Probe(EffectSpec::probe(OBSERVE, String::new(), OBSERVE_DEADLINE_MS)),
+                Command::Probe(EffectSpec::probe(OBSERVE, held, OBSERVE_DEADLINE_MS)),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
+        }
+        if ev.kind.tag == EFFECT_TIMED_OUT {
+            let carry: Carry = carried(view, &ev.stream, STATE);
+            return watch_topics::again(view, ev, &carry.published).map(Command::Effect).into_iter().collect();
         }
         let observed = ev.cause.as_ref().is_some_and(|cause| {
             view.events(&ev.stream).iter().rev().find(|e| &e.id == cause && e.kind.tag == EFFECT_REQUESTED).and_then(|e| serde_json::from_str::<serde_json::Value>(&e.kind.body).ok()).is_some_and(|b| b["spec"]["name"] == OBSERVE)
@@ -118,8 +129,10 @@ impl Handler for ClaimCount {
         let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body) else {
             return vec![];
         };
-        let carry = Self::carry(view, &ev.stream);
-        let (next, due) = decide(&carry, &snap, self.every);
+        let carry: Carry = carried(view, &ev.stream, STATE);
+        let (mut next, due) = decide(&carry, &snap, self.every);
+        let (published, change) = topics(&carry.published, &snap, self.every, ev.at);
+        next.published = published;
         ctx.event().set("claim_count.live", snap.rows.len() as u64);
         let now = ev.at / 1000;
         let mut cmds = vec![];
@@ -129,6 +142,7 @@ impl Handler for ClaimCount {
         cmds.extend(due.iter().map(|c| {
             Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:{}:{}", c.id, c.n), format!("{} [watch:{NAME}] {}", iso8601(now), line(c)), APPEND_DEADLINE_MS))
         }));
+        cmds.extend(change.map(|c| Command::Effect(watch_topics::effect(&c, ev.at))));
         cmds
     }
 }
@@ -158,5 +172,26 @@ mod tests {
         assert!(out.is_empty() && c2 == c, "an idle tick changes nothing");
         let (c3, _) = decide(&c, &snap(&[("a", 13)]), 4);
         assert!(!c3.paged.contains_key("b"), "an item that left the live list leaves the carry");
+    }
+
+    fn set_and_clear(change: &Option<Change>) -> (Vec<&str>, Vec<&str>) {
+        change.as_ref().map_or_else(Default::default, |c| (c.set.keys().map(String::as_str).collect(), c.clear.iter().map(String::as_str).collect()))
+    }
+
+    #[test_id(txumcad)]
+    #[test]
+    fn a_topic_is_set_when_an_item_reaches_the_count_left_alone_while_unchanged_and_cleared_when_it_leaves() {
+        let (p, change) = topics(&Published::new(), &snap(&[("a", 4), ("under", 3)]), 4, 10_000);
+        assert_eq!(set_and_clear(&change), (vec!["a"], vec![]), "appear");
+        assert_eq!((change.unwrap().row.as_str(), p["a"].level.as_str(), p["a"].since, p["a"].at), (NAME, "P2", 10, 10));
+        let (held, change) = topics(&p, &snap(&[("a", 4), ("under", 3)]), 4, 70_000);
+        assert_eq!((change, &held), (None, &p), "hold");
+        let (p, change) = topics(&held, &snap(&[("a", 5)]), 4, 130_000);
+        assert_eq!(set_and_clear(&change), (vec!["a"], vec![]), "change");
+        assert!(p["a"].text.contains("5 times"), "{p:?}");
+        assert_eq!((p["a"].since, p["a"].at), (10, 130), "since survives a change of text");
+        let (p, change) = topics(&p, &snap(&[("under", 3)]), 4, 190_000);
+        assert_eq!(set_and_clear(&change), (vec![], vec!["a"]), "clear");
+        assert!(p.is_empty());
     }
 }

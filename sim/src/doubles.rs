@@ -57,7 +57,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("asks", &["asks.observe", "inbox.append"]),
     ("design-asks", &["design-asks.observe", "inbox.append"]),
     ("brain-dirty", &["brain-dirty.observe", "inbox.append"]),
-    ("claim-count", &["claim-count.observe", "inbox.append"]),
+    ("claim-count", &["claim-count.observe", "inbox.append", "watch.publish"]),
     ("wake-audit", &["inbox.append"]),
     ("writer-grants", &["writer-grants.observe", "inbox.append"]),
     ("supersede-duty", &["supersede-duty.observe", "supersede-duty.act", "inbox.append"]),
@@ -122,7 +122,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("watch.pass_rate", &["watch.pass_rate.observe", "watch.pass_rate.mail"]),
     ("watch.throughput", &["watch.throughput.observe", "watch.throughput.file", "watch.throughput.clear", "inbox.append"]),
     ("watch.transitions", &["watch.transitions.observe", "inbox.append", "watch.transitions.log_append"]),
-    ("watch.ami_stale", &["watch.ami_stale.observe", "inbox.append"]),
+    ("watch.ami_stale", &["watch.ami_stale.observe", "inbox.append", "watch.publish"]),
     ("watch.testenv_cap", &["watch.testenv_cap.observe", "watch.testenv_cap.kill", "inbox.append", "watch.testenv_cap.metric"]),
     ("intake.gh", &["intake.gh.observe", "intake.gh.file_work", "intake.gh.file_untrusted", "intake.gh.note_seen", "intake.gh.close_promoted", "intake.gh.digest", "intake.gh.unverifiable", "inbox.append"]),
     ("trigger.groom", &["trigger.groom.observe", "trigger.groom.file"]),
@@ -144,7 +144,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
 
 /// The effects several tasks share (spira-runtime's `tasks::SHARED`): the inbox line and the
 /// unit manager's verbs. `sim::units::with_units` replaces the latter with a scripted manager.
-pub const SHARED_EFFECTS: &[&str] = &["inbox.append", "unit.start", "unit.stop", "unit.restart", "unit.facts", "unit.start_installed"];
+pub const SHARED_EFFECTS: &[&str] = &["inbox.append", "watch.publish", "unit.start", "unit.stop", "unit.restart", "unit.facts", "unit.start_installed"];
 
 /// Every effect name `TASK_EFFECTS` and `SHARED_EFFECTS` hold, each once, sorted.
 pub fn service_effects() -> Vec<&'static str> {

@@ -186,7 +186,7 @@ fn registration() -> runtime::event::Registration {
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&said_once(), NAME);
-    assert_eq!(rows, ["said"]);
+    assert_eq!(rows, ["published/all", "said"]);
 }
 
 #[test_id(tbywgnz)]

@@ -208,7 +208,7 @@ mod tests {
         for topic in [
             "bead/sp-a/state", "bead/sp-a/sessions", "round/r/12", "gate/r/sp-a", "session/sp-a/state",
             "session/sp-a/age/15m", "session/sp-a/age/30m", "session/sp-a/age/60m", "release/active",
-            "host/pressure", "pr/r/7", "concierge/inbox", "publisher/queue", "subscriber/concierge",
+            "host/pressure", "pr/r/7", "watch/claim-count/sp-a", "concierge/inbox", "publisher/queue", "subscriber/concierge",
         ] {
             assert_eq!(of(topic).map(|(_, c)| c), Some(Class::State), "{topic}");
         }

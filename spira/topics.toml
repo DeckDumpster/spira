@@ -79,6 +79,13 @@ fields = ["state", "sha", "at"]
 resident = ["pr-notify"]
 
 [[topic]]
+family = "watch/<row>/<subject>"
+class = "state"
+publisher = "spira-runtime watch rows"
+fields = ["level", "text", "since", "at"]
+resident = ["spira-runtime"]
+
+[[topic]]
 family = "concierge/inbox"
 class = "state"
 publisher = "inbox-writer"
