@@ -49,9 +49,10 @@ jobs:
   build:
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/spira-round-candidate/')
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 110
     env:
       AWS_REGION: ${{ vars.ROUND_AMI_REGION }}
+      RUN_TAG: ${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
 
@@ -90,6 +91,8 @@ jobs:
 
       - name: Build, image and tag
         if: steps.have.outputs.fresh != '1'
+        # Shorter than the job's, so a hung build leaves the cleanup steps their time.
+        timeout-minutes: 90
         env:
           SHA: ${{ steps.recipe.outputs.sha }}
         run: |
@@ -102,9 +105,8 @@ jobs:
             --iam-instance-profile "Name=${{ vars.ROUND_AMI_INSTANCE_PROFILE }}" \
             --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=100,VolumeType=gp3}' \
             --instance-initiated-shutdown-behavior terminate \
-            --tag-specifications "ResourceType=instance,Tags=[{Key=spill:owner,Value=round},{Key=Name,Value=spira-round-build}]" \
+            --tag-specifications "ResourceType=instance,Tags=[{Key=spill:owner,Value=round},{Key=Name,Value=spira-round-build},{Key=spira:round-build-run,Value=$RUN_TAG}]" \
             --query 'Instances[0].InstanceId' --output text)"
-          trap 'aws ec2 terminate-instances --instance-ids "$id" >/dev/null || true' EXIT
           aws ec2 wait instance-status-ok --instance-ids "$id"
 
           toolchain="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)"
@@ -133,6 +135,45 @@ jobs:
             --query ImageId --output text)"
           bash round-vm/wait-image.sh "$ami"
           echo "built $ami recipe-sha=$SHA"
+
+      # The build can outlast its role session, so cleanup takes a new one.
+      - name: Refresh the role session
+        if: always() && steps.have.outputs.fresh != '1'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.ROUND_AMI_ROLE_ARN }}
+          aws-region: ${{ vars.ROUND_AMI_REGION }}
+
+      # The one owner of termination. It finds instances by the run's tag, not by a shell
+      # variable, so it covers every instance the run launched however the build ended.
+      - name: Remove the build instances
+        if: always() && steps.have.outputs.fresh != '1'
+        run: |
+          set -euo pipefail
+          found="$(aws ec2 describe-instances --filters "Name=tag:spira:round-build-run,Values=$RUN_TAG" \
+            --query 'Reservations[].Instances[].[InstanceId,State.Name]' --output text)" \
+            || { echo "cannot list the build instances tagged spira:round-build-run=$RUN_TAG; any may still be running" >&2; exit 1; }
+          doomed=()
+          unfinished=()
+          while read -r id state; do
+            [ -n "$id" ] || continue
+            echo "found build instance $id ($state)"
+            case "$state" in
+              pending|running|stopping|stopped) doomed+=("$id"); unfinished+=("$id") ;;
+              terminated) ;;
+              *) unfinished+=("$id") ;;
+            esac
+          done <<<"$found"
+          if [ "${#doomed[@]}" != 0 ]; then
+            aws ec2 terminate-instances --instance-ids "${doomed[@]}" \
+              --query 'TerminatingInstances[].[InstanceId,CurrentState.Name]' --output text \
+              || { echo "cannot terminate build instances: ${doomed[*]}" >&2; exit 1; }
+          fi
+          if [ "${#unfinished[@]}" != 0 ]; then
+            aws ec2 wait instance-terminated --instance-ids "${unfinished[@]}" \
+              || { echo "build instances not confirmed terminated: ${unfinished[*]}" >&2; exit 1; }
+          fi
+          echo "no build instance left for run $RUN_TAG"
 
       - name: Remove the staged tree
         if: always() && steps.have.outputs.fresh != '1'
