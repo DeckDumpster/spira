@@ -1,8 +1,7 @@
-//! One OTLP span per call, appended as one `ExportTraceServiceRequest` JSON line to
-//! `<dir>/<service>.<UTC date>.jsonl` — the Collector file-exporter format, so an
-//! `otlpjsonfile` receiver can ship the files unchanged. Emitting never fails or blocks the
-//! caller beyond one short append: an error is counted and dropped. A `buffered` sink does not
-//! append on the caller: it queues, and one thread appends each second's queue.
+//! One OTLP span per call, pushed to a Collector over OTLP/HTTP twice: as a trace span, for
+//! the Collector's request metrics, and as a log record, the wide event its logs pipeline
+//! delivers. `emit` only queues: one thread pushes each second's queue. A span the queue
+//! cannot take or a push cannot deliver is counted and dropped, never retried.
 
 #[cfg(test)]
 #[macro_use]
@@ -23,36 +22,36 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use ports::{Fs, RealFs};
-
+use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::common::v1::{any_value::Value, AnyValue, ArrayValue, InstrumentationScope, KeyValue};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use opentelemetry_proto::tonic::trace::v1::{span::SpanKind, status::StatusCode, ResourceSpans, ScopeSpans, Span, Status};
+use prost::Message;
 
 static DROPPED: AtomicU64 = AtomicU64::new(0);
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-/// Writes spans for one service into one directory, keeping `keep_days` days of files.
+const TRACES_PATH: &str = "/v1/traces"; // not a path: OTLP traces URL path
+const LOGS_PATH: &str = "/v1/logs"; // not a path: OTLP logs URL path
+
+/// Queues one service's spans and pushes them to a Collector.
 pub struct Sink {
     inner: Arc<Inner>,
-    queue: Option<Arc<Queue>>,
+    queue: Arc<Queue>,
 }
 
 struct Inner {
-    fs: Arc<dyn Fs>,
-    dir: PathBuf,
+    addr: String,
     service: String,
-    keep_days: u32,
-    day_max_bytes: u64,
+    deadline: Duration,
     dropped: AtomicU64,
-    warned_days: Mutex<Vec<String>>,
 }
 
-/// Serialised spans waiting for the writer thread, each with its emit time.
+/// Spans waiting for the writer thread; `bytes` is their encoded size.
 #[derive(Default)]
 struct Pending {
-    spans: Vec<(SystemTime, Vec<u8>)>,
+    spans: Vec<Span>,
     bytes: usize,
     busy: bool,
     flushers: usize,
@@ -65,10 +64,12 @@ struct Queue {
     done: Condvar,
 }
 
-/// The most serialised span bytes a buffered sink holds before it drops.
+/// The most encoded span bytes a sink holds before it drops.
 pub const QUEUE_MAX_BYTES: usize = 8 << 20;
 const APPEND_EVERY: Duration = Duration::from_secs(1);
 const FLUSH_BOUND: Duration = Duration::from_secs(5);
+/// Connect, write and status read of one POST.
+const PUSH_DEADLINE: Duration = Duration::from_secs(2);
 
 /// What one call looked like; the attribute set of the span built from it.
 pub struct Call<'a> {
@@ -120,34 +121,23 @@ pub struct Call<'a> {
     pub turn_tasks: Option<&'a str>,
 }
 
-/// Spans lost to a write error since this process started.
+/// Spans lost to a full queue or a failed push since this process started.
 pub fn dropped() -> u64 {
     DROPPED.load(Ordering::Relaxed)
 }
 
 impl Sink {
-    pub fn new(dir: impl Into<PathBuf>, service: &str, keep_days: u32) -> Sink {
-        Self::on(Arc::new(RealFs), dir, service, keep_days)
+    /// `endpoint` is the Collector's OTLP/HTTP receiver, `host:port`.
+    pub fn buffered(endpoint: &str, service: &str) -> Sink {
+        Self::with_deadline(endpoint, service, PUSH_DEADLINE)
     }
 
-    /// As `new`, over `fs`.
-    pub fn on(fs: Arc<dyn Fs>, dir: impl Into<PathBuf>, service: &str, keep_days: u32) -> Sink {
-        Sink { inner: Arc::new(Inner::new(fs, dir.into(), service, keep_days, u64::MAX)), queue: None }
-    }
-
-    /// A sink whose `emit` only queues: one thread appends the queue once a second, and a day
-    /// file at `day_max_bytes` takes no more.
-    pub fn buffered(dir: impl Into<PathBuf>, service: &str, keep_days: u32, day_max_bytes: u64) -> Sink {
-        Self::buffered_on(Arc::new(RealFs), dir, service, keep_days, day_max_bytes)
-    }
-
-    /// As `buffered`, over `fs`.
-    pub fn buffered_on(fs: Arc<dyn Fs>, dir: impl Into<PathBuf>, service: &str, keep_days: u32, day_max_bytes: u64) -> Sink {
-        let inner = Arc::new(Inner::new(fs, dir.into(), service, keep_days, day_max_bytes));
+    fn with_deadline(endpoint: &str, service: &str, deadline: Duration) -> Sink {
+        let inner = Arc::new(Inner { addr: vlogs::host_port(endpoint), service: service.to_string(), deadline, dropped: AtomicU64::new(0) });
         let queue = Arc::new(Queue::default());
         let (i, q) = (inner.clone(), queue.clone());
         std::thread::Builder::new().name("otel-writer".into()).spawn(move || writer_loop(&i, &q)).expect("the span writer thread starts");
-        Sink { inner, queue: Some(queue) }
+        Sink { inner, queue }
     }
 
     /// Spans this sink lost; `dropped()` counts the process.
@@ -155,37 +145,28 @@ impl Sink {
         self.inner.dropped.load(Ordering::Relaxed)
     }
 
-    /// Appends one span, or queues it on a buffered sink; a failure is counted, never returned.
+    /// Queues one span; a span the queue cannot take is counted, never returned.
     pub fn emit(&self, call: &Call) {
-        let Some(queue) = &self.queue else {
-            let _ = self.write(call, SystemTime::now());
-            return;
-        };
-        let Ok(line) = self.inner.line(call) else { return self.inner.drop_spans(1) };
-        let mut p = queue.pending.lock().unwrap_or_else(|e| e.into_inner());
-        if p.bytes + line.len() > QUEUE_MAX_BYTES {
+        let span = span_of(call);
+        let len = span.encoded_len();
+        let mut p = self.queue.pending.lock().unwrap_or_else(|e| e.into_inner());
+        if p.bytes + len > QUEUE_MAX_BYTES {
             drop(p);
             return self.inner.drop_spans(1);
         }
-        p.bytes += line.len();
-        p.spans.push((SystemTime::now(), line));
-        queue.wake.notify_one();
+        p.bytes += len;
+        p.spans.push(span);
+        self.queue.wake.notify_one();
     }
 
-    /// Blocks until everything queued so far has been appended or dropped, or `FLUSH_BOUND`
-    /// passes: a day file held locked elsewhere must not hold a stopping process.
+    /// Blocks until everything queued so far has been pushed or dropped, or `FLUSH_BOUND`
+    /// passes: a Collector that never answers must not hold a stopping process.
     pub fn flush(&self) {
-        let Some(queue) = &self.queue else { return };
-        let mut p = queue.pending.lock().unwrap_or_else(|e| e.into_inner());
+        let mut p = self.queue.pending.lock().unwrap_or_else(|e| e.into_inner());
         p.flushers += 1;
-        queue.wake.notify_one();
-        let (mut p, _) = queue.done.wait_timeout_while(p, FLUSH_BOUND, |p| !p.spans.is_empty() || p.busy).unwrap_or_else(|e| e.into_inner());
+        self.queue.wake.notify_one();
+        let (mut p, _) = self.queue.done.wait_timeout_while(p, FLUSH_BOUND, |p| !p.spans.is_empty() || p.busy).unwrap_or_else(|e| e.into_inner());
         p.flushers -= 1;
-    }
-
-    pub fn write(&self, call: &Call, now: SystemTime) -> std::io::Result<()> {
-        let line = self.inner.line(call).inspect_err(|_| self.inner.drop_spans(1))?;
-        self.inner.append_day(&utc_date(now), &[&line])
     }
 }
 
@@ -199,7 +180,7 @@ fn writer_loop(inner: &Inner, queue: &Queue) {
         p.bytes = 0;
         p.busy = true;
         drop(p);
-        inner.write_batch(&batch);
+        inner.push(batch);
         p = queue.pending.lock().unwrap_or_else(|e| e.into_inner());
         p.busy = false;
         queue.done.notify_all();
@@ -208,171 +189,125 @@ fn writer_loop(inner: &Inner, queue: &Queue) {
 }
 
 impl Inner {
-    fn new(fs: Arc<dyn Fs>, dir: PathBuf, service: &str, keep_days: u32, day_max_bytes: u64) -> Inner {
-        Inner { fs, dir, service: service.to_string(), keep_days, day_max_bytes, dropped: AtomicU64::new(0), warned_days: Mutex::new(Vec::new()) }
-    }
-
-    fn line(&self, call: &Call) -> std::io::Result<Vec<u8>> {
-        let mut line = serde_json::to_vec(&self.request(call)).map_err(std::io::Error::other)?;
-        line.push(b'\n');
-        Ok(line)
-    }
-
     fn drop_spans(&self, n: u64) {
         DROPPED.fetch_add(n, Ordering::Relaxed);
         self.dropped.fetch_add(n, Ordering::Relaxed);
     }
 
-    /// Appends a batch, one locked write per UTC day of emit time.
-    fn write_batch(&self, batch: &[(SystemTime, Vec<u8>)]) {
-        let mut i = 0;
-        while i < batch.len() {
-            let day = utc_date(batch[i].0);
-            let n = batch[i..].iter().take_while(|(t, _)| utc_date(*t) == day).count();
-            let lines: Vec<&[u8]> = batch[i..i + n].iter().map(|(_, l)| l.as_slice()).collect();
-            let _ = self.append_day(&day, &lines);
-            i += n;
+    /// Both posts are tried; a batch that misses either is lost, and counted once.
+    fn push(&self, spans: Vec<Span>) {
+        let n = spans.len() as u64;
+        let logs = wide_events(&self.service, &spans).encode_to_vec();
+        let traces = traces(&self.service, spans).encode_to_vec();
+        let sent = [(TRACES_PATH, traces), (LOGS_PATH, logs)].map(|(path, body)| metrics::post(&self.addr, path, &body, self.deadline).is_ok());
+        if sent.contains(&false) {
+            self.drop_spans(n);
         }
     }
+}
 
-    /// Appends whole lines to `day`'s file while the file stays within the day bound; the rest,
-    /// or all of them on an error, are dropped and counted.
-    fn append_day(&self, day: &str, lines: &[&[u8]]) -> std::io::Result<()> {
-        let path = self.path(day);
-        let sized = self.fs.create_dir(&self.dir).and_then(|()| match self.fs.metadata(&path) {
-            Ok(m) => Ok((m.len, false)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((0, true)),
-            Err(e) => Err(e),
-        });
-        let Ok((mut size, first_today)) = sized else {
-            self.drop_spans(lines.len() as u64);
-            return sized.map(|_| ());
-        };
-        let mut out = Vec::new();
-        let mut kept = 0u64;
-        for l in lines {
-            if size + l.len() as u64 > self.day_max_bytes {
-                break;
-            }
-            size += l.len() as u64;
-            out.extend_from_slice(l);
-            kept += 1;
-        }
-        let lost = lines.len() as u64 - kept;
-        if lost > 0 {
-            self.drop_spans(lost);
-            let mut warned = self.warned_days.lock().unwrap_or_else(|e| e.into_inner());
-            if !warned.iter().any(|d| d == day) {
-                warned.push(day.to_string());
-                eprintln!("spira-otel: {} is at its {} byte day bound; further spans that day are dropped", path.display(), self.day_max_bytes);
-            }
-        }
-        self.fs.append(&path, &out).inspect_err(|_| self.drop_spans(kept))?;
-        if first_today {
-            self.prune(day);
-        }
-        Ok(())
-    }
-
-    fn path(&self, day: &str) -> PathBuf {
-        self.dir.join(format!("{}.{day}.jsonl", self.service))
-    }
-
-    fn prune(&self, today: &str) {
-        let Some(oldest) = day_number(today).map(|d| d - i64::from(self.keep_days) + 1) else { return };
-        let prefix = format!("{}.", self.service);
-        let Ok(names) = self.fs.list(&self.dir) else { return };
-        for name in names {
-            let Some(day) = name.strip_prefix(&prefix).and_then(|r| r.strip_suffix(".jsonl")) else { continue };
-            if day_number(day).is_some_and(|d| d < oldest) {
-                let _ = self.fs.remove(&self.dir.join(&name));
-            }
-        }
-    }
-
-    fn request(&self, c: &Call) -> ExportTraceServiceRequest {
-        let nanos = |t: SystemTime| t.duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_nanos() as u64;
-        let failed = c.exit_code != 0;
-        let mut attributes = vec![
-            kv_str("rpc.system", "spira-lc"),
-            kv_str("rpc.method", c.method),
-            kv_str("spira.caller", c.caller),
-            kv_int("rpc.request.size", c.request_size),
-            kv_int("rpc.response.size", c.response_size),
-            kv_int("spira.queue_wait_us", c.queue_wait.as_micros() as u64),
-            kv_int("spira.serve.before_work_us", c.before_work.as_micros() as u64),
-            kv_int("spira.serve.answer_wait_us", c.answer_wait.as_micros() as u64),
-            kv_int("spira.serve.after_answer_us", c.after_answer.as_micros() as u64),
-            KeyValue { key: "spira.serve.cut".into(), value: Some(AnyValue { value: Some(Value::BoolValue(c.cut)) }) },
-        ];
-        if let Some(answered) = c.answered {
-            attributes.push(kv_int("spira.answer_us", answered.as_micros() as u64));
-        }
-        if let Some(cut) = c.cut_at {
-            attributes.push(kv_int("spira.deadline_cut_ms", cut.as_millis() as u64));
-        }
-        for (name, us) in c.phases {
-            attributes.push(kv_int(&format!("spira.phase.{name}_us"), *us));
-        }
-        if !c.commits_us.is_empty() {
-            attributes.push(kv_int("spira.store.commits", c.commits_us.len() as u64));
-            let values = c.commits_us.iter().map(|us| AnyValue { value: Some(Value::IntValue(*us as i64)) }).collect();
-            attributes.push(KeyValue { key: "spira.phase.commits_us".into(), value: Some(AnyValue { value: Some(Value::ArrayValue(ArrayValue { values })) }) });
-        }
-        if c.reads > 0 {
-            attributes.push(kv_int("spira.store.reads", c.reads));
-            attributes.push(kv_int("spira.store.read_max_us", c.read_max_us));
-            attributes.push(kv_int("spira.store.reads_ended", c.reads_ended));
-            attributes.push(kv_int("spira.store.reads_overran", c.reads_overran));
-        }
-        if c.content_queries > 0 {
-            attributes.push(kv_int("spira.content.queries", c.content_queries));
-            attributes.push(kv_int("spira.content.query_max_us", c.content_query_max_us));
-            attributes.push(kv_str("spira.content.query_max_shape", c.content_query_max_shape));
-        }
-        if let Some(task) = c.task {
-            attributes.push(kv_str("spira.task", task));
-        }
-        if c.children > 0 {
-            attributes.push(kv_int("spira.children", c.children));
-        }
-        if !c.programs.is_empty() {
-            attributes.push(kv_str("spira.children.programs", &c.programs.join(",")));
-        }
-        if let Some(sub) = c.subverb {
-            attributes.push(kv_str("spira.subverb", sub));
-        }
-        if let Some(tasks) = c.turn_tasks {
-            attributes.push(kv_str("spira.turn.tasks", tasks));
-        }
-        if let Some(open) = c.open_phase {
-            attributes.push(kv_str("spira.phase.open", open));
-        }
-        if failed {
-            attributes.push(KeyValue { key: "spira.exit_code".into(), value: Some(AnyValue { value: Some(Value::IntValue(i64::from(c.exit_code))) }) });
-        }
-        let span = Span {
-            trace_id: ids(16),
-            span_id: ids(8),
-            name: c.method.to_string(),
-            kind: SpanKind::Server as i32,
-            start_time_unix_nano: nanos(c.start),
-            end_time_unix_nano: nanos(c.end),
-            attributes,
-            status: Some(Status { code: if failed { StatusCode::Error } else { StatusCode::Ok } as i32, message: String::new() }),
+fn traces(service: &str, spans: Vec<Span>) -> ExportTraceServiceRequest {
+    ExportTraceServiceRequest {
+        resource_spans: vec![ResourceSpans {
+            resource: Some(Resource { attributes: vec![kv_str("service.name", service)], ..Default::default() }),
+            scope_spans: vec![ScopeSpans { scope: Some(InstrumentationScope { name: "spira-otel".into(), ..Default::default() }), spans, ..Default::default() }],
             ..Default::default()
-        };
-        ExportTraceServiceRequest {
-            resource_spans: vec![ResourceSpans {
-                resource: Some(Resource { attributes: vec![kv_str("service.name", &self.service)], ..Default::default() }),
-                scope_spans: vec![ScopeSpans {
-                    scope: Some(InstrumentationScope { name: "spira-otel".into(), ..Default::default() }),
-                    spans: vec![span],
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }],
-        }
+        }],
+    }
+}
+
+/// One log record per span: every span attribute, its duration and ids, timed at its start.
+fn wide_events(service: &str, spans: &[Span]) -> ExportLogsServiceRequest {
+    let records = spans
+        .iter()
+        .map(|s| {
+            let mut attributes = s.attributes.clone();
+            attributes.push(kv_int("spira.duration_us", s.end_time_unix_nano.saturating_sub(s.start_time_unix_nano) / 1000));
+            let mut record = logs::record(&s.name, attributes, s.start_time_unix_nano);
+            record.trace_id = s.trace_id.clone();
+            record.span_id = s.span_id.clone();
+            record
+        })
+        .collect();
+    logs::export(service, records)
+}
+
+/// The trace request carrying one call's span.
+pub fn span_request(service: &str, call: &Call) -> ExportTraceServiceRequest {
+    traces(service, vec![span_of(call)])
+}
+
+fn span_of(c: &Call) -> Span {
+    let nanos = |t: SystemTime| t.duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_nanos() as u64;
+    let failed = c.exit_code != 0;
+    let mut attributes = vec![
+        kv_str("rpc.system", "spira-lc"),
+        kv_str("rpc.method", c.method),
+        kv_str("spira.caller", c.caller),
+        kv_int("rpc.request.size", c.request_size),
+        kv_int("rpc.response.size", c.response_size),
+        kv_int("spira.queue_wait_us", c.queue_wait.as_micros() as u64),
+        kv_int("spira.serve.before_work_us", c.before_work.as_micros() as u64),
+        kv_int("spira.serve.answer_wait_us", c.answer_wait.as_micros() as u64),
+        kv_int("spira.serve.after_answer_us", c.after_answer.as_micros() as u64),
+        KeyValue { key: "spira.serve.cut".into(), value: Some(AnyValue { value: Some(Value::BoolValue(c.cut)) }) },
+    ];
+    if let Some(answered) = c.answered {
+        attributes.push(kv_int("spira.answer_us", answered.as_micros() as u64));
+    }
+    if let Some(cut) = c.cut_at {
+        attributes.push(kv_int("spira.deadline_cut_ms", cut.as_millis() as u64));
+    }
+    for (name, us) in c.phases {
+        attributes.push(kv_int(&format!("spira.phase.{name}_us"), *us));
+    }
+    if !c.commits_us.is_empty() {
+        attributes.push(kv_int("spira.store.commits", c.commits_us.len() as u64));
+        let values = c.commits_us.iter().map(|us| AnyValue { value: Some(Value::IntValue(*us as i64)) }).collect();
+        attributes.push(KeyValue { key: "spira.phase.commits_us".into(), value: Some(AnyValue { value: Some(Value::ArrayValue(ArrayValue { values })) }) });
+    }
+    if c.reads > 0 {
+        attributes.push(kv_int("spira.store.reads", c.reads));
+        attributes.push(kv_int("spira.store.read_max_us", c.read_max_us));
+        attributes.push(kv_int("spira.store.reads_ended", c.reads_ended));
+        attributes.push(kv_int("spira.store.reads_overran", c.reads_overran));
+    }
+    if c.content_queries > 0 {
+        attributes.push(kv_int("spira.content.queries", c.content_queries));
+        attributes.push(kv_int("spira.content.query_max_us", c.content_query_max_us));
+        attributes.push(kv_str("spira.content.query_max_shape", c.content_query_max_shape));
+    }
+    if let Some(task) = c.task {
+        attributes.push(kv_str("spira.task", task));
+    }
+    if c.children > 0 {
+        attributes.push(kv_int("spira.children", c.children));
+    }
+    if !c.programs.is_empty() {
+        attributes.push(kv_str("spira.children.programs", &c.programs.join(",")));
+    }
+    if let Some(sub) = c.subverb {
+        attributes.push(kv_str("spira.subverb", sub));
+    }
+    if let Some(tasks) = c.turn_tasks {
+        attributes.push(kv_str("spira.turn.tasks", tasks));
+    }
+    if let Some(open) = c.open_phase {
+        attributes.push(kv_str("spira.phase.open", open));
+    }
+    if failed {
+        attributes.push(KeyValue { key: "spira.exit_code".into(), value: Some(AnyValue { value: Some(Value::IntValue(i64::from(c.exit_code))) }) });
+    }
+    Span {
+        trace_id: ids(16),
+        span_id: ids(8),
+        name: c.method.to_string(),
+        kind: SpanKind::Server as i32,
+        start_time_unix_nano: nanos(c.start),
+        end_time_unix_nano: nanos(c.end),
+        attributes,
+        status: Some(Status { code: if failed { StatusCode::Error } else { StatusCode::Ok } as i32, message: String::new() }),
+        ..Default::default()
     }
 }
 
@@ -421,313 +356,232 @@ fn civil(z: i64) -> (i64, i64, i64) {
     (yoe + era * 400 + i64::from(m <= 2), m, d)
 }
 
-fn day_number(date: &str) -> Option<i64> {
-    let mut p = date.split('-');
-    let (y, m, d): (i64, i64, i64) = (p.next()?.parse().ok()?, p.next()?.parse().ok()?, p.next()?.parse().ok()?);
-    if p.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
-        return None;
-    }
-    let y = y - i64::from(m <= 2);
-    let era = y.div_euclid(400);
-    let yoe = y.rem_euclid(400);
-    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    Some(era * 146_097 + doe - 719_468)
-}
-
 pub fn dir_of(run: &Path) -> PathBuf {
     run.join("otel")
 }
 
 #[cfg(test)]
+mod test_yaml {
+    /// The indented keys of a YAML file as dotted paths, each with its inline value.
+    pub(crate) fn paths(yaml: &str) -> Vec<(String, String)> {
+        let mut stack: Vec<(usize, String)> = Vec::new();
+        let mut out = Vec::new();
+        for line in yaml.lines() {
+            let t = line.trim();
+            if t.is_empty() || t.starts_with('#') || t.starts_with('-') {
+                continue;
+            }
+            let indent = line.len() - line.trim_start().len();
+            let Some((key, value)) = t.split_once(':') else { continue };
+            stack.retain(|(i, _)| *i < indent);
+            stack.push((indent, key.to_string()));
+            out.push((stack.iter().map(|(_, k)| k.as_str()).collect::<Vec<_>>().join("."), value.trim().to_string()));
+        }
+        out
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use std::time::Duration;
+    use crate::fixture::Collector;
+    use std::net::TcpListener;
+
+    /// A cap on a wait for the fixture's own signal.
+    const CAP: Duration = Duration::from_secs(30);
 
     fn call(code: i32) -> Call<'static> {
         let start = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         Call { method: "list", caller: "work/list", request_size: 40, response_size: 439_002, exit_code: code, start, end: start + Duration::from_millis(12), queue_wait: Duration::ZERO, before_work: Duration::ZERO, answer_wait: Duration::ZERO, after_answer: Duration::ZERO, cut: false, answered: None, cut_at: None, phases: &[], commits_us: &[], reads: 0, read_max_us: 0, reads_ended: 0, reads_overran: 0, open_phase: None, content_queries: 0, content_query_max_us: 0, content_query_max_shape: "", task: None, children: 0, programs: &[], subverb: None, turn_tasks: None }
     }
 
-    fn tmp(name: &str) -> testkit::TempDir {
-        testkit::TempDir::new(name)
-    }
-
-    fn attr<'a>(span: &'a Span, k: &str) -> Option<&'a Value> {
-        span.attributes.iter().find(|a| a.key == k).and_then(|a| a.value.as_ref()?.value.as_ref())
-    }
-
-    #[test_id(txpa66z)]
-    #[test]
-    fn answer_time_and_cutoff_are_int_attributes_only_when_given() {
-        let dir = tmp("answer-cut");
-        let sink = Sink::new(dir.path(), "spira-lc", 14);
-        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        sink.write(&Call { answered: Some(Duration::from_millis(12)), cut_at: Some(Duration::from_millis(1000)), ..call(0) }, now).unwrap();
-        sink.write(&call(0), now).unwrap();
-        let text = fs::read_to_string(dir.join("spira-lc.2023-11-14.jsonl")).unwrap();
-        let spans: Vec<Span> = text.lines().map(|l| serde_json::from_str::<ExportTraceServiceRequest>(l).unwrap().resource_spans[0].scope_spans[0].spans[0].clone()).collect();
-        assert_eq!(attr(&spans[0], "spira.answer_us"), Some(&Value::IntValue(12_000)));
-        assert_eq!(attr(&spans[0], "spira.deadline_cut_ms"), Some(&Value::IntValue(1000)));
-        assert_eq!(attr(&spans[1], "spira.answer_us"), None);
-        assert_eq!(attr(&spans[1], "spira.deadline_cut_ms"), None);
-    }
-
-    #[test_id(tal4n2j)]
-    #[test]
-    fn the_subverb_children_and_queries_are_written_only_when_present() {
-        let dir = tmp("subverb");
-        let sink = Sink::new(dir.path(), "spira-lc", 14);
-        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        let programs = ["bd".to_string(), "git".to_string()];
-        sink.write(&Call { subverb: Some("note"), children: 2, programs: &programs, content_queries: 3, ..call(0) }, now).unwrap();
-        sink.write(&call(0), now).unwrap();
-        let text = fs::read_to_string(dir.join("spira-lc.2023-11-14.jsonl")).unwrap();
-        let spans: Vec<Span> = text.lines().map(|l| serde_json::from_str::<ExportTraceServiceRequest>(l).unwrap().resource_spans[0].scope_spans[0].spans[0].clone()).collect();
-        assert_eq!(attr(&spans[0], "spira.subverb"), Some(&Value::StringValue("note".into())));
-        assert_eq!(attr(&spans[0], "spira.children.programs"), Some(&Value::StringValue("bd,git".into())));
-        assert_eq!(attr(&spans[0], "spira.children"), Some(&Value::IntValue(2)));
-        assert_eq!(attr(&spans[0], "spira.content.queries"), Some(&Value::IntValue(3)));
-        for k in ["spira.subverb", "spira.children", "spira.children.programs", "spira.content.queries"] {
-            assert_eq!(attr(&spans[1], k), None, "{k}");
-        }
-    }
-
-    #[test_id(toh8axn)]
-    #[test]
-    fn the_longest_statement_and_the_task_are_written_only_when_present() {
-        let dir = tmp("query-max");
-        let sink = Sink::new(dir.path(), "spira-lc", 14);
-        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        sink.write(&Call { content_queries: 2, content_query_max_us: 938_132, content_query_max_shape: "SELECT a FROM t WHERE x = ?", task: Some("sentinel"), ..call(0) }, now).unwrap();
-        sink.write(&Call { content_query_max_us: 5, content_query_max_shape: "SELECT 1", ..call(0) }, now).unwrap();
-        let text = fs::read_to_string(dir.join("spira-lc.2023-11-14.jsonl")).unwrap();
-        let spans: Vec<Span> = text.lines().map(|l| serde_json::from_str::<ExportTraceServiceRequest>(l).unwrap().resource_spans[0].scope_spans[0].spans[0].clone()).collect();
-        assert_eq!(attr(&spans[0], "spira.content.query_max_us"), Some(&Value::IntValue(938_132)));
-        assert_eq!(attr(&spans[0], "spira.content.query_max_shape"), Some(&Value::StringValue("SELECT a FROM t WHERE x = ?".into())));
-        assert_eq!(attr(&spans[0], "spira.task"), Some(&Value::StringValue("sentinel".into())));
-        for k in ["spira.content.query_max_us", "spira.content.query_max_shape", "spira.task"] {
-            assert_eq!(attr(&spans[1], k), None, "{k}");
-        }
-    }
-
-    #[test_id(tovzjfu)]
-    #[test]
-    fn the_serve_stages_and_the_cut_are_written_each_under_its_own_name() {
-        let dir = tmp("serve-stages");
-        let sink = Sink::new(dir.path(), "spira-lc", 14);
-        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        let stages = Call { before_work: Duration::from_micros(11), answer_wait: Duration::from_micros(22), after_answer: Duration::from_micros(33), cut: true, ..call(0) };
-        sink.write(&stages, now).unwrap();
-        let text = fs::read_to_string(dir.join("spira-lc.2023-11-14.jsonl")).unwrap();
-        let span = serde_json::from_str::<ExportTraceServiceRequest>(text.trim()).unwrap().resource_spans[0].scope_spans[0].spans[0].clone();
-        assert_eq!(attr(&span, "spira.serve.before_work_us"), Some(&Value::IntValue(11)));
-        assert_eq!(attr(&span, "spira.serve.answer_wait_us"), Some(&Value::IntValue(22)));
-        assert_eq!(attr(&span, "spira.serve.after_answer_us"), Some(&Value::IntValue(33)));
-        assert_eq!(attr(&span, "spira.serve.cut"), Some(&Value::BoolValue(true)));
-    }
-
-    #[test_id(tb7lqpy)]
-    #[test]
-    fn a_span_is_one_line_that_round_trips_through_the_protos_own_deserializer() {
-        let dir = tmp("roundtrip");
-        let sink = Sink::new(dir.path(), "spira-lc", 14);
-        sink.write(&call(0), UNIX_EPOCH + Duration::from_secs(1_700_000_000)).unwrap();
-        sink.write(&call(3), UNIX_EPOCH + Duration::from_secs(1_700_000_001)).unwrap();
-        let text = fs::read_to_string(dir.join("spira-lc.2023-11-14.jsonl")).unwrap();
-        let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines.len(), 2);
-        let raw: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
-        let span = &raw["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
-        assert_eq!(span["startTimeUnixNano"], "1700000000000000000", "64-bit ints are strings");
-        assert_eq!(span["kind"], 2);
-        let ok: ExportTraceServiceRequest = serde_json::from_str(lines[0]).unwrap();
-        let res = &ok.resource_spans[0];
-        assert_eq!(attr_of(&res.resource.as_ref().unwrap().attributes, "service.name"), Some(&Value::StringValue("spira-lc".into())));
-        let s = &res.scope_spans[0].spans[0];
-        assert_eq!(s.trace_id.len(), 16);
-        assert_eq!(s.span_id.len(), 8);
-        assert_eq!(s.end_time_unix_nano - s.start_time_unix_nano, 12_000_000);
-        assert_eq!(attr(s, "rpc.system"), Some(&Value::StringValue("spira-lc".into())));
-        assert_eq!(attr(s, "rpc.method"), Some(&Value::StringValue("list".into())));
-        assert_eq!(attr(s, "spira.caller"), Some(&Value::StringValue("work/list".into())));
-        assert_eq!(attr(s, "rpc.request.size"), Some(&Value::IntValue(40)));
-        assert_eq!(attr(s, "rpc.response.size"), Some(&Value::IntValue(439_002)));
-        assert_eq!(attr(s, "spira.exit_code"), None);
-        assert_eq!(s.status.as_ref().unwrap().code, StatusCode::Ok as i32);
-        let bad: ExportTraceServiceRequest = serde_json::from_str(lines[1]).unwrap();
-        let s = &bad.resource_spans[0].scope_spans[0].spans[0];
-        assert_eq!(s.status.as_ref().unwrap().code, StatusCode::Error as i32);
-        assert_eq!(attr(s, "spira.exit_code"), Some(&Value::IntValue(3)));
+    fn encoded(c: &Call) -> Span {
+        span_request("spira-lc", c).resource_spans[0].scope_spans[0].spans[0].clone()
     }
 
     fn attr_of<'a>(attrs: &'a [KeyValue], k: &str) -> Option<&'a Value> {
         attrs.iter().find(|a| a.key == k).and_then(|a| a.value.as_ref()?.value.as_ref())
     }
 
-    #[test_id(t9khpf6)]
+    fn attr<'a>(span: &'a Span, k: &str) -> Option<&'a Value> {
+        attr_of(&span.attributes, k)
+    }
+
+    fn text(s: &str) -> Option<Value> {
+        Some(Value::StringValue(s.into()))
+    }
+
+    #[test_id(txpa66z)]
     #[test]
-    fn a_write_after_utc_midnight_opens_the_next_days_file_and_old_files_go() {
-        let dir = tmp("rotate");
-        fs::create_dir_all(&dir).unwrap();
-        for d in ["2023-11-01", "2023-11-10", "2023-11-11", "2023-11-13"] {
-            fs::write(dir.join(format!("spira-lc.{d}.jsonl")), "x\n").unwrap();
+    fn answer_time_and_cutoff_are_int_attributes_only_when_given() {
+        let given = encoded(&Call { answered: Some(Duration::from_millis(12)), cut_at: Some(Duration::from_millis(1000)), ..call(0) });
+        let none = encoded(&call(0));
+        assert_eq!(attr(&given, "spira.answer_us"), Some(&Value::IntValue(12_000)));
+        assert_eq!(attr(&given, "spira.deadline_cut_ms"), Some(&Value::IntValue(1000)));
+        assert_eq!(attr(&none, "spira.answer_us"), None);
+        assert_eq!(attr(&none, "spira.deadline_cut_ms"), None);
+    }
+
+    #[test_id(tal4n2j)]
+    #[test]
+    fn the_subverb_children_and_queries_are_written_only_when_present() {
+        let programs = ["bd".to_string(), "git".to_string()];
+        let given = encoded(&Call { subverb: Some("note"), children: 2, programs: &programs, content_queries: 3, ..call(0) });
+        let none = encoded(&call(0));
+        assert_eq!(attr(&given, "spira.subverb"), text("note").as_ref());
+        assert_eq!(attr(&given, "spira.children.programs"), text("bd,git").as_ref());
+        assert_eq!(attr(&given, "spira.children"), Some(&Value::IntValue(2)));
+        assert_eq!(attr(&given, "spira.content.queries"), Some(&Value::IntValue(3)));
+        for k in ["spira.subverb", "spira.children", "spira.children.programs", "spira.content.queries"] {
+            assert_eq!(attr(&none, k), None, "{k}");
         }
-        fs::write(dir.join("other.2023-11-01.jsonl"), "x\n").unwrap();
-        let sink = Sink::new(dir.path(), "spira-lc", 3);
-        let before = UNIX_EPOCH + Duration::from_secs(1_700_006_399);
-        let midnight = UNIX_EPOCH + Duration::from_secs(1_700_006_400);
-        assert_eq!(utc_date(before), "2023-11-14");
-        assert_eq!(utc_date(midnight), "2023-11-15", "1_700_006_400 is 2023-11-15T00:00:00Z");
-        sink.write(&call(0), midnight - Duration::from_secs(1)).unwrap();
-        sink.write(&call(0), midnight).unwrap();
-        assert!(dir.join("spira-lc.2023-11-14.jsonl").exists());
-        assert!(dir.join("spira-lc.2023-11-15.jsonl").exists());
-        assert!(!dir.join("spira-lc.2023-11-01.jsonl").exists(), "older than 3 days");
-        assert!(!dir.join("spira-lc.2023-11-10.jsonl").exists());
-        assert!(dir.join("spira-lc.2023-11-13.jsonl").exists(), "within the window");
-        assert!(dir.join("other.2023-11-01.jsonl").exists(), "another service's files are not ours");
     }
 
-    #[test_id(t46j4z6)]
+    #[test_id(toh8axn)]
     #[test]
-    fn an_unwritable_sink_drops_and_counts_without_failing() {
-        let dir = tmp("blocked");
-        fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("file");
-        fs::write(&file, "x").unwrap();
-        let sink = Sink::new(file.join("under-a-file"), "spira-lc", 14);
+    fn the_longest_statement_and_the_task_are_written_only_when_present() {
+        let given = encoded(&Call { content_queries: 2, content_query_max_us: 938_132, content_query_max_shape: "SELECT a FROM t WHERE x = ?", task: Some("sentinel"), ..call(0) });
+        let none = encoded(&Call { content_query_max_us: 5, content_query_max_shape: "SELECT 1", ..call(0) });
+        assert_eq!(attr(&given, "spira.content.query_max_us"), Some(&Value::IntValue(938_132)));
+        assert_eq!(attr(&given, "spira.content.query_max_shape"), text("SELECT a FROM t WHERE x = ?").as_ref());
+        assert_eq!(attr(&given, "spira.task"), text("sentinel").as_ref());
+        for k in ["spira.content.query_max_us", "spira.content.query_max_shape", "spira.task"] {
+            assert_eq!(attr(&none, k), None, "{k}");
+        }
+    }
+
+    #[test_id(tovzjfu)]
+    #[test]
+    fn the_serve_stages_and_the_cut_are_written_each_under_its_own_name() {
+        let span = encoded(&Call { before_work: Duration::from_micros(11), answer_wait: Duration::from_micros(22), after_answer: Duration::from_micros(33), cut: true, ..call(0) });
+        assert_eq!(attr(&span, "spira.serve.before_work_us"), Some(&Value::IntValue(11)));
+        assert_eq!(attr(&span, "spira.serve.answer_wait_us"), Some(&Value::IntValue(22)));
+        assert_eq!(attr(&span, "spira.serve.after_answer_us"), Some(&Value::IntValue(33)));
+        assert_eq!(attr(&span, "spira.serve.cut"), Some(&Value::BoolValue(true)));
+    }
+
+    #[test_id(tdemrvd)]
+    #[test]
+    fn a_span_names_its_service_ids_times_and_status() {
+        let ok = span_request("spira-lc", &call(0));
+        assert_eq!(attr_of(&ok.resource_spans[0].resource.as_ref().unwrap().attributes, "service.name"), text("spira-lc").as_ref());
+        let s = &ok.resource_spans[0].scope_spans[0].spans[0];
+        assert_eq!((s.trace_id.len(), s.span_id.len(), s.kind), (16, 8, SpanKind::Server as i32));
+        assert_eq!(s.end_time_unix_nano - s.start_time_unix_nano, 12_000_000);
+        assert_eq!(attr(s, "rpc.system"), text("spira-lc").as_ref());
+        assert_eq!(attr(s, "rpc.method"), text("list").as_ref());
+        assert_eq!(attr(s, "spira.caller"), text("work/list").as_ref());
+        assert_eq!(attr(s, "rpc.request.size"), Some(&Value::IntValue(40)));
+        assert_eq!(attr(s, "rpc.response.size"), Some(&Value::IntValue(439_002)));
+        assert_eq!(attr(s, "spira.exit_code"), None);
+        assert_eq!(s.status.as_ref().unwrap().code, StatusCode::Ok as i32);
+        let bad = encoded(&call(3));
+        assert_eq!(bad.status.as_ref().unwrap().code, StatusCode::Error as i32);
+        assert_eq!(attr(&bad, "spira.exit_code"), Some(&Value::IntValue(3)));
+    }
+
+    #[test_id(t7icq07)]
+    #[test]
+    fn emitted_calls_arrive_as_one_trace_post_and_one_log_post_per_batch_with_the_whole_span_in_each_record() {
+        let collector = Collector::hanging();
+        let sink = Sink::with_deadline(collector.addr(), "spira-lc", Duration::from_secs(3600));
+        let answered = || Call { answered: Some(Duration::from_millis(7)), ..call(0) };
+        sink.emit(&answered());
+        assert!(collector.wait_until(|p| !p.is_empty(), CAP), "the first push reached the collector");
+        for _ in 0..3 {
+            sink.emit(&answered());
+        }
+        collector.release();
+        sink.flush();
+        let posts = collector.posts();
+        assert_eq!(posts.iter().map(|p| p.path.as_str()).collect::<Vec<_>>(), [TRACES_PATH, LOGS_PATH, TRACES_PATH, LOGS_PATH]);
+        assert!(posts.iter().all(|p| p.content_type == "application/x-protobuf"), "{posts:?}");
+        assert_eq!(crate::fixture::spans_in(&posts[2..]).len(), 3, "the calls queued during a push leave as one batch");
+        let (spans, records) = (collector.spans(), collector.log_records());
+        assert_eq!((spans.len(), records.len()), (4, 4));
+        for (span, (service, record)) in spans.iter().zip(&records) {
+            assert_eq!(service, "spira-lc");
+            assert_eq!(record.body.as_ref().and_then(|b| b.value.clone()), text("list"));
+            assert_eq!((&record.trace_id, &record.span_id), (&span.trace_id, &span.span_id));
+            assert_eq!(record.trace_id.len(), 16);
+            assert_eq!(record.time_unix_nano, span.start_time_unix_nano);
+            for a in &span.attributes {
+                assert!(record.attributes.contains(a), "{} is on the record", a.key);
+            }
+            assert_eq!(attr_of(&record.attributes, "rpc.method"), text("list").as_ref());
+            assert_eq!(attr_of(&record.attributes, "spira.caller"), text("work/list").as_ref());
+            assert_eq!(attr_of(&record.attributes, "spira.answer_us"), Some(&Value::IntValue(7_000)));
+            assert_eq!(attr_of(&record.attributes, "spira.duration_us"), Some(&Value::IntValue(12_000)));
+        }
+        assert_eq!(sink.dropped_here(), 0);
+    }
+
+    #[test_id(tn0w4e8)]
+    #[test]
+    fn emit_returns_while_the_collector_holds_a_push_and_spans_past_the_queue_cap_are_counted() {
+        let collector = Collector::hanging();
+        let sink = Sink::with_deadline(collector.addr(), "spira-lc", Duration::from_secs(3600));
         sink.emit(&call(0));
-        assert_eq!(sink.dropped_here(), 1);
-        assert!(dropped() >= 1);
+        assert!(collector.wait_until(|p| !p.is_empty(), CAP), "the first push reached the collector");
+        let shape = "x".repeat(16 << 10);
+        for _ in 0..1000 {
+            sink.emit(&Call { content_queries: 1, content_query_max_shape: &shape, ..call(0) });
+        }
+        assert_eq!(collector.posts().len(), 1, "the first request is still unanswered");
+        let held = sink.queue.pending.lock().unwrap().bytes;
+        assert!(held <= QUEUE_MAX_BYTES && held > QUEUE_MAX_BYTES - (17 << 10), "{held}");
+        assert_eq!(sink.dropped_here(), 1000 - sink.queue.pending.lock().unwrap().spans.len() as u64);
+        assert!(sink.dropped_here() > 0);
     }
 
-    fn lines_in(path: &Path) -> usize {
-        fs::read_to_string(path).map(|t| t.lines().count()).unwrap_or(0)
-    }
-
-    #[test_id(tij1vrt)]
+    #[test_id(tc7gfjm)]
     #[test]
-    fn spans_past_the_day_bound_are_dropped_and_counted() {
-        let dir = tmp("day-bound");
-        let one = Sink::new(dir.path(), "spira-lc", 14).inner.line(&call(0)).unwrap().len() as u64;
-        let sink = Sink::buffered(dir.path(), "spira-lc", 14, one * 3);
+    fn a_push_nobody_answers_in_time_counts_its_spans() {
+        let collector = Collector::hanging();
+        let sink = Sink::with_deadline(collector.addr(), "spira-lc", Duration::from_millis(50));
+        sink.emit(&call(0));
+        sink.flush();
+        assert_eq!(sink.dropped_here(), 1);
+    }
+
+    #[test_id(tezr034)]
+    #[test]
+    fn with_nothing_listening_every_emitted_span_is_counted() {
+        let gone = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = gone.local_addr().unwrap().to_string();
+        drop(gone);
+        let before = dropped();
+        let sink = Sink::buffered(&addr, "spira-lc");
         for _ in 0..5 {
             sink.emit(&call(0));
         }
         sink.flush();
-        let file = dir.join(format!("spira-lc.{}.jsonl", utc_date(SystemTime::now())));
-        assert_eq!(lines_in(&file), 3);
-        assert_eq!(sink.dropped_here(), 2);
+        assert_eq!(sink.dropped_here(), 5);
+        assert!(dropped() >= before + 5);
     }
 
-    #[test_id(tg8rnrs)]
+    #[test_id(tbh79ot)]
     #[test]
-    fn a_day_at_its_bound_warns_once_however_many_spans_it_drops() {
-        let dir = tmp("warn-once");
-        let sink = Sink::buffered(dir.path(), "spira-lc", 14, 0);
-        for _ in 0..3 {
-            sink.emit(&call(0));
-            sink.flush();
+    fn the_collector_takes_spans_over_otlp_only_and_forwards_logs_to_victorialogs() {
+        let paths = test_yaml::paths(include_str!("../../spira/metrics/collector.yaml"));
+        let at = |p: &str| paths.iter().find(|(k, _)| k == p).map(|(_, v)| v.as_str()).unwrap_or_else(|| panic!("{p} is not in the collector config"));
+        let list = |p: &str| at(p).trim_matches(['[', ']']).split(',').map(|s| s.trim().to_string()).collect::<Vec<_>>();
+        assert_eq!(list("service.pipelines.traces.receivers"), ["otlp"]);
+        assert_eq!(list("service.pipelines.traces.exporters"), ["spanmetrics"]);
+        assert!(list("service.pipelines.logs.receivers").contains(&"otlp".to_string()));
+        assert_eq!(list("service.pipelines.logs.exporters"), ["otlphttp/victorialogs"]);
+        assert_eq!(list("service.pipelines.metrics.receivers"), ["spanmetrics"]);
+        assert_eq!(list("service.pipelines.metrics.exporters"), ["prometheusremotewrite"]);
+        let tailing: Vec<&str> = paths.iter().filter_map(|(k, _)| k.strip_prefix("receivers.")?.strip_suffix(".include")).collect();
+        assert_eq!(tailing, ["otlpjsonfile/logs"], "no other receiver tails files");
+    }
+
+    #[test_id(tftbb0d)]
+    #[test]
+    fn a_utc_date_is_the_calendar_day_of_the_instant() {
+        for (secs, day) in [(0u64, "1970-01-01"), (86_400 * 59, "1970-03-01"), (1_700_006_399, "2023-11-14"), (1_700_006_400, "2023-11-15"), (4_102_444_800, "2100-01-01")] {
+            assert_eq!(utc_date(UNIX_EPOCH + Duration::from_secs(secs)), day);
         }
-        assert_eq!(sink.dropped_here(), 3);
-        assert_eq!(sink.inner.warned_days.lock().unwrap().len(), 1);
-    }
-
-    #[test_id(tzu0pck)]
-    #[test]
-    fn past_the_queue_bound_emit_drops_and_counts() {
-        let dir = tmp("emit-full");
-        let sink = Sink::buffered(dir.path(), "spira-lc", 14, u64::MAX);
-        {
-            let mut p = sink.queue.as_ref().unwrap().pending.lock().unwrap();
-            p.bytes = QUEUE_MAX_BYTES;
-        }
-        sink.emit(&call(0));
-        assert_eq!(sink.dropped_here(), 1);
-    }
-
-    #[test_id(tt0a5nt)]
-    #[test]
-    fn a_batch_spanning_utc_midnight_lands_in_both_days_files() {
-        let dir = tmp("midnight");
-        let sink = Sink::buffered(dir.path(), "spira-lc", 14, u64::MAX);
-        let midnight = UNIX_EPOCH + Duration::from_secs(1_700_006_400);
-        let line = sink.inner.line(&call(0)).unwrap();
-        sink.inner.write_batch(&[(midnight - Duration::from_secs(1), line.clone()), (midnight, line.clone()), (midnight + Duration::from_secs(1), line)]);
-        assert_eq!(lines_in(&dir.join("spira-lc.2023-11-14.jsonl")), 1);
-        assert_eq!(lines_in(&dir.join("spira-lc.2023-11-15.jsonl")), 2);
-    }
-
-    #[test_id(tt5n0n1)]
-    #[test]
-    fn a_buffered_sink_over_an_unwritable_directory_drops_and_counts() {
-        let dir = tmp("buffered-blocked");
-        let file = dir.join("file");
-        fs::write(&file, "x").unwrap();
-        let sink = Sink::buffered(file.join("under-a-file"), "spira-lc", 14, u64::MAX);
-        sink.emit(&call(0));
-        sink.emit(&call(0));
-        sink.flush();
-        assert_eq!(sink.dropped_here(), 2);
-    }
-
-    #[test_id(t91nkcq)]
-    #[test]
-    fn the_checked_in_fixture_still_deserializes() {
-        let text = include_str!("../tests/fixtures/spira-lc.ndjson");
-        assert!(text.lines().count() >= 3);
-        for l in text.lines() {
-            let r: ExportTraceServiceRequest = serde_json::from_str(l).unwrap();
-            assert_eq!(r.resource_spans[0].scope_spans[0].spans.len(), 1);
-        }
-    }
-
-    #[test_id(tidl5ug)]
-    #[test]
-    #[ignore = "rewrites tests/fixtures/spira-lc.ndjson from freshly emitted spans"]
-    fn regenerate_fixture() {
-        let dir = tmp("fixture");
-        let sink = Sink::new(dir.path(), "spira-lc", 14);
-        let t0 = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        let rows = [("show", "work/show", 61, 1_204, 0, 8), ("list", "work/list", 33, 439_002, 0, 212), ("show", "gate-run", 58, 96, 1, 3), ("event", "lifecycle/event", 412, 0, 0, 41)];
-        for (i, (m, who, rq, rs, code, ms)) in rows.into_iter().enumerate() {
-            let start = t0 + Duration::from_secs(i as u64);
-            let c = Call { method: m, caller: who, request_size: rq, response_size: rs, exit_code: code, start, end: start + Duration::from_millis(ms), queue_wait: Duration::ZERO, before_work: Duration::ZERO, answer_wait: Duration::ZERO, after_answer: Duration::ZERO, cut: false, answered: None, cut_at: None, phases: &[], commits_us: &[], reads: 0, read_max_us: 0, reads_ended: 0, reads_overran: 0, open_phase: None, content_queries: 0, content_query_max_us: 0, content_query_max_shape: "", task: None, children: 0, programs: &[], subverb: None, turn_tasks: None };
-            sink.write(&c, start).unwrap();
-        }
-        fs::copy(dir.join("spira-lc.2023-11-14.jsonl"), testkit::manifest_dir().join("tests/fixtures/spira-lc.ndjson")).unwrap();
-    }
-
-    #[test_id(toec17w)]
-    #[test]
-    fn civil_dates_round_trip() {
-        for t in [0u64, 86_400 * 59, 86_400 * 60, 1_700_000_000, 4_102_444_800] {
-            let d = utc_date(UNIX_EPOCH + Duration::from_secs(t));
-            assert_eq!(day_number(&d), Some((t / 86_400) as i64), "{d}");
-        }
-    }
-
-    #[test_id(txx8imc)]
-    #[test]
-    fn a_sink_over_the_sim_disk_writes_the_same_line_and_counts_a_failed_append() {
-        let fs = ports::SimFs::new(1, Default::default(), ports::VirtualClock::new(0));
-        let sink = Sink::on(fs.clone(), "otel", "spira-lc", 14);
-        let real = tmp("sink-sim");
-        let on_disk = Sink::new(real.path(), "spira-lc", 14);
-        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        sink.write(&call(0), now).unwrap();
-        let line = fs.peek(Path::new("otel/spira-lc.2023-11-14.jsonl")).unwrap();
-        assert!(line.ends_with(b"\n"));
-        let parsed: serde_json::Value = serde_json::from_slice(&line).unwrap();
-        assert_eq!(parsed["resourceSpans"][0]["resource"]["attributes"][0]["value"]["stringValue"], "spira-lc");
-        on_disk.write(&call(0), now).unwrap();
-        let real_line = fs::read(real.path().join("spira-lc.2023-11-14.jsonl")).unwrap();
-        assert_eq!(real_line.len(), line.len(), "the line format is the disk's");
-        fs.crash_after(1);
-        assert!(sink.write(&call(0), now).is_err());
-        assert_eq!(sink.dropped_here(), 1);
     }
 }
 

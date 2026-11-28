@@ -60,7 +60,7 @@ impl MetricsSink {
 
     pub fn try_push(&self, points: &[Point], labels: &[(&str, &str)]) -> std::io::Result<()> {
         let Some(addr) = &self.endpoint else { return Ok(()) };
-        post(addr, &self.encode(points, labels, SystemTime::now()).encode_to_vec(), self.deadline)
+        post(addr, PATH, &self.encode(points, labels, SystemTime::now()).encode_to_vec(), self.deadline)
     }
 
     pub fn encode(&self, points: &[Point], labels: &[(&str, &str)], now: SystemTime) -> ExportMetricsServiceRequest {
@@ -106,7 +106,7 @@ impl MetricsSink {
     /// A failure is returned, for a caller whose record has no other copy.
     pub fn try_push_series(&self, series: &[Series]) -> std::io::Result<()> {
         let Some(addr) = &self.endpoint else { return Err(std::io::Error::other("metrics endpoint is not configured")) };
-        post(addr, &self.encode_series(series).encode_to_vec(), self.deadline)
+        post(addr, PATH, &self.encode_series(series).encode_to_vec(), self.deadline)
     }
 
     pub fn encode_series(&self, series: &[Series]) -> ExportMetricsServiceRequest {
@@ -171,13 +171,14 @@ fn kv(k: &str, v: &str) -> KeyValue {
     KeyValue { key: k.into(), value: Some(AnyValue { value: Some(Value::StringValue(v.into())) }) }
 }
 
-fn post(addr: &str, body: &[u8], deadline: Duration) -> std::io::Result<()> {
+/// One protobuf POST to `path`, every phase within `deadline`, never retried.
+pub(crate) fn post(addr: &str, path: &str, body: &[u8], deadline: Duration) -> std::io::Result<()> {
     let end = Instant::now() + deadline;
     let left = || end.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::TimedOut, "deadline"));
     let target = addr.to_socket_addrs()?.next().ok_or_else(|| std::io::Error::other("no address"))?;
     let mut s = TcpStream::connect_timeout(&target, left()?)?;
     s.set_write_timeout(Some(left()?))?;
-    let head = format!("POST {PATH} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/x-protobuf\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+    let head = format!("POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/x-protobuf\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
     s.write_all(head.as_bytes())?;
     s.write_all(body)?;
     s.set_read_timeout(Some(left()?))?;

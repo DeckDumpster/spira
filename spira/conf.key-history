@@ -847,3 +847,4 @@ dwarf_build_folders_per_repo
 pilgrim_mcp_servers
 runtime_incident_drain_secs
 incident_drain_batch
+otel_collector_endpoint

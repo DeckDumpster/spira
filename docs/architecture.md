@@ -35,14 +35,14 @@
    verdicts/trees/<repo>/<tree>  tree certificates          <releases>/current -> <sha>
    queue/<repo>/...              open-round records
    gate-worker/                  gate queue + locks
-   tsd/ otel/ watchd/ ...        time series, spans, watcher logs
+   tsd/ otel/ watchd/ ...        time series, log records, watcher logs
 ```
 
 | Store | Where | Holds | Written by |
 |---|---|---|---|
 | Beads database | Dolt server (`dolt-beads.service`), `$SPIRA_DB` | bead content, labels, deps, comments, statute and SOP memories | `bd` (through `bead`, `rule`, `sop`) |
 | `spira_lifecycle` | same Dolt server | `bead`, `delivery`, `batch`, `batch_member`, `ask`, `mending`, `mend`, append-only `event`, `bead_dep` | **only** `spira-lc` (a distinct database user holds the grants; the event table is insert/select only) |
-| `run/` state | `$SPIRA_RUN` | tree certificates, open-round records, gate queue and locks, time-series rows, spans, watcher logs, pass state | the binaries that own each file |
+| `run/` state | `$SPIRA_RUN` | tree certificates, open-round records, gate queue and locks, time-series rows, log records, watcher logs, pass state | the binaries that own each file |
 | Git repositories | the registry's paths | branches `spira/<id>`, round branches, the landing ref, `refs/archive/rounds/<n>` | dwarves (their branches), `batcher` / `queue` (rounds, landing) |
 | Releases | `$SPIRA_RELEASES` | immutable releases and the `current` link | `release` |
 

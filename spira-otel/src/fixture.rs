@@ -1,4 +1,4 @@
-//! A fixture OTLP metrics sink for tests: accepts pushes on a local port and decodes them.
+//! Fixture OTLP receivers for tests: they accept pushes on a local port and decode them.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -6,7 +6,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
+use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
+use opentelemetry_proto::tonic::logs::v1::LogRecord;
+use opentelemetry_proto::tonic::trace::v1::Span;
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
 use opentelemetry_proto::tonic::metrics::v1::{metric::Data, number_data_point::Value as Num};
 use prost::Message;
@@ -378,5 +382,149 @@ mod selector_tests {
         let got: Vec<_> = c.iter().map(|c| (c.label.as_str(), c.want.as_str())).collect();
         assert_eq!(got, vec![("__name__", "spira_tsd_value"), ("tsd_family", "bead-stage")]);
         assert_eq!(parse_selector("{a=\"x\"}").len(), 1);
+    }
+}
+
+/// One POST as the fixture Collector received it.
+#[derive(Debug, Clone)]
+pub struct Post {
+    pub path: String,
+    pub content_type: String,
+    pub body: Vec<u8>,
+}
+
+#[derive(Default)]
+struct Held {
+    posts: Vec<Post>,
+    conns: Vec<std::net::TcpStream>,
+    hanging: bool,
+}
+
+type OnPost = Box<dyn Fn(&Post) + Send>;
+
+/// A stand-in for the OpenTelemetry Collector's OTLP/HTTP receiver: records every POST and
+/// answers 200, or, while hanging, holds the connection unanswered until [`Collector::release`].
+pub struct Collector {
+    addr: String,
+    held: Arc<(Mutex<Held>, std::sync::Condvar)>,
+    stop: Arc<AtomicBool>,
+}
+
+impl Collector {
+    pub fn start() -> Collector {
+        Self::with(false, Box::new(|_| {}))
+    }
+
+    /// Accepts and reads every request and answers none.
+    pub fn hanging() -> Collector {
+        Self::with(true, Box::new(|_| {}))
+    }
+
+    /// As `start`, running `on_post` on each request before it is answered.
+    pub fn start_then(on_post: impl Fn(&Post) + Send + 'static) -> Collector {
+        Self::with(false, Box::new(on_post))
+    }
+
+    fn with(hanging: bool, on_post: OnPost) -> Collector {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap().to_string();
+        let held = Arc::new((Mutex::new(Held { hanging, ..Held::default() }), std::sync::Condvar::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (h, st) = (held.clone(), stop.clone());
+        std::thread::spawn(move || {
+            for c in l.incoming() {
+                if st.load(Ordering::SeqCst) {
+                    break;
+                }
+                let Ok(mut c) = c else { continue };
+                c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let Some((head, body)) = read_http(&mut c) else { continue };
+                let path = head.split_whitespace().nth(1).unwrap_or("").to_string();
+                let content_type = head.lines().find_map(|l| l.to_lowercase().strip_prefix("content-type: ").map(str::to_string)).unwrap_or_default();
+                let post = Post { path, content_type, body };
+                on_post(&post);
+                let mut g = h.0.lock().unwrap();
+                g.posts.push(post);
+                if g.hanging {
+                    g.conns.push(c);
+                } else {
+                    let _ = c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+                }
+                h.1.notify_all();
+            }
+        });
+        Collector { addr, held, stop }
+    }
+
+    /// `host:port`.
+    pub fn addr(&self) -> &str {
+        &self.addr
+    }
+
+    /// Answers every held request and every later one.
+    pub fn release(&self) {
+        let mut g = self.held.0.lock().unwrap();
+        g.hanging = false;
+        for mut c in g.conns.drain(..) {
+            let _ = c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        }
+    }
+
+    pub fn posts(&self) -> Vec<Post> {
+        self.held.0.lock().unwrap().posts.clone()
+    }
+
+    /// Blocks until `done` holds of the posts received, or `cap` passes; whether it held.
+    pub fn wait_until(&self, done: impl Fn(&[Post]) -> bool, cap: Duration) -> bool {
+        let g = self.held.0.lock().unwrap();
+        let (g, _) = self.held.1.wait_timeout_while(g, cap, |g| !done(&g.posts)).unwrap();
+        done(&g.posts)
+    }
+
+    /// Every span received on `/v1/traces`, in order.
+    pub fn spans(&self) -> Vec<Span> {
+        spans_in(&self.posts())
+    }
+
+    /// Every span received, in the OTLP JSON shape.
+    pub fn spans_json(&self) -> Vec<serde_json::Value> {
+        self.spans().iter().map(|s| serde_json::to_value(s).unwrap()).collect()
+    }
+
+    /// Every log record received on `/v1/logs`, with its resource's `service.name`.
+    pub fn log_records(&self) -> Vec<(String, LogRecord)> {
+        self.posts()
+            .iter()
+            .filter(|p| p.path == "/v1/logs") // not a path: OTLP URL path
+            .flat_map(|p| ExportLogsServiceRequest::decode(p.body.as_slice()).unwrap().resource_logs)
+            .flat_map(|r| {
+                let service = r.resource.iter().flat_map(|x| &x.attributes).find(|a| a.key == "service.name").and_then(|a| match a.value.as_ref()?.value.as_ref()? {
+                    Value::StringValue(s) => Some(s.clone()),
+                    _ => None,
+                });
+                r.scope_logs.into_iter().flat_map(|s| s.log_records).map(move |rec| (service.clone().unwrap_or_default(), rec))
+            })
+            .collect()
+    }
+}
+
+/// The spans carried by the `/v1/traces` posts among `posts`.
+pub fn spans_in(posts: &[Post]) -> Vec<Span> {
+    posts
+        .iter()
+        .filter(|p| p.path == "/v1/traces") // not a path: OTLP URL path
+        .flat_map(|p| ExportTraceServiceRequest::decode(p.body.as_slice()).unwrap().resource_spans)
+        .flat_map(|r| r.scope_spans)
+        .flat_map(|s| s.spans)
+        .collect()
+}
+
+impl Drop for Collector {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Ok(addr) = self.addr.parse() {
+            let _ = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(5));
+        }
+        self.held.0.lock().unwrap().conns.clear();
     }
 }

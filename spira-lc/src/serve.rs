@@ -48,6 +48,44 @@ fn ledger_ttl_from(read: impl FnOnce(&str) -> Result<String, String>) -> Result<
         .map_err(|e| format!("spira.lc_request_ledger_secs: {e}"))
 }
 
+const COLLECTOR_KEY: &str = "SPIRA_OTEL_COLLECTOR_ENDPOINT";
+
+fn collector_endpoint(read: impl FnOnce(&str) -> Result<String, String>) -> Result<String, String> {
+    let value = read(COLLECTOR_KEY).map_err(|e| format!("spira.otel_collector_endpoint: {e}"))?;
+    if value.trim().is_empty() {
+        return Err("spira.otel_collector_endpoint is empty: request spans have nowhere to go".to_string());
+    }
+    Ok(value)
+}
+
+#[derive(Default)]
+struct MetricsPushed {
+    counts: std::collections::BTreeMap<crate::slow::Key, crate::slow::Counts>,
+    reads: std::collections::BTreeMap<String, crate::slow::ReadCounts>,
+    followups: crate::followups::Pushed,
+    children: u64,
+    overflow: u64,
+}
+
+/// One push of everything the metrics thread reports.
+fn metrics_pass(metrics: &spira_otel::metrics::MetricsSink, pushed: &mut MetricsPushed) {
+    crate::slow::push_counts(metrics, &mut pushed.counts);
+    crate::slow::push_reads(metrics, &mut pushed.reads);
+    crate::slow::push_gate_waits(metrics);
+    crate::slow::push_children_started(metrics, &mut pushed.children);
+    crate::slow::push_spans_dropped(metrics);
+    crate::disk::push_overflow(metrics, &mut pushed.overflow);
+    crate::followups::push(metrics, &mut pushed.followups);
+    if let Some(Ok(store)) = crate::control::served::configured() {
+        match crate::store_gauges::file_series(store.contract().backend(), SystemTime::now()) {
+            Ok(series) => crate::slow::hold_gauges(series),
+            Err(e) => eprintln!("spira-lc serve: store file gauges: {e}"),
+        }
+    }
+    crate::slow::push_held(metrics);
+    crate::slow::push_rss(metrics);
+}
+
 const DEADLINE_KEY: &str = "SPIRA_LC_REQUEST_DEADLINE_MS";
 /// The receiver stops 3 s after receiving (law-calls-have-deadlines); no configured deadline may exceed it.
 /// `spira/testlib/complete.toml` carries it for every test-started serve; `a_test_started_serve_runs_under_the_ceiling_the_complete_fixture_carries` pins the two together.
@@ -280,15 +318,9 @@ pub fn run(args: &[String]) -> i32 {
 
     crate::disk::install(crate::disk::LogWriter::new(std::sync::Arc::new(ports::RealFs), runtime::offload::Pool::global()));
     let mut startup = Startup::begin();
-    let spans = spira_config::process::cfg("SPIRA_RUN").and_then(|run| {
-        let keep = spira_config::process::cfg_parse::<u32>("SPIRA_OTEL_KEEP_DAYS")?;
-        let day_max_mb = spira_config::process::cfg_parse::<u32>("SPIRA_OTEL_DAY_MAX_MB")?;
-        Ok((run, keep, day_max_mb))
-    });
-    match spans {
-        Ok((run, keep, day_max_mb)) => {
-            let sink = spira_otel::Sink::buffered_on(crate::disk::fs(), spira_otel::dir_of(std::path::Path::new(&run)), "spira-lc", keep, u64::from(day_max_mb) << 20);
-            let _ = SPANS.set(sink);
+    match collector_endpoint(spira_config::process::cfg) {
+        Ok(endpoint) => {
+            let _ = SPANS.set(spira_otel::Sink::buffered(&endpoint, "spira-lc"));
         }
         Err(e) => {
             eprintln!("spira-lc serve: {e}");
@@ -416,27 +448,10 @@ pub fn run(args: &[String]) -> i32 {
         std::thread::spawn(|| {
             let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
             let metrics = spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-lc", Duration::from_millis(250));
-            let mut pushed = Default::default();
-            let mut pushed_reads = Default::default();
-            let mut pushed_followups = Default::default();
-            let mut pushed_children = 0;
-            let mut pushed_overflow = 0;
+            let mut pushed = MetricsPushed::default();
             loop {
                 std::thread::sleep(crate::slow::METRICS_EVERY);
-                crate::slow::push_counts(&metrics, &mut pushed);
-                crate::slow::push_reads(&metrics, &mut pushed_reads);
-                crate::slow::push_gate_waits(&metrics);
-                crate::slow::push_children_started(&metrics, &mut pushed_children);
-                crate::disk::push_overflow(&metrics, &mut pushed_overflow);
-                crate::followups::push(&metrics, &mut pushed_followups);
-                if let Some(Ok(store)) = crate::control::served::configured() {
-                    match crate::store_gauges::file_series(store.contract().backend(), SystemTime::now()) {
-                        Ok(series) => crate::slow::hold_gauges(series),
-                        Err(e) => eprintln!("spira-lc serve: store file gauges: {e}"),
-                    }
-                }
-                crate::slow::push_held(&metrics);
-                crate::slow::push_rss(&metrics);
+                metrics_pass(&metrics, &mut pushed);
             }
         });
         if let Some(store) = control {
