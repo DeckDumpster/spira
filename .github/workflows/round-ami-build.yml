@@ -95,6 +95,7 @@ jobs:
         timeout-minutes: 90
         env:
           SHA: ${{ steps.recipe.outputs.sha }}
+          ROUND_AMI_WAIT_MAX: 60
         run: |
           set -euo pipefail
           base="$(aws ssm get-parameter --name "${{ vars.ROUND_AMI_BASE_PARAM }}" --query Parameter.Value --output text)"
