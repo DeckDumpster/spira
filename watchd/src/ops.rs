@@ -31,8 +31,8 @@ pub fn parse_match_output(out: &str) -> Vec<SopMatch> {
         .collect()
 }
 
-pub(crate) fn ask_note_body(subject: &str, default: &str, why: &str, evidence: &str) -> String {
-    format!("## Note\n{subject}\n\nAction: {default}\n\n{why}\n\n{evidence}\n")
+pub fn ask_alert_body(subject: &str, default: &str, why: &str, evidence: &str) -> String {
+    format!("## Alert\n{subject}\n\nAction: {default}\n\n{why}\n\n{evidence}\n")
 }
 
 pub trait Ops {
@@ -207,7 +207,7 @@ impl Ops for Real {
     }
 
     fn mail_ask(&self, subject: &str, default: &str, why: &str, evidence: &str) -> Result<(), String> {
-        crate::send::alert_operator_configured(subject, &ask_note_body(subject, default, why, evidence))
+        crate::send::alert_operator_configured(subject, &ask_alert_body(subject, default, why, evidence))
     }
 
     fn mail_health(&self) -> i32 {

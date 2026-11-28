@@ -93,7 +93,7 @@ Mechanical fixes, unchanged in effect:
 | `stale-blocked` | `bd recompute-blocked` | `RECOMPUTED is_blocked — <id> stuck with every blocker closed` |
 
 Escalation: `$SPIRA_HOME/mail send operator --from 'Strand check <strand@spira>'
---subject <title> --kind question --default <action>`, body on **stdin**; titles exactly as
+--subject <title> --kind alert` under the operator override, body on **stdin**; titles exactly as
 before (`Spira: <id> is stranded (<kind>)`, `Spira: the [<part>] queue is stranded
 (<kind>)`, `Spira: <id> keeps losing its dwarf — the host, not the bead`). The body is the
 bead context (`bd show <id> --json`, rendered as before) + `WHY THIS IS ESCALATED` + the
