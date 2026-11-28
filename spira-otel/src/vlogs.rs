@@ -162,9 +162,13 @@ pub fn transitions_window(window_secs: u64) -> String {
     format!("_time:{window_secs}s _msg:{TRANSITION_KIND}")
 }
 
+/// `v` as a quoted LogsQL value.
+pub(crate) fn quote(v: &str) -> String {
+    format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 /// The LogsQL filter for transitions of `machine` within the last `window_secs`, optionally into state `to`.
 pub fn transitions_filter(machine: &str, to: Option<&str>, window_secs: u64) -> String {
-    let quote = |v: &str| format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""));
     let mut q = format!("_time:{window_secs}s _msg:{TRANSITION_KIND} machine:{}", quote(machine));
     if let Some(to) = to {
         q.push_str(&format!(" to:{}", quote(to)));
@@ -285,7 +289,7 @@ impl Logs {
         }
     }
 
-    fn rows(&self, query: &str) -> Result<Vec<Value>, LogsError> {
+    pub(crate) fn rows(&self, query: &str) -> Result<Vec<Value>, LogsError> {
         let body = self.get(&format!("{QUERY_PATH}?query={}", encode(query)))?;
         let text = std::str::from_utf8(&body).map_err(|e| LogsError::Malformed(format!("not utf-8: {e}")))?;
         text.lines().filter(|l| !l.trim().is_empty()).map(|l| serde_json::from_str(l).map_err(|e| LogsError::Malformed(format!("row: {e}")))).collect()
@@ -308,7 +312,7 @@ impl Logs {
     }
 }
 
-fn number(row: &Value, key: &str) -> Result<u64, LogsError> {
+pub(crate) fn number(row: &Value, key: &str) -> Result<u64, LogsError> {
     let v = row.get(key).ok_or_else(|| LogsError::Malformed(format!("row has no {key}")))?;
     v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).ok_or_else(|| LogsError::Malformed(format!("{key} is not a count: {v}")))
 }

@@ -84,9 +84,8 @@ fn real_main(meter: &spira_otel::metrics::Run) -> i32 {
     let world = Real { batch_tail_lines, suite_timeout_default };
     let mut tally = Tally::default();
     let code = run(&world, &home, &root, &mut tally);
-    let run_dir = spira_config::process::cfg("SPIRA_RUN").ok().filter(|v| !v.is_empty()).map(PathBuf::from);
     let endpoint = gate::real::collector_endpoint(spira_config::process::cfg);
-    record_tests(&root, run_dir, &endpoint, &Caller::read(|k| std::env::var(k).ok()));
+    send_test_results(&root, &endpoint, &Caller::read(|k| std::env::var(k).ok()));
     push_tally(meter, &tally);
     code
 }
@@ -119,29 +118,38 @@ impl Caller {
     }
 }
 
-/// One `test.result` per `test-run` row. A suite reads the whole tree, so the tree is its input
-/// hash. Best effort: what cannot be sent is counted on stderr.
-fn send_test_results(endpoint: &str, rows: &[String], tree: &str, at: &Caller) {
+/// One `test.result` per case of this run's `results.jsonl`; a `(verdict)` row is the retry
+/// classifier's, not a test. A suite reads the whole tree, so the tree is its input hash. Best
+/// effort: what cannot be sent is counted on stderr.
+fn send_test_results(root: &std::path::Path, endpoint: &str, at: &Caller) {
     use spira_otel::testresult::{self, Outcome, Tier};
-    if endpoint.trim().is_empty() || rows.is_empty() {
+    if endpoint.trim().is_empty() {
         return;
     }
+    let Ok(jsonl) = std::fs::read_to_string(root.join("results.jsonl")) else { return };
+    let cases: Vec<serde_json::Value> = jsonl
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| ["suite", "case"].iter().all(|k| v[*k].as_str().is_some_and(|s| !s.is_empty())) && v["case"] != "(verdict)")
+        .collect();
+    if cases.is_empty() {
+        return;
+    }
+    let tree = std::fs::read_to_string(root.join("batch.meta")).ok().and_then(|m| gate::testevents::batch_tree(&m)).unwrap_or_default();
     let runner = tsd::default_host();
     let load1 = gate::real::load1();
-    let sink = spira_otel::logs::LogPush::new(endpoint, "spira-gate-diag", SEND_DEADLINE, rows.len());
-    for row in rows.iter().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()) {
+    let sink = spira_otel::logs::LogPush::new(endpoint, "spira-gate-diag", SEND_DEADLINE, cases.len());
+    for row in &cases {
         let text = |k: &str| row[k].as_str().unwrap_or_default();
-        let test_id = text("test");
-        let name = test_id.strip_prefix(text("suite")).and_then(|r| r.strip_prefix("::")).unwrap_or(test_id);
         let record = testresult::Result {
-            test_id: test_id.to_string(),
-            name: name.to_string(),
+            test_id: format!("{}::{}", text("suite"), text("case")),
+            name: text("case").to_string(),
             crate_name: String::new(),
             tier: Tier::Suite,
-            input_hash: tree.to_string(),
+            input_hash: tree.clone(),
             outcome: match text("status") {
                 "pass" => Outcome::Pass,
-                "skip" => Outcome::Skipped,
+                "skip" | "unreached" | "bail" => Outcome::Skipped,
                 _ => Outcome::Fail,
             },
             duration_ms: (row["seconds"].as_f64().unwrap_or(0.0) * 1000.0).round() as u64,
@@ -152,7 +160,7 @@ fn send_test_results(endpoint: &str, rows: &[String], tree: &str, at: &Caller) {
             gate: String::new(),
             bead: at.bead.clone(),
             repo: at.repo.clone(),
-            tree: tree.to_string(),
+            tree: tree.clone(),
             round: at.round.clone(),
             members: Vec::new(),
         };
@@ -161,26 +169,6 @@ fn send_test_results(endpoint: &str, rows: &[String], tree: &str, at: &Caller) {
     let lost = sink.close(SEND_FLUSH);
     if lost > 0 {
         eprintln!("gate-diag: {lost} test.result record(s) not sent to the Collector");
-    }
-}
-
-/// Sends this run's `results.jsonl` as one `test.result` per test, and appends it to the
-/// `test-run` family as one row per test. Only a caller that names `SPIRA_RUN` has a family to
-/// append to; a failed append is said, never fatal.
-fn record_tests(root: &std::path::Path, run: Option<PathBuf>, endpoint: &str, at: &Caller) {
-    let Ok(jsonl) = std::fs::read_to_string(root.join("results.jsonl")) else { return };
-    let (ts, host) = (tsd::now_iso(), tsd::default_host());
-    let coverage = std::fs::read_to_string(root.join(tsd::testrun::COVERAGE_EXPORT)).unwrap_or_default();
-    let rows = tsd::testrun::rows_from_results(&jsonl, &coverage, &format!("{ts} {}", root.display()), &ts, &host);
-    let tree = std::fs::read_to_string(root.join("batch.meta")).ok().and_then(|m| tsd::testrun::batch_tree(&m)).unwrap_or_default();
-    send_test_results(endpoint, &rows, &tree, at);
-    let Some(run) = run else { return };
-    let path = tsd::family_path(&run, tsd::testrun::FAMILY);
-    for row in rows {
-        if let Err(e) = tsd::append_line(&path, &row) {
-            eprintln!("gate-diag: test-run rows not recorded: {e}");
-            return;
-        }
     }
 }
 
@@ -328,43 +316,9 @@ fn run(world: &dyn World, home: &std::path::Path, root: &std::path::Path, tally:
 }
 
 #[cfg(test)]
-mod record_tests_tests {
-    use super::{record_tests, Caller};
+mod test_result_tests {
+    use super::{send_test_results, Caller};
     use spira_otel::logs::Attr;
-
-    fn nobody() -> Caller {
-        Caller::read(|_| None)
-    }
-
-    #[test_id(tbjd8k8)]
-    #[test]
-    fn a_round_appends_one_test_run_row_per_case_and_none_without_a_run_dir() {
-        let tmp = testkit::TempDir::new("gate-diag-rec");
-        let d = tmp.path().to_path_buf();
-        std::fs::write(
-            d.join("results.jsonl"),
-            "{\"suite\":\"a.sh\",\"case\":\"x\",\"status\":\"pass\",\"seconds\":1}\n{\"suite\":\"a.sh\",\"case\":\"(verdict)\",\"status\":\"red-red\",\"seconds\":0}\n",
-        )
-        .unwrap();
-        record_tests(&d, None, "", &nobody());
-        assert!(!d.join("tsd").exists());
-        record_tests(&d, Some(d.clone()), "", &nobody());
-        let text = std::fs::read_to_string(d.join("tsd/test-run.jsonl")).unwrap();
-        assert_eq!(text.lines().count(), 1);
-        assert!(text.contains("\"test\":\"a.sh::x\""), "{text}");
-    }
-
-    #[test_id(t5853ch)]
-    #[test]
-    fn a_round_with_a_per_case_export_writes_the_covered_lines_onto_that_cases_row() {
-        let tmp = testkit::TempDir::new("gate-diag-cov");
-        let d = tmp.path().to_path_buf();
-        std::fs::write(d.join("results.jsonl"), "{\"suite\":\"a.sh\",\"case\":\"x\",\"status\":\"pass\",\"seconds\":1}\n").unwrap();
-        std::fs::write(d.join(tsd::testrun::COVERAGE_EXPORT), "{\"suite\":\"a.sh\",\"case\":\"x\",\"covered\":[\"src/b.rs:7\"]}\n").unwrap();
-        record_tests(&d, Some(d.clone()), "", &nobody());
-        let text = std::fs::read_to_string(d.join("tsd/test-run.jsonl")).unwrap();
-        assert!(text.contains("\"covered\":[\"src/b.rs:7\"]"), "{text}");
-    }
 
     #[test_id(th0z39d)]
     #[test]
@@ -384,7 +338,7 @@ mod record_tests_tests {
         std::fs::write(d.join("batch.meta"), "key=k\ntree=abc123\n").unwrap();
         let fake = spira_otel::fixture::Collector::start();
         let round = Caller::read(|k| (k == "SPIRA_ROUND_BATCH_ID").then(|| "round-7".to_string()));
-        record_tests(&d, None, fake.addr(), &round);
+        send_test_results(&d, fake.addr(), &round);
         let got = fake.events();
         let field = |e: &spira_otel::fixture::Event, k: &str| match e.attr(k) {
             Some(Attr::Str(s)) => s.clone(),

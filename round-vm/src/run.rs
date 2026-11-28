@@ -1962,7 +1962,7 @@ pub fn build_wall(dir: &Path) -> Option<u64> {
 
 /// The tree the VM's testenv run built and tested: `tree=` in the pulled `batch.meta`.
 pub fn reported_tree(results: &Path) -> Option<String> {
-    tsd::testrun::batch_tree(&fs::read_to_string(results.join("batch.meta")).ok()?)
+    gate::testevents::batch_tree(&fs::read_to_string(results.join("batch.meta")).ok()?)
 }
 
 /// How the batch itself ended, from the last `verdict` line of `run.events` (in `dir` or one
