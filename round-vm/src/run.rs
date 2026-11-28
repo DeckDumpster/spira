@@ -718,9 +718,19 @@ echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
 "#, unit_env_fn!(), r#"unit_cargo() {
     unit_env "#, spira_config::unit_tier_build!("unittest", "--workspace"), r#" "$@"
 }
+# Cargo rewrites a lost dep-info only on a relink, and testkit cannot judge a binary's age without it.
+drop_unit_binaries_without_dep_info() {
+    local f n=0
+    for f in "$HOME/round-work/target/unittest/deps"/*; do
+        [[ -f $f && -x $f && ${f##*/} =~ -[0-9a-f]{16}$ && ! -e $f.d ]] || continue
+        rm -f "$f" && n=$((n + 1))
+    done
+    [ "$n" -eq 0 ] || echo "round-vm: removed ${n} unit-build binaries without dep-info; cargo relinks them" >&2
+}
 # Cargo never deletes a superseded artifact, so deps grows by a generation a round. Keep the files
-# the build just reported, their hashes' siblings (.d, .rmeta) and anything hard-linked to one
-# (a binary is named by its uplifted link); a failed or empty report deletes nothing.
+# the build just reported, anything hard-linked to one (a binary is named by its uplifted link,
+# which carries no hash) and the siblings (.d, .rmeta) of every hash so kept; a failed or empty
+# report deletes nothing.
 prune_superseded_unit() {
     local d="$HOME/round-work/target/unittest/deps" rep="$HOME/round-unit-artifacts.json"
     local -A keep_hash=() keep_ino=()
@@ -742,6 +752,10 @@ prune_superseded_unit() {
         echo "round-vm: unit prune skipped: the build named no files" >&2
         return 0
     fi
+    while read -r ino path; do
+        [ -n "${keep_ino[$ino]:-}" ] || continue
+        if [[ ${path##*/} =~ -([0-9a-f]{16})(\.|$) ]]; then keep_hash[${BASH_REMATCH[1]}]=1; fi
+    done < <(find "$d" -maxdepth 1 -type f -printf '%i %p\n')
     while read -r ino size path; do
         base="${path##*/}"
         [[ $base =~ -([0-9a-f]{16})(\.|$) ]] || continue
@@ -762,6 +776,7 @@ phase unit-build
 unit_build_mark="$HOME/round-work/.runtime/spira/batch-results/unit-build"
 mkdir -p "$(dirname "$unit_build_mark")"
 echo building > "$unit_build_mark"
+drop_unit_binaries_without_dep_info
 t_ut=$(date +%s)
 if ! unit_cargo > ~/round-unit-build.log 2>&1; then
     echo "round-vm: the round's unit-test build failed:" >&2
@@ -4618,6 +4633,18 @@ mod tests {
         assert!(String::from_utf8_lossy(&out.stderr).contains("removed 3 superseded files, 30 bytes"), "{}", String::from_utf8_lossy(&out.stderr));
     }
 
+    #[test_id(ta4b4u3)]
+    #[test]
+    fn pruning_keeps_the_dep_info_of_a_binary_cargo_lists_only_by_its_uplifted_name() {
+        let bin = format!("tool-{H2}");
+        let listing = "{\"reason\":\"compiler-artifact\",\"filenames\":[\"{T}/tool\"],\"executable\":\"{T}/tool\"}\n";
+        let files = [bin.clone(), format!("{bin}.d"), format!("tool-{H1}"), format!("tool-{H1}.d")];
+        let refs: Vec<&str> = files.iter().map(String::as_str).collect();
+        let (out, left) = prune_unit_fixture(listing, &refs, &[(&bin, "tool")]);
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(left, [bin.clone(), format!("{bin}.d")]);
+    }
+
     #[test_id(t94rm6f)]
     #[test]
     fn pruning_the_superseded_unit_artifacts_deletes_nothing_when_the_list_is_empty_or_cargo_fails() {
@@ -4642,6 +4669,13 @@ mod tests {
         let call = REMOTE_SCRIPT.find("\nprune_superseded_unit\n").unwrap();
         assert!(REMOTE_SCRIPT.find("echo built > \"$unit_build_mark\"").unwrap() < call);
         assert!(REMOTE_SCRIPT.find("unit_build_secs=$((").unwrap() < call);
+    }
+
+    #[test_id(tivku49)]
+    #[test]
+    fn binaries_without_dep_info_are_dropped_before_the_unit_build_that_relinks_them() {
+        let drop = REMOTE_SCRIPT.find("\ndrop_unit_binaries_without_dep_info\n").unwrap();
+        assert!(drop < REMOTE_SCRIPT.find("if ! unit_cargo > ~/round-unit-build.log").unwrap());
     }
 
     #[test_id(tykuu6t)]
