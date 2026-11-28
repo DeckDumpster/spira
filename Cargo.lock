@@ -2469,7 +2469,6 @@ dependencies = [
  "gate",
  "groomer",
  "incident",
- "inotify",
  "libc",
  "lifecycle",
  "mail",

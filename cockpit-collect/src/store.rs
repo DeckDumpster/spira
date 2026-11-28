@@ -7,13 +7,18 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use spira_store::lc_call::{LcClient, LcError};
-use store_view::{Projection, Read};
+use store_view::{through_views, Projection, Read};
 
 /// The configured client, bounded at `SPIRA_LC_TIMEOUT` for a program route; `None` when the
 /// key is unset or the route does not resolve.
 pub fn client() -> Option<LcClient> {
     let secs: u64 = spira_config::process::cfg("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty())?.trim().parse().ok()?;
     Some(unwaiting(LcClient::configured().ok()?.within(Duration::from_secs(secs))))
+}
+
+/// [`store_view::through_views`] of the configured client.
+pub fn door() -> Result<LcClient, String> {
+    LcClient::configured().map(through_views)
 }
 
 /// A probe never waits for an absent store: the read fails at once, and the probe serves what it last had.

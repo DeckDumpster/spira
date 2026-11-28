@@ -100,7 +100,7 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
 
     // spira-claim's count, the one ready set (sp-7g5q6) — not a bd ready query of our own.
     let argv: Vec<String> = ["ready-count", "", "--express"].iter().map(|s| s.to_string()).collect();
-    let o = spira_claim::cli::dispatch_in(&argv, &mut std::io::empty(), &|k| std::env::var(k).ok());
+    let o = spira_claim::store::claim_view_from_views(|| spira_claim::cli::dispatch_in(&argv, &mut std::io::empty(), &|k| std::env::var(k).ok()));
     let enr = express_count(o.code, &o.out);
     push(&mut out, "SP_EXPRESS_N", enr.to_string());
 
@@ -135,7 +135,7 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
         let reg = io::repo_registry();
         reg.all().into_iter().filter(|r| reg.land(r) == "queue").filter_map(|r| reg.root(&r)).map(Into::into).collect()
     };
-    let (next_total, next) = match spira_store::lc_call::LcClient::configured() {
+    let (next_total, next) = match crate::store::door() {
         Ok(client) => {
             let lc = queue::real::RealLc { bin: None, client: Some(client) };
             let branches = |root: &std::path::Path| queue::real::RealGit.branches(root, "refs/heads/spira/");

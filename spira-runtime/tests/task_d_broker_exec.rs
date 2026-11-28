@@ -12,11 +12,13 @@ use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use runtime::host::EffectRunner;
+use spira_otel::fixture::{spans_in, Collector, Post};
 use spira_runtime::tasks::d::broker_exec::{self, Snapshot};
 use spira_runtime::Effects;
 use state_store_sqlite::{Options, SqliteBackend};
 
 struct World {
+    collector: Collector,
     _env: testkit::EnvGuard,
     dir: testkit::TempDir,
     toml: PathBuf,
@@ -85,19 +87,14 @@ impl World {
     }
 
     fn spans(&self, name: &str) -> Vec<serde_json::Value> {
-        let mut out = vec![];
-        for f in std::fs::read_dir(self.dir.join("run/otel")).into_iter().flatten().flatten() {
-            for line in std::fs::read_to_string(f.path()).unwrap_or_default().lines() {
-                let r: serde_json::Value = serde_json::from_str(line).unwrap();
-                for span in r["resourceSpans"].as_array().into_iter().flatten().flat_map(|r| r["scopeSpans"].as_array().into_iter().flatten()).flat_map(|s| s["spans"].as_array().into_iter().flatten()) {
-                    if name.is_empty() || span["name"] == name {
-                        out.push(span.clone());
-                    }
-                }
-            }
-        }
-        out
+        assert!(self.collector.wait_until(|p| spans_in(p).iter().any(|s| s.name == name), Duration::from_secs(30)), "no `{name}` span reached the collector");
+        self.collector.spans_json().into_iter().filter(|s| s["name"] == name).collect()
     }
+}
+
+/// Whether `post` carries the service's span for a `work` call it answered: a cut call also sends one.
+fn answered_work_span(post: &Post) -> bool {
+    spans_in(std::slice::from_ref(post)).iter().any(|s| s.name == "work" && !s.attributes.iter().any(|a| a.key == "spira.serve.cut" && format!("{:?}", a.value).contains("BoolValue(true)")))
 }
 
 impl Drop for World {
@@ -116,8 +113,14 @@ fn world() -> World {
     let store = dir.join("control.db");
     drop(SqliteBackend::open(&store, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap());
     let socket = dir.join("lc.sock");
+    let marker = dir.join("span-received");
+    let collector = Collector::start_then(move |post| {
+        if answered_work_span(post) {
+            std::fs::write(&marker, "x").unwrap();
+        }
+    });
     let (d, r, s, sock) = (dir.display().to_string(), run.display().to_string(), store.display().to_string(), socket.display().to_string());
-    let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_WORKSPACES", &d), ("SPIRA_RUN", &r), ("SPIRA_LC_STORE_PATH", &s), ("SPIRA_LC_SOCKET", &sock), ("SPIRA_VICTORIALOGS_URL", "http://127.0.0.1:9")]);
+    let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_WORKSPACES", &d), ("SPIRA_RUN", &r), ("SPIRA_LC_STORE_PATH", &s), ("SPIRA_LC_SOCKET", &sock), ("SPIRA_VICTORIALOGS_URL", "http://127.0.0.1:9"), ("SPIRA_OTEL_COLLECTOR_ENDPOINT", collector.addr())]);
     let mut server = Command::new(testkit::bin_exe("spira-lc"))
         .arg("serve")
         .env_clear()
@@ -143,7 +146,7 @@ fn world() -> World {
         ("SPIRA_HOME", Some(spira_config::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").to_str().unwrap())),
         ("HOME", Some(dir.join("home").to_str().unwrap())),
     ]);
-    let w = World { _env: env, dir, toml, socket, server };
+    let w = World { collector, _env: env, dir, toml, socket, server };
     std::os::unix::fs::symlink(testkit::bin_exe("spira-lc"), w.release().join("bin/spira-lc")).unwrap();
     w
 }
@@ -171,11 +174,10 @@ fn who_ran_me(w: &World, out: &str) -> String {
 #[test]
 fn a_tool_verb_is_recorded_by_the_service_and_run_by_the_scheduler_in_work_exec() {
     let w = world();
-    // clock-safe: the signal waited on is the service's `work` span on disk; the shell sleep only caps that wait, under the client's own.
-    // A cut call also writes a span, but the service never answered it.
+    // clock-safe: the signal waited on is the collector's marker that the service's `work` span arrived; the shell sleep only caps that wait, under the client's own.
     let wait_for_span = format!(
-        "n=0\nuntil grep -shF '\"name\":\"work\"' {otel}/*.jsonl | grep -qvF '\"spira.serve.cut\",\"value\":{{\"boolValue\":true}}'; do\n  n=$((n+1))\n  [ $n -gt 600 ] && break\n  sleep 0.1\ndone\nif [ $n -gt 600 ]; then : > {missing}; else : > {first}; fi",
-        otel = w.dir.join("run/otel").display(),
+        "n=0\nuntil [ -e {received} ]; do\n  n=$((n+1))\n  [ $n -gt 600 ] && break\n  sleep 0.1\ndone\nif [ $n -gt 600 ]; then : > {missing}; else : > {first}; fi",
+        received = w.dir.join("span-received").display(),
         missing = w.dir.join("span-missing").display(),
         first = w.dir.join("span-first").display()
     );

@@ -127,8 +127,12 @@ fn funnel_rows() -> Option<Vec<LcRow>> {
     parse_rows(&funnel_raw()?)
 }
 
-/// One lifecycle read per `SPIRA_PANE_READ_TTL` across every probe process.
+/// One lifecycle read per `SPIRA_PANE_READ_TTL` across every probe process; a watched process
+/// shares nothing, its views being newer than any copy.
 pub fn shared_live(key: &str, fetch: impl FnOnce() -> Option<String>) -> Option<String> {
+    if store_view::watched() {
+        return fetch();
+    }
     let ttl = io::ttl_from_env("SPIRA_PANE_READ_TTL", io::PANE_TTL_SECS);
     io::shared_read(&cache_dir().join("live"), key, ttl, io::now(), fetch)
 }
@@ -153,13 +157,8 @@ pub fn verb_read(args: &[&str]) -> Result<String, Gone> {
     verb_read_on(&crate::store::client().ok_or(Gone::Failed)?, args)
 }
 
-/// A watching projection's held answer when this process keeps one (a stale view refuses, never
-/// falls back), else `client`'s.
 fn verb_read_on(client: &spira_store::lc_call::LcClient, args: &[&str]) -> Result<String, Gone> {
-    match store_view::shared().filter(|p| p.watching()).and_then(|_| store_view::held_read(args)) {
-        Some(held) => held.map_err(|e| if matches!(e, spira_store::lc_call::LcError::NotRunning(_)) { Gone::NotRunning } else { Gone::Failed }),
-        None => crate::store::answer_kind(client, args),
-    }
+    crate::store::answer_kind(&store_view::through_views(client.clone()), args)
 }
 
 /// Ids per `list --ids` read: keeps each answer far under the 64 KiB a probe may draw.
@@ -191,7 +190,8 @@ fn forget_old_reads(prefix: &str) {
 }
 
 fn read_rows(key: &str, args: &[&str]) -> Option<HashMap<String, Row>> {
-    if let Some(held) = store_view::held_list(args) {
+    let held = if store_view::watched() { store_view::held_read(args) } else { store_view::held_list(args) };
+    if let Some(held) = held {
         return lc_state::parse_rows(&held.ok()?).ok().map(lc_state::index);
     }
     let why = std::cell::Cell::new(Gone::Failed);

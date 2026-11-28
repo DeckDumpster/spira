@@ -75,7 +75,7 @@ fn a_full_pool_under_a_roomy_ceiling_is_satisfied_through_handle() {
     let slots = Slots { live: 6, ceiling: 40, ready: 2, capacity_paused: false };
     let world = FlowSnapshot { slots: Ok((slots, slots)), ..backlog_grown_at(1000) };
     let mut r = TaskRig::new(1, registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&world).unwrap())).double(MAIL, |m| Ok(m.into())).double(STATUS, |s| Ok(s.into()));
-    let called = sentinel_call::Carry { task_limit: Some(sentinel::plan::TaskLimit { name: "pool".into(), limit: 6, held: 6 }), ..Default::default() };
+    let called = sentinel_call::Carry { task_limit: Some(sentinel::plan::TaskLimit { name: "pool".into(), limit: 6, held: 6, holders: vec![] }), ..Default::default() };
     r.tick(sentinel_call::STREAM, EventKind::new(sentinel_call::STATE, &serde_json::to_string(&called).unwrap())).unwrap();
     r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
     let carry: Carry = serde_json::from_str(&r.engine().carry_body(NAME, STATE).expect("the watcher carried its verdicts")).unwrap();
@@ -92,7 +92,7 @@ fn room_under_the_pool_mails_through_handle_and_no_carry_is_unobservable() {
         let world = world.clone();
         let mut r = TaskRig::new(1, ReconcilerFlow { grace_secs: 0, ..ReconcilerFlow { interval_ms: 1_800_000, window_hours: 0.5, baseline_hours: 24.0, grace_secs: 0, unobservable_grace_secs: 3600, rework_window_hours: 6.0, sentinel_timer_secs: 900, shadow_kinds: vec![] } }.registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&world).unwrap())).double(MAIL, |m| Ok(m.into())).double(STATUS, |s| Ok(s.into()));
         if let Some(held) = limit {
-            let called = sentinel_call::Carry { task_limit: Some(sentinel::plan::TaskLimit { name: "pool".into(), limit: 6, held }), ..Default::default() };
+            let called = sentinel_call::Carry { task_limit: Some(sentinel::plan::TaskLimit { name: "pool".into(), limit: 6, held, holders: vec![] }), ..Default::default() };
             r.tick(sentinel_call::STREAM, EventKind::new(sentinel_call::STATE, &serde_json::to_string(&called).unwrap())).unwrap();
         }
         r.tick(STREAM, EventKind::new(TICK, "")).unwrap();

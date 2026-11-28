@@ -1,6 +1,4 @@
 extensions:
-  file_storage:
-    directory: /state
   file_storage/logs:
     directory: /state/logs
 
@@ -9,11 +7,6 @@ receivers:
     protocols:
       http:
         endpoint: 0.0.0.0:4318
-  otlpjsonfile:
-    include: ["/otel/*.jsonl"]
-    start_at: end
-    poll_interval: 10s
-    storage: file_storage
   otlpjsonfile/logs:
     include: ["/otel/*.jsonl"]
     start_at: end
@@ -42,10 +35,10 @@ exporters:
     timeout: 30s
 
 service:
-  extensions: [file_storage, file_storage/logs]
+  extensions: [file_storage/logs]
   pipelines:
     traces:
-      receivers: [otlpjsonfile, otlp]
+      receivers: [otlp]
       exporters: [spanmetrics]
     metrics:
       receivers: [spanmetrics]

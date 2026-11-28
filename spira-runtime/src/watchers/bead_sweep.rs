@@ -401,7 +401,7 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, claimed: &[
     out.into_iter().map(|(k, l)| Suspect { key: format!("SUSPECT {k}"), line: format!("SUSPECT {l}") }).collect()
 }
 
-/// The key tail and line for a claimable P0, express or REWORK bead that has waited past the threshold while the scheduler's fresh judgement shows no open slot, giving the limit the scheduler judged full and the WORKING beads.
+/// The key tail and line for a claimable P0, express or REWORK bead that has waited past the threshold while the scheduler's fresh judgement shows no open slot, giving the limit the scheduler judged full and the beads holding it (the WORKING beads when it names none).
 fn pool_wait(p: &BeadSweep, snap: &Snapshot, content: &BTreeMap<&str, &Bead>, r: &Row, age: i64, room: Option<&Room>, now: f64) -> Option<(String, String)> {
     let priority = |id: &str| content.get(id).map_or("P?".to_string(), |b| format!("P{}", b.priority));
     let express = if r.express { " express" } else { "" };
@@ -411,7 +411,11 @@ fn pool_wait(p: &BeadSweep, snap: &Snapshot, content: &BTreeMap<&str, &Bead>, r:
         return None;
     }
     let head = format!("{}{express} WAITING", priority(&r.id));
-    let holders: Vec<String> = snap.rows.iter().filter(|h| h.state == "WORKING").map(|h| format!("{} {}", h.id, priority(&h.id))).collect();
+    let mut ids: Vec<&str> = room.and_then(|x| x.limit.as_ref()).map(|l| l.holders.iter().map(String::as_str).collect()).unwrap_or_default();
+    if ids.is_empty() {
+        ids = snap.rows.iter().filter(|h| h.state == "WORKING").map(|h| h.id.as_str()).collect();
+    }
+    let holders: Vec<String> = ids.iter().map(|id| format!("{id} {}", priority(id))).collect();
     let judged = room.map_or(String::new(), |x| iso8601(x.at_ms / 1000));
     let limit = match room.and_then(|x| x.limit.as_ref()) {
         Some(l) => format!("{} {} of {} held, judged {judged}", l.name, l.held, l.limit),
@@ -566,7 +570,7 @@ mod tests {
     const ROW: &str = "SUSPECT sp-r REWORK UNCLAIMED REWORK over 5m (suites-failed)";
 
     fn full() -> Option<Room> {
-        Some(Room { since_ms: None, at_ms: 3_600_000, limit: Some(sentinel::plan::TaskLimit { name: "pool".into(), limit: 4, held: 4 }) })
+        Some(Room { since_ms: None, at_ms: 3_600_000, limit: Some(sentinel::plan::TaskLimit { name: "pool".into(), limit: 4, held: 4, holders: vec![] }) })
     }
 
     fn pool(waiting: Row, priority: i64) -> Snapshot {
@@ -616,10 +620,19 @@ mod tests {
     #[test_id(te0s42a)]
     #[test]
     fn a_pool_wait_names_the_limit_the_scheduler_judged_not_the_holders() {
-        let room = Some(Room { since_ms: None, at_ms: 3_600_000, limit: Some(sentinel::plan::TaskLimit { name: "pool".into(), limit: 4, held: 4 }) });
+        let room = Some(Room { since_ms: None, at_ms: 3_600_000, limit: Some(sentinel::plan::TaskLimit { name: "pool".into(), limit: 4, held: 4, holders: vec![] }) });
         let row = Row { state: "REWORK".into(), ..ready("sp-r") };
         let line = said(&pool(row, 1), room).remove(0);
         assert!(line.contains("pool 4 of 4 held") && line.contains("working: sp-w0 P1, ") && !line.contains("held by"), "{line}");
+    }
+
+    #[test_id(tfj9zks)]
+    #[test]
+    fn a_pool_wait_lists_the_beads_that_hold_the_judged_limit() {
+        let holders = (0..4).map(|n| format!("sp-w{n}")).collect();
+        let room = Some(Room { since_ms: None, at_ms: 3_600_000, limit: Some(sentinel::plan::TaskLimit { name: "pool".into(), limit: 4, held: 4, holders }) });
+        let line = said(&pool(ready("sp-p"), 0), room).remove(0);
+        assert!(line.ends_with("working: sp-w0 P1, sp-w1 P2, sp-w2 P2, sp-w3 P1") && !line.contains("sp-w4"), "{line}");
     }
 
     #[test_id(t66x1ef)]

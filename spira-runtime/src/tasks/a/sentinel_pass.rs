@@ -892,12 +892,15 @@ pub fn land_log_tail(run: &std::path::Path) -> String {
 /// included, is answered by the held view when it holds it; any other is logged by name and sent.
 fn from_view(argv: &[String]) -> Option<Result<Reply, LcError>> {
     let words: Vec<&str> = argv.iter().map(String::as_str).collect();
-    let held = store_view::held_read(&words);
+    let held = match words.as_slice() {
+        ["claimable"] => store_view::held_claim_view(),
+        _ => store_view::held_reply(&words),
+    };
     if held.is_none() && store_view::shared().is_some() {
         let name: Vec<&str> = words.iter().take_while(|w| !w.starts_with('-') && !w.contains(['/', '{'])).take(2).copied().collect();
         eprintln!("sentinel-pass: the store view does not hold `{}`; asking the store", name.join(" "));
     }
-    held.map(|r| r.map(|out| Reply { code: 0, out, err: String::new(), read_ended: false }))
+    held
 }
 
 /// `sentinel-pass.observe`: the content and lifecycle rows over `LcClient`, the plan pool's

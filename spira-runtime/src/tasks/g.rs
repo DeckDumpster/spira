@@ -41,7 +41,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: cockpit_tier_5s::NAME,
-        reads: Reads::None,
+        reads: Reads::Polled(&["lifecycle/", "readiness/", "batches/", "planning/", "conditions/", "asks/", "mendings/", "landed/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: cockpit_tier_5s::CockpitTier5s::boot,
@@ -53,7 +53,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: cockpit_tier_60s::NAME,
-        reads: Reads::None,
+        reads: Reads::Polled(&["lifecycle/", "readiness/", "batches/", "planning/", "asks/", "edges/", "stays/", "telemetry/sections/", "telemetry/reconciler/", "intents/", "knobs/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: cockpit_tier_60s::CockpitTier60s::boot,
@@ -65,7 +65,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: cockpit_tier_600s::NAME,
-        reads: Reads::None,
+        reads: Reads::Polled(&["lifecycle/", "readiness/", "batches/", "planning/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: cockpit_tier_600s::CockpitTier600s::boot,

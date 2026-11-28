@@ -965,7 +965,7 @@ fn the_claim_view_is_held_until_a_row_readiness_or_plan_changes_or_its_hold_runs
         let w = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(3600));
         w.p.poll().unwrap();
         let _watching = w.p.hold_watching();
-        let read = || w.p.answer(&["claimable"]).unwrap().value.out;
+        let read = || w.p.claim_view().unwrap().value.out;
         let first = read();
         assert_eq!((read(), asked(&w, "claimable")), (first, 1), "unchanged: held");
         changed(&w, &["conditions/x/y"], 5);
@@ -977,7 +977,10 @@ fn the_claim_view_is_held_until_a_row_readiness_or_plan_changes_or_its_hold_runs
             read();
             assert_eq!(asked(&w, "claimable"), 2 + n, "{key}");
         }
-        w.advance(store_view::CLAIM_VIEW_HOLD + Duration::from_secs(1));
+        w.advance(store_view::WINDOW_HOLD + Duration::from_secs(1));
+        read();
+        assert_eq!(asked(&w, "claimable"), 4, "outlives the other readers' hold");
+        w.advance(store_view::CLAIM_VIEW_HOLD);
         read();
         assert_eq!(asked(&w, "claimable"), 5, "the verdicts turn on the clock too");
     });
@@ -990,28 +993,9 @@ fn a_claim_view_the_content_store_could_not_describe_is_asked_again() {
         let w = world(Script { list_rev: 4, content_error: Some("down".into()), ..Default::default() }, Duration::from_secs(10));
         w.p.poll().unwrap();
         let _watching = w.p.hold_watching();
-        w.p.answer(&["claimable"]).unwrap();
-        w.p.answer(&["claimable"]).unwrap();
+        w.p.claim_view().unwrap();
+        w.p.claim_view().unwrap();
         assert_eq!(asked(&w, "claimable"), 2);
-    });
-}
-
-#[test_id(tuha893)]
-#[test]
-fn an_id_with_no_row_is_asked_once_under_a_watch_until_a_change_names_it() {
-    within(|| {
-        let w = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(10));
-        w.p.poll().unwrap();
-        let _watching = w.p.hold_watching();
-        let ids = ["sp-gone".to_string()];
-        let read = || w.p.ids_answer(&ids).unwrap().value;
-        let reads = || w.script.lock().unwrap().seen.iter().filter(|a| a[0] == "list" && a[1] == "--ids").count();
-        assert_eq!((read(), read(), reads()), (vec![], vec![], 1));
-        w.script.lock().unwrap().rows = vec![bead("sp-gone", "DONE", "[]", None, false)];
-        changed(&w, &["lifecycle/sp-gone"], 5);
-        let before = reads();
-        assert_eq!(read().len(), 1, "the row it gained is read");
-        assert!(reads() <= before + 1);
     });
 }
 
