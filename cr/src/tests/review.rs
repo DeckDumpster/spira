@@ -55,7 +55,7 @@ impl World {
         record::dir(self.run.path(), n).join("sealed.json")
     }
     fn open_and_seal(&mut self) -> Outcome {
-        assert_eq!(self.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+        stage_store(self);
         let c = self.comments(1);
         self.seal_with("001", &c)
     }
@@ -590,7 +590,6 @@ fn seal_posts_one_collection_of_the_units_files_whole_then_the_held_labelled_com
     assert_eq!(posts.iter().map(|p| (p.body.as_str(), p.held, p.anchor.clone(), p.in_reply_to.clone())).collect::<Vec<_>>(), [("**His lens:** first look", true, at(1), None), ("**Fresh read:** fresh look", true, at(2), None)]);
     assert_eq!((r.state, r.collection.as_deref(), r.url.as_deref()), (State::Open, Some("col1"), Some(READER)));
     assert_eq!(o.stdout, format!("{READER}\n"));
-    assert_eq!(o.stderr, "", "a review staged and sealed by one cr reports no change");
 }
 
 #[test_id(t87pbnr)]
@@ -1186,4 +1185,45 @@ fn a_seal_resumed_after_the_collection_was_posted_keeps_the_list_the_reader_hold
     assert_eq!(paths_of(&record::load(w.run.path(), 1).unwrap()), saved);
     assert_eq!(ledger_rows(&w.ports).pop().unwrap().files.into_iter().map(|f| f.path).collect::<Vec<_>>(), saved);
     assert_eq!(w.margin.collections_posted(), 1);
+}
+
+#[test_id(tny6i39)]
+#[test]
+fn a_review_staged_and_sealed_by_one_cr_seals_with_empty_stderr() {
+    let o = world().open_and_seal();
+    assert_eq!((o.code, o.stderr.as_str()), (0, ""));
+}
+
+#[test_id(t9xjvxx)]
+#[test]
+fn a_seal_that_failed_after_rewriting_the_list_still_reports_the_change_when_rerun() {
+    for posted_before_failing in [false, true] {
+        let mut w = world();
+        stage_store(&w);
+        restage(&w, grow);
+        if posted_before_failing {
+            w.margin.fail_comment_number(1);
+        } else {
+            w.margin.go_down();
+        }
+        let c = w.comments(1);
+        assert_eq!(w.seal_with("001", &c).code, 1);
+        w.margin.come_up();
+        let o = w.seal_with("001", &c);
+        assert_eq!(o.code, 0, "{}", o.stderr);
+        assert!(o.stderr.contains("staged with 4 files; cr draws 3"), "{posted_before_failing}: {:?}", o.stderr);
+    }
+}
+
+#[test_id(tvt0amx)]
+#[test]
+fn a_resumed_seal_stored_as_one_undivided_array_is_not_refused_for_its_missing_half() {
+    let mut w = world();
+    stage_store(&w);
+    let stored = r#"[{"path":"demo/src/store.rs","line":1,"body":"old"}]"#;
+    std::fs::write(w.sealed_path(1), stored).unwrap();
+    std::fs::write(record::dir(w.run.path(), 1).join("cover.json"), format!(r#"{{"does":"{DOES}","look_first":"{LOOK}"}}"#)).unwrap();
+    restage(&w, |r| r.sealed_sha256 = Some(sha256(stored.as_bytes())));
+    let o = w.cr(&["seal", "--review", "001"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
 }

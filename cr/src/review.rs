@@ -62,6 +62,9 @@ struct Progress {
     url: Option<String>,
     posted: Vec<usize>,
     ledger_row: bool,
+    /// The stage's file count once the list was re-derived, so a rerun still reports the change.
+    #[serde(default)]
+    staged_files: Option<usize>,
 }
 
 fn done(stdout: String) -> Outcome {
@@ -373,20 +376,18 @@ pub fn seal(number: u32, ports: &Ports) -> Outcome {
         Ok(i) => i,
         Err(e) => return refuse(1, &e),
     };
+    let sha7: String = r.source_sha.chars().take(7).collect();
     let mut p = load_progress(&dir);
     let way_out = format!("close it (cr close --review {number:03}) and stage it again (cr open)");
-    let mut note = None;
     // A collection already posted holds the saved list, so a resume must keep it.
     if p.collection.is_none() {
-        let sha7: String = r.source_sha.chars().take(7).collect();
         let Some(drawn) = units::all(&ix).into_iter().find(|u| u.id == r.unit.id) else {
             return refuse(2, &format!("review {number:03}'s unit {} is not drawn at {sha7}; {way_out}", r.unit.id));
         };
         if drawn.files != r.unit.files {
-            let (staged, now) = (r.unit.files.len(), drawn.files.len());
-            note = Some(format!("review {number:03} was staged with {staged} files; cr draws {now} for {} at {sha7}; posting {now}", drawn.id));
+            p.staged_files.get_or_insert(r.unit.files.len());
             r.unit = drawn;
-            if let Err(e) = record::save(run, &r) {
+            if let Err(e) = save_progress(&dir, &p).and_then(|()| record::save(run, &r)) {
                 return refuse(1, &e);
             }
         }
@@ -456,6 +457,10 @@ pub fn seal(number: u32, ports: &Ports) -> Outcome {
     // A sealed.json written by this run was validated above; a stored one may predate this unit.
     if resumed {
         for (half, comments) in [("lens", &held.lens), ("fresh", &held.fresh)] {
+            // A seal stored as one array has no fresh half.
+            if comments.is_empty() {
+                continue;
+            }
             if let Err(e) = validate(half, comments, &files) {
                 return refuse(2, &format!("{e}; {way_out}"));
             }
@@ -494,7 +499,10 @@ pub fn seal(number: u32, ports: &Ports) -> Outcome {
     if let Err(e) = record::save(run, &r).and_then(|()| record::set_state(run, number, State::Open, ports.clock.now_ms()).map(|_| ())) {
         return refuse(1, &e);
     }
-    let stderr = note.map(|n| format!("cr: {n}\n")).unwrap_or_default();
+    let stderr = p.staged_files.map_or_else(String::new, |staged| {
+        let now = r.unit.files.len();
+        format!("cr: review {number:03} was staged with {staged} files; cr draws {now} for {} at {sha7}; posting {now}\n", r.unit.id)
+    });
     Outcome { code: 0, stdout: format!("{url}\n"), stderr }
 }
 
