@@ -16,7 +16,7 @@ use std::time::Duration;
 use ports::{SeededRng, VirtualClock};
 use serde_json::{json, Value};
 use state_store_sqlite::{Options, SqliteBackend};
-use testkit::broker::Broker;
+use testkit::broker::{Broker, Subscriber};
 
 /// Bounds each wait on the server or the broker, so a broken one fails instead of hanging.
 const FAILSAFE: Duration = Duration::from_secs(30);
@@ -281,6 +281,11 @@ fn a_watch_with_nothing_to_report_is_held_for_its_whole_wait() {
     let home = Home::new();
     let server = Server::start(&home, &broker, PINNED_NOW);
     server.wait_said(SUBSCRIBED, 1);
+    // The bridge's greeting may land after the tap subscribed, and its row is a write. The
+    // marker is published behind it, so once the marker is listed that write is made.
+    Subscriber::to(broker.socket(), &["publisher/lc-serve"]).recv();
+    publish(&broker, &[("marker/sp-z", false)]);
+    server.listed(|r| row(r, "marker/+").is_some());
     let (code, out) = server.call(&["watch", "topics/", "--from-rev", &u64::MAX.to_string(), "--wait-ms", "0"]);
     assert_eq!(code, 0, "{out}");
     let head = serde_json::from_str::<Value>(&out).unwrap()["future_rev"]["head"].as_u64().expect("the head").to_string();
