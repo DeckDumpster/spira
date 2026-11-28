@@ -198,8 +198,6 @@ impl<T> Drop for Push<T> {
 mod tests {
     use super::*;
     use std::sync::mpsc::{channel, Receiver, Sender};
-    use std::sync::{Arc, Mutex};
-    use std::time::Duration;
 
     /// A cap on a wait for the closure's own signal.
     const CAP: Duration = Duration::from_secs(30);
