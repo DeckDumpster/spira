@@ -162,6 +162,10 @@ pub(crate) mod verdict_run {
         stuck_streak: Option<&'static str>,
         /// The row's state once it leaves WORKING, and when its ask hold was last raised.
         left: Mutex<Option<&'static str>>,
+        /// What the `lc_claim_bead` seam call exits with.
+        claim_rc: i32,
+        /// The stderr `spira-claim write-event` fails with.
+        write_event_error: Option<&'static str>,
         ask_since: Mutex<i64>,
         calls: Mutex<Vec<Vec<String>>>,
     }
@@ -178,6 +182,7 @@ pub(crate) mod verdict_run {
             self.record(prog, args);
             match (prog, args.first().map(String::as_str)) {
                 ("spira-claim", Some("stack")) => Out::ok(self.proposal),
+                ("spira-claim", Some("write-event")) if self.write_event_error.is_some() => Out { code: 1, stderr: self.write_event_error.unwrap_or_default().into(), ..Default::default() },
                 ("spira-claim", Some("rejections")) => Out::ok(self.rejections),
                 ("spira-claim", Some("select")) => Out::ok("-\t-\t-\t-\t-\tsp-x\n"),
                 ("spira-lc", Some("list")) => Out::ok("[]"),
@@ -191,6 +196,7 @@ pub(crate) mod verdict_run {
             self.record(f, a);
             if f == "lc_claim_bead" {
                 *self.holder.lock().unwrap() = a[1].clone();
+                return Out { code: self.claim_rc, ..Default::default() };
             }
             match (self.stuck_streak, f) {
                 (Some(_), "lc_bead_verified") => return Out { code: 1, ..Default::default() },
@@ -326,6 +332,30 @@ pub(crate) mod verdict_run {
         assert_eq!((sent[0][1].as_str(), sent[0][4].as_str()), ("sp-x", "{}"));
         assert!(sent[0].last().is_some_and(|d| d.contains("concierge")), "{sent:?}");
         assert_claim_kept(&store, &ledger);
+    }
+
+    #[test_id(t4pqsut)]
+    #[test]
+    fn only_a_claim_confirmed_after_a_lost_reply_has_its_claimed_fact_written_by_the_dwarf() {
+        let lost = Claimable { proposal: UNSTACKED, claim_rc: 2, write_event_error: Some("store down\nmore"), ..Default::default() };
+        let (lines, ledger) = directed_claim(&lost);
+        assert_claim_kept(&lost, &ledger);
+        assert_eq!(lines.iter().filter(|l| l.contains("sp-x") && l.contains("claimed fact was not written (store down)")).count(), 1, "{lines:?}");
+        let holder = lost.holder.lock().unwrap().clone();
+        assert_eq!(
+            lost.called(&["spira-claim", "write-event"]),
+            vec![["spira-claim", "write-event", "sp-x", "claimed", holder.as_str()].map(String::from).to_vec()]
+        );
+
+        let answered = Claimable { proposal: UNSTACKED, ..Default::default() };
+        let (_, ledger) = directed_claim(&answered);
+        assert_claim_kept(&answered, &ledger);
+        assert!(answered.called(&["spira-claim", "write-event"]).is_empty(), "lc_claim_bead has already written this claim's fact");
+
+        let unheld = Claimable { proposal: UNSTACKED, claim_rc: 2, left: Mutex::new(Some("REWORK")), ..Default::default() };
+        directed_claim(&unheld);
+        assert_eq!(unheld.called(&["lc_claim_bead"]).len(), 1, "positive control: the claim was sent");
+        assert!(unheld.called(&["spira-claim", "write-event"]).is_empty(), "a claim that was never won has no fact");
     }
 
     #[test_id(tbvnrsy)]

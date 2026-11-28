@@ -417,6 +417,7 @@ lc_claim_bead() {
     fi
     IFS=$'\t' read -r state version cur_holder _ <<< "$row"
     [ -n "$state" ] || return 2
+    # No fact here: an earlier send by this holder made the row WORKING, and that send owns it.
     [ "$state" = WORKING ] && [ "$cur_holder" = "$holder" ] && return 0
     local persona_json=null
     [ -z "$persona" ] || persona_json="\"$persona\""
@@ -427,7 +428,10 @@ lc_claim_bead() {
         # A refusal is not "not mine" until the row says so: a double-sent claim applies once.
         row="$(lc_bead_row "$id")" || return 2
         IFS=$'\t' read -r state _ cur_holder _ <<< "$row"
-        [ "$state" = WORKING ] && [ "$cur_holder" = "$holder" ] && return 0
+        if [ "$state" = WORKING ] && [ "$cur_holder" = "$holder" ]; then
+            _bump_write_event "$id" claimed "$holder"
+            return 0
+        fi
     fi
     if [ "$rc" -eq 3 ]; then printf '%s\n' "$LC_EVENT_REPLY" >&2; fi
     [ "$rc" -eq 0 ] || return "$rc"
