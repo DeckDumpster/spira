@@ -12,7 +12,7 @@ const NAME: &str = "bin-tests-skipped";
 const ROOT: &str = "Cargo.toml";
 
 const HINT: &str = "remove `test = false`: this bin's source holds tests, and cargo test / the \
-round's unit tier skip them while it is set (sp-e4tj8d set it only on bins with no test)";
+round's unit tier skip them while it is set (the flag belongs only on a bin with no test)";
 
 /// The first test, as (fn name, file), in the crate rooted at `root` and the files it loads.
 /// Test-gated modules are followed too: their tests are skipped like any other.
@@ -189,6 +189,13 @@ mod tests {
     fn a_bin_that_runs_its_tests_is_clean() {
         let got = run("binskip-on", "[[bin]]\nname = \"demo\"\n", &[(MAIN, A_TEST)]).unwrap();
         assert!(got.is_empty(), "{got:?}");
+    }
+
+    #[test_id(tx699sn)]
+    #[test]
+    fn a_skipped_bin_whose_source_is_not_in_the_walk_is_refused() {
+        let got = run("binskip-gone", SKIPPED, &[]);
+        assert!(matches!(&got, Err(LintError::Refused(m)) if m.contains(MAIN)), "{got:?}");
     }
 
     #[test_id(tlnujuk)]
