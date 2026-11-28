@@ -302,7 +302,11 @@ fn audits<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, Strin
         }
         rows.push(Value::Object(row));
     }
-    Ok(json!({ "rows": rows }).to_string())
+    let mut answer = json!({ "rows": rows });
+    if let Some(next) = read.next {
+        answer["next"] = next.into();
+    }
+    Ok(answer.to_string())
 }
 
 /// `dwell [--window S] [--landed-after T] [--now T]`: every waiting record's state, repo and
