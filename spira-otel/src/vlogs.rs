@@ -200,6 +200,25 @@ fn encode(s: &str) -> String {
 /// One group of a `stats by` count: its field values and the count.
 pub type Group = (BTreeMap<String, String>, u64);
 
+/// One group of a [`Logs::stats_by`] read: its `by` field values, and each requested stat by
+/// name. `None` is a stat the store omitted, as it does a `max` over no values.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stats {
+    pub keys: BTreeMap<String, String>,
+    values: BTreeMap<String, Option<u64>>,
+}
+
+impl Stats {
+    pub fn get(&self, name: &str) -> Option<u64> {
+        self.values.get(name).copied().flatten()
+    }
+
+    /// A stat every group must carry, such as a count.
+    pub fn require(&self, name: &str) -> Result<u64, LogsError> {
+        self.get(name).ok_or_else(|| LogsError::Malformed(format!("row has no {name}")))
+    }
+}
+
 /// The one LogsQL reader: `filter` is the part of a query before the `| stats`.
 pub struct Logs {
     addr: String,
@@ -240,6 +259,23 @@ impl Logs {
         for row in self.rows(&format!("{filter} | stats by ({}) count() as n", by.join(", ")))? {
             let keys = by.iter().map(|k| (k.to_string(), row.get(*k).and_then(Value::as_str).unwrap_or("").to_string())).collect();
             out.push((keys, number(&row, "n")?));
+        }
+        Ok(out)
+    }
+
+    /// Each of `stats`, a (stats function, result name) pair, per combination of the fields
+    /// `by` among records matching `filter`.
+    pub fn stats_by(&self, filter: &str, by: &[&str], stats: &[(&str, &str)]) -> Result<Vec<Stats>, LogsError> {
+        let funcs: Vec<String> = stats.iter().map(|(func, name)| format!("{func} {name}")).collect();
+        let mut out = vec![];
+        for row in self.rows(&format!("{filter} | stats by ({}) {}", by.join(", "), funcs.join(", ")))? {
+            let keys = by.iter().map(|k| (k.to_string(), row.get(*k).and_then(Value::as_str).unwrap_or("").to_string())).collect();
+            let mut values = BTreeMap::new();
+            for (_, name) in stats {
+                let absent = row.get(name).is_none_or(|v| v.as_str().is_some_and(|s| s.is_empty() || s == "NaN"));
+                values.insert(name.to_string(), if absent { None } else { Some(number(&row, name)?) });
+            }
+            out.push(Stats { keys, values });
         }
         Ok(out)
     }
@@ -464,6 +500,21 @@ mod tests {
     }
 
     use std::net::TcpListener;
+
+    #[test_id(tcc0li8)]
+    #[test]
+    fn grouped_stats_read_each_named_value_and_tell_an_omitted_one_from_a_garbled_one() {
+        let f = FakeLogs::start();
+        f.answer("good", Script { status: 200, body: "{\"m\":\"show\",\"n\":\"3\",\"hi\":\"NaN\"}\n{\"m\":\"list\",\"n\":\"1\",\"hi\":\"9\"}\n".into(), hang: false });
+        f.answer("garbled", Script { status: 200, body: "{\"m\":\"show\",\"n\":\"x\"}\n".into(), hang: false });
+        let logs = Logs::new(&f.url()).unwrap();
+        let stats = [("count()", "n"), ("max(a) if (b:*)", "hi")];
+        let got = logs.stats_by("good", &["m"], &stats).unwrap();
+        assert_eq!(f.queries()[0], "good | stats by (m) count() n, max(a) if (b:*) hi");
+        assert_eq!(got.iter().map(|g| (g.keys["m"].as_str(), g.get("n"), g.get("hi"))).collect::<Vec<_>>(), [("show", Some(3), None), ("list", Some(1), Some(9))]);
+        assert!(matches!(got[0].require("hi"), Err(LogsError::Malformed(_))));
+        assert!(matches!(logs.stats_by("garbled", &["m"], &stats), Err(LogsError::Malformed(_))));
+    }
 
     #[test_id(t3epc80)]
     #[test]

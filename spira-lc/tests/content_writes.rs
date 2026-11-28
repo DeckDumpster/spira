@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
+use spira_otel::fixture::{spans_in, Collector, Post};
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
 
 /// The tool on this process's PATH, else on the harness's declared tool path (`spira.path`) or
@@ -132,7 +132,7 @@ struct Lc {
     toml: PathBuf,
     home: PathBuf,
     dir: PathBuf,
-    otel: PathBuf,
+    collector: Collector,
     bd_log: PathBuf,
     bd: String,
     child: Option<Child>,
@@ -182,10 +182,11 @@ impl Lc {
                 ("SPIRA_MAIL_KINDS", &kinds),
         ];
         declared.extend_from_slice(keys);
+        let collector = Collector::start();
+        declared.push(("SPIRA_OTEL_COLLECTOR_ENDPOINT", collector.addr()));
         let toml = spira_config::process::fixture_toml(&dir, &declared);
         let home = spira_config::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
-        let otel = spira_otel::dir_of(&run);
-        Lc { toml, home, dir, otel, bd_log, bd: bd_program, child: None, runner: None, cut: Default::default() }
+        Lc { toml, home, dir, collector, bd_log, bd: bd_program, child: None, runner: None, cut: Default::default() }
     }
 
     fn command(&self) -> Command {
@@ -261,60 +262,43 @@ impl Lc {
         said
     }
 
-    /// The children (count, programs) of every span the service has written for `method`.
+    /// The children counted by every span of `method` among `posts`.
+    fn children_in(posts: &[Post], method: &str) -> Vec<i64> {
+        spans_in(posts)
+            .iter()
+            .filter(|span| span.name == method)
+            .map(|span| match span.attributes.iter().find(|a| a.key == "spira.children").and_then(|a| a.value.clone()).and_then(|v| v.value) {
+                Some(Value::IntValue(n)) => n,
+                _ => 0,
+            })
+            .collect()
+    }
+
     fn spans(&self, method: &str) -> Vec<i64> {
-        let mut found = vec![];
-        for entry in std::fs::read_dir(&self.otel).into_iter().flatten().flatten() {
-            for line in std::fs::read_to_string(entry.path()).unwrap_or_default().lines() {
-                let Ok(r) = serde_json::from_str::<ExportTraceServiceRequest>(line) else { continue };
-                for span in r.resource_spans.iter().flat_map(|r| &r.scope_spans).flat_map(|s| &s.spans) {
-                    if span.name != method {
-                        continue;
-                    }
-                    let children = span.attributes.iter().find(|a| a.key == "spira.children").and_then(|a| a.value.clone()).and_then(|v| v.value);
-                    found.push(match children {
-                        Some(Value::IntValue(n)) => n,
-                        _ => 0,
-                    });
-                }
-            }
-        }
-        found
+        Self::children_in(&self.collector.posts(), method)
+    }
+
+    /// The most children among the spans of `method` past the first `before`, once there is one.
+    fn next_children(&self, method: &str, before: usize, args: &[&str]) -> i64 {
+        assert!(self.collector.wait_until(|p| Self::children_in(p, method).len() > before, Duration::from_secs(30)), "no {method} span after {args:?}");
+        self.spans(method)[before..].iter().copied().max().unwrap_or(0)
     }
 
     /// The `spira.children` of the span the request `args` makes.
     fn children_of(&self, method: &str, args: &[&str], stdin: Option<&str>) -> (String, i64) {
         let before = self.spans(method).len();
         let (rc, said) = self.settled(args, stdin);
-        let mut polls = 0;
-        loop {
-            let now = self.spans(method);
-            if now.len() > before {
-                let children = now[before..].iter().copied().max().unwrap_or(0);
-                let (rc, out) = self.finished(rc, said);
-                assert!(rc == 0, "{args:?}: {out}");
-                return (out, children);
-            }
-            polls += 1;
-            assert!(polls < 3_000, "no {method} span after {args:?}");
-            std::thread::sleep(Duration::from_millis(10)); // clock-safe: polls the span file, the signal waited on
-        }
+        let children = self.next_children(method, before, args);
+        let (rc, out) = self.finished(rc, said);
+        assert!(rc == 0, "{args:?}: {out}");
+        (out, children)
     }
 
     /// A request the service refuses: its exit code, its answer, and the children its span counted.
     fn refused_of(&self, method: &str, args: &[&str], stdin: Option<&str>) -> (i32, String, i64) {
         let before = self.spans(method).len();
         let (rc, out) = self.settled(args, stdin);
-        let mut polls = 0;
-        loop {
-            let now = self.spans(method);
-            if now.len() > before {
-                return (rc, out, now[before..].iter().copied().max().unwrap_or(0));
-            }
-            polls += 1;
-            assert!(polls < 3_000, "no {method} span after {args:?}");
-            std::thread::sleep(Duration::from_millis(10)); // clock-safe: polls the span file, the signal waited on
-        }
+        (rc, out, self.next_children(method, before, args))
     }
 
     /// The bead as `content show --json` prints it, once its own span is written, so a later

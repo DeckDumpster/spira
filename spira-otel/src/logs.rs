@@ -1,6 +1,5 @@
 //! One OTLP log record per unit of work, appended as one `ExportLogsServiceRequest` JSON line to
-//! `<dir>/<service>.logs.<UTC date>.jsonl` beside the span files, so the same `otlpjsonfile`
-//! receiver ships it. The attributes are an open set the caller supplies; nothing here names a key.
+//! `<dir>/<service>.logs.<UTC date>.jsonl`, which the Collector's `otlpjsonfile` receiver ships. The attributes are an open set the caller supplies; nothing here names a key.
 
 use std::fs;
 use std::path::PathBuf;
@@ -158,21 +157,30 @@ impl LogSink {
 
     pub fn request(&self, body: &str, attrs: &[(String, Attr)], now: SystemTime) -> ExportLogsServiceRequest {
         let t = now.duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_nanos() as u64;
-        let record = LogRecord {
-            time_unix_nano: t,
-            observed_time_unix_nano: t,
-            severity_number: SeverityNumber::Info as i32,
-            body: Some(any(Value::StringValue(body.into()))),
-            attributes: attrs.iter().map(|(k, v)| KeyValue { key: k.clone(), value: Some(any(v.value())) }).collect(),
+        let attributes = attrs.iter().map(|(k, v)| KeyValue { key: k.clone(), value: Some(any(v.value())) }).collect();
+        export(&self.service, vec![record(body, attributes, t)])
+    }
+}
+
+/// One info record at `time_unix_nano`.
+pub(crate) fn record(body: &str, attributes: Vec<KeyValue>, time_unix_nano: u64) -> LogRecord {
+    LogRecord {
+        time_unix_nano,
+        observed_time_unix_nano: time_unix_nano,
+        severity_number: SeverityNumber::Info as i32,
+        body: Some(any(Value::StringValue(body.into()))),
+        attributes,
+        ..Default::default()
+    }
+}
+
+pub(crate) fn export(service: &str, log_records: Vec<LogRecord>) -> ExportLogsServiceRequest {
+    ExportLogsServiceRequest {
+        resource_logs: vec![ResourceLogs {
+            resource: Some(Resource { attributes: vec![crate::kv_str("service.name", service)], ..Default::default() }),
+            scope_logs: vec![ScopeLogs { scope: Some(InstrumentationScope { name: "spira-otel".into(), ..Default::default() }), log_records, ..Default::default() }],
             ..Default::default()
-        };
-        ExportLogsServiceRequest {
-            resource_logs: vec![ResourceLogs {
-                resource: Some(Resource { attributes: vec![crate::kv_str("service.name", &self.service)], ..Default::default() }),
-                scope_logs: vec![ScopeLogs { scope: Some(InstrumentationScope { name: "spira-otel".into(), ..Default::default() }), log_records: vec![record], ..Default::default() }],
-                ..Default::default()
-            }],
-        }
+        }],
     }
 }
 
@@ -258,7 +266,7 @@ mod tests {
             }
         }
         let tail: Vec<_> = blocks.iter().filter(|(n, _)| !n.is_empty()).collect();
-        assert_eq!(tail.len(), 2, "{tail:?}");
+        assert_eq!(tail.len(), 1, "{tail:?}");
         assert!(tail.iter().all(|(_, ok)| *ok), "{tail:?}");
     }
 

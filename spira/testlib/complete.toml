@@ -506,6 +506,7 @@ lanes_max_live = 2
 law_book = "wiki/law"
 ffx_vocabulary_mode = "enforce"
 otel_keep_days = 14
+otel_collector_endpoint = "127.0.0.1:19318"
 metrics_flush_minutes = 60
 otel_day_max_mb = 2048
 results_keep_days = 7

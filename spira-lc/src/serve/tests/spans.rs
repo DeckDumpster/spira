@@ -4,16 +4,12 @@ use super::*;
 #[test]
 fn a_served_request_writes_one_span_and_a_dead_sink_changes_nothing() {
     let _env = testkit::env_read();
-    let dir = testkit::TempDir::new("lc-serve-otel");
-    let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
+    let spans = Spans::new();
     let req = "[\"no-such-verb\"]\n";
-    let (reply, code) = ask(Some(&sink), req);
-    let files: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().collect();
-    assert_eq!(files.len(), 1);
-    let text = std::fs::read_to_string(files[0].path()).unwrap();
-    assert_eq!(text.lines().count(), 1, "exactly one span per request");
-    let r: opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest = serde_json::from_str(text.trim()).unwrap();
-    let span = &r.resource_spans[0].scope_spans[0].spans[0];
+    let (reply, code) = ask(Some(&spans.sink), req);
+    let got = spans.received();
+    assert_eq!(got.len(), 1, "exactly one span per request");
+    let span = &got[0];
     assert_eq!(span.name, "no-such-verb");
     let body_len = reply.split_once('\n').unwrap().1.len() as i64;
     assert!(span.attributes.iter().any(|a| a.key == "spira.queue_wait_us"), "queue wait is recorded on every span");
@@ -26,18 +22,36 @@ fn a_served_request_writes_one_span_and_a_dead_sink_changes_nothing() {
     let size = span.attributes.iter().find(|a| a.key == "rpc.response.size").unwrap();
     assert_eq!(format!("{:?}", size.value), format!("Some(AnyValue {{ value: Some(IntValue({body_len})) }})"));
 
-    let blocked = dir.join("spira-lc.1970-01-01.jsonl");
-    std::fs::write(&blocked, "x").unwrap();
-    let dead = spira_otel::Sink::new(blocked.join("sub"), "spira-lc", 14);
-    let before = spira_otel::dropped();
+    let gone = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = gone.local_addr().unwrap().to_string();
+    drop(gone);
+    let dead = spira_otel::Sink::buffered(&addr, "spira-lc");
     let (reply2, code2) = ask(Some(&dead), req);
     assert_eq!((reply2, code2), (reply, code), "a failing sink leaves the reply and exit code unchanged");
-    assert_eq!(spira_otel::dropped(), before + 1);
+    dead.flush();
+    assert_eq!(dead.dropped_here(), 1);
+}
+
+/// A sink pushing to its own fixture Collector.
+struct Spans {
+    collector: spira_otel::fixture::Collector,
+    sink: spira_otel::Sink,
+}
+
+impl Spans {
+    fn new() -> Spans {
+        let collector = spira_otel::fixture::Collector::start();
+        let sink = spira_otel::Sink::buffered(collector.addr(), "spira-lc");
+        Spans { collector, sink }
+    }
+
+    fn received(&self) -> Vec<opentelemetry_proto::tonic::trace::v1::Span> {
+        self.sink.flush();
+        self.collector.spans()
+    }
 }
 
 fn span_of(snapshot: &state_store::phases::Snapshot) -> opentelemetry_proto::tonic::trace::v1::Span {
-    let dir = testkit::TempDir::new("lc-serve-phases");
-    let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
     let now = std::time::SystemTime::now();
     let call = spira_otel::Call {
         method: "renew",
@@ -69,11 +83,7 @@ fn span_of(snapshot: &state_store::phases::Snapshot) -> opentelemetry_proto::ton
         programs: &snapshot.programs,
         subverb: None,
     };
-    super::record_span(Some(&sink), &call);
-    let file = std::fs::read_dir(&dir).unwrap().flatten().next().unwrap();
-    let text = std::fs::read_to_string(file.path()).unwrap();
-    let r: opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest = serde_json::from_str(text.trim()).unwrap();
-    r.resource_spans[0].scope_spans[0].spans[0].clone()
+    spira_otel::span_request("spira-lc", &call).resource_spans[0].scope_spans[0].spans[0].clone()
 }
 
 #[test_id(t0nfoaq)]
@@ -151,13 +161,10 @@ fn a_span_names_its_longest_content_statement() {
 fn a_request_that_names_its_task_carries_it_on_the_span() {
     let _env = testkit::env_read();
     use opentelemetry_proto::tonic::common::v1::any_value::Value;
-    let dir = testkit::TempDir::new("lc-serve-task");
-    let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
-    ask(Some(&sink), "{\"argv\":[\"no-such-verb\"],\"task\":\"t\"}\n");
-    ask(Some(&sink), "[\"no-such-verb\"]\n");
-    let file = std::fs::read_dir(&dir).unwrap().flatten().next().unwrap();
-    let text = std::fs::read_to_string(file.path()).unwrap();
-    let spans: Vec<_> = text.lines().map(|l| serde_json::from_str::<opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest>(l).unwrap().resource_spans[0].scope_spans[0].spans[0].clone()).collect();
+    let spans = Spans::new();
+    ask(Some(&spans.sink), "{\"argv\":[\"no-such-verb\"],\"task\":\"t\"}\n");
+    ask(Some(&spans.sink), "[\"no-such-verb\"]\n");
+    let spans = spans.received();
     let task = |i: usize| spans[i].attributes.iter().find(|a| a.key == "spira.task").and_then(|a| a.value.clone()).and_then(|v| v.value);
     assert!(matches!(task(0), Some(Value::StringValue(s)) if s == "t"));
     assert!(task(1).is_none());
@@ -232,15 +239,9 @@ fn a_request_that_touched_no_store_carries_no_phase_attribute() {
     assert!(span.attributes.iter().any(|a| a.key == "spira.queue_wait_us"));
 }
 
-fn span_attr(dir: &testkit::TempDir, verb: &str, key: &str) -> Option<Option<i64>> {
+fn span_attr(spans: &Spans, verb: &str, key: &str) -> Option<Option<i64>> {
     use opentelemetry_proto::tonic::common::v1::any_value::Value;
-    let file = std::fs::read_dir(dir).unwrap().flatten().next().expect("a span file");
-    let text = std::fs::read_to_string(file.path()).unwrap();
-    let span = text
-        .lines()
-        .map(|l| serde_json::from_str::<opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest>(l).unwrap().resource_spans[0].scope_spans[0].spans[0].clone())
-        .rfind(|s| s.name == verb)
-        .expect("a span for the verb");
+    let span = spans.received().into_iter().rfind(|s| s.name == verb).expect("a span for the verb");
     span.attributes.iter().find(|a| a.key == key).map(|a| match a.value.as_ref()?.value.as_ref()? {
         Value::IntValue(n) => Some(*n),
         _ => None,
@@ -251,37 +252,24 @@ fn span_attr(dir: &testkit::TempDir, verb: &str, key: &str) -> Option<Option<i64
 #[test]
 fn a_span_records_the_cutoff_only_for_a_call_the_cutoff_abandoned() {
     let _env = testkit::env_read();
-    let dir = testkit::TempDir::new("lc-serve-cut");
-    let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
+    let spans = Spans::new();
     let r = rig(false, three_seconds());
-    let _ = send_spanned(&r.door, Some(&sink), &["show", "sp-none"], None, None);
-    assert!(span_attr(&dir, "show", "spira.answer_us").is_some(), "an in-time call records its answer time");
-    assert_eq!(span_attr(&dir, "show", "spira.deadline_cut_ms"), None, "an in-time call records no cutoff");
+    let _ = send_spanned(&r.door, Some(&spans.sink), &["show", "sp-none"], None, None);
+    assert!(span_attr(&spans, "show", "spira.answer_us").is_some(), "an in-time call records its answer time");
+    assert_eq!(span_attr(&spans, "show", "spira.deadline_cut_ms"), None, "an in-time call records no cutoff");
 
     let parked = rig(true, fifty_ms());
-    let cut = send_spanned(&parked.door, Some(&sink), &["content", "note", "sp-a", "x"], None, None);
+    let cut = send_spanned(&parked.door, Some(&spans.sink), &["content", "note", "sp-a", "x"], None, None);
     assert_eq!(cut, (2, "cannot tell: deadline".to_string()));
-    assert_eq!(span_attr(&dir, "content", "spira.deadline_cut_ms"), Some(Some(50)));
-    assert!(span_attr(&dir, "content", "spira.answer_us").is_some());
+    assert_eq!(span_attr(&spans, "content", "spira.deadline_cut_ms"), Some(Some(50)));
+    assert!(span_attr(&spans, "content", "spira.answer_us").is_some());
     parked.notes.release();
 
     let ledgered = rig(true, fifty_ms());
-    let cut = send_spanned(&ledgered.door, Some(&sink), &["content", "note", "sp-b", "y"], None, Some("req-cut"));
+    let cut = send_spanned(&ledgered.door, Some(&spans.sink), &["content", "note", "sp-b", "y"], None, Some("req-cut"));
     assert_eq!(cut, (2, "cannot tell: deadline".to_string()));
-    assert_eq!(span_attr(&dir, "content", "spira.deadline_cut_ms"), Some(Some(50)), "a write under a request id is cut the same way");
+    assert_eq!(span_attr(&spans, "content", "spira.deadline_cut_ms"), Some(Some(50)), "a write under a request id is cut the same way");
     ledgered.notes.release();
-}
-
-fn spans_of(dir: &testkit::TempDir) -> Vec<opentelemetry_proto::tonic::trace::v1::Span> {
-    let file = std::fs::read_dir(dir).unwrap().flatten().next().expect("a span file");
-    let text = std::fs::read_to_string(file.path()).unwrap();
-    text.lines().map(|l| serde_json::from_str::<opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest>(l).unwrap().resource_spans[0].scope_spans[0].spans[0].clone()).collect()
-}
-
-fn only_span(dir: &testkit::TempDir) -> opentelemetry_proto::tonic::trace::v1::Span {
-    let mut spans = spans_of(dir);
-    assert_eq!(spans.len(), 1, "one span");
-    spans.remove(0)
 }
 
 fn serve_value(span: &opentelemetry_proto::tonic::trace::v1::Span, key: &str) -> opentelemetry_proto::tonic::common::v1::any_value::Value {
@@ -292,17 +280,16 @@ fn serve_value(span: &opentelemetry_proto::tonic::trace::v1::Span, key: &str) ->
 #[test]
 fn a_span_cut_at_its_deadline_says_where_its_time_went() {
     let _env = testkit::env_read();
-    let dir = testkit::TempDir::new("lc-serve-stages");
-    let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
+    let sink = Spans::new();
     let parked = rig(true, fifty_ms());
-    let cut = send_spanned(&parked.door, Some(&sink), &["content", "note", "sp-a", "x"], None, None);
+    let cut = send_spanned(&parked.door, Some(&sink.sink), &["content", "note", "sp-a", "x"], None, None);
     assert_eq!(cut, (2, "cannot tell: deadline".to_string()));
     parked.notes.release();
     let ledgered = rig(true, fifty_ms());
-    let cut = send_spanned(&ledgered.door, Some(&sink), &["content", "note", "sp-b", "y"], None, Some("req-stages"));
+    let cut = send_spanned(&ledgered.door, Some(&sink.sink), &["content", "note", "sp-b", "y"], None, Some("req-stages"));
     assert_eq!(cut, (2, "cannot tell: deadline".to_string()));
     ledgered.notes.release();
-    let spans = spans_of(&dir);
+    let spans = sink.received();
     assert_eq!(spans.len(), 2);
     for span in &spans {
         check_stages(span);
@@ -326,11 +313,12 @@ fn check_stages(span: &opentelemetry_proto::tonic::trace::v1::Span) {
 fn a_call_answered_in_time_writes_cut_false() {
     let _env = testkit::env_read();
     use opentelemetry_proto::tonic::common::v1::any_value::Value;
-    let dir = testkit::TempDir::new("lc-serve-stages-ok");
-    let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
+    let spans = Spans::new();
     let r = rig(false, three_seconds());
-    let _ = send_spanned(&r.door, Some(&sink), &["show", "sp-none"], None, None);
-    let span = only_span(&dir);
+    let _ = send_spanned(&r.door, Some(&spans.sink), &["show", "sp-none"], None, None);
+    let mut got = spans.received();
+    assert_eq!(got.len(), 1, "one span");
+    let span = got.remove(0);
     assert_eq!(serve_value(&span, "spira.serve.cut"), Value::BoolValue(false));
 }
 
@@ -413,4 +401,29 @@ fn a_request_logs_its_own_verb_and_caller_for_a_query_made_before_any_dispatch()
     let who = crate::slow::caller_of_pid(me);
     let fields: Vec<(String, String)> = got.lines().map(|l| (l.split('\t').nth(1).unwrap().to_string(), l.split('\t').nth(2).unwrap().to_string())).collect();
     assert_eq!(fields, [("list".to_string(), who.clone()), ("show".to_string(), who)], "{got}");
+}
+
+#[test_id(tcezk56)]
+#[test]
+fn the_metrics_pass_pushes_the_dropped_span_count_for_spira_lc() {
+    let _env = testkit::env_read();
+    let store = spira_otel::fixture::Sink::start();
+    let metrics = spira_otel::metrics::MetricsSink::new(Some(store.addr()), "spira-lc", std::time::Duration::from_secs(30));
+    let before = spira_otel::dropped();
+    super::metrics_pass(&metrics, &mut super::MetricsPushed::default());
+    let seen = store.received(std::time::Duration::from_secs(30));
+    let dropped = seen.iter().find(|s| s.name == "spira_otel_spans_dropped_total").unwrap_or_else(|| panic!("{seen:?}"));
+    assert_eq!(dropped.label("service"), Some("spira-lc"));
+    assert!(dropped.value >= before as f64 && dropped.value <= spira_otel::dropped() as f64, "the cumulative count: {}", dropped.value);
+}
+
+#[test_id(tx4qwbh)]
+#[test]
+fn lc_serve_refuses_a_missing_or_empty_collector_endpoint_naming_the_key() {
+    let _env = testkit::env_read();
+    for read in [Err("missing".to_string()), Ok(String::new()), Ok("  ".to_string())] {
+        let e = super::collector_endpoint(|_| read.clone()).unwrap_err();
+        assert!(e.contains("spira.otel_collector_endpoint"), "{e}");
+    }
+    assert_eq!(super::collector_endpoint(|k| Ok(format!("{k}:1"))), Ok("SPIRA_OTEL_COLLECTOR_ENDPOINT:1".to_string()));
 }

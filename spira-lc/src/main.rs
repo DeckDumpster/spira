@@ -84,15 +84,13 @@ use serde_json::Value;
 use spira_lc::{flag, goodput, CANNOT_TELL, REFUSED};
 
 fn run_deadline(verb: &str, args: &[String]) -> (i32, String) {
-    let run = match spira_config::process::cfg("SPIRA_RUN") {
-        Ok(run) => run,
+    let url = match spira_config::process::cfg("SPIRA_VICTORIALOGS_URL") {
+        Ok(url) => url,
         Err(e) => return (CANNOT_TELL, format!("spira-lc deadline: {e}")),
     };
-    let dir = spira_otel::dir_of(std::path::Path::new(&run));
-    let now = std::time::SystemTime::now();
     match (verb, args.split_first()) {
-        ("deadline-check", _) => deadline::deadline_check(args, &dir, now),
-        ("deadline", Some((sub, rest))) if sub == "lower" => deadline::deadline_lower(rest, &dir, now, &mut deadline::spira_config),
+        ("deadline-check", _) => deadline::deadline_check(args, &url),
+        ("deadline", Some((sub, rest))) if sub == "lower" => deadline::deadline_lower(rest, &url, &mut deadline::spira_config),
         _ => (CANNOT_TELL, "spira-lc deadline: usage: deadline-check (--ms N [--verb V] | --configured) | deadline lower --ms N --file F".to_string()),
     }
 }
