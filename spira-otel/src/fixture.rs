@@ -437,7 +437,7 @@ impl Collector {
                     break;
                 }
                 let Ok(mut c) = c else { continue };
-                c.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+                c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
                 let Some((head, body)) = read_http(&mut c) else { continue };
                 let path = head.split_whitespace().nth(1).unwrap_or("").to_string();
                 let content_type = head.lines().find_map(|l| l.to_lowercase().strip_prefix("content-type: ").map(str::to_string)).unwrap_or_default();
@@ -522,7 +522,9 @@ pub fn spans_in(posts: &[Post]) -> Vec<Span> {
 impl Drop for Collector {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
-        let _ = std::net::TcpStream::connect(&self.addr);
+        if let Ok(addr) = self.addr.parse() {
+            let _ = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(5));
+        }
         self.held.0.lock().unwrap().conns.clear();
     }
 }

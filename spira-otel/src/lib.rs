@@ -465,7 +465,7 @@ mod tests {
         }
         sink.flush();
         let posts = collector.posts();
-        assert!(!posts.is_empty() && posts.len() % 2 == 0, "{} posts", posts.len());
+        assert!(!posts.is_empty() && posts.len().is_multiple_of(2), "{} posts", posts.len());
         for pair in posts.chunks(2) {
             assert_eq!((pair[0].path.as_str(), pair[1].path.as_str()), (TRACES_PATH, LOGS_PATH));
             assert!(pair.iter().all(|p| p.content_type == "application/x-protobuf"), "{pair:?}");
