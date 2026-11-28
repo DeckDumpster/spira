@@ -60,6 +60,10 @@ fn watch_door(held: Duration) -> Arc<super::Door> {
         std::thread::sleep(held); // clock-safe: the deadline under test is a real recv_timeout; the sleep only outlasts it
         crate::callers::Answer { code: 0, stdout: "idle".into(), stderr: String::new(), cert_log: None, owed: Default::default(), rejudge: false }
     });
+    door_of(work)
+}
+
+fn door_of(work: super::Work) -> Arc<super::Door> {
     let deadlines = super::Deadlines { default: Duration::from_millis(1000) };
     Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, personas: Default::default(), deadlines })
 }
@@ -68,9 +72,17 @@ fn watch_door(held: Duration) -> Arc<super::Door> {
 #[test]
 fn a_watch_holding_two_seconds_is_not_cut_by_a_one_second_request_cutoff() {
     let _env = testkit::env_read();
-    let door = watch_door(Duration::from_secs(2));
+    let (bound_tx, bound_rx) = std::sync::mpsc::channel();
+    let work: super::Work = Arc::new(move |_| {
+        let _ = bound_tx.send(state_store::phases::deadline());
+        crate::callers::Answer { code: 0, stdout: "idle".into(), stderr: String::new(), cert_log: None, owed: Default::default(), rejudge: false }
+    });
+    let door = door_of(work);
+    let before = std::time::Instant::now();
     let (code, out) = send(&door, &["watch", "p/", "--from-rev", "0", "--wait-ms", "2000"], None);
     assert_eq!((code, out.as_str()), (0, "idle"));
+    let bound = bound_rx.recv().unwrap().expect("the work runs under a bound deadline");
+    assert!(bound >= before + Duration::from_millis(2500), "the watch is cut at its hold plus margin, not the default: {:?}", bound - before);
 }
 
 #[test_id(tqvecu8)]
