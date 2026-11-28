@@ -7,6 +7,7 @@
 extern crate spira_test_id;
 
 use spira_runtime::tasks::g::cockpit_tier_5s as t5;
+use spira_runtime::tasks::g::cockpit_tier_600s as t600;
 use spira_runtime::tasks::g::cockpit_tier_60s as t60;
 use std::collections::{BTreeMap, VecDeque};
 use std::os::unix::net::UnixListener;
@@ -39,6 +40,8 @@ impl Store {
             _ => self.asked.push(argv.join(" ")),
         }
         match (word(0), word(1)) {
+            ("list", _) if !argv.iter().any(|a| a == "--batches") => rows(argv),
+            ("content", "list" | "show") => content(),
             ("list-asks", _) => Value::Array(self.asks.clone()).to_string(),
             ("claimable", _) => json!({ "rev": 5, "cannot_tell": 0, "beads": [] }).to_string(),
             ("section", "snapshot") => json!({ "sections": [], "intents": [], "knobs": {}, "pass": null, "list_rev": 5 }).to_string(),
@@ -99,6 +102,10 @@ fn rig(name: &str) -> Rig {
 }
 
 impl Rig {
+    fn client(&self) -> LcClient {
+        LcClient::socket(&self.fx.world.lc_socket)
+    }
+
     /// One observe of a tier, every probe given a minute.
     fn observe(&self, probes: &[(&str, u64)]) -> Snapshot {
         let probes: Vec<(&str, u64)> = probes.iter().map(|(n, _)| (*n, 60_000)).collect();
@@ -136,7 +143,31 @@ impl Rig {
 
 /// `env`'s lines but the keys that read the clock.
 fn but_clock(env: &str) -> Vec<&str> {
-    env.lines().filter(|l| l.split_once('=').is_none_or(|(k, _)| k != "SP_AT" && !k.ends_with("_AGE") && !k.ends_with("_AGE_S") && !k.ends_with("_AGE_M"))).collect()
+    env.lines().filter(|l| l.split_once('=').is_none_or(|(k, _)| k != "SP_AT" && !k.starts_with("_PROBE_AT_") && !k.ends_with("_AGE") && !k.ends_with("_AGE_S") && !k.ends_with("_AGE_M"))).collect()
+}
+
+/// Four beads, one of them landed, and a content list that also names one with no row at all.
+fn rows(argv: &[String]) -> String {
+    let named = |flag: &str| argv.iter().position(|a| a == flag).map(|i| argv[i + 1].as_str());
+    let row = |id: &str, state: &str, holds: &str| {
+        let view = matches!(state, "READY" | "REWORK").then(|| json!({ "verdict": "claimable", "blocker": null, "runes": ["builder"] }));
+        json!({ "bead_id": id, "state": state, "holds": holds, "express": "0", "repo": "spira", "title": id, "priority": 1, "updated_at": 100, "since": 100, "claim_view": view })
+    };
+    let all = [row("sp-a", "READY", "[]"), row("sp-b", "WORKING", "[]"), row("sp-c", "CERTIFIED", "[\"poison\"]"), row("sp-d", "LANDED", "[]")];
+    let kept: Vec<&Value> = all
+        .iter()
+        .filter(|r| named("--ids").is_none_or(|ids| ids.split(',').any(|i| r["bead_id"] == i)))
+        .filter(|r| named("--state").is_none_or(|states| states.split(',').any(|s| r["state"] == s)))
+        .filter(|r| named("--hold").is_none_or(|h| r["holds"].as_str().is_some_and(|held| held.contains(h))))
+        .filter(|r| !argv.iter().any(|a| a == "--live") || r["state"] != "LANDED")
+        .filter(|r| !argv.iter().any(|a| a == "--express") || r["express"] == "1")
+        .collect();
+    serde_json::to_string(&kept).unwrap()
+}
+
+fn content() -> String {
+    let item = |id: &str| json!({ "id": id, "title": format!("title of {id}"), "priority": 1, "issue_type": "task", "status": "open", "labels": ["plan", "spira", "repo:spira"], "dependencies": [], "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z" });
+    Value::Array(["sp-a", "sp-b", "sp-c", "sp-d", "sp-epic"].map(item).to_vec()).to_string()
 }
 
 /// `decide`'s first publish of `snap`, as `run/cockpit.env` then reads.
@@ -156,6 +187,7 @@ struct Tier {
 }
 
 const MINUTE: Tier = Tier { probes: t60::PROBES, decide: t60::decide, publish: t60::PUBLISH };
+const TEN_MINUTES: Tier = Tier { probes: t600::PROBES, decide: t600::decide, publish: t600::PUBLISH };
 const FIVE: Tier = Tier { probes: t5::PROBES, decide: t5::decide, publish: t5::PUBLISH };
 
 /// An unwatched observe reads each of `verbs`; two watched ones publish the same, the second
@@ -183,7 +215,30 @@ fn a_second_observe_of_an_unchanged_store_sends_it_nothing_and_an_ask_change_rer
     quiet_after_one_read(&r, FIVE, &["list-asks", "mending list --live", "ops-view ops_recent"]);
     quiet_after_one_read(&r, MINUTE, &["list", "claimable", "list-asks", "ops-graph", "ops-view ops_dwell", "ops-view ops_edges", "plan repo-labels", "section snapshot", "content list"]);
 
+    // The slow tier also reads memories and gates, which no store key ends, so only its lifecycle
+    // and bead content reads are held to silence.
+    let held = |a: &String| ["list ", "content list", "content show"].iter().any(|v| a.starts_with(v));
+    r.observe(TEN_MINUTES.probes);
+    let reads = r.asked();
+    for verb in ["list --live", "content list"] {
+        assert!(reads.iter().any(|a| a.starts_with(verb)), "an unwatched slow observe reads {verb}: {reads:?}");
+    }
+    {
+        let _watching = r.watch();
+        r.observe(TEN_MINUTES.probes);
+        r.asked();
+        r.observe(TEN_MINUTES.probes);
+        assert_eq!(r.asked().into_iter().filter(held).collect::<Vec<_>>(), Vec::<String>::new(), "the slow tier re-reads no bead or row");
+        r.changed("planning/watermark");
+        r.observe(TEN_MINUTES.probes);
+        assert!(r.asked().iter().any(|a| a.starts_with("content list")), "a planning write ends the content it read");
+    }
+
     let _watching = r.watch();
+    let actor = spira_claim::store::Store { lc: r.client(), lc_bin: String::new(), timeout: Duration::from_secs(5), views: store_view::shared() };
+    actor.claim_view().unwrap();
+    actor.claim_view().unwrap();
+    assert_eq!(r.asked(), ["claimable", "claimable"], "a claim reader that acts is never answered from the held view");
     r.observe(MINUTE.probes);
     r.observe(FIVE.probes);
     r.asked();

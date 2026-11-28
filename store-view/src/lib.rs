@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use spira_store::lc_call::{LcClient, LcError, Reply, WATCH_HOLD_MS};
+use spira_store::lc_call::{LcClient, LcError, Reply, Transport, WATCH_HOLD_MS};
 use spira_store::lc_state::{self, BatchState, Row};
 
 /// How old a view's last confirmed revision may be before its reads refuse; a view the watch
@@ -363,6 +363,35 @@ pub fn held_reply(argv: &[&str]) -> Option<Result<Reply, LcError>> {
     }
     classes_of(argv)?;
     Some(p.answer(argv).map(|r| r.value))
+}
+
+/// Whether this process keeps a projection the store's watch holds current.
+pub fn watched() -> bool {
+    shared().is_some_and(|p| p.watching())
+}
+
+/// `inner`, but while this process is [`watched`] a read the projection holds is answered by it,
+/// exit code and error kind kept, and a stale view is an error, never a fall back to the store.
+/// For a caller that must hand a client on; every other request is `inner`'s, with its bounds.
+pub fn through_views(inner: LcClient) -> LcClient {
+    let socket = inner.is_socket();
+    LcClient::over(Arc::new(Views(inner)), socket)
+}
+
+struct Views(LcClient);
+
+impl Transport for Views {
+    fn exchange(&self, argv: &[String], stdin: Option<&str>, deadline: Duration) -> Result<Reply, String> {
+        self.exchange_kind(argv, stdin, deadline, deadline).map_err(String::from)
+    }
+
+    fn exchange_kind(&self, argv: &[String], stdin: Option<&str>, _deadline: Duration, _wait: Duration) -> Result<Reply, LcError> {
+        let words: Vec<&str> = argv.iter().map(String::as_str).collect();
+        match stdin {
+            Some(body) => self.0.call_stdin(argv, body),
+            None => watched().then(|| held_reply(&words)).flatten().unwrap_or_else(|| self.0.call(argv)),
+        }
+    }
 }
 
 /// The ids of a `list --ids a,b` that names nothing else.
@@ -1051,7 +1080,7 @@ mod tests {
         by_id: std::sync::atomic::AtomicUsize,
     }
 
-    impl spira_store::lc_call::Transport for Counting {
+    impl Transport for Counting {
         fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
             let ok = |out: String| Ok(Reply { code: 0, out, err: String::new(), read_ended: false });
             match argv[0].as_str() {
@@ -1084,7 +1113,7 @@ mod tests {
         let now = Arc::new(Mutex::new(Instant::now()));
         let clock = now.clone();
         struct Shared(Arc<Counting>);
-        impl spira_store::lc_call::Transport for Shared {
+        impl Transport for Shared {
             fn exchange(&self, argv: &[String], stdin: Option<&str>, d: Duration) -> Result<Reply, String> {
                 self.0.exchange(argv, stdin, d)
             }

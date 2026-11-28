@@ -383,7 +383,7 @@ fn live_base() -> Option<String> {
         }
         live_on(&crate::store::door().ok()?)
     };
-    if crate::store::watched() {
+    if store_view::watched() {
         return fetch();
     }
     base_read("live", pane_ttl(), fetch)
@@ -415,17 +415,28 @@ pub fn history_on(lc: &spira_store::lc_call::LcClient, labels: &str, window_secs
     content_on(lc, &args, 1).map(|s| json_only(&s).to_string())
 }
 
+/// How far a day window's start moves in one step. A start that moved every second would make
+/// each read a new one the views could not hold; the callers count within their own window.
+pub const WINDOW_STEP_SECS: i64 = 3_600;
+
+/// `now` at the last whole [`WINDOW_STEP_SECS`], so a window reaches no less far back than asked.
+pub fn window_end(now: i64) -> i64 {
+    now - now.rem_euclid(WINDOW_STEP_SECS)
+}
+
 /// Beads carrying `labels` updated inside `window_secs`, closed ones included, for the probes
-/// that count history. Read at most once per `SPIRA_HISTORY_READ_TTL` per label set and window.
+/// that count history. A watched process's views hold the read until a planning write; any other
+/// reads it at most once per `SPIRA_HISTORY_READ_TTL` per label set and window.
 pub fn history_beads(labels: &str, window_secs: i64) -> Option<String> {
     let ttl = ttl_from_env("SPIRA_HISTORY_READ_TTL", HISTORY_TTL_SECS);
     let key = format!("history-{}-{window_secs}", labels.replace(|c: char| !c.is_ascii_alphanumeric(), "_"));
-    let all = base_read(&key, ttl, || {
+    let fetch = || {
         if fixture_mode() {
             return read_json(&["list", "--all", "--closed-after", "1970-01-01", "--json"]);
         }
-        history_on(&crate::store::door().ok()?, labels, window_secs, now())
-    });
+        history_on(&crate::store::door().ok()?, labels, window_secs, window_end(now()))
+    };
+    let all = if store_view::watched() { fetch() } else { base_read(&key, ttl, fetch) };
     with_labels(merge_rows(&[live_base(), all]), labels)
 }
 

@@ -1185,7 +1185,7 @@ pub fn livelock_keys() -> Kv {
         eprintln!("cockpit-collect: {e}");
         std::process::exit(1)
     });
-    let week_ago = strand::timefmt::utc_stamp(strand::timefmt::now() - 7 * 86_400);
+    let week_ago = strand::timefmt::utc_stamp(io::window_end(strand::timefmt::now()) - 7 * 86_400);
     livelock_report(
         &strand::detectors::detect_livelocked(&cfg, &door),
         strand::detectors::invalid_closed_since(&cfg, &door, &week_ago).as_deref(),

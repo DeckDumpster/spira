@@ -100,7 +100,7 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
 
     // spira-claim's count, the one ready set (sp-7g5q6) — not a bd ready query of our own.
     let argv: Vec<String> = ["ready-count", "", "--express"].iter().map(|s| s.to_string()).collect();
-    let o = spira_claim::cli::dispatch_in(&argv, &mut std::io::empty(), &|k| std::env::var(k).ok());
+    let o = spira_claim::store::claim_view_from_views(|| spira_claim::cli::dispatch_in(&argv, &mut std::io::empty(), &|k| std::env::var(k).ok()));
     let enr = express_count(o.code, &o.out);
     push(&mut out, "SP_EXPRESS_N", enr.to_string());
 

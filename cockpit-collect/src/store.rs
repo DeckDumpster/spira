@@ -6,48 +6,19 @@ use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use spira_store::lc_call::{LcClient, LcError, Reply, Transport};
-use store_view::{Projection, Read};
+use spira_store::lc_call::{LcClient, LcError};
+use store_view::{through_views, Projection, Read};
 
 /// The configured client, bounded at `SPIRA_LC_TIMEOUT` for a program route; `None` when the
 /// key is unset or the route does not resolve.
 pub fn client() -> Option<LcClient> {
     let secs: u64 = spira_config::process::cfg("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty())?.trim().parse().ok()?;
-    Some(through_views(unwaiting(LcClient::configured().ok()?.within(Duration::from_secs(secs)))))
+    Some(unwaiting(LcClient::configured().ok()?.within(Duration::from_secs(secs))))
 }
 
-/// Whether this process keeps a projection the store's watch holds current.
-pub fn watched() -> bool {
-    store_view::shared().is_some_and(|p| p.watching())
-}
-
-/// `inner`, but a read the watched projection holds is answered by it: a stale view is an error,
-/// never a fall back to the store. Every other request, and every request of a process with no
-/// watch, is `inner`'s.
-pub fn through_views(inner: LcClient) -> LcClient {
-    let socket = inner.is_socket();
-    LcClient::over(Arc::new(Views(inner)), socket)
-}
-
-/// [`through_views`] of the configured client.
+/// [`store_view::through_views`] of the configured client.
 pub fn door() -> Result<LcClient, String> {
     LcClient::configured().map(through_views)
-}
-
-struct Views(LcClient);
-
-impl Transport for Views {
-    fn exchange(&self, argv: &[String], stdin: Option<&str>, deadline: Duration) -> Result<Reply, String> {
-        self.exchange_kind(argv, stdin, deadline, deadline).map_err(String::from)
-    }
-
-    fn exchange_kind(&self, argv: &[String], stdin: Option<&str>, _deadline: Duration, _wait: Duration) -> Result<Reply, LcError> {
-        let words: Vec<&str> = argv.iter().map(String::as_str).collect();
-        match stdin {
-            Some(body) => self.0.call_stdin(argv, body),
-            None => watched().then(|| store_view::held_reply(&words)).flatten().unwrap_or_else(|| self.0.call(argv)),
-        }
-    }
 }
 
 /// A probe never waits for an absent store: the read fails at once, and the probe serves what it last had.

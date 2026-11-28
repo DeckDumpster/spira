@@ -130,7 +130,7 @@ fn funnel_rows() -> Option<Vec<LcRow>> {
 /// One lifecycle read per `SPIRA_PANE_READ_TTL` across every probe process; a watched process
 /// shares nothing, its views being newer than any copy.
 pub fn shared_live(key: &str, fetch: impl FnOnce() -> Option<String>) -> Option<String> {
-    if crate::store::watched() {
+    if store_view::watched() {
         return fetch();
     }
     let ttl = io::ttl_from_env("SPIRA_PANE_READ_TTL", io::PANE_TTL_SECS);
@@ -158,7 +158,7 @@ pub fn verb_read(args: &[&str]) -> Result<String, Gone> {
 }
 
 fn verb_read_on(client: &spira_store::lc_call::LcClient, args: &[&str]) -> Result<String, Gone> {
-    crate::store::answer_kind(&crate::store::through_views(client.clone()), args)
+    crate::store::answer_kind(&store_view::through_views(client.clone()), args)
 }
 
 /// Ids per `list --ids` read: keeps each answer far under the 64 KiB a probe may draw.
@@ -190,7 +190,7 @@ fn forget_old_reads(prefix: &str) {
 }
 
 fn read_rows(key: &str, args: &[&str]) -> Option<HashMap<String, Row>> {
-    let held = if crate::store::watched() { store_view::held_read(args) } else { store_view::held_list(args) };
+    let held = if store_view::watched() { store_view::held_read(args) } else { store_view::held_list(args) };
     if let Some(held) = held {
         return lc_state::parse_rows(&held.ok()?).ok().map(lc_state::index);
     }

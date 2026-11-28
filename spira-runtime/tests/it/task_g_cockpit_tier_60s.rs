@@ -252,3 +252,14 @@ fn a_changed_title_a_new_row_a_read_flip_or_a_repo_change_publishes_journalled()
         assert!(published[0].journaled, "{second:?}");
     }
 }
+
+#[test_id(td394ne)]
+#[test]
+fn a_change_under_a_prefix_the_tiers_reads_depend_on_wakes_it_before_its_cadence() {
+    let s = spira_runtime::fixture::fixture();
+    let wake = spira_runtime::registrations(&s).into_iter().find(|r| r.name == NAME).and_then(|r| r.wake).expect("the tier declares its reads");
+    assert!(wake.polls, "its cadence stands for the clock-driven fields");
+    for key in ["lifecycle/sp-a", "readiness/sp-a", "batches/spira/b-1", "planning/watermark", "asks/sp-q", "edges/0000000001", "stays/READY/0000000001", "telemetry/sections/Lifecycle/all", "telemetry/reconciler/pass", "intents/Host/h", "knobs/k"] {
+        assert!(wake.reads.iter().any(|p| key.starts_with(p)), "{key} does not wake {NAME}: {:?}", wake.reads);
+    }
+}
