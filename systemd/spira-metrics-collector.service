@@ -1,5 +1,5 @@
 [Unit]
-Description=OpenTelemetry Collector — span files to spanmetrics
+Description=OpenTelemetry Collector — OTLP to spanmetrics and VictoriaLogs
 Documentation=file://@SPIRA_HOME@/metrics-stack.sh
 After=spira-metrics-vm.service spira-metrics-logs.service
 Wants=spira-metrics-vm.service spira-metrics-logs.service

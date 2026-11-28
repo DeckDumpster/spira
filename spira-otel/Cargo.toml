@@ -2,7 +2,7 @@
 name = "spira-otel"
 version = "1.0.0"
 edition = "2021"
-description = "spira-otel — one OTLP/JSON span per call, appended as a line to a daily-rotated file in the OpenTelemetry Collector file-exporter format."
+description = "spira-otel — one OTLP span per call, pushed to an OpenTelemetry Collector from a bounded queue; OTLP metrics and log records; a VictoriaLogs shipper and reader."
 
 [features]
 integration = ["system-paths/integration", "testkit/integration", "spira-test-id/integration", "ports/integration"]

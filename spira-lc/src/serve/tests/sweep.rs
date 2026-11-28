@@ -118,3 +118,225 @@ fn the_journal_sweep_finishes_over_many_steps_each_bounded() {
         assert!(asked <= 8, "{argv:?} asked the backend for {asked} keys");
     }
 }
+
+mod priced {
+    use runtime::ports::VirtualClock;
+    use state_store::{Backend, Config, Contract, Error, LogEntry, MemBackend, Object, Ports, Request, Result, Txn, Version, Write};
+    use std::sync::{Arc, Mutex};
+
+    const MAX_READ_MS: u64 = 100;
+
+    #[derive(Default)]
+    pub(super) struct Seen {
+        /// (revision asked for, head at that moment) of each `range` call.
+        pub ranges: Vec<(u64, u64)>,
+        /// (revision asked for, revision of the `range` before it) of each page's lookups.
+        pub lookups: Vec<(u64, u64)>,
+        /// Ends the `range` call that makes `ranges` this long.
+        pub refuse_range: Option<usize>,
+        /// Ends this `get_many` call, counting from the first.
+        pub refuse_get_many: Option<usize>,
+        get_manys: usize,
+    }
+
+    /// A backend charging a virtual clock 1 ms per KiB it reads, ending a read charged over the limit.
+    #[derive(Clone)]
+    pub(super) struct Priced {
+        inner: MemBackend,
+        clock: VirtualClock,
+        pub seen: Arc<Mutex<Seen>>,
+    }
+
+    fn ended() -> Error {
+        Error::Backend(format!("{} (100 ms; 0 ms at the gate)", state_store::READ_ENDED))
+    }
+
+    impl Priced {
+        fn charge(&self, bytes: usize) -> Result<()> {
+            let ms = bytes as u64 / 1_024;
+            self.clock.advance(ms);
+            if ms > MAX_READ_MS {
+                return Err(ended());
+            }
+            Ok(())
+        }
+    }
+
+    impl Backend for Priced {
+        fn head(&self) -> Result<u64> {
+            self.inner.head()
+        }
+        fn get(&self, key: &str, at: u64) -> Result<Option<Version>> {
+            self.inner.get(key, at)
+        }
+        fn get_many(&self, keys: &[&str], at: u64) -> Result<Vec<Option<Version>>> {
+            let refused = {
+                let mut seen = self.seen.lock().unwrap();
+                seen.get_manys += 1;
+                if let (false, Some((page, _))) = (keys.iter().any(|k| k.contains("journal-meta")), seen.ranges.last().copied()) {
+                    seen.lookups.push((at, page));
+                }
+                seen.refuse_get_many == Some(seen.get_manys)
+            };
+            if refused {
+                return Err(ended());
+            }
+            let v = self.inner.get_many(keys, at)?;
+            self.charge(v.iter().flatten().map(|v| v.value.len()).sum())?;
+            Ok(v)
+        }
+        fn range(&self, prefix: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<(String, Version)>> {
+            let head = self.inner.head()?;
+            let refused = {
+                let mut seen = self.seen.lock().unwrap();
+                seen.ranges.push((at, head));
+                seen.refuse_range == Some(seen.ranges.len())
+            };
+            if refused {
+                return Err(ended());
+            }
+            let rows = self.inner.range(prefix, after, limit, at)?;
+            self.charge(rows.iter().map(|r| r.1.value.len()).sum())?;
+            Ok(rows)
+        }
+        fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<String>> {
+            self.inner.owned_by(owner, after, limit, at)
+        }
+        fn due(&self, now: u64, limit: usize, at: u64) -> Result<Vec<String>> {
+            self.inner.due(now, limit, at)
+        }
+        fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64> {
+            self.inner.commit(expect, batch)
+        }
+        fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>> {
+            self.inner.log(from, max_mains)
+        }
+        fn compact(&self, rev: u64) -> Result<()> {
+            self.inner.compact(rev)
+        }
+    }
+
+    pub(super) struct Fixture {
+        pub store: crate::control::store::Store<Priced>,
+        pub raw: Contract<MemBackend>,
+        pub seen: Arc<Mutex<Seen>>,
+    }
+
+    impl Fixture {
+        /// `rows` closed effects, each padded by `pad` bytes of spec and named by its marker.
+        pub(super) fn closed_effects(rows: usize, pad: usize) -> Self {
+            let (inner, clock) = (MemBackend::new(), VirtualClock::new(1_000));
+            let config = || Config { min_lock_ttl_ms: 1_000 };
+            let raw = Contract::open(inner.clone(), Ports::virtual_clock(&clock), config()).unwrap();
+            let seen: Arc<Mutex<Seen>> = Default::default();
+            let backend = Priced { inner, clock: clock.clone(), seen: seen.clone() };
+            let store = crate::control::store::Store::new(Contract::open(backend, Ports::virtual_clock(&clock), config()).unwrap(), 1_000);
+            let mut writes = Vec::new();
+            for n in 0..rows {
+                let id = format!("r{n:05}");
+                let row = serde_json::json!({"task": "t", "ekey": format!("e{n:05}"), "request_id": id, "stream": "s", "spec": "x".repeat(pad), "requested_at": 1, "deadline_at": 2});
+                writes.push((Self::effect_key(n), row));
+                writes.push((crate::control::keys::runtime("resolved", &[&id]), serde_json::json!({})));
+            }
+            for (n, chunk) in writes.chunks(100).enumerate() {
+                let txn = chunk.iter().fold(Txn::new(), |t, (k, v)| t.put(k, Object::new(v.clone())));
+                assert!(raw.txn(&txn, &Request::new(&format!("seed-{n}"), "test", "seed")).unwrap().succeeded);
+            }
+            Fixture { store, raw, seen }
+        }
+
+        pub(super) fn effect_key(n: usize) -> String {
+            crate::control::keys::runtime("effect", &["t", &format!("e{n:05}")])
+        }
+
+        pub(super) fn call(&self, argv: &[String]) -> (i32, String) {
+            crate::journal::answer(crate::journal::run(&argv[1..], &self.store))
+        }
+
+        /// Forgets what was seen so far and ends the numbered calls from here on.
+        pub(super) fn arm(&self, refuse_range: Option<usize>, refuse_get_many: Option<usize>) {
+            *self.seen.lock().unwrap() = Seen { refuse_range, refuse_get_many, ..Seen::default() };
+        }
+
+        pub(super) fn dry_effect_step(&self) -> (i32, String) {
+            self.call(&["journal", "sweep", "--dry-run", "--from", "effect:"].map(String::from))
+        }
+
+        pub(super) fn keys_under(&self, table: &str) -> usize {
+            self.raw.list(&[crate::control::keys::runtime_table(table).as_str()], &state_store::Selector::Everything).unwrap().0.len()
+        }
+    }
+}
+
+#[test_id(ta47wlt)]
+#[test]
+fn the_journal_sweep_completes_when_a_read_is_priced_by_the_bytes_it_returns() {
+    let f = priced::Fixture::closed_effects(2_000, 4_850);
+    let mut effect_steps: Vec<usize> = Vec::new();
+    let mut step = |argv: &[String]| {
+        let before = f.seen.lock().unwrap().ranges.len();
+        let answered = f.call(argv);
+        if argv.iter().any(|a| a.starts_with("effect:")) {
+            effect_steps.push(f.seen.lock().unwrap().ranges.len() - before);
+        }
+        answered
+    };
+    let (code, out) = crate::journal::sweep_until_done(&mut step, true, None);
+    assert_eq!(code, 0, "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!((v["complete"].as_bool(), v["deleted_effects"].as_u64()), (Some(true), Some(2_000)), "{out}");
+    let (_, before_last) = effect_steps.split_last().unwrap();
+    assert!(!before_last.is_empty() && before_last.iter().all(|pages| *pages > 1), "pages per effect step: {effect_steps:?}");
+    let (code, out) = crate::journal::sweep_until_done(&mut |argv| f.call(argv), false, None);
+    assert_eq!(code, 0, "{out}");
+    assert_eq!((f.keys_under("effect"), f.keys_under("resolved")), (0, 0));
+}
+
+#[test_id(t7z37jh)]
+#[test]
+fn a_sweep_step_whose_later_read_is_ended_answers_the_pages_it_finished() {
+    // Small enough that 25 rows fit inside the step's budget, so a second page is always asked.
+    let f = priced::Fixture::closed_effects(60, 900);
+    f.arm(Some(2), None);
+    assert_kept_the_first_page(&f.dry_effect_step());
+}
+
+#[test_id(to0e3dj)]
+#[test]
+fn each_sweep_page_is_read_at_the_head_current_when_it_is_asked() {
+    let f = priced::Fixture::closed_effects(100, 0);
+    let (code, out) = crate::journal::sweep_until_done(&mut |argv| f.call(argv), false, None);
+    assert_eq!(code, 0, "{out}");
+    let seen = f.seen.lock().unwrap();
+    let split: Vec<&(u64, u64)> = seen.lookups.iter().filter(|(at, page)| at != page).collect();
+    assert!(seen.lookups.len() > 2 && split.is_empty(), "(lookup, page) revisions that differ: {split:?}");
+    let stale: Vec<&(u64, u64)> = seen.ranges.iter().filter(|(at, head)| at != head).collect();
+    assert!(seen.ranges.len() > 2 && stale.is_empty(), "(asked, head) of the stale reads: {stale:?}");
+}
+
+fn assert_kept_the_first_page((code, out): &(i32, String)) {
+    assert_eq!(*code, 0, "{out}");
+    let v: serde_json::Value = serde_json::from_str(out).unwrap();
+    assert_eq!(v["deleted_effects"].as_u64(), Some(4), "{out}");
+    assert_eq!(v["next"].as_str(), Some(format!("effect:{}", priced::Fixture::effect_key(3)).as_str()), "{out}");
+}
+
+#[test_id(tf80wq4)]
+#[test]
+fn a_sweep_step_whose_later_lookup_is_ended_answers_only_the_pages_it_finished() {
+    let f = priced::Fixture::closed_effects(60, 900);
+    // The step's first `get_many` is the indexed mark, then one per page.
+    f.arm(None, Some(3));
+    assert_kept_the_first_page(&f.dry_effect_step());
+}
+
+#[test_id(tcejh2p)]
+#[test]
+fn a_sweep_step_whose_first_page_read_is_ended_answers_the_error() {
+    for (range, get_many) in [(Some(1), None), (None, Some(2))] {
+        let f = priced::Fixture::closed_effects(60, 900);
+        f.arm(range, get_many);
+        let (code, out) = f.dry_effect_step();
+        assert!(code != 0 && out.contains(state_store::READ_ENDED), "range {range:?}, get_many {get_many:?}: {code} {out}");
+    }
+}

@@ -113,6 +113,13 @@ pub struct ReactiveDwarf {
     pub started_ms: u64,
 }
 
+/// A live dwarf and the bead its pidfile names.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LiveDwarf {
+    pub rune: String,
+    pub bead: String,
+}
+
 /// Everything CHECK 7 reads, read once.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CallWorld {
@@ -133,6 +140,7 @@ pub struct CallWorld {
     /// `None` when the machine could not answer: the reactive runes yield, never "nothing urgent".
     pub urgent: Option<Vec<Urgent>>,
     pub reactive_dwarves: Vec<ReactiveDwarf>,
+    pub live_dwarves: Vec<LiveDwarf>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -165,6 +173,9 @@ pub struct TaskLimit {
     pub name: String,
     pub limit: i64,
     pub held: i64,
+    /// The beads of the dwarves `held` counts; one with no pidfile bead is counted and not named.
+    #[serde(default)]
+    pub holders: Vec<String>,
 }
 
 impl TaskLimit {
@@ -257,6 +268,23 @@ impl Planner<'_> {
                 Bound { class: c.clone(), limit: *limit, held, waiting, over: held > *limit }
             })
             .collect()
+    }
+
+    /// A rune names at most as many beads as it has live units: a dead dwarf's lease can outlive its unit.
+    fn holders(&self, counts: impl Fn(&Rune) -> bool) -> Vec<String> {
+        self.w
+            .task
+            .iter()
+            .chain(&self.w.reactive)
+            .filter(|r| counts(r))
+            .flat_map(|r| self.w.live_dwarves.iter().filter(|d| d.rune == r.name).take(usize::try_from(self.live_of(&r.name)).unwrap_or(0)))
+            .map(|d| d.bead.clone())
+            .collect()
+    }
+
+    /// A limit every live dwarf counts toward.
+    fn fleet_limit(&self, name: &str, limit: i64) -> TaskLimit {
+        TaskLimit { name: name.into(), limit, held: self.live_total(), holders: self.holders(|_| true) }
     }
 
     fn set_task_limit(&mut self, limit: Option<TaskLimit>) {
@@ -377,16 +405,16 @@ pub fn plan(w: &CallWorld) -> CallPlan {
             }
         }
         p.plan.refusal = Some(why);
-        p.set_task_limit(Some(TaskLimit { name: "closed".into(), limit: 0, held: p.live_total() }));
+        p.set_task_limit(Some(p.fleet_limit("closed", 0)));
         p.plan.bound = p.bound();
         return p.plan;
     }
     let mut pool: Option<i64> = None;
     let limit = if w.throttled {
-        Some(TaskLimit { name: "throttle".into(), limit: 0, held: p.live_total() })
+        Some(p.fleet_limit("throttle", 0))
     } else {
-        let pool = w.limits.get(BUILD_DISK).map(|l| TaskLimit { name: "pool".into(), limit: *l, held: p.held(BUILD_DISK) });
-        let ceiling = w.max_live_dwarves.map(|m| TaskLimit { name: "ceiling".into(), limit: m, held: p.live_total() });
+        let pool = w.limits.get(BUILD_DISK).map(|l| TaskLimit { name: "pool".into(), limit: *l, held: p.held(BUILD_DISK), holders: p.holders(|r| r.uses.iter().any(|u| u == BUILD_DISK)) });
+        let ceiling = w.max_live_dwarves.map(|m| p.fleet_limit("ceiling", m));
         [pool, ceiling].into_iter().flatten().min_by_key(TaskLimit::room)
     };
     p.set_task_limit(limit);
@@ -785,5 +813,40 @@ mod tests {
         b.uses.push("memory".into());
         let p = plan(&limited(vec![b], &[("build-disk", 4), ("memory", 2)]));
         assert_eq!(called(&p), ["builder", "builder"], "{:?}", p.log);
+    }
+
+    #[test_id(t064xy9)]
+    #[test]
+    fn a_full_pool_names_only_the_beads_of_the_runes_that_declare_build_disk() {
+        let mut w = limited(vec![builder(1, 4)], &[("build-disk", 4)]);
+        w.reactive = vec![using("skuld", 0, 2, &[], true)];
+        w.live_dwarves = [("builder", "sp-b0"), ("skuld", "sp-s0"), ("builder", "sp-b1"), ("builder", "sp-b2"), ("skuld", "sp-s1"), ("builder", "sp-b3")]
+            .map(|(rune, bead)| LiveDwarf { rune: rune.into(), bead: bead.into() })
+            .into();
+        let limit = plan(&w).task_limit.unwrap();
+        assert_eq!((limit.name.as_str(), limit.held), ("pool", 4));
+        assert_eq!(limit.holders, ["sp-b0", "sp-b1", "sp-b2", "sp-b3"]);
+    }
+
+    #[test_id(tpei7qc)]
+    #[test]
+    fn every_limit_but_the_pool_names_every_live_dwarf_on_the_roster() {
+        let mut w = limited(vec![builder(1, 1)], &[]);
+        w.reactive = vec![using("skuld", 0, 1, &[], true)];
+        w.live_dwarves = vec![LiveDwarf { rune: "builder".into(), bead: "sp-b".into() }, LiveDwarf { rune: "skuld".into(), bead: "sp-s".into() }, LiveDwarf { rune: "gone".into(), bead: "sp-g".into() }];
+        w.max_live_dwarves = Some(2);
+        for (w, name) in [(w.clone(), "ceiling"), (CallWorld { throttled: true, ..w.clone() }, "throttle"), (CallWorld { world: World::Halted, ..w }, "closed")] {
+            let limit = plan(&w).task_limit.unwrap();
+            assert_eq!((limit.name.as_str(), limit.holders), (name, vec!["sp-b".to_string(), "sp-s".to_string()]));
+        }
+    }
+
+    #[test_id(thin1lr)]
+    #[test]
+    fn a_limit_never_names_more_beads_of_a_rune_than_it_counted_and_invents_none() {
+        let mut w = limited(vec![builder(0, 1), using("mender", 0, 2, &["build-disk"], false)], &[("build-disk", 3)]);
+        w.live_dwarves = ["sp-new", "sp-ended"].map(|b| LiveDwarf { rune: "builder".into(), bead: b.into() }).into();
+        let limit = plan(&w).task_limit.unwrap();
+        assert_eq!((limit.held, limit.holders), (3, vec!["sp-new".to_string()]));
     }
 }

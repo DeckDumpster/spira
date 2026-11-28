@@ -6,10 +6,10 @@
 extern crate spira_test_id;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::json;
+use spira_otel::fixture::{spans_in, Collector};
 use state_store::{events_key, Backend, Object, Rev, Write};
 use state_store_sqlite::{Options, SqliteBackend};
 
@@ -56,33 +56,23 @@ struct Server {
     child: std::process::Child,
     socket: std::path::PathBuf,
     pid: u32,
-    run_dir: std::path::PathBuf,
     _dir: testkit::TempDir,
 }
 
-/// Starts `spira-lc serve` over a seeded store and returns once it has said ready.
-fn start_server(hold_spans: bool) -> Server {
+/// Starts `spira-lc serve` over a seeded store, pushing spans to `collector`, and returns once it has said ready.
+fn start_server(collector: Option<&Collector>) -> Server {
     let dir = testkit::TempDir::new("spira-lc-serve-memory");
     let run_dir = dir.join("run");
     std::fs::create_dir_all(&run_dir).unwrap();
-    if hold_spans {
-        let otel = spira_otel::dir_of(&run_dir);
-        std::fs::create_dir_all(&otel).unwrap();
-        let now = std::time::SystemTime::now();
-        for t in [now, now + Duration::from_secs(86_400)] {
-            let path = std::ffi::CString::new(otel.join(format!("spira-lc.{}.jsonl", spira_otel::utc_date(t))).into_os_string().into_encoded_bytes()).unwrap();
-            // SAFETY: a valid NUL-terminated path.
-            assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0, "mkfifo");
-        }
-    }
     let store = dir.join("control.db");
     seed(&store);
     let socket = dir.join("lc.sock");
     let (d, r, s, sock) = (dir.display().to_string(), run_dir.display().to_string(), store.display().to_string(), socket.display().to_string());
-    let toml = spira_config::process::fixture_toml(
-        &dir,
-        &[("SPIRA_WORKSPACES", &d), ("SPIRA_RUN", &r), ("SPIRA_LC_STORE_PATH", &s), ("SPIRA_LC_SOCKET", &sock), ("SPIRA_VICTORIALOGS_URL", "http://127.0.0.1:9")],
-    );
+    let mut set = vec![("SPIRA_WORKSPACES", d.as_str()), ("SPIRA_RUN", r.as_str()), ("SPIRA_LC_STORE_PATH", s.as_str()), ("SPIRA_LC_SOCKET", sock.as_str()), ("SPIRA_VICTORIALOGS_URL", "http://127.0.0.1:9")];
+    if let Some(c) = collector {
+        set.push(("SPIRA_OTEL_COLLECTOR_ENDPOINT", c.addr()));
+    }
+    let toml = spira_config::process::fixture_toml(&dir, &set);
     std::fs::create_dir_all(dir.join("release/bin")).unwrap();
     let home = spira_config::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
     let mut child = Command::new(testkit::bin_exe("spira-lc"))
@@ -106,51 +96,20 @@ fn start_server(hold_spans: bool) -> Server {
     }
     std::thread::spawn(move || std::io::copy(&mut stderr, &mut std::io::sink()));
     let pid = child.id();
-    Server { child, socket, pid, run_dir, _dir: dir }
+    Server { child, socket, pid, _dir: dir }
 }
 
 #[test_id(tu38fgg)]
 #[test]
 fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_where_it_was() {
-    let Server {
-        mut child,
-        socket,
-        pid,
-        run_dir,
-        _dir,
-    } = start_server(true);
+    let Server { mut child, socket, pid, _dir } = start_server(None);
     let at_ready = rss_anon(pid);
 
-    // Every span write blocks until a reader opens: each worker is held in its reply's aftermath
-    // until every client has its first reply, and a client that waits for the close is then
-    // served by a reused worker, whatever the disk's speed.
-    let first_replies = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let deadline_answers = std::sync::atomic::AtomicUsize::new(0);
-    let otel = spira_otel::dir_of(&run_dir);
-    let held: Vec<_> = std::fs::read_dir(&otel)
-        .unwrap()
-        .flatten()
-        .map(|e| e.path())
-        .collect();
-    assert_eq!(held.len(), 2);
-    // Detached: these readers never see an end of file.
-    for path in held {
-        let first_replies = first_replies.clone();
-        std::thread::spawn(move || {
-            while first_replies.load(std::sync::atomic::Ordering::SeqCst) < CONNECTIONS {
-                std::thread::yield_now();
-            }
-            // Read-write, so the reader outlives each writer's close and no later write blocks.
-            if let Ok(mut fifo) = std::fs::File::options().read(true).write(true).open(path) {
-                let _ = std::io::copy(&mut fifo, &mut std::io::sink());
-            }
-        });
-    }
     std::thread::scope(|scope| {
         let per = REQUESTS / CONNECTIONS;
         for c in 0..CONNECTIONS {
-            let (socket, first_replies, deadline_answers) =
-                (&socket, &*first_replies, &deadline_answers);
+            let (socket, deadline_answers) = (&socket, &deadline_answers);
             scope.spawn(move || {
                 for n in 0..per {
                     let argv: Vec<String> = if (c + n) % 2 == 0 {
@@ -168,9 +127,6 @@ fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_w
                         .unwrap_or_else(|_| panic!("no answer to {argv:?}"));
                     if reply.code != 0 && reply.text() == spira_store::lc_call::DEADLINE_ANSWER {
                         deadline_answers.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    }
-                    if n == 0 {
-                        first_replies.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     }
                     let mut rest = Vec::new();
                     std::io::Read::read_to_end(&mut closed, &mut rest).unwrap_or_else(|e| {
@@ -220,102 +176,104 @@ fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_w
 #[test_id(tovs682)]
 #[test]
 fn the_ready_line_is_written_once_the_accept_thread_runs() {
-    let Server { mut child, pid, .. } = start_server(false);
+    let Server { mut child, pid, .. } = start_server(None);
     let names = thread_names(pid);
     let _ = child.kill();
     let _ = child.wait();
     assert!(names.iter().any(|n| n == "lc-accept"), "ready was said before the accept thread ran; threads: {}", names.join(", "));
 }
 
-fn otel_dir(server: &Server) -> std::path::PathBuf {
-    server._dir.join("run/otel")
-}
+/// A cap on a wait for the fixture's own signal.
+const CAP: Duration = Duration::from_secs(30);
 
 fn ask(server: &Server) {
     let stream = spira_store::lc_call::connect_within(&server.socket, Duration::from_secs(30)).expect("connect");
     spira_store::lc_call::exchange_once(stream, &["list".to_string(), "--live".to_string()], None).expect("an answer");
 }
 
-fn span_lines(dir: &std::path::Path) -> Vec<String> {
-    let mut out = Vec::new();
-    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-        out.extend(std::fs::read_to_string(e.path()).unwrap_or_default().lines().map(str::to_string));
-    }
-    out
-}
-
-fn wait_for_spans(dir: &std::path::Path, want: usize) {
-    let mut polls = 0;
-    while span_lines(dir).len() < want {
-        polls += 1;
-        assert!(polls < 1_000, "{} of {want} spans written", span_lines(dir).len());
-        std::thread::sleep(Duration::from_millis(10)); // clock-safe: polls the span file, the signal waited on
-    }
+fn assert_no_span_file(server: &Server) {
+    let files: Vec<String> = std::fs::read_dir(server._dir.join("run/otel"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with("spira-lc.") && !n.starts_with("spira-lc.logs."))
+        .collect();
+    assert!(files.is_empty(), "a span file was written: {files:?}");
 }
 
 #[test_id(tr71tg4)]
 #[test]
-fn a_span_file_held_locked_stalls_no_request_worker_and_loses_no_span() {
-    let server = start_server(false);
-    let dir = otel_dir(&server);
-    std::fs::create_dir_all(&dir).unwrap();
-    let today = dir.join(format!("spira-lc.{}.jsonl", spira_otel::utc_date(std::time::SystemTime::now())));
-    let held = std::fs::OpenOptions::new().create(true).append(true).open(&today).unwrap();
-    // SAFETY: the descriptor is open for as long as `held`.
-    assert_eq!(unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&held), libc::LOCK_EX) }, 0);
+fn a_collector_holding_requests_unanswered_stalls_no_request_worker() {
+    let collector = Collector::hanging();
+    let server = start_server(Some(&collector));
+    assert!(collector.wait_until(|p| !p.is_empty(), CAP), "the start-up span's push is held");
+    ask(&server);
     let before = thread_names(server.pid).len();
     for _ in 0..30 {
         ask(&server);
     }
     let grown = thread_names(server.pid).len().saturating_sub(before);
-    drop(held);
-    wait_for_spans(&dir, 30);
+    assert_no_span_file(&server);
     let Server { mut child, .. } = server;
     let _ = child.kill();
     let _ = child.wait();
-    assert!(grown <= 4, "threads grew by {grown} over 30 requests while the span file was locked");
+    assert!(grown <= 4, "threads grew by {grown} over 30 requests while the collector answered nothing");
 }
 
 #[test_id(tyigr7q)]
 #[test]
-fn a_hundred_requests_close_the_span_file_for_writing_about_once_a_second() {
-    use inotify::{Inotify, WatchMask};
-    let server = start_server(false);
-    let dir = otel_dir(&server);
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut watch = Inotify::init().expect("inotify");
-    watch.watches().add(&dir, WatchMask::CLOSE_WRITE).expect("watch the otel directory");
-    // A reader that blocks: unread identical events coalesce, which would hide a close per span.
-    let closes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let seen = closes.clone();
-    std::thread::spawn(move || {
-        let mut buf = [0u8; 4096];
-        while let Ok(events) = watch.read_events_blocking(&mut buf) {
-            seen.fetch_add(events.count(), std::sync::atomic::Ordering::Relaxed);
-        }
-    });
+fn a_hundred_requests_are_pushed_about_once_a_second() {
+    let collector = Collector::start();
+    let server = start_server(Some(&collector));
     let started = std::time::Instant::now();
     for _ in 0..100 {
         ask(&server);
     }
+    let listed = |p: &[spira_otel::fixture::Post]| spans_in(p).iter().filter(|s| s.name == "list").count();
+    assert!(collector.wait_until(|p| listed(p) >= 100, CAP), "{} of 100 spans received", listed(&collector.posts()));
     let elapsed = started.elapsed().as_secs();
-    wait_for_spans(&dir, 100);
-    let closes = closes.load(std::sync::atomic::Ordering::Relaxed);
+    let pushes = collector.posts().iter().filter(|p| p.path == "/v1/traces").count(); // not a path: OTLP URL path
+    assert_no_span_file(&server);
     let Server { mut child, .. } = server;
     let _ = child.kill();
     let _ = child.wait();
-    assert!(closes as u64 <= elapsed + 2, "{closes} close-for-write events in {elapsed} s"); // clock-safe: measures the span-file closes per elapsed second the test itself spent; no wait depends on it
+    assert!(pushes as u64 <= elapsed + 2, "{pushes} pushes in {elapsed} s"); // clock-safe: measures pushes per elapsed second the test itself spent; no wait depends on it
 }
 
 #[test_id(tkdm6hh)]
 #[test]
-fn a_request_answered_before_sigterm_has_its_span_in_the_file_when_the_server_exits() {
-    let server = start_server(false);
-    let dir = otel_dir(&server);
+fn a_request_answered_before_sigterm_has_its_span_at_the_collector_when_the_server_exits() {
+    let collector = Collector::start();
+    let mut server = start_server(Some(&collector));
     ask(&server);
     // SAFETY: signals a child this test spawned.
     assert_eq!(unsafe { libc::kill(server.pid as i32, libc::SIGTERM) }, 0);
-    let Server { mut child, .. } = server;
-    child.wait().expect("the server exits");
-    assert!(span_lines(&dir).iter().any(|l| l.contains("\"list\"")), "no span for the request in {:?}", span_lines(&dir).len());
+    server.child.wait().expect("the server exits");
+    let names: Vec<String> = collector.spans().into_iter().map(|s| s.name).collect();
+    assert!(names.iter().any(|n| n == "list"), "no span for the request in {names:?}");
+    assert_no_span_file(&server);
+}
+
+#[test_id(tqh7bnx)]
+#[test]
+fn serve_with_an_empty_collector_endpoint_exits_2_naming_the_key() {
+    let dir = testkit::TempDir::new("spira-lc-serve-no-collector");
+    let (d, sock) = (dir.display().to_string(), dir.join("lc.sock").display().to_string());
+    let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_WORKSPACES", &d), ("SPIRA_RUN", &d), ("SPIRA_LC_SOCKET", &sock), ("SPIRA_OTEL_COLLECTOR_ENDPOINT", "")]);
+    std::fs::create_dir_all(dir.join("release/bin")).unwrap();
+    // batch-job: a server that refuses to start exits at once
+    let out = Command::new(testkit::bin_exe("spira-lc"))
+        .arg("serve")
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("SPIRA_TOML", &toml)
+        .env("SPIRA_HOME", spira_config::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree"))
+        .env("SPIRA_RELEASE", dir.join("release"))
+        .env("HOME", dir.join("home"))
+        .output()
+        .expect("spira-lc serve runs");
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{said}");
+    assert!(said.contains("spira.otel_collector_endpoint"), "{said}");
 }

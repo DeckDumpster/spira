@@ -84,15 +84,13 @@ use serde_json::Value;
 use spira_lc::{flag, goodput, CANNOT_TELL, REFUSED};
 
 fn run_deadline(verb: &str, args: &[String]) -> (i32, String) {
-    let run = match spira_config::process::cfg("SPIRA_RUN") {
-        Ok(run) => run,
+    let url = match spira_config::process::cfg("SPIRA_VICTORIALOGS_URL") {
+        Ok(url) => url,
         Err(e) => return (CANNOT_TELL, format!("spira-lc deadline: {e}")),
     };
-    let dir = spira_otel::dir_of(std::path::Path::new(&run));
-    let now = std::time::SystemTime::now();
     match (verb, args.split_first()) {
-        ("deadline-check", _) => deadline::deadline_check(args, &dir, now),
-        ("deadline", Some((sub, rest))) if sub == "lower" => deadline::deadline_lower(rest, &dir, now, &mut deadline::spira_config),
+        ("deadline-check", _) => deadline::deadline_check(args, &url),
+        ("deadline", Some((sub, rest))) if sub == "lower" => deadline::deadline_lower(rest, &url, &mut deadline::spira_config),
         _ => (CANNOT_TELL, "spira-lc deadline: usage: deadline-check (--ms N [--verb V] | --configured) | deadline lower --ms N --file F".to_string()),
     }
 }
@@ -558,5 +556,19 @@ mod tests {
         let strukt = serde_json::to_value(lifecycle::bead::BeadEventKind::Submit { tip: "abc".into() }).unwrap();
         assert_eq!(kind_name(&unit), "Release");
         assert_eq!(kind_name(&strukt), "Submit");
+    }
+}
+
+#[cfg(test)]
+mod deadline_verb_tests {
+    #[test_id(t3t5px3)]
+    #[test]
+    fn the_deadline_verb_reads_the_configured_victorialogs() {
+        let logs = spira_otel::vlogs::fake::FakeLogs::start();
+        let dir = testkit::TempDir::new("lc-deadline-verb");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_VICTORIALOGS_URL", &logs.url())]);
+        let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
+        let (code, out) = spira_config::process::with_fresh(|| crate::run_deadline("deadline-check", &["--ms".to_string(), "1000".to_string()])).unwrap();
+        assert_eq!((code, logs.queries().len()), (crate::CANNOT_TELL, 1), "{out}");
     }
 }
