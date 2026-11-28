@@ -3,14 +3,9 @@
 //! 4.11"). The most-called family in the whole decomposition (16 Rust seams, 20 bash
 //! scripts) — moving it in-process is the biggest single wall-clock win the plan names.
 //!
-//! WHAT THIS READS: the legacy pipe-delimited `SPIRA_REPO_MAP` file, not yet `spira.toml`'s
-//! typed `[repo.*]` table. `conf.sh` still derives `SPIRA_REPO_MAP` itself (the "conf.sh
-//! becomes an eval of resolve" cutover, wave4-decomposition.md row 5, has not landed), so
-//! the pipe file remains the one live source of truth for which repositories this harness
-//! manages — porting the READER faithfully, not changing what it reads, is the whole job of
-//! this bead. `queue`'s own `[repo.<name>].mode`/`.base` read (`real.rs`) is a different,
-//! narrower thing: the land-mode transition's own target of record, not a drop-in substitute
-//! for this map.
+//! WHAT THIS READS: the pipe-delimited `SPIRA_REPO_MAP` file. It is generated from
+//! `spira.toml`'s `[repo.*]` tables ([`render_map`]) every time spira-config writes them, so
+//! the tables are the one definition and the file is their mirror.
 //!
 //! UNKNOWN NAMES FAIL CLOSED, exactly as lib.sh's own comment insists: every lookup here
 //! returns `None`/empty for a name the map does not carry, and a caller that defaults a
@@ -136,9 +131,8 @@ pub fn parse(text: &str) -> Vec<Row> {
     text.lines().filter_map(parse_row).collect()
 }
 
-/// The `[repo.<name>]` tables as map rows, for a box whose `spira.toml` is the only source:
-/// no `repo-map` file is read when this applies, and a map file that exists always wins.
-/// `gate` is retired from the schema, so that column is empty.
+/// The `[repo.<name>]` tables as map rows. [`Registry::from_env`] serves these only when no map
+/// file exists. `gate` is retired from the schema, so that column is empty.
 pub fn rows_from_toml(doc: &crate::SpiraToml) -> Vec<Row> {
     use crate::{Lane, LandMode};
     doc.repo
@@ -174,6 +168,149 @@ pub fn rows_from_toml(doc: &crate::SpiraToml) -> Vec<Row> {
                 .join(","),
         })
         .collect()
+}
+
+const GENERATED_HEADER: &str = "# GENERATED from spira.toml [repo.*] by spira-config — do not edit; use spira-config repo set";
+const IMPORT_VERB: &str = "spira-config repo import";
+
+pub(crate) fn row_line(r: &Row) -> String {
+    format!("{} | {} | {} | {} | {} | | {}", r.name, r.path, r.land, r.base, r.format, r.lanes)
+}
+
+/// The repo-map that mirrors `doc`'s `[repo.*]` tables.
+pub fn render_map(doc: &crate::SpiraToml) -> String {
+    let rows = rows_from_toml(doc).iter().map(row_line).collect::<Vec<_>>();
+    std::iter::once(GENERATED_HEADER.to_string()).chain(rows).map(|l| l + "\n").collect()
+}
+
+/// The repo-map path the registry reads for `env`, so a writer mirrors the file readers open.
+pub fn map_path(env: BTreeMap<String, String>, home: &Path) -> Option<PathBuf> {
+    registry_env(env, home).get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).map(PathBuf::from)
+}
+
+/// [`map_path`] for this process.
+pub fn process_map_path() -> Option<PathBuf> {
+    map_path(std::env::vars().collect(), &crate::resolve::locate_home_for_process().unwrap_or_default())
+}
+
+/// A regenerated repo-map written beside its destination, not yet visible there.
+pub struct Mirror {
+    map: PathBuf,
+    pending: crate::PendingWrite,
+}
+
+impl Mirror {
+    pub fn commit(self) -> Result<(), String> {
+        crate::atomic_write_commit(self.pending)
+            .map_err(|e| format!("{}: {e} — the repo-map is now stale; run `{IMPORT_VERB}` after fixing it", self.map.display()))
+    }
+}
+
+/// Everything that can refuse a mirror write, done before anything is replaced. `dropped` names
+/// the tables this write removes, whose rows are meant to go. `None`: the file is current.
+fn stage_map(doc: &crate::SpiraToml, map: &Path, dropped: &[String]) -> Result<Option<Mirror>, String> {
+    let fail = |e: std::io::Error| format!("{}: {e}", map.display());
+    let current = match std::fs::read_to_string(map) {
+        Ok(t) => Some(t),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(fail(e)),
+    };
+    let kept: Vec<Row> = parse(current.as_deref().unwrap_or_default()).into_iter().filter(|r| !dropped.contains(&r.name)).collect();
+    let unknown: Vec<&str> = kept.iter().filter(|r| !doc.repo.contains_key(&r.name)).map(|r| r.name.as_str()).collect();
+    let gated: Vec<&str> = kept.iter().filter(|r| !r.gate.is_empty()).map(|r| r.name.as_str()).collect();
+    let mut why = Vec::new();
+    if !unknown.is_empty() {
+        why.push(format!("rows with no [repo.<name>] table: {}", unknown.join(", ")));
+    }
+    if !gated.is_empty() {
+        why.push(format!("rows with a gate column: {}", gated.join(", ")));
+    }
+    let text = render_map(doc);
+    if parse(&text) != rows_from_toml(doc) {
+        why.push("a [repo.*] value holds a pipe, a newline or surrounding space, which a row cannot carry".to_string());
+    }
+    if !why.is_empty() {
+        return Err(format!(
+            "refusing to write: the repo-map {} cannot be regenerated from [repo.*] ({}); move the rows into spira.toml with `{IMPORT_VERB}`",
+            map.display(),
+            why.join("; ")
+        ));
+    }
+    if current.as_deref() == Some(text.as_str()) {
+        return Ok(None);
+    }
+    crate::backup_existing(map).map_err(fail)?;
+    let pending = crate::atomic_write_start(map, &text).map_err(fail)?;
+    Ok(Some(Mirror { map: map.to_path_buf(), pending }))
+}
+
+/// Regenerates `map` from `doc`'s `[repo.*]` tables, or refuses and writes nothing.
+pub fn sync_map(doc: &crate::SpiraToml, map: &Path) -> Result<(), String> {
+    stage_map(doc, map, &[])?.map_or(Ok(()), Mirror::commit)
+}
+
+/// The mirror a rewrite of config file `file` from `old` to `new` owes, staged. `None` when
+/// `[repo.*]` is unchanged or no map is declared. A layer of `$SPIRA_TOML` is judged with its
+/// sibling layers and mirrored to the map the registry reads; any other file is a config of its
+/// own, mirrored to the map it declares.
+pub fn stage_mirror(file: &Path, old: &str, new: &str, reg: Option<&crate::registry::Registry>) -> Result<Option<Mirror>, String> {
+    let parse_doc = |text: &str| match reg {
+        _ if text.trim().is_empty() => Ok(crate::SpiraToml::default()),
+        Some(r) => crate::validate_with(text, r).map(|(d, _)| d),
+        None => crate::validate(text),
+    };
+    let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let spec = std::env::var(crate::process::TOML_ENV).unwrap_or_default();
+    let layers: Vec<&str> = spec.split(':').filter(|p| !p.is_empty()).collect();
+    let layer = layers.iter().position(|p| canon(Path::new(p)) == canon(file));
+    let effective = |text: &str| match layer {
+        Some(at) if layers.len() > 1 => {
+            let mut texts = crate::read_layers(&spec)?;
+            texts[at].1 = text.to_string();
+            let merged = toml::to_string(&crate::merge_texts(&texts)?).map_err(|e| e.to_string())?;
+            parse_doc(&merged)
+        }
+        _ => parse_doc(text),
+    };
+    let new_doc = effective(new)?;
+    // An old text that no longer validates declares nothing a write could drop.
+    let old_doc = effective(old).unwrap_or_default();
+    let tables = |d: &crate::SpiraToml| serde_json::to_value(&d.repo).map_err(|e| e.to_string());
+    if tables(&old_doc)? == tables(&new_doc)? {
+        return Ok(None);
+    }
+    let declared = || {
+        let v = new_doc.spira.as_ref()?.0.get("repo_map")?.as_str()?;
+        (!v.is_empty()).then(|| PathBuf::from(v))
+    };
+    let Some(map) = layer.and_then(|_| process_map_path()).or_else(declared) else {
+        return Ok(None);
+    };
+    let dropped: Vec<String> = old_doc.repo.keys().filter(|n| !new_doc.repo.contains_key(*n)).cloned().collect();
+    stage_map(&new_doc, &map, &dropped)
+}
+
+/// The one line a hand-edited map earns: which repositories it describes differently from
+/// `[repo.*]`. Silent while some row has no table, which is a map not yet imported.
+fn drift_line(map_rows: &[Row], doc: &crate::SpiraToml, map: &str, toml: &str) -> Option<String> {
+    if !map_rows.iter().all(|r| doc.repo.contains_key(&r.name)) {
+        return None;
+    }
+    let tables = rows_from_toml(doc);
+    let differing: Vec<&str> = tables
+        .iter()
+        .filter(|t| {
+            let rows: Vec<Row> = map_rows.iter().filter(|r| r.name == t.name).map(|r| Row { gate: String::new(), ..r.clone() }).collect();
+            rows.as_slice() != std::slice::from_ref(*t)
+        })
+        .map(|t| t.name.as_str())
+        .collect();
+    (!differing.is_empty()).then(|| {
+        format!(
+            "spira-config repos: the repo-map {map} differs from [repo.*] in {toml} for {}; the map is generated, so move a hand edit into spira.toml with `{IMPORT_VERB}`",
+            differing.join(", ")
+        )
+    })
 }
 
 /// `repo_field <name> <col>` — the first row named `name`'s column, or `""` when no row
@@ -300,6 +437,12 @@ impl Registry {
         if map_text.is_none() {
             if let Some(rows) = doc.as_ref().map(rows_from_toml) {
                 return Registry { rows, home: home_repo(&env, home), root_override: repo_override(&env), map_present: true, publish, git: None };
+            }
+        }
+        if let (Some(text), Some(doc)) = (&map_text, &doc) {
+            let at = |k: &str| env.get(k).map(String::as_str).unwrap_or_default();
+            if let Some(line) = drift_line(&parse(text), doc, at("SPIRA_REPO_MAP"), at(crate::process::TOML_ENV)) {
+                eprintln!("{line}");
             }
         }
         Registry::new(map_text.as_deref(), &env, home).with_publish(publish)

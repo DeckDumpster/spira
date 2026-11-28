@@ -1815,51 +1815,57 @@ pub fn is_retired_path(path: &str) -> bool {
 /// together (queue's land-mode transition writes `mode` and `base` as one fact), so the
 /// document is never observed with one written and not the other.
 pub fn set_paths_in_file(file: &std::path::Path, pairs: &[(&str, &str)]) -> Result<(), String> {
-    let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
-    let before = if text.trim().is_empty() { SpiraToml::default() } else { validate(&text)? };
-    let mut doc = before.clone();
-    for (path, value) in pairs {
-        doc = set_path(&doc, path, value)?;
-    }
-    let out = edit_text(&text, &before, &doc).map_err(|e| format!("{}: {e}", file.display()))?;
-    validate(&out)?;
-    write_atomic(file, &out).map_err(|e| format!("{}: {e}", file.display()))
+    edit_paths_in_file(file, pairs, &[])
 }
 
 /// [`set_paths_in_file`]'s sibling for clearing: each dotted path's value is removed, siblings kept.
 pub fn unset_paths_in_file(file: &std::path::Path, paths: &[&str]) -> Result<(), String> {
+    edit_paths_in_file(file, &[], paths)
+}
+
+/// Sets and clears in one write.
+pub(crate) fn edit_paths_in_file(file: &std::path::Path, sets: &[(&str, &str)], unsets: &[&str]) -> Result<(), String> {
     let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
     let before = if text.trim().is_empty() { SpiraToml::default() } else { validate(&text)? };
     let mut doc = before.clone();
-    for path in paths {
+    for (path, value) in sets {
+        doc = set_path(&doc, path, value)?;
+    }
+    for path in unsets {
         doc = unset_path(&doc, path)?;
     }
     let out = edit_text(&text, &before, &doc).map_err(|e| format!("{}: {e}", file.display()))?;
-    validate(&out)?;
-    write_atomic(file, &out).map_err(|e| format!("{}: {e}", file.display()))
+    commit_edit(file, &text, &out)
 }
 
-/// Removes the whole `[<table>.<name>]` table (`publish.<name>`) from `file`; other tables stay
-/// as written. Returns whether one was there.
-pub fn remove_named_table_in_file(file: &std::path::Path, table: &str, name: &str) -> Result<bool, String> {
+/// The last step of every library write: validate, stage the repo-map mirror (whose refusal
+/// refuses the whole write), then replace the config and the map.
+fn commit_edit(file: &std::path::Path, old: &str, new: &str) -> Result<(), String> {
+    validate(new)?;
+    let mirror = repos::stage_mirror(file, old, new, None)?;
+    write_atomic(file, new).map_err(|e| format!("{}: {e}", file.display()))?;
+    mirror.map_or(Ok(()), repos::Mirror::commit)
+}
+
+/// Removes each `[<table>.<name>]` table (`publish.<name>`) from `file` in one write; other
+/// tables stay as written. Returns whether any was there.
+pub fn remove_named_tables_in_file(file: &std::path::Path, tables: &[&str], name: &str) -> Result<bool, String> {
     let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
     if text.trim().is_empty() {
         return Ok(false);
     }
     let before = validate(&text)?;
     let mut json = serde_json::to_value(&before).map_err(|e| e.to_string())?;
-    let removed = json
-        .get_mut(table)
-        .and_then(|t| t.as_object_mut())
-        .map(|t| t.remove(name).is_some())
-        .unwrap_or(false);
+    let mut removed = false;
+    for table in tables {
+        removed |= json.get_mut(table).and_then(|t| t.as_object_mut()).is_some_and(|t| t.remove(name).is_some());
+    }
     if !removed {
         return Ok(false);
     }
     let doc: SpiraToml = serde_json::from_value(json).map_err(|e| e.to_string())?;
     let out = edit_text(&text, &before, &doc).map_err(|e| format!("{}: {e}", file.display()))?;
-    validate(&out)?;
-    write_atomic(file, &out).map_err(|e| format!("{}: {e}", file.display()))?;
+    commit_edit(file, &text, &out)?;
     Ok(true)
 }
 

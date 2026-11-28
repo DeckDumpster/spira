@@ -2,6 +2,7 @@
 //! piece of plumbing a bead for it needs. `add` is idempotent and writes only through the
 //! config writers; `check` stops at the first missing piece and names it.
 
+use crate::convert::{repo_sections, ConvertWarnings};
 use crate::repos::{self, Registry};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -58,8 +59,8 @@ pub struct AddArgs {
     pub publish_mode: Option<String>,
 }
 
-/// The files `add` writes: the repo-map when one is in force (it outranks `[repo.*]`), else
-/// `[repo.<name>]` in the toml; `[publish.<name>]` always goes to the toml.
+/// The toml every verb writes (`[repo.<name>]`, `[publish.<name>]`), and the repo-map in force:
+/// the toml writers regenerate it, so here it is only read.
 #[derive(Debug, Clone)]
 pub struct Targets {
     pub map: Option<PathBuf>,
@@ -96,21 +97,11 @@ fn valid_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
 }
 
-fn row_line(a: &AddArgs, land_ref: &str) -> String {
-    format!(
-        "{} | {} | {} | {} | {} | {} | plan",
-        a.name,
-        a.path.display(),
-        a.queue.mode(),
-        land_ref,
-        a.format,
-        a.gate
-    )
-}
+const GATE_RETIRED: &str = "[repo.*] retired the gate key; the gate lives in the tree under test (gate.steps)";
 
 const PUBLISH_FLAGS: &str = "--publish <remote>|none [--publish-branch <b>] [--publish-mode pr|push]";
 
-/// Refuses every publish mistake before the checkout, the repo-map or the toml is touched, and
+/// Refuses every publish mistake before the checkout or the toml is touched, and
 /// returns the `[publish.<name>]` keys that differ from what is stored.
 fn preflight_publish(a: &AddArgs, t: &Targets) -> Result<Vec<(String, String)>, String> {
     let given = a.publish.is_some() || a.publish_branch.is_some() || a.publish_mode.is_some();
@@ -210,12 +201,14 @@ pub fn add(a: &AddArgs, t: &Targets) -> Result<Vec<String>, String> {
             a.path.display()
         ));
     }
-    for (what, v) in [("--format", &a.format), ("--gate", &a.gate)] {
-        if v.contains('|') || v.contains('\n') {
-            return Err(format!(
-                "repo add: {what} may not contain a pipe or newline"
-            ));
-        }
+    if !a.gate.is_empty() {
+        return Err(format!("repo add: --gate: {GATE_RETIRED}"));
+    }
+    if a.format.contains('|') || a.format.contains('\n') {
+        return Err("repo add: --format may not contain a pipe or newline".to_string());
+    }
+    if map_only(&a.name, t) {
+        return Err(not_imported("add", &a.name, t));
     }
     let land_ref = a
         .land_ref
@@ -327,62 +320,25 @@ pub fn add(a: &AddArgs, t: &Targets) -> Result<Vec<String>, String> {
 }
 
 fn register(a: &AddArgs, land_ref: &str, t: &Targets, did: &mut Vec<String>) -> Result<(), String> {
-    if let Some(map) = t.map.as_ref().filter(|m| m.is_file()) {
-        let text = std::fs::read_to_string(map).map_err(|e| format!("{}: {e}", map.display()))?;
-        let want = repos::parse(&row_line(a, land_ref)).remove(0);
-        if let Some(have) = repos::parse(&text).into_iter().find(|r| r.name == a.name) {
-            let same = have.path == want.path
-                && have.land == want.land
-                && have.base == want.base
-                && have.format == want.format
-                && have.gate == want.gate;
-            return if same {
-                Ok(())
-            } else {
-                Err(format!(
-                    "repo add: {} is already registered differently in {} ({} | {} | {} | {})",
-                    a.name,
-                    map.display(),
-                    have.path,
-                    have.land,
-                    have.base,
-                    have.format
-                ))
-            };
-        }
-        let mut out = text;
-        if !out.is_empty() && !out.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push_str(&row_line(a, land_ref));
-        out.push('\n');
-        write_map(map, &out)?;
-        did.push(format!("appended the {} row to {}", a.name, map.display()));
-        return Ok(());
-    }
-    let toml = t
-        .toml
-        .as_ref()
-        .ok_or("repo add: neither a repo-map nor a spira.toml is in force")?;
-    if !a.gate.is_empty() {
-        return Err("repo add: --gate needs a repo-map; [repo.*] retired the gate key".to_string());
-    }
+    let toml = t.toml.as_ref().ok_or("repo add: no spira.toml located to carry [repo.<name>]")?;
     let doc = crate::load(toml).ok();
     let path_s = a.path.display().to_string();
-    if let Some(have) = doc.as_ref().and_then(|d| d.repo.get(&a.name)) {
-        let rows = repos::rows_from_toml(doc.as_ref().expect("just matched"));
-        let r = rows.iter().find(|r| r.name == a.name).expect("same table");
+    if let Some(have) = doc.as_ref().and_then(|d| row_of(d, &a.name)) {
         let same = have.path == path_s
-            && r.land == a.queue.mode()
-            && r.base == land_ref
-            && r.format == a.format;
+            && have.land == a.queue.mode()
+            && have.base == land_ref
+            && have.format == a.format;
         return if same {
             Ok(())
         } else {
             Err(format!(
-                "repo add: {} is already registered differently in {}",
+                "repo add: {} is already registered differently in {} ({} | {} | {} | {})",
                 a.name,
-                toml.display()
+                toml.display(),
+                have.path,
+                have.land,
+                have.base,
+                have.format
             ))
         };
     }
@@ -396,63 +352,81 @@ fn register(a: &AddArgs, land_ref: &str, t: &Targets, did: &mut Vec<String>) -> 
     Ok(())
 }
 
-fn map_row_index(text: &str, name: &str) -> Option<(usize, repos::Row)> {
-    text.lines()
-        .enumerate()
-        .find_map(|(i, l)| repos::parse(l).into_iter().next().filter(|r| r.name == name).map(|r| (i, r)))
+fn row_of(doc: &crate::SpiraToml, name: &str) -> Option<repos::Row> {
+    repos::rows_from_toml(doc).into_iter().find(|r| r.name == name)
 }
 
-fn rebuild(text: &str, idx: usize, replacement: Option<String>) -> String {
-    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
-    match replacement {
-        Some(l) => lines[idx] = l,
-        None => {
-            lines.remove(idx);
-        }
+fn map_rows(t: &Targets) -> Vec<repos::Row> {
+    t.map
+        .as_ref()
+        .and_then(|m| std::fs::read_to_string(m).ok())
+        .map(|text| repos::parse(&text))
+        .unwrap_or_default()
+}
+
+fn in_toml(name: &str, t: &Targets) -> bool {
+    t.toml
+        .as_ref()
+        .and_then(|f| crate::load(f).ok())
+        .is_some_and(|d| d.repo.contains_key(name))
+}
+
+/// A row nothing has moved into `[repo.*]` yet: writing its table afresh would replace it.
+fn map_only(name: &str, t: &Targets) -> bool {
+    !in_toml(name, t) && map_rows(t).iter().any(|r| r.name == name)
+}
+
+fn not_imported(verb: &str, name: &str, t: &Targets) -> String {
+    let map = t.map.as_ref().map(|m| m.display().to_string()).unwrap_or_default();
+    format!("repo {verb}: {name} is only a row in the repo-map {map}; move it into spira.toml with `spira-config repo import`")
+}
+
+/// The toml carrying `[repo.<name>]` and the table as a row; refuses an unregistered name.
+fn registered_table<'a>(verb: &str, name: &str, t: &'a Targets) -> Result<(&'a PathBuf, repos::Row), String> {
+    let toml = t.toml.as_ref().ok_or_else(|| format!("repo {verb}: no spira.toml located to carry [repo.{name}]"))?;
+    match row_of(&crate::load(toml)?, name) {
+        Some(row) => Ok((toml, row)),
+        None if map_only(name, t) => Err(not_imported(verb, name, t)),
+        None => Err(format!("repo {verb}: {name} is not registered in {}", toml.display())),
     }
-    lines.join("\n") + "\n"
 }
 
-fn write_map(map: &Path, out: &str) -> Result<(), String> {
-    crate::backup_existing(map).map_err(|e| format!("{}: {e}", map.display()))?;
-    crate::write_atomic(map, out).map_err(|e| format!("{}: {e}", map.display()))
+fn lanes_json(comma_list: &str) -> String {
+    serde_json::json!(comma_list.split(',').filter(|l| !l.is_empty()).collect::<Vec<_>>()).to_string()
 }
 
-fn read_map(verb: &str, map: Option<&PathBuf>) -> Result<(PathBuf, String), String> {
-    let map = map
-        .filter(|m| m.is_file())
-        .ok_or_else(|| format!("repo {verb}: no repo-map is in force"))?;
-    let text = std::fs::read_to_string(map).map_err(|e| format!("{}: {e}", map.display()))?;
-    Ok((map.clone(), text))
-}
-
-/// Changes one field of a registered repo's repo-map row and returns `(old, new)`. `queue`
-/// is the land-mode column and `land` the landing ref (`base`).
+/// Changes one field of `[repo.<name>]` and returns `(old, new)`. `queue` is the land mode and
+/// `land` the landing ref (`base`).
 pub fn set(name: &str, field: &str, value: &str, t: &Targets) -> Result<(String, String), String> {
     if let Some(key) = field.strip_prefix("publish-") {
         return set_publish(name, key, value, t);
     }
-    let (map, text) = read_map("set", t.map.as_ref())?;
-    let (idx, mut row) = map_row_index(&text, name)
-        .ok_or_else(|| format!("repo set: {name} is not registered in {}", map.display()))?;
-    if matches!(field, "format" | "gate") && (value.contains('|') || value.contains('\n')) {
-        return Err(format!("repo set: {field} may not contain a pipe or newline"));
+    if field == "gate" {
+        return Err(format!("repo set: gate: {GATE_RETIRED}"));
     }
-    let old = match field {
+    let (toml, row) = registered_table("set", name, t)?;
+    if field == "format" && (value.contains('|') || value.contains('\n')) {
+        return Err("repo set: format may not contain a pipe or newline".to_string());
+    }
+    let (mut land, mut base) = (row.land.clone(), row.base.clone());
+    let (old, key, stored) = match field {
         "path" => {
             if !Path::new(value).is_absolute() {
                 return Err(format!("repo set: path {value} must be absolute"));
             }
-            std::mem::replace(&mut row.path, value.to_string())
+            (row.path, "path", value.to_string())
         }
         "queue" => {
             let q = Queue::parse(value)
                 .ok_or_else(|| format!("repo set: queue must be local or forge, not {value:?}"))?;
-            std::mem::replace(&mut row.land, q.mode().to_string())
+            land = q.mode().to_string();
+            (row.land, "mode", land.clone())
         }
-        "land" => std::mem::replace(&mut row.base, value.to_string()),
-        "format" => std::mem::replace(&mut row.format, value.to_string()),
-        "gate" => std::mem::replace(&mut row.gate, value.to_string()),
+        "land" => {
+            base = value.to_string();
+            (row.base, "base", base.clone())
+        }
+        "format" => (row.format, "format", value.to_string()),
         "lanes" => {
             let word = |l: &str| {
                 !l.is_empty() && l.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
@@ -460,42 +434,115 @@ pub fn set(name: &str, field: &str, value: &str, t: &Targets) -> Result<(String,
             if !value.split(',').all(word) {
                 return Err(format!("repo set: lanes must be a comma list of lane names, not {value:?}"));
             }
-            std::mem::replace(&mut row.lanes, value.to_string())
+            (row.lanes, "lanes", lanes_json(value))
         }
         other => {
             return Err(format!(
-                "repo set: unknown field {other:?} (path, queue, land, format, gate, lanes)"
+                "repo set: unknown field {other:?} (path, queue, land, format, lanes)"
             ))
         }
     };
     if matches!(field, "queue" | "land")
-        && row.land == Queue::Forge.mode()
-        && repos::ref_remote(&row.base, None).is_none()
+        && land == Queue::Forge.mode()
+        && repos::ref_remote(&base, None).is_none()
     {
         return Err(format!(
-            "repo set: queue.forge lands on a remote ref such as origin/main, not {}",
-            row.base
+            "repo set: queue.forge lands on a remote ref such as origin/main, not {base}"
         ));
     }
-    let line = format!(
-        "{} | {} | {} | {} | {} | {} | {}",
-        row.name, row.path, row.land, row.base, row.format, row.gate, row.lanes
-    );
-    write_map(&map, &rebuild(&text, idx, Some(line)))?;
+    let path = format!("repo.{name}.{key}");
+    if stored.is_empty() {
+        crate::unset_paths_in_file(toml, &[&path])?;
+    } else {
+        crate::set_paths_in_file(toml, &[(&path, &stored)])?;
+    }
     Ok((old, value.to_string()))
 }
 
+/// Moves every repo-map row's path, mode, base, format and lanes into `[repo.<name>]`, keeping
+/// the keys only the toml carries, then regenerates the map. Returns what changed.
+pub fn import(t: &Targets) -> Result<Vec<String>, String> {
+    let map = t.map.as_ref().filter(|m| m.is_file()).ok_or("repo import: no repo-map is in force")?;
+    let toml = t.toml.as_ref().ok_or("repo import: no spira.toml located to import into")?;
+    let text = std::fs::read_to_string(map).map_err(|e| format!("{}: {e}", map.display()))?;
+    let rows = repos::parse(&text);
+    let gated: Vec<&str> = rows.iter().filter(|r| !r.gate.is_empty()).map(|r| r.name.as_str()).collect();
+    if !gated.is_empty() {
+        return Err(format!(
+            "repo import: rows with a gate column in {}: {} — {GATE_RETIRED}; empty the column, then run `spira-config repo import` again",
+            map.display(),
+            gated.join(", ")
+        ));
+    }
+    let mut names = std::collections::BTreeSet::new();
+    if let Some(r) = rows.iter().find(|r| !names.insert(r.name.as_str())) {
+        return Err(format!("repo import: {} has two rows for {}; keep one", map.display(), r.name));
+    }
+    let mut warnings = ConvertWarnings::default();
+    let sections = repo_sections(&text, &mut warnings).map_err(|e| format!("repo import: {}", e.join("; ")))?;
+    if let Some(r) = rows.iter().find(|r| !sections.contains_key(&r.name)) {
+        return Err(format!("repo import: cannot read the {} row: {}", r.name, warnings.0.join("; ")));
+    }
+    let before = crate::load(toml)?;
+    let (mut sets, mut unsets, mut did) = (Vec::new(), Vec::new(), Vec::new());
+    for row in &rows {
+        let n = &row.name;
+        // An empty column means every lane to the lane check, as does an empty list rendered
+        // back; only a mode word such as `self` has to be spelled out for the typed array.
+        let lanes = if row.lanes.is_empty() {
+            Vec::new()
+        } else {
+            sections[n].lanes.clone()
+        };
+        let have = row_of(&before, n);
+        let mut doc = crate::SpiraToml::default();
+        doc.repo.insert(n.clone(), crate::RepoSection { lanes, ..sections[n].clone() });
+        let want = row_of(&doc, n).expect("just inserted");
+        let fields = [
+            ("path", have.as_ref().map(|h| &h.path), &want.path),
+            ("mode", have.as_ref().map(|h| &h.land), &want.land),
+            ("base", have.as_ref().map(|h| &h.base), &want.base),
+            ("format", have.as_ref().map(|h| &h.format), &want.format),
+            ("lanes", have.as_ref().map(|h| &h.lanes), &want.lanes),
+        ];
+        let changed: Vec<&str> = fields.iter().filter(|(_, h, w)| *h != Some(*w)).map(|f| f.0).collect();
+        if changed.is_empty() {
+            continue;
+        }
+        did.push(format!("[repo.{n}]: {}", changed.join(", ")));
+        if have.is_none() {
+            let mut table = serde_json::json!({"path": want.path, "mode": want.land, "lanes": serde_json::from_str::<serde_json::Value>(&lanes_json(&want.lanes)).expect("a JSON array")});
+            for (key, value) in [("base", &want.base), ("format", &want.format)] {
+                if !value.is_empty() {
+                    table[key] = serde_json::Value::String(value.clone());
+                }
+            }
+            sets.push((format!("repo.{n}"), table.to_string()));
+            continue;
+        }
+        for (key, _, value) in fields.iter().filter(|f| changed.contains(&f.0)) {
+            let path = format!("repo.{n}.{key}");
+            match *key {
+                "lanes" => sets.push((path, lanes_json(value))),
+                _ if value.is_empty() => unsets.push(path),
+                _ => sets.push((path, (*value).clone())),
+            }
+        }
+    }
+    if !did.is_empty() {
+        let sets: Vec<(&str, &str)> = sets.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let unsets: Vec<&str> = unsets.iter().map(String::as_str).collect();
+        crate::edit_paths_in_file(toml, &sets, &unsets)?;
+    }
+    repos::sync_map(&crate::load(toml)?, map)?;
+    if std::fs::read_to_string(map).map_err(|e| format!("{}: {e}", map.display()))? != text {
+        did.push(format!("regenerated {}", map.display()));
+    }
+    Ok(did)
+}
+
 fn registered_anywhere(name: &str, t: &Targets) -> bool {
-    let in_map = t
-        .map
-        .as_ref()
-        .and_then(|m| std::fs::read_to_string(m).ok())
-        .is_some_and(|text| map_row_index(&text, name).is_some());
-    in_map
-        || t.toml
-            .as_ref()
-            .and_then(|f| crate::load(f).ok())
-            .is_some_and(|d| d.repo.contains_key(name))
+    in_toml(name, t) || map_rows(t).iter().any(|r| r.name == name)
 }
 
 fn stored_publish(name: &str, t: &Targets) -> crate::PublishSection {
@@ -567,27 +614,11 @@ pub fn publish_target(name: &str, t: &Targets) -> Result<serde_json::Value, Stri
     }))
 }
 
-/// Removes a repository's repo-map row and its `[publish.<name>]` table, returning the row it
-/// removed. The toml is written first and restored if the repo-map write then fails.
+/// Removes `[repo.<name>]` and `[publish.<name>]` in one write, returning the row it removed.
 pub fn rm(name: &str, t: &Targets) -> Result<String, String> {
-    let (map, text) = read_map("rm", t.map.as_ref())?;
-    let (idx, _) = map_row_index(&text, name)
-        .ok_or_else(|| format!("repo rm: {name} is not registered in {}", map.display()))?;
-    let old = text.lines().nth(idx).unwrap_or_default().to_string();
-    let saved = match &t.toml {
-        Some(f) => {
-            let before = std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?;
-            crate::remove_named_table_in_file(f, "publish", name)?.then_some((f, before))
-        }
-        None => None,
-    };
-    if let Err(e) = write_map(&map, &rebuild(&text, idx, None)) {
-        if let Some((f, before)) = saved {
-            crate::write_atomic(f, &before).map_err(|re| format!("{e}; restoring {}: {re}", f.display()))?;
-        }
-        return Err(e);
-    }
-    Ok(old)
+    let (toml, row) = registered_table("rm", name, t)?;
+    crate::remove_named_tables_in_file(toml, &["repo", "publish"], name)?;
+    Ok(repos::row_line(&row))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -920,7 +951,7 @@ mod tests {
         let map = d.path().join("repo-map");
         let toml = d.path().join("spira.toml");
         std::fs::write(&map, "# rows\n").unwrap();
-        std::fs::write(&toml, "").unwrap();
+        std::fs::write(&toml, format!("[spira]\nrepo_map = \"{}\"\n", map.display())).unwrap();
         Fx {
             map,
             toml,
@@ -949,54 +980,93 @@ mod tests {
         assert_eq!(first_failure(&f), Some("registered"));
     }
 
-    fn registered(f: &Fx, gate: &str) -> Targets {
-        std::fs::write(
-            &f.map,
-            format!("# rows\nfixture | srv/fx | queue.local | local/main | fmt | {gate} | plan\n"),
+    fn registered(f: &Fx) -> Targets {
+        std::fs::write(&f.map, "# rows\n").unwrap();
+        crate::set_paths_in_file(
+            &f.toml,
+            &[("repo.fixture", r#"{"path":"/srv/fx","mode":"queue.local","base":"local/main","format":"fmt","lanes":["plan"]}"#)],
         )
         .unwrap();
-        Targets {
-            map: Some(f.map.clone()),
-            toml: None,
-        }
+        both(f)
     }
 
-    #[test_id(tc1utlg)]
+    fn files(f: &Fx) -> (String, String) {
+        (std::fs::read_to_string(&f.map).unwrap(), std::fs::read_to_string(&f.toml).unwrap())
+    }
+
+    #[test_id(tjos2d4)]
     #[test]
-    fn set_gate_to_empty_reads_back_empty_and_reports_old_and_new() {
+    fn set_writes_the_table_reports_old_and_new_and_regenerates_the_map() {
         let f = fx();
-        let t = registered(&f, "bash gate.sh");
-        let (old, new) = set("fixture", "gate", "", &t).unwrap();
-        assert_eq!((old.as_str(), new.as_str()), ("bash gate.sh", ""));
-        let r = reg(&f);
-        assert_eq!(r.gate("fixture").as_deref(), Some(""));
-        assert_eq!(r.format("fixture").as_deref(), Some("fmt"));
-        assert_eq!(r.root("fixture").as_deref(), Some("srv/fx"));
+        let t = registered(&f);
+        let (old, new) = set("fixture", "lanes", "plan,incident", &t).unwrap();
+        assert_eq!((old.as_str(), new.as_str()), ("plan", "plan,incident"));
+        assert_eq!(crate::load(&f.toml).unwrap().repo["fixture"].lanes, [crate::Lane::Plan, crate::Lane::Incident]);
+        assert_eq!(reg(&f).field("fixture", repos::Column::Lanes).as_deref(), Some("plan,incident"));
+        assert_eq!(set("fixture", "format", "", &t).unwrap().0, "fmt");
+        assert_eq!(crate::load(&f.toml).unwrap().repo["fixture"].format, None);
+        assert_eq!(reg(&f).format("fixture").as_deref(), Some(""));
+        assert_eq!(reg(&f).root("fixture").as_deref(), Some("/srv/fx"));
+    }
+
+    #[test_id(tgrkhb8)]
+    #[test]
+    fn set_and_add_refuse_the_retired_gate_key() {
+        let f = fx();
+        let t = registered(&f);
+        let before = files(&f);
+        let e = set("fixture", "gate", "", &t).unwrap_err();
+        assert!(e.contains("[repo.*] retired the gate key"), "{e}");
+        let mut a = add_args(f._d.path(), Some("none"));
+        a.name = "gated".into();
+        a.gate = "bash gate.sh".into();
+        let e = add(&a, &t).unwrap_err();
+        assert!(e.contains("[repo.*] retired the gate key"), "{e}");
+        assert_eq!(files(&f), before);
     }
 
     #[test_id(t7d1mba)]
     #[test]
     fn set_refuses_an_unknown_field_and_leaves_the_map_alone() {
         let f = fx();
-        let t = registered(&f, "g");
-        let before = std::fs::read_to_string(&f.map).unwrap();
+        let t = registered(&f);
+        let before = files(&f);
         let e = set("fixture", "colour", "red", &t).unwrap_err();
         assert!(e.contains("unknown field"), "{e}");
-        assert_eq!(std::fs::read_to_string(&f.map).unwrap(), before);
+        assert_eq!(files(&f), before);
     }
 
     #[test_id(tvm5znw)]
     #[test]
     fn set_refuses_an_unregistered_name_and_bad_values() {
         let f = fx();
-        let t = registered(&f, "g");
-        assert!(set("nope", "gate", "", &t).unwrap_err().contains("not registered"));
+        let t = registered(&f);
+        assert!(set("nope", "format", "", &t).unwrap_err().contains("not registered"));
         assert!(set("fixture", "path", "rel", &t).is_err());
-        assert!(set("fixture", "gate", "a|b", &t).is_err());
+        assert!(set("fixture", "format", "a|b", &t).is_err());
         assert!(set("fixture", "queue", "sideways", &t).is_err());
         assert!(set("fixture", "lanes", "plan,b@d", &t).is_err());
+        assert!(set("fixture", "lanes", "plan,nosuch", &t).is_err());
         set("fixture", "land", "main", &t).unwrap();
         assert!(set("fixture", "queue", "forge", &t).is_err());
+    }
+
+    #[test_id(tjtfv8m)]
+    #[test]
+    fn a_repository_that_is_only_a_map_row_is_sent_to_import() {
+        let f = fx();
+        std::fs::write(&f.map, "fixture | /srv/fx | queue.local | local/main | | | plan\n").unwrap();
+        let t = both(&f);
+        let before = files(&f);
+        let repo = local_checkout(f._d.path(), false);
+        for e in [
+            set("fixture", "lanes", "plan", &t).unwrap_err(),
+            rm("fixture", &t).unwrap_err(),
+            add(&add_args(&repo, Some("none")), &t).unwrap_err(),
+        ] {
+            assert!(e.contains("spira-config repo import"), "{e}");
+        }
+        assert_eq!(files(&f), before);
     }
 
     fn gated_fx(land: &str, column: &str, files: &[(&str, &str)]) -> (Fx, PathBuf) {
@@ -1126,10 +1196,8 @@ mod tests {
     #[test]
     fn rm_drops_only_the_named_row() {
         let f = fx();
-        let t = registered(&f, "g");
-        let mut text = std::fs::read_to_string(&f.map).unwrap();
-        text.push_str("other | /srv/o | queue.local | local/main | | | plan\n");
-        std::fs::write(&f.map, text).unwrap();
+        let t = registered(&f);
+        crate::set_paths_in_file(&f.toml, &[("repo.other", r#"{"path":"/srv/o","mode":"push"}"#)]).unwrap();
         rm("fixture", &t).unwrap();
         assert_eq!(reg(&f).names(), vec!["other".to_string()]);
         assert!(rm("fixture", &t).is_err());
@@ -1415,8 +1483,7 @@ mod tests {
     #[test]
     fn set_publish_fields_report_old_and_new_clear_and_refuse_bad_values() {
         let f = fx();
-        let t = both(&f);
-        let t = { registered(&f, "g"); t };
+        let t = registered(&f);
         assert_eq!(set("fixture", "publish-remote", "origin", &t).unwrap(), ("".into(), "origin".into()));
         assert_eq!(set("fixture", "publish-mode", "push", &t).unwrap().1, "push");
         assert_eq!(set("fixture", "publish-branch", "main", &t).unwrap().1, "main");
@@ -1431,8 +1498,7 @@ mod tests {
     #[test]
     fn rm_removes_the_publish_table_and_leaves_other_repositories_tables() {
         let f = fx();
-        let t = both(&f);
-        registered(&f, "g");
+        let t = registered(&f);
         crate::set_paths_in_file(
             &f.toml,
             &[("publish.fixture.remote", "origin"), ("publish.other.remote", "none")],
