@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "spira-sub": {
+      "command": "${CHANNEL_SPIKE_BIN}",
+      "args": ["--socket", "${CHANNEL_SPIKE_CONTROL_DIR}/wake-spike.sock"]
+    }
+  }
+}

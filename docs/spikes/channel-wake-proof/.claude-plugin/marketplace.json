@@ -1,0 +1,11 @@
+{
+  "name": "spira",
+  "owner": { "name": "Spira" },
+  "plugins": [
+    {
+      "name": "spira-sub",
+      "source": "./plugin",
+      "description": "Throwaway: relays spira-sub deliveries into a session as channel events, for the live wake proof."
+    }
+  ]
+}

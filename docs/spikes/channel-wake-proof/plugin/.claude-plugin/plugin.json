@@ -1,0 +1,6 @@
+{
+  "name": "spira-sub",
+  "version": "0.0.1",
+  "description": "Throwaway: relays spira-sub deliveries into a session as channel events, for the live wake proof.",
+  "channels": [{ "server": "spira-sub" }]
+}
