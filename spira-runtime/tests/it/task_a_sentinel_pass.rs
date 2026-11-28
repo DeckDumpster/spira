@@ -749,7 +749,7 @@ fn t5_check2_ends_a_takeover_whose_owner_session_is_gone_with_a_note_and_keeps_a
 
 /// What a real observe sends the store. The installed projection and the resolved config are each
 /// one per process, so each test re-runs itself in a child with its own.
-mod observe_store_calls {
+pub(crate) mod observe_store_calls {
     use std::collections::BTreeMap;
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixListener;
@@ -764,8 +764,8 @@ mod observe_store_calls {
     const CHILD: &str = "SPIRA_TEST_OBSERVE_CHILD";
 
     #[derive(Default)]
-    struct Fake {
-        asked: Mutex<Vec<Vec<String>>>,
+    pub(crate) struct Fake {
+        pub(crate) asked: Mutex<Vec<Vec<String>>>,
         knobs: Mutex<serde_json::Map<String, Value>>,
     }
 
@@ -791,7 +791,7 @@ mod observe_store_calls {
         }
     }
 
-    fn serve(path: &Path, fake: Arc<Fake>) {
+    pub(crate) fn serve(path: &Path, fake: Arc<Fake>) {
         let listener = UnixListener::bind(path).unwrap();
         std::thread::spawn(move || {
             for conn in listener.incoming().flatten() {
@@ -811,7 +811,9 @@ mod observe_store_calls {
         });
     }
 
-    fn in_own_process(test: &str, body: fn(&Path)) {
+    /// Runs `body` in a child of this binary that has its own fixture config in `dir`; `test` is
+    /// the calling test's `module_path!()`, which `test_id` ends with its name.
+    pub(crate) fn in_own_process(test: &str, body: fn(&Path)) {
         if let Ok(dir) = std::env::var(CHILD) {
             return body(Path::new(&dir));
         }
@@ -835,11 +837,12 @@ mod observe_store_calls {
         std::os::unix::fs::symlink(timeout, path.join("timeout")).unwrap();
         let sock = dir.path().join("lc.sock");
         let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", run.to_str().unwrap()), ("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_LC_LIFECYCLE_ON_STORE", "1"), ("SPIRA_RUNES_DIR", testkit::manifest_dir().join("../spira/runes").to_str().unwrap())]);
-        let name = format!("{}::{test}", module_path!().split_once("::").unwrap().1);
+        let name = test.split_once("::").unwrap().1;
         let out = std::process::Command::new(std::env::current_exe().unwrap())
             .args([&format!("{name}::"), "--nocapture"])
             .env_clear()
             .env("PATH", &path)
+            .env("CARGO_MANIFEST_DIR", testkit::manifest_dir())
             .env("SPIRA_SYSTEMCTL", &systemctl)
             .env("HOME", dir.path())
             .env("SPIRA_HOME", testkit::manifest_dir().join("../spira"))
@@ -854,7 +857,7 @@ mod observe_store_calls {
     }
 
     /// The calls of each verb the acceptance names, and each knob write.
-    fn counted(asked: &[Vec<String>]) -> BTreeMap<&'static str, usize> {
+    pub(crate) fn counted(asked: &[Vec<String>]) -> BTreeMap<&'static str, usize> {
         let mut counts: BTreeMap<&'static str, usize> = ["claimable", "list", "content list", "intent knob-init"].map(|v| (v, 0)).into();
         for argv in asked {
             let two = argv.iter().take(2).cloned().collect::<Vec<_>>().join(" ");
@@ -889,7 +892,7 @@ mod observe_store_calls {
     #[test_id(thfm235)]
     #[test]
     fn one_observe_asks_for_the_claim_view_once() {
-        in_own_process("one_observe_asks_for_the_claim_view_once", |dir| {
+        in_own_process(module_path!(), |dir| {
             let [first, _] = two_passes(dir);
             assert_eq!(counted(&first)["claimable"], 1, "{first:?}");
         });
@@ -898,7 +901,7 @@ mod observe_store_calls {
     #[test_id(ttamkwa)]
     #[test]
     fn a_second_observe_over_unchanged_data_asks_the_store_for_no_lifecycle_or_content_read() {
-        in_own_process("a_second_observe_over_unchanged_data_asks_the_store_for_no_lifecycle_or_content_read", |dir| {
+        in_own_process(module_path!(), |dir| {
             let [_, second] = two_passes(dir);
             assert!(counted(&second).values().all(|n| *n == 0), "{:?}: {second:?}", counted(&second));
         });

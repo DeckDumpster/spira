@@ -767,6 +767,30 @@ pub fn run_bounded(mut cmd: Command, limit: Duration) -> (i32, String) {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(t6e45p3)]
+    #[test]
+    fn a_thread_read_answers_what_it_holds_sends_the_rest_and_lets_its_own_calls_through() {
+        use super::{LcClient, LcError, Reply, ThreadReads};
+        fn answerer(argv: &[String]) -> Option<Result<Reply, LcError>> {
+            (argv[0] == "list").then(|| {
+                // A `list` of its own: offered back to the answerer, this would never return.
+                let own = LcClient::over(std::sync::Arc::new(super::fake::Content::new(vec![])), true).call(&["list", "--ids", "sp-a"])?;
+                Ok(Reply { code: 0, out: format!("held {}", own.code), ..Reply::default() })
+            })
+        }
+        let sent = std::sync::Arc::new(super::fake::Content::new(vec![]));
+        let lc = LcClient::over(sent.clone(), true);
+        {
+            let _held = ThreadReads::begin(answerer);
+            assert!(lc.call(&["list", "--live"]).unwrap().out.starts_with("held "), "answered in place of the store");
+            assert!(lc.call(&["list", "--live"]).unwrap().out.starts_with("held "), "and again after its own call");
+            let _ = lc.call(&["content", "list"]);
+            let _ = lc.call_stdin(&["list"], "body");
+        }
+        let _ = lc.call(&["list", "--live"]);
+        let verbs: Vec<String> = sent.requests().iter().map(|a| a.join(" ")).collect();
+        assert_eq!(verbs, ["content list", "list", "list --live"], "unheld, bodied and after the guard go to the store");
+    }
     use std::io::{BufRead, BufReader, Read};
     use std::os::unix::net::UnixStream;
     #[test_id(t862q11)]

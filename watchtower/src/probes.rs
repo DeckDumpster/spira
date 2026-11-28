@@ -852,7 +852,8 @@ mod tests {
         assert_eq!(conds.len(), 1);
         assert!(conds[0].body.contains("sp-b") && !conds[0].body.contains("sp-a,"), "{}", conds[0].body);
         let seen = t.seen.lock().unwrap();
-        assert_eq!(&seen[0][..3], &["content", "list", "--status"]);
+        let content = seen.iter().find(|a| a[0] == "content").expect("a content read");
+        assert_eq!(&content[..3], &["content", "list", "--status"]);
         let (_, down) = crate::lc::scripted::scripted(2, "cannot tell");
         let cfg = RowlessCfg { lc: down, cap: 5, sustain_secs: 0, state: d.join("rowless2.state"), full_secs: 3600 };
         assert!(matches!(rowless_beads(&cfg, 1_700_000_000), Reading::Unknown), "no answer is unknown, never no rowless beads");
@@ -939,6 +940,24 @@ mod tests {
         assert_eq!(tally(Some(("i1", 2)), &term), None);
         let kill = Run { exit: Some(Exit::Signal(9)), ..term };
         assert_eq!(tally(Some(("i1", 2)), &kill), Some(("i2".into(), 3)));
+    }
+
+    #[test_id(tsk81ti)]
+    #[test]
+    fn a_pass_over_an_unmoved_planning_watermark_reads_no_content_rows_and_a_moved_one_does() {
+        let d = testkit::TempDir::new("wt-rowless-watermark");
+        let sweep = |watermark: &str, now: i64| {
+            let (t, lc) = crate::lc::scripted::scripted_by(&[("plan watermark", 0, watermark), ("content list", 0, "[]")]);
+            let cfg = RowlessCfg { lc, cap: 5, sustain_secs: 0, state: d.join("rowless.state"), full_secs: 3600 };
+            assert!(matches!(rowless_beads(&cfg, now), Reading::Standing(_)));
+            let seen = t.seen.lock().unwrap().iter().filter(|a| a[0] == "content").count();
+            seen
+        };
+        let now = 1_700_000_000;
+        assert_eq!(sweep(r#"{"watermark":7}"#, now), 1, "the first sweep is full");
+        assert_eq!(sweep(r#"{"watermark":7}"#, now + 120), 0, "no bead was created since");
+        assert_eq!(sweep(r#"{"watermark":8}"#, now + 240), 1, "a planning write");
+        assert_eq!(sweep(r#"{"watermark":8}"#, now + 3600), 1, "the hourly full sweep reads whatever the watermark says");
     }
 
     #[test_id(taoe892)]
