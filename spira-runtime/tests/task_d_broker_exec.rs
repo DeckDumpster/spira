@@ -55,7 +55,16 @@ impl World {
     fn tick(&self, e: &Effects) -> Vec<String> {
         let spec = runtime::EffectSpec::probe(broker_exec::OBSERVE, "", 10_000);
         let snap: Snapshot = serde_json::from_str(&e.run(&spec.key, &spec).expect("the probe answers")).unwrap();
-        broker_exec::decide(&snap).iter().map(|s| e.run(&s.key, s).unwrap_or_else(|err| format!("failed: {err}"))).collect()
+        broker_exec::decide(&snap).iter().map(|s| {
+            self.journal_open(&s.key);
+            e.run(&s.key, s).unwrap_or_else(|err| format!("failed: {err}"))
+        }).collect()
+    }
+
+    /// What the engine commits before a runner starts: the effect's open row, under its request id.
+    fn journal_open(&self, id: &str) {
+        let row = serde_json::json!({"task": "broker.exec", "ekey": id, "request_id": id, "stream": "broker.exec", "spec": {}, "requested_at": 1, "deadline_at": 2});
+        spira_store::lc_call::LcClient::socket(&self.socket).answer(&["journal", "turn", &serde_json::json!({"effects": [row]}).to_string()]).expect("the turn commits");
     }
 
     /// Runs the `work` client with `args` while the scheduler ticks, and returns its exit code and output.

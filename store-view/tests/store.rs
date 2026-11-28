@@ -73,7 +73,7 @@ impl Transport for Double {
                 }
                 None => Err("the script has no watch answer left".into()),
             },
-            "content" | "show-batch" | "condition" => ok(format!("answer {}", s.seen.iter().filter(|a| a[0] == argv[0]).count())),
+            "content" | "show-batch" | "condition" | "incidents" => ok(format!("answer {}", s.seen.iter().filter(|a| a[0] == argv[0]).count())),
             other => Err(format!("unscripted {other}")),
         }
     }
@@ -135,11 +135,15 @@ struct World {
 }
 
 fn world(script: Script, stale: Duration) -> World {
+    world_watching(script, stale, &[])
+}
+
+fn world_watching(script: Script, stale: Duration, prefixes: &[&str]) -> World {
     let script = Arc::new(Mutex::new(script));
     let now = Arc::new(Mutex::new(Instant::now()));
     let clock_now = Arc::clone(&now);
     let client = LcClient::over(Arc::new(Double(Arc::clone(&script))), true);
-    let p = Projection::new(client, stale, Arc::new(move || *clock_now.lock().unwrap()));
+    let p = Projection::new(client, stale, Arc::new(move || *clock_now.lock().unwrap())).with_prefixes(prefixes);
     World { script, now, p }
 }
 
@@ -943,4 +947,45 @@ fn after_a_failed_watch_the_next_one_sends_wait_ms_0_and_its_quiet_answer_confir
         w.advance(Duration::from_secs(11));
         assert_eq!(w.p.ready_counts().unwrap().rev, 5, "the quiet answer was confirmed, and the next watch holds");
     });
+}
+
+/// How often an `incidents list` reached the store after two reads, a change under
+/// `incidents/`, and a third read, on a view watching `prefixes`.
+fn incident_lists_asked(prefixes: &'static [&'static str]) -> (usize, usize) {
+    let (told, asked_after) = mpsc::channel();
+    within(move || {
+        let w = world_watching(Script { list_rev: 4, quiet: true, ..Default::default() }, Duration::from_secs(10), prefixes);
+        w.p.poll().unwrap();
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        std::thread::scope(|sc| {
+            sc.spawn(|| w.p.run(&stop, &mut |_| {}));
+            // clock-safe: a cap on the wait for the watch to start
+            while !w.p.watching() {
+                // clock-safe: a poll interval under that cap
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let list = || w.p.answer(&["incidents", "list"]).unwrap().value.out;
+            list();
+            deliver(&w, &["lifecycle/sp-x"], 8);
+            list();
+            let quiet = asked(&w, "incidents");
+            deliver(&w, &["incidents/incident:a"], 9);
+            list();
+            told.send((quiet, asked(&w, "incidents"))).unwrap();
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+    });
+    asked_after.recv().unwrap()
+}
+
+#[test_id(tv7xfib)]
+#[test]
+fn a_held_incident_list_lasts_until_a_key_under_incidents_changes() {
+    assert_eq!(incident_lists_asked(&["incidents/"]), (1, 2));
+}
+
+#[test_id(t72th21)]
+#[test]
+fn a_view_that_does_not_watch_the_incidents_holds_no_list_of_them() {
+    assert_eq!(incident_lists_asked(&[]), (2, 3));
 }

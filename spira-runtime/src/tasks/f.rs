@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use super::{Reads, Task};
 use crate::watchers::{answers_observe, INBOX_APPEND};
 
-pub mod incident_drain;
+pub mod incident_file;
 pub mod intake_filings;
 pub mod intake_gh;
 pub mod intake_gh_closeout;
@@ -61,16 +61,16 @@ pub static TASKS: &[Task] = &[
         build: |s| refuse(intake_gh_closeout::NAME, intake_gh_closeout::IntakeGhCloseout::from_settings(s)).registration(),
     },
     Task {
-        name: incident_drain::NAME,
-        reads: Reads::None,
+        name: incident_file::NAME,
+        reads: Reads::Only(&["incidents/"]),
         plane: runtime::Plane::Work,
         signal: &[],
-        boot: incident_drain::IncidentDrain::boot,
-        cadence_ms: |s| cadence(s, incident_drain::CADENCE_KEY),
-        effects: incident_drain::EFFECTS,
-        runners: &[(incident_drain::OBSERVE, incident_drain::run_observe), (incident_drain::DRAIN, incident_drain::run_drain)],
-        keys: &[incident_drain::KEYS],
-        build: |s| refuse(incident_drain::NAME, incident_drain::IncidentDrain::from_settings(s)).registration(),
+        boot: incident_file::IncidentFile::boot,
+        cadence_ms: |_| incident_file::CADENCE_MS,
+        effects: incident_file::EFFECTS,
+        runners: &[(incident_file::OBSERVE, incident_file::run_observe), (incident_file::RUN, incident_file::run_file)],
+        keys: &[incident_file::KEYS],
+        build: |s| refuse(incident_file::NAME, incident_file::IncidentFile::from_settings(s)).registration(),
     },
     Task {
         name: persona_ops::NAME,
@@ -83,7 +83,6 @@ pub static TASKS: &[Task] = &[
         runners: &[
             (persona_ops::OBSERVE, persona_ops::run_observe),
             (persona_ops::INTAKE_INSTALL, persona_ops::run_intake_install),
-            (persona_ops::INCIDENT_DRAIN, persona_ops::run_incident_drain),
             (persona_ops::BRIEF, persona_ops::run_brief),
             (persona_ops::LEDGER, persona_ops::run_ledger),
             (persona_ops::CLEANUP, persona_ops::run_cleanup),

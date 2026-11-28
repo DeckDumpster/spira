@@ -117,6 +117,8 @@ pub struct Call<'a> {
     pub programs: &'a [String],
     /// The request's sub-verb, when it is a plain word.
     pub subverb: Option<&'a str>,
+    /// The tasks whose rows a scheduler turn carries, comma-joined.
+    pub turn_tasks: Option<&'a str>,
 }
 
 /// Spans lost to a full queue or a failed push since this process started.
@@ -287,6 +289,9 @@ fn span_of(c: &Call) -> Span {
     if let Some(sub) = c.subverb {
         attributes.push(kv_str("spira.subverb", sub));
     }
+    if let Some(tasks) = c.turn_tasks {
+        attributes.push(kv_str("spira.turn.tasks", tasks));
+    }
     if let Some(open) = c.open_phase {
         attributes.push(kv_str("spira.phase.open", open));
     }
@@ -387,7 +392,7 @@ mod tests {
 
     fn call(code: i32) -> Call<'static> {
         let start = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        Call { method: "list", caller: "work/list", request_size: 40, response_size: 439_002, exit_code: code, start, end: start + Duration::from_millis(12), queue_wait: Duration::ZERO, before_work: Duration::ZERO, answer_wait: Duration::ZERO, after_answer: Duration::ZERO, cut: false, answered: None, cut_at: None, phases: &[], commits_us: &[], reads: 0, read_max_us: 0, reads_ended: 0, reads_overran: 0, open_phase: None, content_queries: 0, content_query_max_us: 0, content_query_max_shape: "", task: None, children: 0, programs: &[], subverb: None }
+        Call { method: "list", caller: "work/list", request_size: 40, response_size: 439_002, exit_code: code, start, end: start + Duration::from_millis(12), queue_wait: Duration::ZERO, before_work: Duration::ZERO, answer_wait: Duration::ZERO, after_answer: Duration::ZERO, cut: false, answered: None, cut_at: None, phases: &[], commits_us: &[], reads: 0, read_max_us: 0, reads_ended: 0, reads_overran: 0, open_phase: None, content_queries: 0, content_query_max_us: 0, content_query_max_shape: "", task: None, children: 0, programs: &[], subverb: None, turn_tasks: None }
     }
 
     fn encoded(c: &Call) -> Span {

@@ -171,6 +171,20 @@ fn bead(bead_id: &str) -> Result<Option<Bead>, String> {
     store(|sql, db| content_sql::bead(sql, db, bead_id))
 }
 
+fn text_of(bead_id: &str, column: &str) -> Result<String, String> {
+    let found = bead(bead_id)?.ok_or_else(|| format!("{NO_SUCH} {bead_id:?}"))?;
+    Ok(found.text.get(column).cloned().unwrap_or_default())
+}
+
+/// `bead_id`'s notes alone.
+pub fn notes(bead_id: &str) -> Result<String, String> {
+    text_of(bead_id, "notes")
+}
+
+pub fn description(bead_id: &str) -> Result<String, String> {
+    text_of(bead_id, "description")
+}
+
 /// `bead_id`'s external reference; `Ok(None)` when it has none or the store holds no such bead.
 pub fn external_ref_of(bead_id: &str) -> Result<Option<String>, String> {
     Ok(bead(bead_id)?.and_then(|b| b.external_ref).filter(|r| !r.trim().is_empty()))
@@ -362,18 +376,44 @@ pub fn amend_replace(id: &str, body: &str) -> Result<(), String> {
     content_write(&["update", id, "--body-file", "-"], body)
 }
 
-/// Notes `text` on `id` unless it is already there as a whole line.
+/// Whether `held` already carries `text`: as a whole line, or, for several lines, as a block.
+fn already_noted(held: &str, text: &str) -> bool {
+    let text = text.trim();
+    if text.contains('\n') {
+        format!("\n{held}\n").contains(&format!("\n{text}\n"))
+    } else {
+        held.lines().any(|l| l.trim() == text)
+    }
+}
+
+/// Notes `text` on `id` unless it is already there.
 pub fn amend_note(id: &str, text: &str) -> Result<(), String> {
-    if show(id)?.lines().any(|l| l.trim() == text.trim()) {
+    if already_noted(&show(id)?, text) {
         return Ok(());
     }
     content_write(&["note", id, "--stdin"], text)
 }
 
-/// The open beads that wait on `id` through a `blocks` edge, each with its title.
-pub fn blocked_dependents(id: &str) -> Result<Vec<(String, String)>, String> {
-    let ids = <LiveBd as crate::callers::Bd>::blocking_dependents(&mut LiveBd, id)?;
-    ids.into_iter().map(|d| { let t = title(&d)?.unwrap_or_default(); Ok((d, t)) }).collect()
+/// A bead behind another's `blocks` edge, and whether it is still open.
+pub struct Dependent {
+    pub id: String,
+    pub title: String,
+    pub open: bool,
+}
+
+/// Every bead behind a `blocks` edge on `id`, the closed ones included.
+pub fn blocked_dependents(id: &str) -> Result<Vec<Dependent>, String> {
+    let ids = store(|sql, db| content_sql::blocked_by(sql, db, id))?;
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let open = <LiveBd as crate::callers::Bd>::open_among(&mut LiveBd, &ids)?;
+    ids.into_iter().map(|d| Ok(Dependent { title: title(&d)?.unwrap_or_default(), open: open.contains(&d), id: d })).collect()
+}
+
+/// The (target, kind) of each edge `id` has onto another bead.
+pub fn edges(id: &str) -> Result<Vec<(String, String)>, String> {
+    Ok(bead(id)?.map(|b| b.dependencies).unwrap_or_default().into_iter().map(|e| (e.depends_on_id, e.kind)).collect())
 }
 
 /// Pushes a count of `name`, labelled by `op`; a failed push is dropped.
@@ -572,6 +612,21 @@ mod settled_tests {
     #[test]
     fn a_successful_close_is_never_reread() {
         assert!(settled(Ok(()), "sp-a", || panic!("must not read")).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod noted_tests {
+    use super::already_noted;
+
+    #[test_id(t0ukt6y)]
+    #[test]
+    fn evidence_of_several_lines_is_noted_once() {
+        let held = "○ sp-x\n\nNOTES\nAmended by Skuld: sp-r1\n\nnew evidence\nlater note\n";
+        assert!(already_noted(held, "Amended by Skuld: sp-r1\n\nnew evidence\n"));
+        assert!(!already_noted(held, "Amended by Skuld: sp-r1\n\nother evidence"));
+        assert!(already_noted(held, "later note"));
+        assert!(!already_noted(held, "later"));
     }
 }
 

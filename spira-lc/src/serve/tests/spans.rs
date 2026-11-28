@@ -82,6 +82,7 @@ fn span_of(snapshot: &state_store::phases::Snapshot) -> opentelemetry_proto::ton
         children: snapshot.children,
         programs: &snapshot.programs,
         subverb: None,
+        turn_tasks: None,
     };
     spira_otel::span_request("spira-lc", &call).resource_spans[0].scope_spans[0].spans[0].clone()
 }
@@ -426,4 +427,20 @@ fn lc_serve_refuses_a_missing_or_empty_collector_endpoint_naming_the_key() {
         assert!(e.contains("spira.otel_collector_endpoint"), "{e}");
     }
     assert_eq!(super::collector_endpoint(|k| Ok(format!("{k}:1"))), Ok("SPIRA_OTEL_COLLECTOR_ENDPOINT:1".to_string()));
+}
+
+#[test_id(tu8xs7c)]
+#[test]
+fn a_served_journal_turns_span_names_the_tasks_of_its_rows() {
+    let _env = testkit::env_read();
+    let spans = Spans::new();
+    let turn = runtime::journal::Turn { state: vec![runtime::journal::StateRow { task: "claim-count".into(), skey: "carry".into(), value: "v".into(), at: 1 }], ..Default::default() };
+    let argv = ["journal".to_string(), "turn".to_string(), serde_json::to_string(&turn).unwrap()];
+    let _ = send_spanned(&door_answering(0, None), Some(&spans.sink), &argv.iter().map(String::as_str).collect::<Vec<_>>(), None, None);
+    let got = spans.received();
+    assert_eq!(got.len(), 1, "one span");
+    let span = got[0].clone();
+    use opentelemetry_proto::tonic::common::v1::any_value::Value;
+    assert_eq!(serve_value(&span, "spira.turn.tasks"), Value::StringValue("claim-count".into()));
+    assert_eq!(serve_value(&span, "spira.subverb"), Value::StringValue("turn".into()));
 }

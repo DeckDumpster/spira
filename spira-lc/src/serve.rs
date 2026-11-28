@@ -714,6 +714,7 @@ impl Startup {
             children: 0,
             programs: &[],
             subverb: None,
+            turn_tasks: None,
         });
     }
 }
@@ -1097,6 +1098,7 @@ pub(crate) fn record_unread(spans: Option<&spira_otel::Sink>, size: usize, msg: 
         children: none.children,
         programs: &none.programs,
         subverb: None,
+        turn_tasks: None,
     };
     record_span(spans, &call);
 }
@@ -1246,6 +1248,7 @@ pub(crate) fn record_served(spans: Option<&spira_otel::Sink>, called: &Called, s
     }
     crate::followups::request_done(caller, measured, store.reads_ended > 0 || store.reads_overran > 0 || store.reads_ended_by_reset > 0 || gate_wait.is_some(), ans.code);
     let (handed, returned) = called.worked;
+    let turn_tasks = crate::journal::turn_tasks(&called.argv);
     let before_span = Instant::now();
     let call = spira_otel::Call {
         method: measured,
@@ -1276,6 +1279,7 @@ pub(crate) fn record_served(spans: Option<&spira_otel::Sink>, called: &Called, s
         children: store.children,
         programs: &store.programs,
         subverb: subverb_of(&called.argv),
+        turn_tasks: turn_tasks.as_deref(),
     };
     record_span(spans, &call);
 }

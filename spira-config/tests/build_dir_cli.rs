@@ -562,9 +562,9 @@ fn a_tree_whose_lockfile_and_one_crate_differ_cleans_that_crate_at_lease() {
     assert_eq!(cargo_log(&b), "");
 }
 
-#[test_id(tq4lk3c)]
+#[test_id(tpmwghf)]
 #[test]
-fn a_tree_whose_workspace_manifest_differs_still_cleans_the_workspace_at_lease() {
+fn a_tree_whose_workspace_manifest_alone_differs_cleans_nothing_at_lease() {
     let b = setup("bdcli-root-manifest");
     let d = b.base.join("dir.1");
     clean_tree(&b, &d);
@@ -572,8 +572,119 @@ fn a_tree_whose_workspace_manifest_differs_still_cleans_the_workspace_at_lease()
     std::fs::write(b.tree.join("Cargo.lock"), "# another tree's lock\n").unwrap();
     std::fs::write(b.tree.join("Cargo.toml"), "[workspace]\nmembers = [\"a\", \"b\"]\n# changed\n").unwrap();
     let said = clean_tree(&b, &d);
-    assert!(said.contains("Cargo.toml changed"), "{said}");
-    assert_eq!(cargo_log(&b), "clean --workspace");
+    assert!(said.contains("Cargo.toml Cargo.lock changed") && said.contains("nothing cleaned"), "{said}");
+    assert_eq!(cargo_log(&b), "");
+    assert_eq!(report(&d).acts, []);
+}
+
+#[test_id(t8o35kd)]
+#[test]
+fn a_tree_whose_toolchain_pin_alone_differs_cleans_nothing_at_lease() {
+    let b = setup("bdcli-toolchain-pin");
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    let _ = std::fs::remove_file(&b.log);
+    std::fs::write(b.tree.join("rust-toolchain.toml"), "[toolchain]\nchannel = \"1.80.0\"\n").unwrap();
+    let said = clean_tree(&b, &d);
+    assert_eq!(cargo_log(&b), "", "{said}");
+    assert_eq!(report(&d).acts, [], "{said}");
+    assert!(said.contains("rust-toolchain.toml changed") && said.contains("nothing cleaned"), "{said}");
+}
+
+#[test_id(tv398fu)]
+#[test]
+fn a_tree_whose_workspace_manifest_and_one_crate_differ_cleans_that_crate_at_lease() {
+    let b = setup("bdcli-root-manifest-and-crate");
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    std::fs::write(b.tree.join("Cargo.toml"), "[workspace]\nmembers = [\"a\", \"b\"]\n# changed\n").unwrap();
+    std::fs::write(b.tree.join("a/src/lib.rs"), "pub fn f() { let _ = 2; }\n").unwrap();
+    clean_tree(&b, &d);
+    let a = only_act(&d);
+    assert_eq!(kind(&a), ("per-crate", "bytes-changed"));
+    assert_eq!(a.crates, ["crate-a"]);
+}
+
+#[test_id(twe3gkx)]
+#[test]
+fn a_changed_cargo_config_still_cleans_the_workspace_at_lease() {
+    let b = setup("bdcli-cargo-config");
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    std::fs::create_dir_all(b.tree.join(".cargo")).unwrap();
+    std::fs::write(b.tree.join(".cargo/config.toml"), "[env]\nX = \"1\"\n").unwrap();
+    clean_tree(&b, &d);
+    let a = only_act(&d);
+    assert_eq!(kind(&a), ("whole-workspace", "build-input-changed"));
+    assert_eq!(a.inputs, [".cargo/config.toml"]);
+}
+
+#[test_id(tiavj1m)]
+#[test]
+fn a_root_package_manifest_that_differs_still_cleans_the_workspace_at_lease() {
+    let b = setup("bdcli-root-package");
+    let root = "[package]\nname = \"root\"\n[workspace]\nmembers = [\"a\", \"b\"]\n";
+    std::fs::write(b.tree.join("Cargo.toml"), root).unwrap();
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    std::fs::write(b.tree.join("Cargo.toml"), format!("{root}# changed\n")).unwrap();
+    clean_tree(&b, &d);
+    let a = only_act(&d);
+    assert_eq!(kind(&a), ("whole-workspace", "build-input-changed"));
+    assert_eq!(a.inputs, ["Cargo.toml"]);
+}
+
+/// Rewrites the tree as a glob workspace holding `crates/<c>` for each of `names`.
+fn glob_tree(b: &Box_, manifest: &str, names: &[&str]) {
+    std::fs::write(b.tree.join("Cargo.toml"), manifest).unwrap();
+    for c in names {
+        let dir = b.tree.join("crates").join(c);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), format!("[package]\nname = \"crate-{c}\"\n")).unwrap();
+        std::fs::write(dir.join("src/lib.rs"), "pub fn f() {}\n").unwrap();
+    }
+}
+
+#[test_id(tgvzeqj)]
+#[test]
+fn a_workspace_with_glob_members_is_hashed_and_cleaned_per_crate() {
+    let b = setup("bdcli-glob-members");
+    glob_tree(&b, "[workspace]\nmembers = [\"crates/*\"]\n", &["a", "b"]);
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    assert_eq!(kind(&only_act(&d)), ("whole-workspace", "missing-record"));
+    std::fs::write(b.tree.join("crates/b/src/lib.rs"), "pub fn f() { let _ = 1; }\n").unwrap();
+    clean_tree(&b, &d);
+    let a = only_act(&d);
+    assert_eq!(kind(&a), ("per-crate", "bytes-changed"));
+    assert_eq!(a.crates, ["crate-b"]);
+}
+
+#[test_id(t11li9f)]
+#[test]
+fn a_crate_named_by_a_literal_entry_and_a_glob_is_one_member() {
+    let b = setup("bdcli-glob-overlap");
+    glob_tree(&b, "[workspace]\nmembers = [\"crates/a\", \"crates/*\"]\n", &["a"]);
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    std::fs::write(b.tree.join("crates/a/src/lib.rs"), "pub fn f() { let _ = 1; }\n").unwrap();
+    clean_tree(&b, &d);
+    assert_eq!(only_act(&d).crates, ["crate-a"]);
+}
+
+#[test_id(t9mn575)]
+#[test]
+fn a_crate_a_glob_workspace_excludes_is_not_hashed() {
+    let b = setup("bdcli-glob-exclude");
+    glob_tree(&b, "[workspace]\nmembers = [\"crates/*\"]\nexclude = [\n  \"crates/x\", # not ours\n]\n", &["a", "x"]);
+    let d = b.base.join("dir.1");
+    clean_tree(&b, &d);
+    assert_eq!(kind(&only_act(&d)), ("whole-workspace", "missing-record"));
+    let _ = std::fs::remove_file(&b.log);
+    std::fs::write(b.tree.join("crates/x/src/lib.rs"), "pub fn f() { let _ = 1; }\n").unwrap();
+    clean_tree(&b, &d);
+    assert_eq!(report(&d).acts, []);
+    assert_eq!(cargo_log(&b), "");
 }
 
 /// `cargo test --offline --locked` in `tree`, building in `target`.
@@ -629,6 +740,42 @@ fn a_tree_whose_lockfile_alone_differs_does_not_run_the_other_trees_test_binary(
     let b = real_cargo_test(&tree, &target);
     let b_said = format!("{}{}", String::from_utf8_lossy(&b.stdout), String::from_utf8_lossy(&b.stderr));
     assert!(b.status.success(), "tree B built its own test binary against dep 0.1.1; it did not run tree A's: {b_said}");
+}
+
+// Real cargo for the same reason: leaving the root manifest uncleaned is safe only while cargo
+// keys a unit by what it takes from it.
+#[test_id(t6r5r4c)]
+#[test]
+fn a_tree_whose_workspace_manifest_alone_differs_does_not_run_the_other_trees_test_binary() {
+    let d = testkit::TempDir::new("bdcli-root-real");
+    let (tree, target) = (d.path().join("tree"), d.path().join("target"));
+    std::fs::create_dir_all(tree.join("w/src")).unwrap();
+    std::fs::write(tree.join("rust-toolchain.toml"), include_str!("../../rust-toolchain.toml")).unwrap();
+    std::fs::write(tree.join("w/Cargo.toml"), "[package]\nname = \"w\"\nversion.workspace = true\nedition = \"2021\"\n").unwrap();
+    std::fs::write(tree.join("w/src/lib.rs"), "#[test]\nfn v() {\n    assert_eq!(env!(\"CARGO_PKG_VERSION\"), \"0.2.0\");\n}\n").unwrap();
+    let write_root = |version: &str| {
+        std::fs::write(tree.join("Cargo.toml"), format!("[workspace]\nmembers = [\"w\"]\nresolver = \"2\"\n[workspace.package]\nversion = \"{version}\"\n")).unwrap();
+        std::fs::write(tree.join("Cargo.lock"), format!("version = 3\n\n[[package]]\nname = \"w\"\nversion = \"{version}\"\n")).unwrap();
+    };
+    let home = spira_config::resolve::locate_home_for_process().unwrap();
+    let script = home.join(spira_config::build_dir::CLEAN_SCRIPT);
+    let path = std::env::var("PATH").unwrap_or_default();
+
+    write_root("0.1.0");
+    spira_config::build_dir::clean(&script, &tree, &target, &path, false, "sp-test", None).unwrap();
+    let a = real_cargo_test(&tree, &target);
+    let a_said = format!("{}{}", String::from_utf8_lossy(&a.stdout), String::from_utf8_lossy(&a.stderr));
+    assert!(!a.status.success() && a_said.contains("0.1.0"), "tree A's test sees version 0.1.0 and is red: {a_said}");
+    // As unit-tests.sh does after its run; without it the next clean drops tree A's unit as unrecorded.
+    let stamped = Command::new("bash").arg(&script).arg("--stamp").arg(&tree).env("CARGO_TARGET_DIR", &target).status().unwrap();
+    assert!(stamped.success());
+
+    write_root("0.2.0");
+    let said = spira_config::build_dir::clean(&script, &tree, &target, &path, false, "sp-test", None).unwrap();
+    let b = real_cargo_test(&tree, &target);
+    let b_said = format!("{}{}", String::from_utf8_lossy(&b.stdout), String::from_utf8_lossy(&b.stderr));
+    assert!(b.status.success(), "tree B built its own test binary at version 0.2.0; it did not run tree A's: {b_said}");
+    assert_eq!(report(&target).acts, [], "the lease clean removed nothing: {said}");
 }
 
 #[test_id(thvvkjk)]

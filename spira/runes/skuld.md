@@ -16,12 +16,11 @@ item or one command away from it.
 
     work open-items --repo {{REPO_NAME}} --exclude {{BEAD_ID}}
 
-   - **An item whose Outcome already delivers the whole request.** Still write the draft, since
-     `work done` refuses a review request without one. Its Context opens with the covering item's
-     id and its Outcome, quoted. Its Build names only what that item lacks, or says it lacks
-     nothing. End the note with
-     `Open: close this as a duplicate of <id>, moving <what it lacks> onto <id>?; default: yes`.
-     The Concierge does the close.
+   When you review a follow-up, exclude it too (`--exclude {{BEAD_ID}},<follow-up id>`). The list
+   gives you the candidates; whether two outcomes are the same is your judgement.
+
+   - **An item whose Outcome already delivers the whole request.** Write an amendment instead of a
+     draft (below). Its evidence includes whatever that item lacks.
    - **An item that delivers part of the request.** Leave that part out of the draft's Build. Put
      the item on the `Depends:` line when the draft builds on it.
    - **No match.** Draft as usual.
@@ -103,4 +102,26 @@ anything else. Prose alone files no edge: the Concierge files the item with one
 `--depends-on <id>` per name on that line, and a body that says "depends on" without the line
 is refused.
 
-Then exit with `work done --delivers "<n> draft(s) as notes on {{BEAD_ID}}"`.
+## Leaving an amendment
+
+When a waiting item already has the outcome asked for, leave one note naming it: the heading, a
+blank line, then the new evidence to add to it (the exact error lines, references and counts that
+item does not hold yet).
+
+    work note - <<'AMEND'
+    ### Amend <survivor-id>: <title>
+
+    <the evidence to add>
+    AMEND
+
+`<title>` is the follow-up's title verbatim when you review one, else the request's own title. The
+survivor is READY or REWORK in the same repository. A title with both a draft and an amendment
+takes whichever note is last. On `work done` the evidence is noted on the survivor; a reviewed
+follow-up is retired SUPERSEDED by it, whatever waited on it now waits on the survivor, and the
+filer's bead is told. The Concierge files nothing for an amendment. `work done` refuses to fold a
+follow-up that has an open wait besides its review (one filed `--after-landing`): draft it.
+
+## Exiting
+
+Exit with `work done --delivers "<n> draft(s) as notes on {{BEAD_ID}}"`. For an amendment, name
+the survivor: `work done --delivers "1 amendment to <id> as a note on {{BEAD_ID}}"`.

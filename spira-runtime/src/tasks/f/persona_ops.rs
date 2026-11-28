@@ -40,7 +40,6 @@
 //! |---|---|---|---|---|
 //! | `persona.ops.observe` | host | 10 s | (probe) | nothing; an unreadable pause reads `Unknown` |
 //! | `persona.ops.intake_install` | host | 60 s (unverified) | `ops/<run_id>/intake` | `SPIRA_ALERT_GLOB` unset: a no-op |
-//! | `persona.ops.incident_drain` | store | 60 s (unverified) | `ops/<run_id>/drain` | no `SPIRA_DB`; a spooled file it cannot file |
 //! | `persona.ops.brief` | host | 30 s | `ops/<run_id>/brief` | a missing core statute; an unresolvable persona model |
 //! | `unit.start` (shared) | unit | 2000 s; the session's wall is `RUNE_TIMEOUT_SECONDS` | `ops/<run_id>` as the unit key | a unit of that name already active |
 //! | `unit.stop` (shared) | unit | 30 s | `ops/<run_id>/stop` | a unit not running (done) |
@@ -61,7 +60,7 @@
 //! # Replaces
 //!
 //! `spira-ops-prod.service` and `.timer` and their manifest rows; children `world guard`,
-//! `release intake install`, `incident.sh drain`, `bash lib.sh _dwarf_snapshot`,
+//! `release intake install`, `bash lib.sh _dwarf_snapshot`,
 //! `strand dwarf-count`, `bdq memories`, the capacity probe; only `claude` survives, inside the
 //! unit. Pinned config: [`KEYS`]; `persona.ops.model` and the `RUNE_*` keys come from the toml
 //! persona table and the rune file (unverified that `cfg` reads them).
@@ -91,20 +90,19 @@ pub const STATE: EventKindTag = "persona.ops.state";
 
 pub const OBSERVE: &str = "persona.ops.observe";
 pub const INTAKE_INSTALL: &str = "persona.ops.intake_install";
-pub const INCIDENT_DRAIN: &str = "persona.ops.incident_drain";
 pub const BRIEF: &str = "persona.ops.brief";
 pub const LEDGER: &str = "persona.ops.ledger";
 pub const CLEANUP: &str = "persona.ops.cleanup";
 pub const INBOX_APPEND: &str = crate::watchers::INBOX_APPEND;
-pub const EFFECTS: &[&str] = &[OBSERVE, INTAKE_INSTALL, INCIDENT_DRAIN, BRIEF, UNIT_START, UNIT_STOP, LEDGER, CLEANUP, INBOX_APPEND];
+pub const EFFECTS: &[&str] = &[OBSERVE, INTAKE_INSTALL, BRIEF, UNIT_START, UNIT_STOP, LEDGER, CLEANUP, INBOX_APPEND];
 
 /// Consecutive harness-reds with one failing line before the Concierge is asked.
 pub const RED_ASK_AT: u32 = 3;
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_PERSONA_OPS_SECS";
 /// `BD_TIMEOUT` is dropped: no step of the sweep calls bd with a deadline any more (statutes
-/// come over the store's socket, the drain's bd calls carry their own).
-pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_AGENT", "SPIRA_MEMORIES_CACHE", "SPIRA_MEMORIES_CACHE_AGE", "SPIRA_STATUTE_CORE", "SPIRA_STATUTE_CORE_LOCAL", "SPIRA_BDQ_CONN_RETRIES", "SPIRA_ALERT_GLOB", "SPIRA_RUN", "SPIRA_OPS_SWEEP_KEEP_DAYS", "SPIRA_RESULTS_PRUNE_MAX", incident::intake::BATCH_KEY];
+/// come over the store's socket).
+pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_AGENT", "SPIRA_MEMORIES_CACHE", "SPIRA_MEMORIES_CACHE_AGE", "SPIRA_STATUTE_CORE", "SPIRA_STATUTE_CORE_LOCAL", "SPIRA_BDQ_CONN_RETRIES", "SPIRA_ALERT_GLOB", "SPIRA_RUN", "SPIRA_OPS_SWEEP_KEEP_DAYS", "SPIRA_RESULTS_PRUNE_MAX"];
 
 /// The first line of a prompt that means there is nothing to sweep.
 pub const NOMINAL: &str = "SWEEP:NOMINAL";
@@ -187,7 +185,7 @@ pub const TRANSITIONS: &[Transition<State>] = &[
     Transition { from: State::Idle, on: "tick", to: State::Observing, effects: &[OBSERVE] },
     Transition { from: State::Observing, on: "skip", to: State::Idle, effects: &[] },
     Transition { from: State::Observing, on: "busy", to: State::Idle, effects: &[LEDGER] },
-    Transition { from: State::Observing, on: "go", to: State::Preparing, effects: &[INTAKE_INSTALL, INCIDENT_DRAIN] },
+    Transition { from: State::Observing, on: "go", to: State::Preparing, effects: &[INTAKE_INSTALL] },
     Transition { from: State::Preparing, on: "prepared", to: State::Briefing, effects: &[BRIEF] },
     Transition { from: State::Briefing, on: "statute-missing", to: State::Idle, effects: &[LEDGER] },
     Transition { from: State::Briefing, on: "no-argv", to: State::Recording, effects: &[LEDGER, CLEANUP] },
@@ -300,11 +298,11 @@ pub fn decide(carry: &Carry, input: &Input) -> Result<(Carry, Vec<EffectSpec>), 
                 (fresh(carry, go("busy")?), vec![ledger(carry, "awake", why, None)])
             } else {
                 let next = Carry { head: Some(snap.prompt_head.trim().to_string()), ..with(carry, go("go")?) };
-                (next, vec![EffectSpec::keyed(INTAKE_INSTALL, format!("ops/{}/intake", run_of(carry)), String::new(), PREPARE_DEADLINE_MS), EffectSpec::keyed(INCIDENT_DRAIN, format!("ops/{}/drain", run_of(carry)), String::new(), PREPARE_DEADLINE_MS)])
+                (next, vec![EffectSpec::keyed(INTAKE_INSTALL, format!("ops/{}/intake", run_of(carry)), String::new(), PREPARE_DEADLINE_MS)])
             }
         }
-        Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == LEDGER || effect == INBOX_APPEND || effect == INTAKE_INSTALL || effect == UNIT_STOP => (carry.clone(), vec![]),
-        Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == INCIDENT_DRAIN => {
+        Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == LEDGER || effect == INBOX_APPEND || effect == UNIT_STOP || (effect == INTAKE_INSTALL && s != State::Preparing) => (carry.clone(), vec![]),
+        Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == INTAKE_INSTALL => {
             let ask = BriefAsk { prompt: String::new(), run_id: carry.run_id.clone().unwrap_or_default() };
             (with(carry, go("prepared")?), vec![spec(BRIEF, format!("ops/{}/brief", run_of(carry)), &ask, BRIEF_DEADLINE_MS)])
         }
@@ -571,22 +569,6 @@ pub fn run_intake_install(_: &Effects, _key: &str, s: &EffectSpec) -> Result<Str
         None => Ok(release::intake::NO_GLOB.to_string()),
         Some(r) if r.unverified.is_empty() => Ok(format!("{} template(s), {} wired", r.total, r.wired.len())),
         Some(r) => Err(format!("{} template(s), {} wired, {} unverified: {}", r.total, r.wired.len(), r.unverified.len(), r.unverified.join(" "))),
-    }
-}
-
-/// `persona.ops.incident_drain`: one pass over the incident spool (`incident`'s intake as a library).
-pub fn run_incident_drain(_: &Effects, _key: &str, _s: &EffectSpec) -> Result<String, String> {
-    let env = incident::intake::Env::load();
-    if env.db.is_none() {
-        return Err("no SPIRA_DB: the incident spool cannot be drained".into());
-    }
-    let bd = incident::real::RealBd::from_env()?;
-    let batch = incident::intake::configured_batch()?;
-    let report = incident::intake::drain_spool(&env, &bd, &incident::real::RealMailer, &incident::real::RealClock, batch);
-    if report.stuck.is_empty() {
-        Ok(format!("drained {}", report.drained()))
-    } else {
-        Err(incident::intake::drain_report(&report))
     }
 }
 
