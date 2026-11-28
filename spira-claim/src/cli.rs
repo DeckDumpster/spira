@@ -1038,7 +1038,7 @@ fn judge_rows(a: &Args, env: &Env, st: &Store, only: Option<&BTreeSet<String>>, 
     if publish && env.config.control_store {
         match publish_readiness(st, &entries, only) {
             Ok(()) => {
-                if let Err(e) = st.clear_readiness_refused() {
+                if let Err(e) = st.settle_readiness_alert() {
                     eprintln!("spira-claim: readiness alert not cleared: {e}");
                 }
             }

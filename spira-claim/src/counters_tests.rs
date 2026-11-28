@@ -114,7 +114,7 @@ fn the_streak_metadata_is_written_through_the_content_door() {
         }
     }
     let fake = Arc::new(Fake(Mutex::new(Vec::new())));
-    let store = Store { lc: LcClient::over(fake.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: std::time::Duration::from_secs(1), views: None };
+    let store = Store { lc: LcClient::over(fake.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: std::time::Duration::from_secs(1), views: None, readiness_alert: Default::default() };
     thrash_streak_bump(&store, "sp-a", "?", "stalled");
     let seen = fake.0.lock().unwrap().clone();
     let writes: Vec<_> = seen.iter().filter(|a| a[..2] == ["content", "update"]).collect();

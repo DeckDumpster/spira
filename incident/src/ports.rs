@@ -1,11 +1,28 @@
 //! Every effect the intake has outside its own arguments, as a trait (DESIGN.md §5):
-//! `bd`, `mail`, the repository map and the clock. `real.rs` implements them against the
+//! `bd`, `mail`, the incident rows, the repository map and the clock. `real.rs` implements them against the
 //! host; unit tests implement them as fakes so the orchestration in `run.rs` is testable
 //! without a database.
 
 use crate::decide::{BeadRow, Scope};
+use spira_store::incident::{Payload, Recorded, Row};
+
+/// The control store's unfiled incidents (`spira-lc incidents`). Each call is one store call.
+pub trait Rows {
+    /// Upserts the payload's row and answers its key.
+    fn raise(&self, payload: &Payload) -> Result<String, String>;
+    /// Takes the row to file it; `Err` names the state that refused the claim.
+    fn claim(&self, key: &str, by: &str, for_secs: i64) -> Result<Row, String>;
+    fn record(&self, key: &str, outcome: &Recorded) -> Result<(), String>;
+    /// Makes refused and unread rows pending, only `key`'s when named; answers how many.
+    fn retry(&self, key: Option<&str>) -> Result<usize, String>;
+    /// Every unfiled incident with its key, oldest first.
+    fn list(&self) -> Result<Vec<(String, Row)>, String>;
+}
 
 pub trait Bd {
+    /// The unfiled incidents of the store this `Bd` writes to.
+    fn incident_rows(&self) -> Box<dyn Rows + '_>;
+
     /// The incident beads in `scope` — bd's `list --all [--label <label>] [--closed-after
     /// <date>] --json` for the content, each bead's state from its lifecycle row (sp-jgjvh:
     /// incident beads are work beads; bd status is never read). Err when bd or the lifecycle

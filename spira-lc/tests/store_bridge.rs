@@ -249,3 +249,58 @@ fn a_transition_with_the_broker_down_is_applied_and_the_failed_publish_is_logged
     let (code, out) = server.call(&["show", "sp-bra"]);
     assert!(code == 0 && out.contains("WORKING"), "{code} {out}");
 }
+
+#[test_id(tc47ons)]
+#[test]
+fn an_unfiled_incident_is_a_retained_topic_until_it_is_filed_and_survives_a_broker_restart() {
+    let mut broker = Broker::up();
+    let server = bridged(&broker);
+    let mut watching = Subscriber::to(broker.socket(), &["incident/#"]);
+    let incidents = |words: &[&str]| {
+        let argv: Vec<&str> = std::iter::once("incidents").chain(words.iter().copied()).collect();
+        let (code, out) = server.call(&argv);
+        assert_eq!(code, 0, "{words:?}: {out}");
+    };
+    let raise = |reference: &str| incidents(&["raise", &json!({ "reference": reference, "title": "t", "repo": "spira" }).to_string()]);
+
+    raise("incident:bridge/a");
+    let (topic, value) = next(&mut watching);
+    assert_eq!(topic, "incident/incident:bridge-a");
+    assert_eq!(
+        value,
+        json!({"reference": "incident:bridge/a", "title": "t", "repo": "spira", "state": "pending", "reason": null, "events": 1, "first_at": PINNED_NOW, "last_at": PINNED_NOW, "bead": null})
+    );
+    incidents(&["record", "incident:bridge%2Fa", "refused", "--reason", "walled"]);
+    let (_, refused) = next(&mut watching);
+    assert_eq!((refused["state"].clone(), refused["reason"].clone()), (json!("refused"), json!("walled")));
+    let mut late = Subscriber::to(broker.socket(), &[topic.as_str()]);
+    assert_eq!(next(&mut late).1, refused, "retained for a later subscriber");
+
+    incidents(&["retry", "incident:bridge%2Fa"]);
+    assert_eq!(next(&mut watching).1["state"], "pending");
+    incidents(&["claim", "incident:bridge%2Fa", "--by", "t", "--for", "600"]);
+    assert_eq!(next(&mut watching).1["state"], "filing");
+    incidents(&["record", "incident:bridge%2Fa", "filed", "sp-bra"]);
+    let cleared = watching.recv();
+    assert_eq!((cleared.topic.as_str(), cleared.payload.len()), (topic.as_str(), 0));
+
+    raise("incident:one");
+    raise("incident:two");
+    raise("incident:three");
+    incidents(&["claim", "incident:three", "--by", "t", "--for", "600"]);
+    incidents(&["record", "incident:three", "filed", "sp-brb"]);
+    while !watching.recv().payload.is_empty() {}
+    broker.restart();
+    wait_up(&broker);
+    let mut after = Subscriber::to(broker.socket(), &["incident/+"]);
+    // A later raise is published behind the whole republish, so it marks its end.
+    raise("incident:last");
+    let mut again = BTreeMap::new();
+    while !again.contains_key("incident/incident:last") {
+        let d = after.recv();
+        if !d.payload.is_empty() {
+            again.insert(d.topic, serde_json::from_slice::<Value>(&d.payload).unwrap());
+        }
+    }
+    assert_eq!(again.keys().collect::<Vec<_>>(), ["incident/incident:last", "incident/incident:one", "incident/incident:two"]);
+}

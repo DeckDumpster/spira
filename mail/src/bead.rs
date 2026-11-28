@@ -876,7 +876,7 @@ mod door_tests {
             ("spira-runtime/src/tasks/b/incident_alarms.rs", include_str!("../../spira-runtime/src/tasks/b/incident_alarms.rs")),
             ("spira-runtime/src/tasks/b/mail_reconcile.rs", include_str!("../../spira-runtime/src/tasks/b/mail_reconcile.rs")),
             ("spira-runtime/src/tasks/e/incident_probe.rs", include_str!("../../spira-runtime/src/tasks/e/incident_probe.rs")),
-            ("spira-runtime/src/tasks/f/incident_drain.rs", include_str!("../../spira-runtime/src/tasks/f/incident_drain.rs")),
+            ("spira-runtime/src/tasks/f/incident_file.rs", include_str!("../../spira-runtime/src/tasks/f/incident_file.rs")),
             ("spira-runtime/src/tasks/f/intake_gh.rs", include_str!("../../spira-runtime/src/tasks/f/intake_gh.rs")),
             ("spira-runtime/src/tasks/f/intake_gh_closeout.rs", include_str!("../../spira-runtime/src/tasks/f/intake_gh_closeout.rs")),
         ] {

@@ -506,6 +506,7 @@ fn live_over(content: spira_store::lc_call::Reply, show: spira_store::lc_call::R
         lc_bin: "nonexistent/spira-lc".into(),
         timeout: std::time::Duration::from_secs(1),
         views: None,
+        readiness_alert: Default::default(),
     };
     Live {
         store,
