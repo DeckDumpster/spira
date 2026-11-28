@@ -294,6 +294,7 @@ pub const BASE_RELATIVE: &[&str] = &[
     "config-delta-folded",
     "workflow-config",
     "otel-binaries",
+    "bin-tests-skipped",
     "journal-reads",
     "release-tool-exec",
     "bare-unit-name",
@@ -911,6 +912,23 @@ mod tests {
         assert!(d.keeps(&f(
             "lists SPIRA_TOML for spira/gone.sh, which no longer names it"
         )));
+    }
+
+    #[test_id(tyau2sh)]
+    #[test]
+    fn a_skipped_bin_finding_survives_diff_scoping_when_the_branch_left_the_manifest_alone() {
+        let mut d = DiffScope {
+            files: Default::default(),
+        };
+        d.parse("--- a/demo/src/cli.rs\n+++ b/demo/src/cli.rs\n@@ -1 +1 @@\n-a\n+b\n");
+        let f = Finding {
+            rule: "bin-tests-skipped",
+            path: "demo/Cargo.toml".into(),
+            line: Some(4),
+            message: "bin demo holds tests, first t in demo/src/main.rs".into(),
+        };
+        assert!(!d.keeps(&f));
+        assert!(kept_by(Some(&d), f.rule, &f));
     }
 
     #[test_id(tfdpzbv)]

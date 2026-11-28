@@ -12,7 +12,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "perf-watch"
 path = "src/main.rs"
-test = false
 
 [[test]]
 name = "no_fork_edges"

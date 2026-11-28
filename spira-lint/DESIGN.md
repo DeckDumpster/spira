@@ -1491,6 +1491,20 @@ finding per literal; comments and test code are ignored. The allow file
 landed and only shrinks. System units that are not instance-suffixed are the legitimate
 remainder in it.
 
+## Rule `bin-tests-skipped`
+
+**Intent.** cargo test and the round's unit tier leave out a `[[bin]]` declared `test = false`,
+so a test added to one later never runs and nothing reports it.
+
+**Scope.** Every `[[bin]]` with `test = false` in a `[workspace] members` manifest: its `path`
+(default `src/main.rs`) and every file that loads through `mod name;`, transitively,
+test-gated modules included. A crate root resolves its modules beside itself.
+
+**Violation.** Any of those files holds a test fn: one finding per bin, at the manifest's
+`test = false` line, naming the bin and the first test fn and file. No allow list. The rule
+is base-relative, because the usual offender adds a test without touching the manifest.
+A root with no workspace members, or a bin source outside the walk, is refused.
+
 ## Rule `ffx-vocabulary`
 
 **Intent.** The Final Fantasy X working vocabulary is being replaced term by term; this rule is
