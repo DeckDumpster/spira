@@ -1218,7 +1218,7 @@ fn a_seal_that_failed_after_rewriting_the_list_still_reports_the_change_when_rer
 #[test_id(tvt0amx)]
 #[test]
 fn a_resumed_seal_stored_as_one_undivided_array_is_not_refused_for_its_missing_half() {
-    let mut w = world();
+    let w = world();
     stage_store(&w);
     let stored = r#"[{"path":"demo/src/store.rs","line":1,"body":"old"}]"#;
     std::fs::write(w.sealed_path(1), stored).unwrap();
