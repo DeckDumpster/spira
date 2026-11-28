@@ -668,6 +668,22 @@ fn audits_answers_the_applied_and_refused_events_after_a_revision_in_pages<B: Ba
     assert_ne!(verbs::run(s, &zero).0, 0);
 }
 
+#[test_id(tb1ekj9)]
+#[test]
+fn audits_names_next_when_it_stops_inside_a_stretch_of_commits_with_no_audit() {
+    let s = store(MemBackend::new(), &VirtualClock::new(0));
+    create(&s, "sp-a");
+    let first = s.contract().head().unwrap();
+    for n in 0..5_000 {
+        let txn = state_store::Txn::new().put("pad/k", state_store::Object::new(serde_json::json!(n)));
+        s.contract().txn(&txn, &req(&format!("pad-{n}"))).unwrap();
+    }
+    create(&s, "sp-b");
+    let got = call(&s, &["audits", "--after", &first.to_string(), "--limit", "100"]);
+    assert_eq!(got["rows"], serde_json::json!([]), "{got}");
+    assert!(got["next"].as_u64().unwrap() > first, "{got}");
+}
+
 #[test_id(tpk6pd9)]
 #[test]
 fn audits_newest_reads_only_the_newest_chunk_of_a_long_log() {

@@ -16,6 +16,8 @@ const PAGE: usize = 1_000;
 const EVENTS_PER_READ: usize = 100;
 /// The most `events/` keys one answer reads.
 pub const MAX_SCANNED: usize = 200_000;
+/// The most `events/` keys one limited read past a revision reads, so it stays inside the store's read deadline.
+pub const AUDIT_SCAN_KEYS: usize = 1_000;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Logged {
@@ -26,6 +28,8 @@ pub struct Logged {
 #[derive(Debug)]
 pub struct Scanned {
     pub audits: Vec<Logged>,
+    /// Where to resume a read that stopped at its key cap short of the head.
+    pub next: Option<u64>,
 }
 
 /// One audit read in place from its `events/` key: the fields the ops views fold, borrowed, with
@@ -145,11 +149,17 @@ impl<B: Backend> Store<B> {
     /// Every audit the store holds, oldest first: the imported history by its old seq, then each
     /// revision's. `after` skips what is at or below that revision.
     pub fn audits_after(&self, after: u64) -> Result<Scanned> {
-        self.audits_after_upto(after, usize::MAX)
+        self.read_audits(after, usize::MAX, usize::MAX)
     }
 
-    /// The first `limit` audits past `after`, oldest first: the log is read only as far as they reach.
+    /// The first `limit` audits past `after`, oldest first: the log is read only as far as they reach,
+    /// and past a revision no further than [`AUDIT_SCAN_KEYS`] keys.
     pub fn audits_after_upto(&self, after: u64, limit: usize) -> Result<Scanned> {
+        let cap = if after > 0 { AUDIT_SCAN_KEYS } else { usize::MAX };
+        self.read_audits(after, limit, cap)
+    }
+
+    fn read_audits(&self, after: u64, limit: usize, cap: usize) -> Result<Scanned> {
         let head = self.contract().head()?;
         let mut audits: Vec<Logged> = Vec::new();
         let mut seq_cursor = 0u64;
@@ -169,8 +179,9 @@ impl<B: Backend> Store<B> {
             }
         }
         let mut cursor = (after > 0).then(|| events_key(after));
+        let (mut keys, mut next) = (0usize, None);
         while audits.len() < limit {
-            let want = EVENTS_PER_READ.min(limit - audits.len()).max(1);
+            let want = EVENTS_PER_READ.min(limit - audits.len()).min(cap - keys);
             let page = self.contract().range_at(EVENTS_PREFIX, cursor.as_deref(), want, head)?;
             for item in &page {
                 audits.extend(branch_audits(item).into_iter().map(|audit| Logged { rev: item.mod_rev.main, audit }));
@@ -178,11 +189,16 @@ impl<B: Backend> Store<B> {
             if page.len() < want {
                 break;
             }
+            keys += page.len();
+            if keys >= cap && audits.len() < limit {
+                next = page.last().map(|i| i.mod_rev.main).filter(|rev| *rev < head);
+                break;
+            }
             cursor = page.last().map(|i| i.key.clone());
         }
         audits.sort_by_key(|l| l.rev);
         audits.truncate(limit);
-        Ok(Scanned { audits })
+        Ok(Scanned { audits, next })
     }
 }
 
@@ -289,5 +305,43 @@ mod tests {
         assert!(!asked.is_empty() && asked.iter().all(|n| *n <= 100), "{asked:?}");
         assert!(asked.iter().sum::<usize>() <= 250 + 100, "{asked:?}");
         assert_eq!(got.iter().map(|l| l.rev).collect::<Vec<_>>(), (2..=251).collect::<Vec<_>>());
+    }
+
+    #[test_id(tjgyuas)]
+    #[test]
+    fn a_read_past_a_revision_stops_at_the_key_cap_in_an_audit_less_stretch_and_resumes_to_the_next_audit() {
+        use super::super::super::store::counting::Counting;
+        use serde_json::json;
+        use state_store::{Object, Txn};
+        let c = Contract::open(Counting::default(), Ports::virtual_clock(&VirtualClock::new(0)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        let s = Store::new(c, 1_000);
+        let create = |id: &str| {
+            s.create(id, None, Some("0123456789abcdef0123456789abcdef01234567"), 100, &Request::new(id, "t", "t")).unwrap();
+        };
+        create("sp-a");
+        let first = s.audits_after(0).unwrap().audits.iter().map(|l| l.rev).max().unwrap();
+        for n in 0..5_000 {
+            s.contract().txn(&Txn::new().put("pad/k", Object::new(json!(n))), &Request::new(&format!("pad-{n}"), "t", "t")).unwrap();
+        }
+        create("sp-b");
+        s.contract().backend().take();
+        let (mut cursor, mut found) = (first, Vec::new());
+        for call in 0.. {
+            assert!(call < 20, "the cursor never reached the head: {cursor}");
+            let got = s.audits_after_upto(cursor, 100).unwrap();
+            let keys: usize = s.contract().backend().take().iter().filter(|(k, p, _)| *k == "range" && p.starts_with(EVENTS_PREFIX)).map(|(_, _, n)| *n).sum();
+            assert!(keys <= AUDIT_SCAN_KEYS + 100, "call {call} asked for {keys} events keys");
+            if call == 0 {
+                assert!(got.audits.is_empty(), "{:?}", got.audits);
+                assert!(got.next.is_some(), "a read cut at the cap names where to resume");
+            }
+            found.extend(got.audits.into_iter().map(|l| l.audit.lc_key));
+            let Some(next) = got.next else { break };
+            assert!(next > cursor, "{next} is not past {cursor}");
+            cursor = next;
+        }
+        assert_eq!(found, ["sp-b"]);
+        let all = s.audits_after(first).unwrap();
+        assert_eq!((all.audits.len(), all.next), (1, None), "the unbounded read ignores the cap");
     }
 }
