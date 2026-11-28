@@ -308,7 +308,7 @@ pub fn lc_claim_loop<A: Into<Attempt>>(
                 if resumable.iter().any(|r| r == id) {
                     logs.push(format!("{who}: resuming {id} ({}) — it already has work on its branch", tier.unwrap_or("top rank")));
                 } else {
-                    logs.push(format!("{who}: claiming {id} (epic-first rank)"));
+                    logs.push(format!("{who}: claiming {id} (priority-first rank)"));
                 }
                 return (Some(id.clone()), logs, false);
             }

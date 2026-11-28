@@ -72,8 +72,9 @@ and the `spira-runtime serve` task that does it.
    worker (step 7).
 
 3. **Claim.** The called `dwarf` asks `spira-claim select` for the top-ranked claimable bead
-   (`READY`/`REWORK`, no hold but `wait`, in its partition, blockers satisfied; epics first,
-   express beads ahead) and sends `Claim` to `spira-lc`. The compare-and-swap means two dwarves
+   (`READY`/`REWORK`, no hold but `wait`, in its partition, blockers satisfied; express
+   first, then `REWORK`, then fresh work by each bead's own priority, with epic grouping only
+   breaking ties) and sends `Claim` to `spira-lc`. The compare-and-swap means two dwarves
    cannot win the same bead. The claim records holder, persona, lease and, for a bead built on
    unlanded prerequisites, the stack of their certified tips.
 
