@@ -44,11 +44,11 @@ pub fn send(bd: &dyn Bd, env: &Env, letter: &Letter) -> Result<(), String> {
     })
 }
 
-/// A note to the operator about a reader that is not reading. Unclassed operator mail is
+/// An alert to the operator about a reader that is not reading. Without the override it would be
 /// rerouted to the concierge, which is the mailbox such an alert is usually about.
 pub fn alert_operator(bd: &dyn Bd, env: &Env, subject: &str, body: &str) -> Result<(), String> {
     let env = Env { operator_considered: Some("watchd alerts the operator about readers that are not reading".into()), condition: crate::notify::condition_of(subject), ..env.clone() };
-    send(bd, &env, &Letter { mailbox: "operator", subject, kind: "note", default: "", body })
+    send(bd, &env, &Letter { mailbox: "operator", subject, kind: "alert", default: "", body })
 }
 
 pub fn alert_operator_configured(subject: &str, body: &str) -> Result<(), String> {
@@ -65,14 +65,14 @@ pub fn send_configured(letter: &Letter) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use mail::bead::BdOut;
     use std::cell::RefCell;
     use std::path::PathBuf;
 
     #[derive(Default)]
-    struct NoStore {
+    pub(crate) struct NoStore {
         calls: RefCell<Vec<Vec<String>>>,
     }
 
@@ -89,7 +89,7 @@ mod tests {
         }
     }
 
-    fn env(root: &std::path::Path) -> Env {
+    pub(crate) fn env(root: &std::path::Path) -> Env {
         Env {
             mail_root: root.join("mail"),
             kinds_dir: root.join("kinds"),
@@ -124,8 +124,10 @@ mod tests {
         let tmp = testkit::TempDir::new("watchd-alert");
         let root = tmp.path().to_path_buf();
         std::fs::create_dir_all(root.join("run")).unwrap();
-        alert_operator(&NoStore::default(), &env(&root), "events unread", "## Note\nx\n").unwrap();
-        assert_eq!(std::fs::read_dir(root.join("mail/operator/new")).unwrap().count(), 1);
+        alert_operator(&NoStore::default(), &env(&root), "events unread", "## Alert\nx\n").unwrap();
+        let sent: Vec<_> = std::fs::read_dir(root.join("mail/operator/new")).unwrap().flatten().collect();
+        assert_eq!(sent.len(), 1);
+        assert!(std::fs::read_to_string(sent[0].path()).unwrap().contains("\nX-Spira-Kind: alert\n"));
         assert!(!root.join("mail/concierge/new").exists());
     }
 
@@ -136,7 +138,7 @@ mod tests {
         let root = tmp.path().to_path_buf();
         std::fs::create_dir_all(root.join("run")).unwrap();
         let sent = |subject: &str| {
-            alert_operator(&NoStore::default(), &env(&root), subject, "## Note\nx\n").unwrap();
+            alert_operator(&NoStore::default(), &env(&root), subject, "## Alert\nx\n").unwrap();
             let mut files: Vec<_> = std::fs::read_dir(root.join("mail/operator/new")).unwrap().flatten().collect();
             files.sort_by_key(|f| f.metadata().unwrap().modified().unwrap());
             std::fs::read_to_string(files.last().unwrap().path()).unwrap()
@@ -171,7 +173,7 @@ mod tests {
         std::fs::create_dir_all(root.join("run")).unwrap();
         let strict = Env { kinds_dir: testkit::manifest_dir().join("../spira/mail/kinds"), lint_considered: None, ..env(&root) };
         for (subject, default, why) in [(BACKLOG_SUBJECT, BACKLOG_DEFAULT, BACKLOG_WHY), (HEALTH_SUBJECT, HEALTH_DEFAULT, HEALTH_WHY)] {
-            let body = crate::ops::ask_note_body(subject, default, why, "[2000-01-01T00:00:00Z] FAIL planted");
+            let body = crate::ops::ask_alert_body(subject, default, why, "[2000-01-01T00:00:00Z] FAIL planted");
             alert_operator(&NoStore::default(), &strict, subject, &body).unwrap_or_else(|e| panic!("{subject}: {e}"));
         }
         assert_eq!(std::fs::read_dir(root.join("mail/operator/new")).unwrap().count(), 2);

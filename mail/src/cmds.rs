@@ -172,6 +172,16 @@ pub fn operator_refusal(kind: &str, default: &str, class: &str, body: &str, requ
     class_refusal(class, default, body)
 }
 
+/// Why the operator's door turns a send away. The kind is judged first: a kind that asks nothing
+/// is turned away whatever flag or override the sender sets.
+fn door_refusal(args: &SendArgs, body: &str, overridden: bool) -> Option<String> {
+    match args.kind {
+        "question" | "decision" | "alert" if overridden => None,
+        "question" | "decision" | "alert" | "report" => operator_refusal(args.kind, args.default, args.class, body, args.requested_by),
+        kind => Some(format!("kind '{kind}' is never admitted to the operator: it reports and asks nothing (law-wake-only-for-what-must-be-decided)")),
+    }
+}
+
 const PROBE_MARKERS: [&str; 4] = ["probe", "deleteme", "plumbing test", "test ping"];
 
 /// The probe marker an operator-bound message carries in its subject or first body line.
@@ -254,7 +264,7 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deli
         }
     }
 
-    if mailbox == "operator" && !args.digest && env.operator_considered.is_none() {
+    if mailbox == "operator" && env.operator_considered.is_none() {
         if let Some(why) = unknown_class_refusal(args.class) {
             return Err(why);
         }
@@ -262,8 +272,8 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deli
 
     let sent_body = body.clone();
     let mut rerouted: Option<String> = None;
-    if mailbox == "operator" && !args.digest && env.operator_considered.is_none() {
-        if let Some(why) = operator_refusal(args.kind, args.default, args.class, &body, args.requested_by) {
+    if mailbox == "operator" {
+        if let Some(why) = door_refusal(args, &body, env.operator_considered.is_some()) {
             if matches!(args.kind, "question" | "decision") {
                 if env.lint_considered.is_none() {
                     let from = args.from.map(str::to_string).or_else(|| env.mail_from.clone()).unwrap_or_default();
@@ -273,7 +283,7 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deli
                 return Err(format!("refusing an ask for the operator — {why}"));
             }
             eprintln!(
-                "mail: routed to the concierge, not the operator — {why}. The operator mailbox admits only question asks with a class, a default and the sections above; everything else is the concierge's judgement, and carries no ask label."
+                "mail: routed to the concierge, not the operator — {why}. The operator mailbox admits only asks with a class, a default and the sections above, a requested report, and an alert from a sender that declares an operator override; everything else is the concierge's judgement, and carries no ask label."
             );
             body = format!("(Routed here from an operator mail: {why}.)\n\n{body}");
             mailbox = "concierge".to_string();
@@ -1150,6 +1160,66 @@ mod probe_tests {
         let line = sent_line(&out).unwrap();
         assert!(line.starts_with(&format!("mail send: sent {id} to concierge (rerouted from operator: kind 'note'")), "{line}");
         assert!(line.ends_with(')') && !line.contains('\n'), "{line}");
+    }
+
+    fn send_to_operator(t: &testkit::TempDir, kind: &str, digest: bool, considered: bool) -> SendOutcome {
+        let mut e = env(t.path());
+        e.operator_considered = considered.then(|| "a sender that states a failure".to_string());
+        let a = SendArgs { kind, default: "", class: "", digest, ..args("Disk is filling", false) };
+        send(&FakeBd::new(vec![]), &e, &a, "## Note\nx\n\n## Alert\nx\n".into()).unwrap()
+    }
+
+    fn assert_rerouted_note(t: &testkit::TempDir, out: &SendOutcome) {
+        let line = sent_line(out).unwrap();
+        assert!(line.contains(" to concierge (rerouted from operator: kind 'note'"), "{line}");
+        assert_eq!((root_mailbox_entries(t.path(), "operator"), root_mailbox_entries(t.path(), "concierge")), (0, 1));
+    }
+
+    // covers: UC-operator-channel-02
+    #[test_id(t83psj6)]
+    #[test]
+    fn a_digest_flag_does_not_carry_a_note_to_the_operator() {
+        let t = testkit::TempDir::new("mail-door-digest");
+        let out = send_to_operator(&t, "note", true, false);
+        assert_rerouted_note(&t, &out);
+    }
+
+    // covers: UC-operator-channel-02
+    #[test_id(twfovrb)]
+    #[test]
+    fn an_operator_override_does_not_carry_a_note_to_the_operator() {
+        let t = testkit::TempDir::new("mail-door-considered");
+        let out = send_to_operator(&t, "note", false, true);
+        assert_rerouted_note(&t, &out);
+    }
+
+    // covers: UC-operator-channel-02
+    #[test_id(t4idzgm)]
+    #[test]
+    fn an_alert_with_an_operator_override_reaches_the_operator() {
+        let t = testkit::TempDir::new("mail-door-alert");
+        let out = send_to_operator(&t, "alert", true, true);
+        assert_eq!((out.mailbox.as_str(), out.rerouted), ("operator", None));
+        assert!(written_message(t.path()).contains("\nX-Spira-Kind: alert\n"));
+    }
+
+    // covers: UC-operator-channel-02
+    #[test_id(tpm1mx6)]
+    #[test]
+    fn an_alert_without_an_operator_override_goes_to_the_concierge() {
+        let t = testkit::TempDir::new("mail-door-alert-bare");
+        let out = send_to_operator(&t, "alert", true, false);
+        assert_eq!(out.mailbox, "concierge");
+        assert_eq!((root_mailbox_entries(t.path(), "operator"), root_mailbox_entries(t.path(), "concierge")), (0, 1));
+    }
+
+    // covers: UC-operator-channel-02
+    #[test_id(tlbzr98)]
+    #[test]
+    fn an_operator_override_does_not_admit_a_report_the_operator_never_asked_for() {
+        let t = testkit::TempDir::new("mail-door-report");
+        let out = send_to_operator(&t, "report", false, true);
+        assert_eq!(out.mailbox, "concierge");
     }
 
     #[test_id(tnd5mxf)]

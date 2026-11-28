@@ -60,7 +60,7 @@
 //! | `inbox.notify.concierge_note` | store (mail; `ops.rs:358`) | 30 s | `inbox.notify:note:<slug>:<row key>` | — |
 //! | `inbox.notify.mail_health` | store (until split into `mail.health`) | 60 s | `inbox.notify:mailhealth:<tick at>` | exit 3 means the task could not check: `notify` fails today, which becomes `effect.failed` |
 //!
-//! The ask is mailed as `mail send operator --from "Watchd <watchd@spira>" --subject <s> --kind note` with the operator bypass (an alert about a silent reader must not be rerouted to it), body `"## Note\n{subject}\n\nAction: {default}\n\n{why}\n\n{evidence}\n"`. There are two subjects:
+//! The ask is mailed as `mail send operator --from "Watchd <watchd@spira>" --subject <s> --kind alert` with the operator bypass (an alert about a silent reader must not be rerouted to it), body `"## Alert\n{subject}\n\nAction: {default}\n\n{why}\n\n{evidence}\n"`. There are two subjects:
 //!
 //! - `Events a watcher produced have reached no reader`
 //! - `A watcher has stopped producing events`
@@ -375,7 +375,7 @@ pub fn asks(carry: &Carry, offer: &Offer, outcome: &str) -> Vec<EffectSpec> {
         if stamp.as_deref() == Some(fingerprint.as_str()) {
             continue;
         }
-        let body = format!("## Note\n{subject}\n\nAction: {default}\n\n{why}\n\n{report}\n");
+        let body = format!("## Alert\n{subject}\n\nAction: {default}\n\n{why}\n\n{report}\n");
         let akey = format!("inbox.notify:{}:{fingerprint}", format!("{kind:?}").to_lowercase());
         let ask = Ask { kind, fingerprint, from: watchd::send::FROM.into(), subject: subject.into(), default: default.into(), body };
         out.push(EffectSpec::keyed(ASK, akey, serde_json::to_string(&ask).unwrap_or_default(), ACT_DEADLINE_MS));

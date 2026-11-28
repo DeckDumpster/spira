@@ -12,6 +12,13 @@ names the rule it enforces, a repeat within a window is suppressed and counted, 
 closes the tracking bead it answers so "answered" is never re-derived by re-scanning beads
 (`law-answers-arrive-as-mail`, brain `feedback_read_the_mailbox_first`).
 
+**The operator's door judges the kind first, and no flag lifts it** (`--digest` and
+`SPIRA_MAIL_OPERATOR_CONSIDERED` included). It admits three things: a `question`/`decision` that
+meets the ask-class rules (the override waives those rules), a `report` with `--requested-by`
+(override or not), and an `alert` whose sender sets the override. Every other send to `operator`
+is rerouted to `concierge`, with the reason on stderr and atop the body; a failing ask is
+refused rather than rerouted (law-wake-only-for-what-must-be-decided).
+
 Three properties this rewrite must not weaken, because other tooling depends on them
 exactly as they are today:
 

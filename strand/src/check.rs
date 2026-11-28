@@ -651,13 +651,13 @@ pub fn bead_context(bead: Option<&crate::model::Bead>, id: &str, now: i64) -> St
 }
 
 pub fn escalation_body(title: &str, action: &str, why: &str, ctx: &str) -> String {
-    format!("## Note\n{title}\n\nAction: {action}\n\n{why}\n\n{ctx}\n")
+    format!("## Alert\n{title}\n\nAction: {action}\n\n{why}\n\n{ctx}\n")
 }
 
-/// A stranded-work alert is about the very mailboxes a dead reader leaves unread; it is a note
-/// to the operator with the bypass, since an unclassed question is rerouted to the concierge.
+/// A stranded-work alert is about the very mailboxes a dead reader leaves unread; it is an alert
+/// to the operator with the bypass, without which it is rerouted to the concierge.
 pub fn operator_send_args<'a>(title: &'a str, condition: &'a str) -> Vec<&'a str> {
-    vec!["send", "operator", "--from", "Strand check <strand@spira>", "--subject", title, "--kind", "note", "--condition", condition]
+    vec!["send", "operator", "--from", "Strand check <strand@spira>", "--subject", title, "--kind", "alert", "--condition", condition]
 }
 
 /// The `X-Spira-Condition` of a stranded-work alarm: the owner `mail tidy` asks, and the episode
@@ -835,15 +835,15 @@ mod tests {
 
     #[test_id(twmcflu)]
     #[test]
-    fn a_stranded_alert_is_a_note_to_the_operator_with_the_bypass_and_no_question() {
+    fn a_stranded_alert_is_an_alert_to_the_operator_with_the_bypass_and_no_question() {
         let a = operator_send_args("t", "strand:p:k:i");
         assert_eq!(a[1], "operator");
-        assert!(a.windows(2).any(|w| w == ["--kind", "note"]), "{a:?}");
+        assert!(a.windows(2).any(|w| w == ["--kind", "alert"]), "{a:?}");
         assert!(!a.contains(&"--default") && !a.contains(&"question"), "{a:?}");
         assert!(a.windows(2).any(|w| w == ["--condition", "strand:p:k:i"]), "{a:?}");
         assert_eq!(OPERATOR_CONSIDERED.0, "SPIRA_MAIL_OPERATOR_CONSIDERED");
         let b = escalation_body("T", "do x", "why", "ctx");
-        assert!(b.starts_with("## Note\n") && b.contains("do x"), "{b}");
+        assert!(b.starts_with("## Alert\n") && b.contains("do x"), "{b}");
     }
 
     #[test_id(txfb4en)]

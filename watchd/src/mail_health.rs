@@ -56,15 +56,19 @@ pub struct LibMailer;
 
 impl Mailer for LibMailer {
     fn send(&self, subject: &str, condition: &str, body: &str) -> Result<(), String> {
-        let mut env = mail::env::Env::load()?;
-        env.condition = Some(condition.to_string());
-        env.operator_considered = Some("mail-health alerts the operator about unread mailboxes".into());
-        env.repeat_considered = Some("mail-health has own dedup".into());
-        mail::maildir::mailbox_valid("operator")?;
+        let env = mail::env::Env::load()?;
         let bd = mail::bead::BdCli::configured(env.bd_conn_retries)?;
-        let args = mail::cmds::SendArgs { mailbox: "operator", from: Some(FROM), subject, kind: "", default: "", class: "", bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
-        mail::cmds::send_recorded(&bd, &env, &args, body.to_string()).map(|_| ())
+        alert(&bd, env, subject, condition, body)
     }
+}
+
+fn alert(bd: &dyn mail::bead::Bd, mut env: mail::env::Env, subject: &str, condition: &str, body: &str) -> Result<(), String> {
+    env.condition = Some(condition.to_string());
+    env.operator_considered = Some("mail-health alerts the operator about unread mailboxes".into());
+    env.repeat_considered = Some("mail-health has own dedup".into());
+    mail::maildir::mailbox_valid("operator")?;
+    let args = mail::cmds::SendArgs { mailbox: "operator", from: Some(FROM), subject, kind: "alert", default: "", class: "", bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
+    mail::cmds::send_recorded(bd, &env, &args, body.to_string()).map(|_| ())
 }
 
 /// What `(mtime, len)` of a file said when `spira-sendmail --check` last passed.
@@ -138,7 +142,7 @@ fn outbound(cfg: &Config, mailer: &dyn Mailer, memo: &CheckMemo, sendmail_check:
     if read_state(&state).as_deref() == Some(fault.as_str()) {
         return Outbound::Fine;
     }
-    let body = format!("## Note\nYou cannot reply to mail: {fault}. Re-run spira-install to rewrite aerc's outgoing command.\n");
+    let body = format!("## Alert\nYou cannot reply to mail: {fault}. Re-run spira-install to rewrite aerc's outgoing command.\n");
     if let Err(e) = mailer.send("reply path is broken: aerc cannot send", "mail-health:outbound", &body) {
         eprintln!("mail-health: could not mail the operator about the reply path: {e}");
         return Outbound::Unsent;
@@ -214,7 +218,7 @@ fn mailbox_pass(cfg: &Config, mailer: &dyn Mailer, mailbox: &str) -> Pass {
     if age < cfg.unread_age_s || read_state(&state).as_deref() == Some(oldest.to_string().as_str()) {
         return Pass::Quiet;
     }
-    let body = format!("## Note\n{mailbox} is not reading its mail ({} message(s), oldest {} minutes unread).\n", unread.len(), age / 60);
+    let body = format!("## Alert\n{mailbox} is not reading its mail ({} message(s), oldest {} minutes unread).\n", unread.len(), age / 60);
     if let Err(e) = mailer.send(&format!("{mailbox} is not reading its mail"), &format!("mail-health:{mailbox}"), &body) {
         eprintln!("mail-health: could not mail the operator about {mailbox}: {e}");
         return Pass::Failed;
@@ -296,6 +300,31 @@ mod tests {
 
     fn run(fx: &Fx, readers: &[&str], out: &Outbox) -> i32 {
         check(&fx.cfg(readers), out, &CheckMemo::default(), &|_| true)
+    }
+
+    struct Door {
+        env: mail::env::Env,
+    }
+
+    impl Mailer for Door {
+        fn send(&self, subject: &str, condition: &str, body: &str) -> Result<(), String> {
+            alert(&crate::send::tests::NoStore::default(), self.env.clone(), subject, condition, body)
+        }
+    }
+
+    // covers: UC-operator-channel-09
+    #[test_id(t69sp14)]
+    #[test]
+    fn both_mail_health_alarms_pass_the_lint_and_reach_the_operator_as_alerts() {
+        let fx = Fx::new("mh-door");
+        std::fs::create_dir_all(fx.t.path().join("run")).unwrap();
+        fx.deliver("concierge", "a", 120);
+        fx.aerc_outgoing("/nowhere/spira-sendmail");
+        let env = mail::env::Env { kinds_dir: testkit::manifest_dir().join("../spira/mail/kinds"), lint_considered: None, ..crate::send::tests::env(fx.t.path()) };
+        assert_eq!(check(&fx.cfg(&["concierge"]), &Door { env }, &CheckMemo::default(), &|_| true), 1);
+        let sent: Vec<String> = std::fs::read_dir(fx.t.path().join("mail/operator/new")).unwrap().map(|f| std::fs::read_to_string(f.unwrap().path()).unwrap()).collect();
+        assert_eq!(sent.len(), 2);
+        assert!(sent.iter().all(|m| m.contains("\nX-Spira-Kind: alert\n") && m.contains("\n## Alert\n")), "{sent:?}");
     }
 
     // covers: UC-operator-channel-09
