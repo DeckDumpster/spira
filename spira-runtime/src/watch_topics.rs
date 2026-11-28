@@ -32,6 +32,59 @@ pub struct Condition {
 /// What one row has published, by subject.
 pub type Published = BTreeMap<String, Condition>;
 
+/// One of the conditions a row holds, with the line it was first said with: a line rebuilt
+/// each pass would move with its ages, and the value with it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Standing {
+    pub id: String,
+    pub subject: String,
+    pub line: String,
+}
+
+/// `now`, each condition that was already in `before` keeping its line.
+pub fn keep(before: &[Standing], mut now: Vec<Standing>) -> Vec<Standing> {
+    for c in &mut now {
+        if let Some(held) = before.iter().find(|b| b.id == c.id && b.subject == c.subject) {
+            c.line.clone_from(&held.line);
+        }
+    }
+    now
+}
+
+/// Puts `c` ahead of the rest unless a condition of its id is already held.
+pub fn lead(held: &mut Vec<Standing>, c: Standing) {
+    if !held.iter().any(|h| h.id == c.id) {
+        held.insert(0, c);
+    }
+}
+
+const ORPHAN: &str = "orphan/";
+
+/// The condition of a maintenance, begun at `since`, whose owner is gone: its own, beside the
+/// BLIND a row pages for a store it cannot read, so neither says the other's remedy.
+pub fn orphan(since: u64, line: String) -> Standing {
+    Standing { id: format!("{ORPHAN}{since}"), subject: "all".into(), line }
+}
+
+/// Drops every [`orphan`] but the one begun at `still`.
+pub fn drop_orphans(held: &mut Vec<Standing>, still: Option<u64>) {
+    let still = still.map(|since| format!("{ORPHAN}{since}"));
+    held.retain(|c| !c.id.starts_with(ORPHAN) || Some(&c.id) == still.as_ref());
+}
+
+/// The pass over a row whose subjects may hold several conditions: each subject's lines are
+/// joined in the order of `held`. Moves `published` on, and returns the effect that takes the
+/// broker there, if anything changed.
+pub fn stand(row: &str, published: &mut Published, held: &[Standing], now_ms: u64) -> Option<EffectSpec> {
+    let mut lines: BTreeMap<String, String> = BTreeMap::new();
+    for c in held {
+        lines.entry(c.subject.clone()).and_modify(|text| *text = format!("{text}; {}", c.line)).or_insert_with(|| c.line.clone());
+    }
+    let (next, change) = settle(row, published, lines, now_ms);
+    *published = next;
+    change.map(|c| effect(&c, now_ms))
+}
+
 /// The input of one `watch.publish`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Change {
@@ -47,9 +100,9 @@ struct Carried {
     published: Published,
 }
 
-/// The line's own priority word, else `P2`.
+/// The most urgent priority word in the text, else `P2`.
 fn level(text: &str) -> &str {
-    text.split_whitespace().find(|w| matches!(*w, "P0" | "P1" | "P2" | "P3")).unwrap_or("P2")
+    text.split_whitespace().filter(|w| matches!(*w, "P0" | "P1" | "P2" | "P3")).min().unwrap_or("P2")
 }
 
 /// The pass at `now_ms` over `row`'s current conditions (subject → line): what the row has
@@ -98,6 +151,21 @@ pub fn carried(row: &str, published: &Published) -> String {
         return String::new();
     }
     serde_json::to_string(&Carried { row: row.to_string(), published: published.clone() }).unwrap_or_default()
+}
+
+/// The observe input `input` of a row that also takes parameters, carrying what the row last
+/// published when it has published anything.
+pub fn asked_with(mut input: serde_json::Value, row: &str, published: &Published) -> String {
+    if !published.is_empty() {
+        input["row"] = json!(row);
+        input["published"] = json!(published);
+    }
+    input.to_string()
+}
+
+/// Whether an observe's input carries anything a row published.
+pub fn carries(input: &str) -> bool {
+    serde_json::from_str::<Carried>(input).is_ok()
 }
 
 fn topic(row: &str, subject: &str) -> String {

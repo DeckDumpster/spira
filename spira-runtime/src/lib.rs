@@ -306,7 +306,7 @@ impl Effects {
 
     /// What a watch row's observe was asked with: nothing to say builds no publisher.
     pub(crate) fn watch_track(&self, input: &str) {
-        if input.is_empty() {
+        if !watch_topics::carries(input) {
             return;
         }
         if let Some(topics) = self.watch_topics() {

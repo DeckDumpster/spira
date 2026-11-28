@@ -78,6 +78,11 @@ path = "tests/task_e_watch_unit_usage.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "task_e_watch_throughput"
+path = "tests/task_e_watch_throughput.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "task_e_watch_transitions"
 path = "tests/task_e_watch_transitions.rs"
 required-features = ["integration"]
