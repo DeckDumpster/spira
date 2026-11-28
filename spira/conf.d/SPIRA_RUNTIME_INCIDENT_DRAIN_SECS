@@ -1,8 +1,0 @@
-TYPE=u64
-GROUP=runtime
-DOC=Seconds between the incident.drain task's looks at the incident spool; a tick on an empty spool lists one directory and does nothing else.
-SCHEMA=REQUIRED: Seconds between the incident.drain task's ticks in spira-runtime. Declared by a spira-runtime task row; its default is the task's pin, which spira-config init writes on a fresh install and activation's config delta declares on an upgrade.
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # A spooled event is retried within this long; one still spooled after twice it is noted to the Concierge.
-    : "${SPIRA_RUNTIME_INCIDENT_DRAIN_SECS:=60}"
-SPIRA_CONF_DEFAULT_EOF
