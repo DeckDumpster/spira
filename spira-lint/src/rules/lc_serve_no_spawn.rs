@@ -151,12 +151,29 @@ mod tests {
         assert!(!in_scope(DOOR) && in_scope("spira-lc/src/bd.rs"));
     }
 
+    fn rust_files_under(root: &std::path::Path, rel: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut dirs = vec![rel.to_string()];
+        while let Some(d) = dirs.pop() {
+            for e in std::fs::read_dir(root.join(&d)).unwrap() {
+                let e = e.unwrap();
+                let p = format!("{d}/{}", e.file_name().to_string_lossy());
+                if e.file_type().unwrap().is_dir() {
+                    dirs.push(p);
+                } else if p.ends_with(".rs") {
+                    out.push(p);
+                }
+            }
+        }
+        out
+    }
+
     #[test_id(t04qtpc)]
     #[test]
     fn the_real_spira_lc_tree_has_no_start_outside_the_door() {
         let manifest = testkit::manifest_dir();
         let root = manifest.parent().unwrap();
-        let tree = Tree::from_git(root).unwrap();
+        let tree = Tree::from_paths(root, rust_files_under(root, "spira-lc/src"), std::iter::empty::<String>());
         assert!(tree.entries.iter().any(|e| e.path == DOOR), "the walk must reach spira-lc for its silence to mean anything");
         let found = LcServeNoSpawn.check(&tree).unwrap();
         assert!(found.is_empty(), "{:?}", found.iter().map(|f| f.to_string()).collect::<Vec<_>>());
