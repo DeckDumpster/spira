@@ -84,6 +84,12 @@ fn is_test_file(path: &str) -> bool {
     path.ends_with("/tests.rs") || path == "tests.rs"
 }
 
+fn is_test_path(path: &str, c: &Crate) -> bool {
+    let tests_dir = format!("{}/", crate::index::join_norm(&c.dir, "tests"));
+    let stem = path.rsplit('/').next().and_then(|n| n.split('.').next()).unwrap_or("");
+    is_test_file(path) || path.starts_with(&tests_dir) || stem.ends_with("_tests")
+}
+
 pub fn module_units(ix: &Index) -> Vec<Unit> {
     let mut out = Vec::new();
     for c in &ix.crates {
@@ -247,8 +253,10 @@ pub fn trait_units(ix: &Index) -> Vec<Unit> {
                     }
                 }
             }
-            paths.extend(impls);
-            paths.extend(callers);
+            let in_tests = |f: &String| ix.crate_of(f).is_some_and(|c| is_test_path(f, c));
+            let (test_impls, impls): (Vec<_>, Vec<_>) = impls.into_iter().partition(in_tests);
+            let (test_callers, callers): (Vec<_>, Vec<_>) = callers.into_iter().partition(in_tests);
+            paths.extend([impls, callers, test_impls, test_callers].concat());
             out.push(unit(format!("trait:{path}::{name}"), Kind::Trait, format!("trait {name}"), paths));
         }
     }

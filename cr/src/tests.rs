@@ -248,6 +248,21 @@ fn a_trait_unit_holds_only_what_resolves_to_that_trait_by_path() {
     assert_eq!(trait_unit_files(&units, "trait:c/src/ports.rs::World"), ["c/src/ports.rs", "a/src/far.rs"]);
 }
 
+#[test_id(t4fkzs9)]
+#[test]
+fn a_trait_unit_lists_the_interface_then_implementations_then_callers_then_test_files() {
+    let fake = "use crate::ports::World;\n\nimpl World for Fake {\n    fn go(&self) {}\n}\n";
+    let t = two_worlds()
+        .with_file("a/src/real_tests.rs", fake)
+        .with_file("a/src/tests.rs", fake)
+        .with_file("a/tests/it.rs", "fn f(w: &dyn a::ports::World) {}\n");
+    let ix = crate::index::Index::build(&t).unwrap();
+    assert_eq!(
+        trait_unit_files(&crate::units::trait_units(&ix), "trait:a/src/ports.rs::World"),
+        ["a/src/ports.rs", "a/src/real.rs", "b/src/bridge.rs", "a/src/lib.rs", "b/src/main.rs", "a/src/real_tests.rs", "a/src/tests.rs", "a/tests/it.rs"]
+    );
+}
+
 #[test_id(tejcb8b)]
 #[test]
 fn a_trait_is_reached_by_glob_rename_and_crate_root_reexport() {
