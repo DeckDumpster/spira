@@ -1,7 +1,7 @@
-//! The watch rows' conditions on `watch/<row>/<subject>`: [`settle`] is what a row's handler
-//! says changed, [`WatchTopics`] the effects' publisher, off the loop. What it would republish
-//! to a broker that comes back is what each row's latest observe carried, with every publish
-//! since on top.
+//! Retained values under a topic prefix: the watch rows' conditions on `watch/<row>/<subject>`
+//! ([`settle`] is what a row's handler says changed) and unread mail on `mail/<mailbox>/<id>`.
+//! [`WatchTopics`] is the effects' publisher, off the loop. What it would republish to a broker
+//! that comes back is what each prefix's latest observe carried, with every publish since on top.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use runtime::event::{fnv1a, EffectSpec, Event, Projection};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use spira_pub::{Class, Publisher};
 
 use crate::watchers::{answered_spec, lost_at_restart, WATCH_PUBLISH};
@@ -85,19 +85,19 @@ pub fn stand(row: &str, published: &mut Published, held: &[Standing], now_ms: u6
     change.map(|c| effect(&c, now_ms))
 }
 
-/// The input of one `watch.publish`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Change {
-    pub row: String,
-    pub set: Published,
+/// The input of one publish: the values to retain and the subjects to forget under `prefix`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Change<V = Condition> {
+    pub prefix: String,
+    pub set: BTreeMap<String, V>,
     pub clear: Vec<String>,
 }
 
-/// The input of a row's observe: what it last published.
+/// What an observe was last told had been published under `prefix`.
 #[derive(Serialize, Deserialize)]
-struct Carried {
-    row: String,
-    published: Published,
+struct Carried<V> {
+    prefix: String,
+    published: BTreeMap<String, V>,
 }
 
 /// The most urgent priority word in the text, else `P2`.
@@ -110,7 +110,7 @@ fn level(text: &str) -> &str {
 /// line is unchanged keeps its value, `at` included.
 pub fn settle(row: &str, published: &Published, conditions: BTreeMap<String, String>, now_ms: u64) -> (Published, Option<Change>) {
     let now = now_ms / 1000;
-    let (mut next, mut change) = (Published::new(), Change { row: row.to_string(), ..Change::default() });
+    let (mut next, mut change) = (Published::new(), Change { prefix: prefix(row), set: Published::new(), clear: Vec::new() });
     for (subject, text) in conditions {
         let held = published.get(&subject);
         let value = match held {
@@ -132,7 +132,12 @@ pub fn settle(row: &str, published: &Published, conditions: BTreeMap<String, Str
 /// engine refuse a change while an earlier one is in flight, with the carry already past it.
 pub fn effect(change: &Change, now_ms: u64) -> EffectSpec {
     let input = serde_json::to_string(change).unwrap_or_default();
-    EffectSpec::keyed(WATCH_PUBLISH, format!("watch/{}/{now_ms}/{:016x}", change.row, fnv1a(&input)), input, PUBLISH_DEADLINE_MS)
+    EffectSpec::keyed(WATCH_PUBLISH, key(&change.prefix, &input, now_ms), input, PUBLISH_DEADLINE_MS)
+}
+
+/// The idempotency key of the publish of `input` under `prefix`.
+pub fn key(prefix: &str, input: &str, now_ms: u64) -> String {
+    format!("{prefix}/{now_ms}/{:016x}", fnv1a(input))
 }
 
 /// The effect again when `ev` says a `watch.publish` was lost with a stopping process, less
@@ -145,19 +150,28 @@ pub fn again(view: &Projection, ev: &Event, published: &Published) -> Option<Eff
     (!change.set.is_empty() || !change.clear.is_empty()).then(|| effect(&change, ev.at))
 }
 
+fn prefix(row: &str) -> String {
+    format!("watch/{row}")
+}
+
 /// What `row`'s observe is asked with; empty when it has published nothing.
 pub fn carried(row: &str, published: &Published) -> String {
+    carried_under(&prefix(row), published.clone())
+}
+
+/// [`carried`] for any prefix and payload.
+pub fn carried_under<V: Serialize>(prefix: &str, published: BTreeMap<String, V>) -> String {
     if published.is_empty() {
         return String::new();
     }
-    serde_json::to_string(&Carried { row: row.to_string(), published: published.clone() }).unwrap_or_default()
+    serde_json::to_string(&Carried { prefix: prefix.to_string(), published }).unwrap_or_default()
 }
 
 /// The observe input `input` of a row that also takes parameters, carrying what the row last
 /// published when it has published anything.
 pub fn asked_with(mut input: serde_json::Value, row: &str, published: &Published) -> String {
     if !published.is_empty() {
-        input["row"] = json!(row);
+        input["prefix"] = json!(prefix(row));
         input["published"] = json!(published);
     }
     input.to_string()
@@ -165,16 +179,17 @@ pub fn asked_with(mut input: serde_json::Value, row: &str, published: &Published
 
 /// Whether an observe's input carries anything a row published.
 pub fn carries(input: &str) -> bool {
-    serde_json::from_str::<Carried>(input).is_ok()
+    serde_json::from_str::<Carried<Value>>(input).is_ok()
 }
 
-fn topic(row: &str, subject: &str) -> String {
-    format!("watch/{row}/{}", spira_pub::segment(subject))
+fn topic(prefix: &str, subject: &str) -> String {
+    format!("{prefix}/{}", spira_pub::segment(subject))
 }
 
 #[derive(Default)]
 struct State {
-    held: BTreeMap<String, Published>,
+    /// Prefix → subject → the retained value.
+    held: BTreeMap<String, BTreeMap<String, Value>>,
     /// Topics cleared here that the broker has not been seen to take.
     uncleared: BTreeSet<String>,
 }
@@ -193,12 +208,13 @@ impl WatchTopics {
     pub fn new(publisher: Publisher) -> WatchTopics {
         let state = Arc::new(Mutex::new(State::default()));
         let republish = state.clone();
+        publisher.resident();
         publisher.on_connect(move |again| {
             let state = lock(&republish);
-            for (row, published) in &state.held {
+            for (prefix, published) in &state.held {
                 for (subject, value) in published {
                     // A refusal is the publisher's to log; nothing here can mend it.
-                    let _ = again.publish(Class::State, &topic(row, subject), &json!(value));
+                    let _ = again.publish(Class::State, &topic(prefix, subject), value);
                 }
             }
             for cleared in &state.uncleared {
@@ -211,22 +227,22 @@ impl WatchTopics {
     /// Takes the carried state an observe was asked with. Whatever of it is not already held is
     /// published, so a restarted process says it again.
     pub fn track(&self, input: &str) {
-        let Ok(Carried { row, published }) = serde_json::from_str(input) else { return };
-        let held = lock(&self.state).held.get(&row).cloned().unwrap_or_default();
-        let unsaid: Vec<(&String, &Condition)> = published.iter().filter(|(s, v)| held.get(*s) != Some(*v)).collect();
+        let Ok(Carried { prefix, published }) = serde_json::from_str::<Carried<Value>>(input) else { return };
+        let held = lock(&self.state).held.get(&prefix).cloned().unwrap_or_default();
+        let unsaid: Vec<(&String, &Value)> = published.iter().filter(|(s, v)| held.get(*s) != Some(*v)).collect();
         if !unsaid.is_empty() && !self.asked_to_connect.swap(true, Ordering::SeqCst) {
             // A failure is logged by the publisher, which connects when the broker appears.
             let _ = self.publisher.connect();
         }
         for (subject, value) in unsaid {
-            let _ = self.publisher.publish(Class::State, &topic(&row, subject), &json!(value));
+            let _ = self.publisher.publish(Class::State, &topic(&prefix, subject), value);
         }
         let mut state = lock(&self.state);
         for subject in published.keys() {
-            state.uncleared.remove(&topic(&row, subject));
+            state.uncleared.remove(&topic(&prefix, subject));
         }
         // Held only after the publishes: the connect hook takes this lock while they wait.
-        state.held.insert(row, published);
+        state.held.insert(prefix, published);
         drop(state);
         self.send_clears();
     }
@@ -234,25 +250,25 @@ impl WatchTopics {
     /// Publishes the [`Change`] in `input`. A broker that cannot be reached is logged by the
     /// publisher and is not the effect's failure: the state goes out on reconnect.
     pub fn publish(&self, input: &str) -> Result<String, String> {
-        let Change { row, set, clear } = serde_json::from_str(input).map_err(|e| e.to_string())?;
+        let Change { prefix, set, clear } = serde_json::from_str::<Change<Value>>(input).map_err(|e| e.to_string())?;
         {
             // A clear is recorded before anything is sent, so a connect on the way cannot put
             // the old value back.
             let mut state = lock(&self.state);
             for subject in &clear {
-                state.uncleared.insert(topic(&row, subject));
-                if let Some(published) = state.held.get_mut(&row) {
+                state.uncleared.insert(topic(&prefix, subject));
+                if let Some(published) = state.held.get_mut(&prefix) {
                     published.remove(subject);
                 }
             }
             for subject in set.keys() {
-                state.uncleared.remove(&topic(&row, subject));
+                state.uncleared.remove(&topic(&prefix, subject));
             }
         }
-        let sent = set.iter().filter(|(s, v)| self.publisher.publish(Class::State, &topic(&row, s), &json!(v)).is_ok()).count();
+        let sent = set.iter().filter(|(s, v)| self.publisher.publish(Class::State, &topic(&prefix, s), v).is_ok()).count();
         let said = format!("published {sent} of {} value(s), {} clear(s)", set.len(), clear.len());
         // Held only after the publishes: the connect hook takes this lock while they wait.
-        lock(&self.state).held.entry(row).or_default().extend(set);
+        lock(&self.state).held.entry(prefix).or_default().extend(set);
         self.send_clears();
         Ok(said)
     }

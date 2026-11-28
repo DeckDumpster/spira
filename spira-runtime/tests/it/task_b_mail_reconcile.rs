@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde_json::{json, Value};
 use spira_runtime::tasks::b::kit::{names, testing as t, Input};
 use spira_runtime::tasks::b::mail_reconcile::{self as task, Carry, MailReconcile as H, Orig, Reply, Snapshot};
 
@@ -41,15 +42,15 @@ fn t2_no_pending_reply_is_the_probe_alone() {
 #[test]
 fn t3_a_reply_steps_to_complete_once_and_a_second_complete_is_refused() {
     let h = t::handler::<H>(SET);
-    let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { replies: vec![reply("m1", "notice", &[])] }), MIN).unwrap();
+    let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { replies: vec![reply("m1", "notice", &[])], ..Default::default() }), MIN).unwrap();
     assert_eq!(names(&acts), [task::NOTE]);
     let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Outcome { effect: task::NOTE.into(), ok: true, body: "m1/note-orig".into() }, MIN).unwrap();
     assert_eq!(names(&acts), [task::MARK], "a step that succeeded is marked in the ledger");
-    let refused = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { replies: vec![reply("m1", "notice", &["note-orig", "complete"])] }), MIN).unwrap_err();
+    let refused = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { replies: vec![reply("m1", "notice", &["note-orig", "complete"])], ..Default::default() }), MIN).unwrap_err();
     assert!(refused.contains("complete"), "{refused}");
     let mut abandoned = reply("m2", "notice", &[]);
     abandoned.fails.insert("note-orig".into(), task::MAX_ATTEMPTS);
-    let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { replies: vec![abandoned] }), MIN).unwrap();
+    let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { replies: vec![abandoned], ..Default::default() }), MIN).unwrap();
     assert_eq!(names(&acts), [task::INBOX], "an abandoned step is said once");
 }
 
@@ -64,9 +65,9 @@ fn t4_its_effects_are_runnable_and_the_module_spawns_neither_bdq_nor_spira_lc() 
 #[test]
 fn t5_a_question_closes_and_answers_and_a_second_pass_is_silent() {
     let h = t::handler::<H>(SET);
-    let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { replies: vec![reply("m1", "question", &[])] }), MIN).unwrap();
+    let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { replies: vec![reply("m1", "question", &[])], ..Default::default() }), MIN).unwrap();
     assert_eq!(names(&acts), [task::CLOSE, task::ANSWER], "close the tracking bead, then close-ask --exit answered");
-    let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { replies: vec![reply("m1", "question", &["close", "answer"])] }), 2 * MIN).unwrap();
+    let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { replies: vec![reply("m1", "question", &["close", "answer"])], ..Default::default() }), 2 * MIN).unwrap();
     assert!(acts.is_empty(), "the ledger makes the second pass silent: {acts:?}");
 }
 
@@ -87,7 +88,7 @@ fn a_close_refusal_is_the_runners_typed_answer_not_text_in_the_failure() {
 #[test_id(tqq8sxu)]
 #[test]
 fn it_keeps_no_carry_row_however_many_replies_it_has_acted_on() {
-    let rig = t::rig::<H>(1, SET, &json(&Snapshot { replies: vec![reply("m1", "question", &[])] }));
+    let rig = t::rig::<H>(1, SET, &json(&Snapshot { replies: vec![reply("m1", "question", &[])], ..Default::default() }));
     t::assert_ported(&rig, task::STREAM);
     let kept: Vec<_> = rig.journal.state().into_iter().filter(|((task_name, _), v)| task_name == task::NAME && !v.is_empty()).collect();
     assert!(kept.is_empty(), "{kept:?}");
@@ -96,5 +97,32 @@ fn it_keeps_no_carry_row_however_many_replies_it_has_acted_on() {
 #[test_id(tob86vu)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
-    t::assert_boot_matches_an_unstopped_run::<H>(SET, vec![json(&Snapshot { replies: vec![reply("m1", "question", &[])] })], |_| {});
+    t::assert_boot_matches_an_unstopped_run::<H>(SET, vec![json(&Snapshot { replies: vec![reply("m1", "question", &[])], ..Default::default() })], |_| {});
+}
+
+#[test_id(t0uhhvw)]
+#[test]
+fn unread_mail_is_set_once_and_cleared_when_read_and_a_failed_publish_is_said_again() {
+    let h = t::handler::<H>(SET);
+    let one = json!({"from": "a", "subject": "s", "kind": "note", "at": 1});
+    let unread = |ids: &[&str]| Input::Observed(Snapshot { unread: BTreeMap::from([("concierge".to_string(), ids.iter().map(|id| (id.to_string(), one.clone())).collect())]), ..Default::default() });
+    let change = |acts: &[spira_runtime::tasks::b::kit::Act]| {
+        assert_eq!(names(acts), [task::PUBLISH]);
+        serde_json::from_str::<Value>(&acts[0].input).unwrap()
+    };
+
+    let (carry, acts) = task::decide(&h.cfg, &Carry::default(), &unread(&["m1"]), MIN).unwrap();
+    assert_eq!(change(&acts), json!({"prefix": "mail/concierge", "set": {"m1": one}, "clear": []}));
+    let (same, quiet) = task::decide(&h.cfg, &carry, &unread(&["m1"]), 2 * MIN).unwrap();
+    assert!(quiet.is_empty() && same == carry, "{quiet:?}");
+
+    let (read, acts) = task::decide(&h.cfg, &carry, &unread(&[]), 3 * MIN).unwrap();
+    assert_eq!(change(&acts), json!({"prefix": "mail/concierge", "set": {}, "clear": ["m1"]}));
+    assert_eq!(read, Carry::default());
+
+    let failed = Input::Outcome { effect: task::PUBLISH.into(), ok: false, body: acts[0].input.clone() };
+    let (owed, quiet) = task::decide(&h.cfg, &read, &failed, 4 * MIN).unwrap();
+    assert!(quiet.is_empty(), "{quiet:?}");
+    let (_, acts) = task::decide(&h.cfg, &owed, &unread(&[]), 5 * MIN).unwrap();
+    assert_eq!(change(&acts)["clear"], json!(["m1"]), "a clear that did not land is sent again");
 }

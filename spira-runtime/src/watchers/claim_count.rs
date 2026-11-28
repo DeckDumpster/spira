@@ -183,7 +183,7 @@ mod tests {
     fn a_topic_is_set_when_an_item_reaches_the_count_left_alone_while_unchanged_and_cleared_when_it_leaves() {
         let (p, change) = topics(&Published::new(), &snap(&[("a", 4), ("under", 3)]), 4, 10_000);
         assert_eq!(set_and_clear(&change), (vec!["a"], vec![]), "appear");
-        assert_eq!((change.unwrap().row.as_str(), p["a"].level.as_str(), p["a"].since, p["a"].at), (NAME, "P2", 10, 10));
+        assert_eq!((change.unwrap().prefix.as_str(), p["a"].level.as_str(), p["a"].since, p["a"].at), ("watch/claim-count", "P2", 10, 10));
         let (held, change) = topics(&p, &snap(&[("a", 4), ("under", 3)]), 4, 70_000);
         assert_eq!((change, &held), (None, &p), "hold");
         let (p, change) = topics(&held, &snap(&[("a", 5)]), 4, 130_000);

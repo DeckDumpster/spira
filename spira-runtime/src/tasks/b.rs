@@ -34,7 +34,10 @@ macro_rules! hosted {
     ($ty:ident, catch_up = $catch_up:path, failure = $failure:path) => {
         $crate::tasks::b::hosted!($ty, catch_up = $catch_up, off_journal = false, failure = $failure);
     };
-    ($ty:ident, catch_up = $catch_up:path, off_journal = $off:expr, failure = $failure:path) => {
+    ($ty:ident, extra = { $($extra:item)* }, failure = $failure:path) => {
+        $crate::tasks::b::hosted!($ty, catch_up = $crate::tasks::b::kit::no_catch_up, off_journal = false, failure = $failure, extra = { $($extra)* });
+    };
+    ($ty:ident, catch_up = $catch_up:path, off_journal = $off:expr, failure = $failure:path $(, extra = { $($extra:item)* })?) => {
         impl $crate::tasks::b::kit::Stub for $ty {
             type Snapshot = Snapshot;
             type Carry = Carry;
@@ -66,6 +69,8 @@ macro_rules! hosted {
             fn failure_body(request: &runtime::event::EffectSpec, body: &str) -> String {
                 $failure(request, body)
             }
+
+            $($($extra)*)?
         }
 
         impl $ty {
@@ -81,8 +86,8 @@ macro_rules! hosted {
 
         impl runtime::event::Handler for $ty {
             fn interests(&self) -> &[runtime::event::EventKindTag] {
-                static INTERESTS: [runtime::event::EventKindTag; 5] = $crate::tasks::b::kit::interests(TICK);
-                &INTERESTS
+                static INTERESTS: std::sync::OnceLock<Vec<runtime::event::EventKindTag>> = std::sync::OnceLock::new();
+                INTERESTS.get_or_init(|| $crate::tasks::b::kit::interests(TICK).into_iter().chain(<$ty as $crate::tasks::b::kit::Stub>::HEARS.iter().copied()).collect())
             }
 
             fn handle(&self, ctx: &runtime::event::Ctx, view: &runtime::event::Projection, ev: &runtime::event::Event) -> Vec<runtime::event::Command> {
@@ -181,6 +186,7 @@ pub static TASKS: &[Task] = &[
             (mail_reconcile::ANSWER, |e, _, s| mail_reconcile::run(e, s)),
             (mail_reconcile::INBOX, |e, _, s| mail_reconcile::run(e, s)),
             (mail_reconcile::MARK, |e, _, s| mail_reconcile::run(e, s)),
+            (mail_reconcile::PUBLISH, |e, _, s| mail_reconcile::run(e, s)),
         ],
         keys: &[mail_reconcile::KEYS],
         build: build::<MailReconcile>,
@@ -400,6 +406,16 @@ pub mod kit {
         /// lost a slot or a pass, or `None`. The timer that held the slot lives in memory only.
         /// A resumed pass is stamped by `Input::Fire`, as a slot's is.
         fn catch_up(carry: &Self::Carry, now_ms: u64, cadence: &Cadence) -> Option<String>;
+        /// The events beyond the kit's own that wake this task, on whatever stream they come.
+        const HEARS: &'static [EventKindTag] = &[];
+        /// What an event of [`Stub::HEARS`] asks for.
+        fn heard(&self, _view: &Projection, _ev: &Event) -> Vec<Command> {
+            vec![]
+        }
+        /// The observe probe's input.
+        fn probe_input(cfg: &Cfg, _carry: &Self::Carry) -> String {
+            Self::SPEC.probe_input_key.and_then(|k| cfg.get(k)).cloned().unwrap_or_default()
+        }
         /// The body `decide` is handed for a failed or timed-out effect, given what was asked.
         fn failure_body(request: &EffectSpec, body: &str) -> String {
             plain_failure(request, body)
@@ -476,6 +492,9 @@ pub mod kit {
                 None => vec![],
             };
         }
+        if T::HEARS.contains(&ev.kind.tag.as_str()) {
+            return t.heard(view, ev);
+        }
         if ev.stream != stream {
             return vec![];
         }
@@ -487,7 +506,7 @@ pub mod kit {
                 cmds.extend(run(t, ctx, view, &stream, Input::Fire, ev.at));
             }
             if !booting {
-                let input = spec.probe_input_key.and_then(|k| t.cfg().get(k)).cloned().unwrap_or_default();
+                let input = T::probe_input(t.cfg(), &carried::<T::Carry>(view, &stream, spec.state));
                 cmds.push(Command::Probe(EffectSpec::probe(spec.probe, input, spec.probe_deadline_ms)));
             } else if let Some(input) = resumed {
                 cmds.push(Command::Probe(EffectSpec::probe(spec.probe, input, spec.probe_deadline_ms)));

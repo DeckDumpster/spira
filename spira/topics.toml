@@ -99,6 +99,13 @@ publisher = "heimdall, spira-watchdog"
 fields = ["text", "since", "at"]
 
 [[topic]]
+family = "mail/<mailbox>/<id>"
+class = "state"
+publisher = "spira-runtime mail.reconcile"
+fields = ["from", "subject", "kind", "at"]
+resident = ["spira-runtime"]
+
+[[topic]]
 family = "concierge/inbox"
 class = "state"
 publisher = "inbox-writer"

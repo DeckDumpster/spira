@@ -374,12 +374,12 @@ fn a_clear_the_broker_could_not_take_is_sent_once_it_can_be_reached() {
     let dir = testkit::TempDir::new("watch-unreached");
     let path = dir.join("s");
     let topics = WatchTopics::new(Publisher::with("spira-runtime", Options::new(&path, Arc::new(VirtualClock::new(0)), Box::new(SeededRng::new(1)))).unwrap());
-    topics.publish(&json!({"row": "claim-count", "set": {}, "clear": ["sp-a"]}).to_string()).unwrap();
+    topics.publish(&json!({"prefix": "watch/claim-count", "set": {}, "clear": ["sp-a"]}).to_string()).unwrap();
     assert_eq!(broker.retained("watch/#").len(), 1, "the clear had no way to the broker");
 
     std::os::unix::fs::symlink(broker.socket(), &path).unwrap();
     let value = json!({"level": "P2", "text": "new", "since": 1, "at": 1});
-    topics.publish(&json!({"row": "claim-count", "set": {"sp-b": value}, "clear": []}).to_string()).unwrap();
+    topics.publish(&json!({"prefix": "watch/claim-count", "set": {"sp-b": value}, "clear": []}).to_string()).unwrap();
     topics.flush(FAILSAFE).unwrap();
 
     let held: Vec<String> = broker.retained("watch/#").into_iter().map(|(t, _)| t).collect();
@@ -393,7 +393,7 @@ fn a_clear_lost_with_a_stopping_runtime_is_asked_for_again_after_the_restart() {
     let broker = Broker::up();
     let fx = service(&broker);
     // What the process that is about to stop had put on the broker.
-    let held = json!({"row": "claim-count", "set": {"sp-a": {"level": "P2", "text": "x", "since": 1, "at": 1}}, "clear": []}).to_string();
+    let held = json!({"prefix": "watch/claim-count", "set": {"sp-a": {"level": "P2", "text": "x", "since": 1, "at": 1}}, "clear": []}).to_string();
     fx.run("k", &EffectSpec::keyed(WATCH_PUBLISH, "k", held, 10_000)).unwrap();
     flush(&fx);
 
@@ -424,6 +424,6 @@ fn a_publish_with_no_broker_configured_says_so_and_is_no_failure() {
     let _env = testkit::env_read();
     let fx = Effects::default();
     assert!(fx.watch_topics.set(None).is_ok());
-    let input = json!({"row": "claim-count", "set": {}, "clear": ["sp-a"]}).to_string();
+    let input = json!({"prefix": "watch/claim-count", "set": {}, "clear": ["sp-a"]}).to_string();
     assert_eq!(fx.run("k", &EffectSpec::keyed(WATCH_PUBLISH, "k", input, 1000)), Ok("not published: no broker configured".to_string()));
 }

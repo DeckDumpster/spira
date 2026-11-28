@@ -7,8 +7,8 @@
 //!
 //! - Cadence **60 s** (unit: `OnBootSec=1min`, `OnUnitActiveSec=1min`, `AccuracySec=10s`,
 //!   `Persistent=true` — which does nothing on a monotonic timer). First tick 60 s after boot.
-//! - Also woken by `mail.arrived` (the S9 source replacing mail-deliver) on any mailbox: a reply
-//!   is the only input that creates work.
+//! - Also woken by `mail.arrived` (the S9 source replacing mail-deliver) on any mailbox: a
+//!   delivery observes at once, leaving the cadence as it was.
 //! - Single-flight: one observe in flight; a tick that lands while one is outstanding is dropped
 //!   (the next tick repeats the whole pass anyway, `reconcile.rs:195`).
 //!
@@ -17,7 +17,7 @@
 //! `mail.reconcile.observe` returns:
 //!
 //! ```text
-//! Snapshot { replies: Vec<Reply> }
+//! Snapshot { replies: Vec<Reply>, unread: BTreeMap<mailbox, BTreeMap<id, {from,subject,kind,at}>> }
 //! Reply { key, in_reply_to, actor, para, orig: Option<Orig>, done: BTreeSet<String>, fails: BTreeMap<String,u32> }
 //! Orig  { bead, kind, work_bead, subject }
 //! ```
@@ -27,6 +27,8 @@
 //!   by its own Message-ID or the filename stem (`:220-221`), skipping those whose ledger says
 //!   `complete` (`:226`). The original is found by `find_message_by_id` (`:121`). The maildir
 //!   is mail's own store, so reading it is asking the component that decides.
+//! - `unread`: for each mailbox `SPIRA_MAIL_READERS` registers, and no other, every message
+//!   `maildir::is_unread` calls unread, by its file name before `:2,`.
 //! - `done`/`fails`: the per-message ledger under `<SPIRA_RUN>/mail-reconcile/<key>`
 //!   (`main.rs:320`, `reconcile.rs:41-46`). Moves to the task's carried state is **not**
 //!   proposed: the ledger is what makes a store outage converge, and it must survive a
@@ -49,7 +51,10 @@
 //! | bead of kind question/decision | `answer` (`spira-lc close-ask --exit answered`) (`:180-186`) |
 //! | any step at `MAX_ATTEMPTS` = 30 fails | mark abandoned; one `abandoned-inbox` row (`:25,86-89,188-191`) |
 //!
-//! No carried state in the scheduler (the ledger is the state). Fixtures: the eight tests at
+//! The replies carry no state in the scheduler (the ledger is the state). The one carry is
+//! `published`, what is retained on `mail/<mailbox>/<id>`: a mailbox whose unread set differs
+//! from it gets one `publish`. A failed or lost publish leaves its ids unknown (null), so the
+//! next pass sets or clears each again. Fixtures: the eight tests at
 //! `reconcile.rs:290-410` (close+lift+answer; second pass silent; duplicate Message-ID once;
 //! store down then up; refused close → one note + one inbox row; routed question; notice;
 //! empty body).
@@ -63,6 +68,7 @@
 //! | `mail.reconcile.lift` | store | 15 s | `<msgid>/lift` | terminal work bead (no-op, `lc.rs:46-49`); exit 1/3 quiet (`lc.rs:56`) |
 //! | `mail.reconcile.answer` | store | 15 s | `<msgid>/answer` | exit 1 (legacy ask, no row) and 3 (closed) quiet (`lc.rs:65-73`) |
 //! | `mail.reconcile.inbox` | host | 10 s | `<msgid>/refused-inbox\|abandoned-inbox` | writes the concierge maildir (`reconcile.rs:108-116`); becomes `inbox.append` |
+//! | `mail.publish` | host | 10 s | `mail/<mailbox>/<ms>/<hash>` | nothing; a broker out of reach is logged, and the values go out on reconnect |
 //! | `mail.reconcile.mark` | host | 5 s | `<msgid>/<step>` (append-only line) | nothing; appends the ledger (`reconcile.rs:50-61`) |
 //!
 //! Deadline 15 s = `LC_TIMEOUT` (`spira-store/src/lc_call.rs:7`); bdq calls run under
@@ -95,16 +101,21 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use runtime::event::EventKindTag;
+use runtime::event::{Command, EffectSpec, Event, EventKind, EventKindTag, Projection, StreamKey};
 use spira_store::lc_call::LcError;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 use super::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
+use crate::tasks::g::mail_arrived::ARRIVED;
+use crate::watch_topics::{self, Change};
 
 pub const NAME: &str = "mail.reconcile";
 pub const STREAM: &str = "task.mail.reconcile";
 pub const TICK: EventKindTag = "mail.reconcile.tick";
 pub const STATE: EventKindTag = "mail.reconcile.state";
+/// A delivery, handed to this task's own stream.
+pub const WOKE: EventKindTag = "mail.reconcile.woke";
 
 pub const OBSERVE: &str = "mail.reconcile.observe";
 pub const NOTE: &str = "mail.reconcile.note";
@@ -113,13 +124,15 @@ pub const LIFT: &str = "mail.reconcile.lift";
 pub const ANSWER: &str = "mail.reconcile.answer";
 pub const INBOX: &str = "mail.reconcile.inbox";
 pub const MARK: &str = "mail.reconcile.mark";
-pub const EFFECTS: &[&str] = &[OBSERVE, NOTE, CLOSE, LIFT, ANSWER, INBOX, MARK];
+pub const PUBLISH: &str = "mail.publish";
+pub const EFFECTS: &[&str] = &[OBSERVE, NOTE, CLOSE, LIFT, ANSWER, INBOX, MARK, PUBLISH];
 
 /// `MAX_ATTEMPTS`: a step failing this often is abandoned.
 pub const MAX_ATTEMPTS: u32 = 30;
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_MAIL_RECONCILE_SECS";
-pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_MAIL", "SPIRA_DB", "SPIRA_RUN", "SPIRA_BDQ_CONN_RETRIES"];
+pub const READERS_KEY: &str = "SPIRA_MAIL_READERS";
+pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_MAIL", "SPIRA_DB", "SPIRA_RUN", "SPIRA_BDQ_CONN_RETRIES", READERS_KEY];
 
 pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
 
@@ -149,6 +162,18 @@ pub struct Reply {
 #[serde(default)]
 pub struct Snapshot {
     pub replies: Vec<Reply>,
+    pub unread: Mailboxes,
+}
+
+/// Mailbox → message id → the payload of its topic.
+pub type Mailboxes = BTreeMap<String, BTreeMap<String, Value>>;
+
+/// The input of the observe: whose mail is published, and what already is.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ObserveIn {
+    pub readers: String,
+    pub published: Mailboxes,
 }
 
 /// The per-reply step machine (T3); the ledger holds it, not the scheduler.
@@ -181,9 +206,13 @@ pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[
     (Phase::Pending, "fails:max", Phase::Abandoned),
 ];
 
-/// No carried state: the per-message ledger is the state and survives a restart.
+/// What is retained on the broker. The replies' state is the per-message ledger, not this.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Carry {}
+#[serde(default)]
+pub struct Carry {
+    /// A null payload is a publish not known to have landed.
+    pub published: Mailboxes,
+}
 
 pub struct MailReconcile {
     pub cadence: Cadence,
@@ -221,6 +250,54 @@ fn act(name: &str, j: &Job, deadline_ms: u64) -> Act {
 const STORE_MS: u64 = 15_000;
 const INBOX_MS: u64 = 10_000;
 const MARK_MS: u64 = 5_000;
+const PUBLISH_MS: u64 = 10_000;
+
+fn mail_prefix(mailbox: &str) -> String {
+    format!("mail/{mailbox}")
+}
+
+/// One publish per mailbox whose unread mail differs from what is retained for it.
+fn publication(published: &Mailboxes, unread: &Mailboxes, now_ms: u64) -> Vec<Act> {
+    let none = BTreeMap::new();
+    let mailboxes: BTreeSet<&String> = published.keys().chain(unread.keys()).collect();
+    mailboxes
+        .into_iter()
+        .filter_map(|mailbox| {
+            let (was, is) = (published.get(mailbox).unwrap_or(&none), unread.get(mailbox).unwrap_or(&none));
+            let change = Change::<Value> {
+                prefix: mail_prefix(mailbox),
+                set: is.iter().filter(|(id, v)| was.get(*id) != Some(*v)).map(|(id, v)| (id.clone(), v.clone())).collect(),
+                clear: was.keys().filter(|id| !is.contains_key(*id)).cloned().collect(),
+            };
+            if change.set.is_empty() && change.clear.is_empty() {
+                return None;
+            }
+            let input = serde_json::to_string(&change).unwrap_or_default();
+            Some(Act { name: PUBLISH.into(), key: watch_topics::key(&change.prefix, &input, now_ms), input, deadline_ms: PUBLISH_MS, probe: false })
+        })
+        .collect()
+}
+
+/// `carry` with everything the failed publish in `input` touched marked unknown.
+fn unknown(carry: &Carry, input: &str) -> Carry {
+    let mut next = carry.clone();
+    let Ok(change) = serde_json::from_str::<Change<Value>>(input) else { return next };
+    let Some(mailbox) = change.prefix.strip_prefix("mail/") else { return next };
+    let ids = change.set.into_keys().chain(change.clear);
+    next.published.entry(mailbox.to_string()).or_default().extend(ids.map(|id| (id, Value::Null)));
+    next
+}
+
+/// A failed publish is handed what it asked, which is what has to be said again.
+fn failure(request: &EffectSpec, body: &str) -> String {
+    if request.name == PUBLISH { request.input.clone() } else { body.to_string() }
+}
+
+fn probe_input(cfg: &Cfg, carry: &Carry) -> String {
+    let mut published = carry.published.clone();
+    published.values_mut().for_each(|ids| ids.retain(|_, v| !v.is_null()));
+    serde_json::to_string(&ObserveIn { readers: cfg.get(READERS_KEY).cloned().unwrap_or_default(), published }).unwrap_or_default()
+}
 
 /// The acts one reply still needs, by the branch structure of `mail::reconcile::apply`: each
 /// step the ledger has not recorded, an abandoned step said once, nothing once all are done.
@@ -285,19 +362,25 @@ fn key_step(body: &str) -> Option<(String, String, String)> {
 /// The branch structure of `apply` lifted out of IO: an observed reply asks for the steps its
 /// ledger lacks; a step's outcome is marked in the ledger (`<step>`, `fail:<step>`, or
 /// `close:refused` for a lifecycle refusal). A reply already `complete` is refused.
-pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
+pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     let retries = cfg.get("SPIRA_BDQ_CONN_RETRIES").and_then(|v| v.trim().parse().ok()).unwrap_or(1);
     match input {
         Input::Fire => Ok((carry.clone(), vec![])),
         Input::Observed(s) => {
+            let mut acts = publication(&carry.published, &s.unread, now_ms);
+            let mut next = carry.clone();
+            next.published = s.unread.clone();
+            next.published.retain(|_, ids| !ids.is_empty());
             if cfg.get("SPIRA_DB").is_some_and(|d| d.is_empty()) {
-                return Ok((carry.clone(), vec![]));
+                return Ok((next, acts));
             }
             if let Some(r) = s.replies.iter().find(|r| r.done.contains("complete")) {
                 return Err(format!("{NAME}: reply {} is already in state complete; recording it again is refused", r.key));
             }
-            Ok((carry.clone(), s.replies.iter().flat_map(|r| plan(r, retries)).collect()))
+            acts.extend(s.replies.iter().flat_map(|r| plan(r, retries)));
+            Ok((next, acts))
         }
+        Input::Outcome { effect, ok, body } if effect == PUBLISH => Ok((if *ok { carry.clone() } else { unknown(carry, body) }, vec![])),
         Input::Outcome { effect, .. } if effect == MARK => Ok((carry.clone(), vec![])),
         Input::Outcome { effect, ok, body } if EFFECTS.contains(&effect.as_str()) => {
             let Some((key, step, _)) = key_step(body) else { return Ok((carry.clone(), vec![])) };
@@ -318,17 +401,46 @@ fn ledger(e: &crate::Effects) -> std::path::PathBuf {
     e.world.run_dir.join("mail-reconcile")
 }
 
-/// The observe: the maildir and the ledger, read in-process.
-pub fn observe(e: &crate::Effects) -> Result<String, String> {
+/// The unread mail of each mailbox `readers` registers. `new/` is listed first, so a message
+/// read as it moves to `cur/` is seen in one of the two.
+fn unread(readers: &str, mail_root: &std::path::Path) -> Mailboxes {
+    use mail::{maildir, message};
+    crate::sources::mail::mailboxes(readers, mail_root)
+        .into_iter()
+        .map(|(mailbox, dir)| {
+            let files = ["new", "cur"].iter().flat_map(|sub| maildir::sorted_entries(&dir.join(sub)));
+            let messages = files.filter(|f| maildir::is_unread(f)).filter_map(|f| {
+                let name = f.file_name()?.to_str()?;
+                let id = name.split_once(":2,").map_or(name, |(id, _)| id).to_string();
+                let text = String::from_utf8_lossy(&std::fs::read(&f).ok()?).into_owned();
+                let header = |h: &str| message::header_ci_before_blank(&text, h);
+                Some((id, json!({"from": header("from"), "subject": header("subject"), "kind": header("x-spira-kind"), "at": maildir::mtime_secs(&f)})))
+            });
+            (mailbox, messages.collect())
+        })
+        .collect()
+}
+
+/// The observe: the maildir and the ledger, read in-process. What `input` says was published
+/// is handed to the publisher first, so a restarted process says it again.
+pub fn observe(e: &crate::Effects, input: &str) -> Result<String, String> {
+    let asked: ObserveIn = serde_json::from_str(input).map_err(|err| format!("{OBSERVE}: bad input: {err}"))?;
+    for (mailbox, published) in asked.published {
+        e.watch_track(&watch_topics::carried_under(&mail_prefix(&mailbox), published));
+    }
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    serde_json::to_string(&serde_json::json!({ "replies": mail::reconcile::pending(&e.world.mail, &ledger(e), now) })).map_err(|e| e.to_string())
+    let snapshot = json!({ "replies": mail::reconcile::pending(&e.world.mail, &ledger(e), now), "unread": unread(&asked.readers, &e.world.mail) });
+    serde_json::to_string(&snapshot).map_err(|e| e.to_string())
 }
 
 /// Every act's runner, by `spec.name`: the mail library's own steps. Success answers
 /// `key/step`; a failure is `key/step: why`, so the outcome marks the ledger.
 pub fn run(e: &crate::Effects, spec: &runtime::EffectSpec) -> Result<String, String> {
     if spec.name == OBSERVE {
-        return observe(e);
+        return observe(e, &spec.input);
+    }
+    if spec.name == PUBLISH {
+        return e.watch_publish(&spec.input);
     }
     let j: Job = serde_json::from_str(&spec.input).map_err(|e| e.to_string())?;
     let tag = format!("{}/{}", j.key, j.step);
@@ -359,6 +471,24 @@ pub fn run(e: &crate::Effects, spec: &runtime::EffectSpec) -> Result<String, Str
     out.map(|_| if refused { format!("{}/close:refused", j.key) } else { tag.clone() }).map_err(|why| format!("{tag}: {why}"))
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "published", drop: &[] }];
 
-super::hosted!(MailReconcile);
+super::hosted!(MailReconcile, extra = {
+    const HEARS: &'static [EventKindTag] = &[ARRIVED, WOKE];
+
+    fn heard(&self, view: &Projection, ev: &Event) -> Vec<Command> {
+        let own = StreamKey(STREAM.into());
+        if ev.kind.tag == ARRIVED {
+            return vec![Command::EmitTo { stream: own, kind: EventKind::new(WOKE, "") }];
+        }
+        if ev.stream != own {
+            return vec![];
+        }
+        let carry = crate::watchers::carried::<Carry>(view, &own, STATE);
+        vec![Command::Probe(EffectSpec::probe(OBSERVE, probe_input(&self.cfg, &carry), SPEC.probe_deadline_ms))]
+    }
+
+    fn probe_input(cfg: &Cfg, carry: &Carry) -> String {
+        probe_input(cfg, carry)
+    }
+}, failure = failure);

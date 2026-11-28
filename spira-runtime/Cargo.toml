@@ -244,3 +244,8 @@ required-features = ["integration"]
 name = "watch_topics"
 path = "tests/watch_topics.rs"
 required-features = ["integration"]
+
+[[test]]
+name = "mail_topics"
+path = "tests/mail_topics.rs"
+required-features = ["integration"]

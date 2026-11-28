@@ -87,7 +87,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("reconcile.heimdall", &["reconcile.heimdall.observe", "reconcile.heimdall.raise", "reconcile.heimdall.clear", "reconcile.heimdall.refresh", "reconcile.heimdall.fallback", "reconcile.heimdall.alarms"]),
     ("incident.settle", &["incident.settle.observe", "incident.settle.close", "incident.settle.note", "incident.settle.label", "incident.settle.log"]),
     ("incident.alarms", &["incident.alarms.observe", "incident.alarms.page", "incident.alarms.note", "incident.alarms.floor_ask", "incident.alarms.retry", "incident.alarms.attempt", "incident.alarms.knob_init", "incident.alarms.publish", "incident.alarms.heartbeat"]),
-    ("mail.reconcile", &["mail.reconcile.observe", "mail.reconcile.note", "mail.reconcile.close", "mail.reconcile.lift", "mail.reconcile.answer", "mail.reconcile.inbox", "mail.reconcile.mark"]),
+    ("mail.reconcile", &["mail.reconcile.observe", "mail.reconcile.note", "mail.reconcile.close", "mail.reconcile.lift", "mail.reconcile.answer", "mail.reconcile.inbox", "mail.reconcile.mark", "mail.publish"]),
     ("asks.verify", &["asks.verify.observe", "asks.verify.check", "asks.verify.close", "asks.verify.withdraw", "asks.verify.note"]),
     ("hel.sweep", &["hel.sweep.observe", "hel.sweep.pr_tip", "hel.sweep.send", "hel.sweep.content_on_base", "hel.sweep.close_on_land", "hel.sweep.archive", "hel.sweep.free_worktree", "hel.sweep.orphan_worktree", "hel.sweep.prune"]),
     ("hel.reap_terminal", &["hel.reap_terminal.observe", "hel.reap_terminal.destroy_worktree", "hel.reap_terminal.remove_scratch", "hel.reap_terminal.prune"]),
