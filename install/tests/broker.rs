@@ -72,3 +72,28 @@ fn a_broker_that_exits_before_ready_fails_the_start_at_once_naming_its_exit() {
     let message = panic.downcast_ref::<String>().expect("a formatted panic message");
     assert!(message.contains("exited before it reported ready: exit status:"), "{message}");
 }
+
+#[test_id(t6nxlsd)]
+#[test]
+fn a_wildcard_subscriber_is_handed_every_retained_value() {
+    let dir = testkit::TempDir::new("mq");
+    let (conf, socket) = placed_config(&dir);
+    // Well past mosquitto's default limit on the QoS 1 messages queued for one client.
+    let values: Vec<_> = (0..3000).map(|n| (format!("bead/sp-{n}/state"), format!("state {n}"))).collect();
+    let handed = |conf: &Path| {
+        let broker = Process::start(&dir, conf);
+        testkit::broker::retain(&socket, &values);
+        let held = testkit::broker::retained(&socket, "bead/+/state").len();
+        drop(broker);
+        held
+    };
+
+    assert_eq!(handed(&conf), values.len(), "retained values handed to a new subscriber");
+
+    // Positive control: under the default limit the same read comes up short.
+    let shipped = std::fs::read_to_string(&conf).unwrap();
+    assert!(shipped.contains("max_queued_messages 0\n"), "{shipped}");
+    std::fs::write(&conf, shipped.replace("max_queued_messages 0\n", "")).unwrap();
+    let held = handed(&conf);
+    assert!(held < values.len(), "the check above could have seen a cut: {held}");
+}

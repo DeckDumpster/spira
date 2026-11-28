@@ -17,7 +17,7 @@ const SOCKET_SLOT: &str = "@SPIRA_BROKER_SOCKET@";
 const FAILSAFE: Duration = Duration::from_secs(30);
 /// How often a wait on the broker looks at its process.
 const POLL: Duration = Duration::from_millis(50);
-/// Marks the end of what [`Broker::retained`] reads.
+/// Marks the end of what [`retained`] reads.
 const END_TOPIC: &str = "testkit/end";
 
 /// One `mosquitto` process running a config the caller placed; killed when dropped.
@@ -186,6 +186,63 @@ impl Subscriber {
     }
 }
 
+/// Publishes each `(topic, payload)` retained at QoS 1 and returns once the broker has
+/// acknowledged them all.
+pub fn retain(socket: &Path, values: &[(String, String)]) {
+    use rumqttc::{Client, Event, MqttOptions, Packet, QoS, Transport};
+    let mut options = MqttOptions::new(client_id(), socket.to_str().expect("a UTF-8 socket path"), 0);
+    options.set_transport(Transport::Unix);
+    options.set_keep_alive(Duration::ZERO);
+    // Room for every request: they are all queued before the connection is first polled.
+    let (client, mut connection) = Client::new(options, values.len() + 1);
+    for (topic, payload) in values {
+        client.publish(topic.as_str(), QoS::AtLeastOnce, true, payload.as_str()).expect("queue the publish");
+    }
+    let mut acked = 0;
+    while acked < values.len() {
+        match connection.recv_timeout(FAILSAFE) {
+            Ok(Ok(Event::Incoming(Packet::PubAck(_)))) => acked += 1,
+            Ok(Ok(_)) => {}
+            other => panic!("the broker acknowledged {acked} of {} publishes: {other:?}", values.len()),
+        }
+    }
+}
+
+/// What a subscriber arriving now is handed for `filter`: each retained `(topic, payload)`.
+pub fn retained(socket: &Path, filter: &str) -> Vec<(String, String)> {
+    use rumqttc::{Event, Packet, QoS, RecvTimeoutError};
+    let Subscriber { link, mut early } = Subscriber::to(socket, &[filter]);
+    let Link::V3(client, mut connection) = link else { unreachable!("Subscriber::to speaks 3.1.1") };
+    // The broker works through one connection in order, so what `filter` holds is sent
+    // ahead of a marker published and subscribed to after its acknowledgement.
+    client.publish(END_TOPIC, QoS::AtLeastOnce, true, "end").expect("queue the end marker");
+    let ask_for_marker = || client.subscribe(END_TOPIC, QoS::AtLeastOnce).expect("queue the end subscription");
+    ask_for_marker();
+    let mut held = Vec::new();
+    let mut deadline = std::time::Instant::now() + FAILSAFE;
+    loop {
+        let got: Delivered = match early.pop_front() {
+            Some(delivered) => delivered,
+            None => match connection.recv_timeout(POLL) {
+                Ok(Ok(Event::Incoming(Packet::Publish(p)))) => p.into(),
+                Ok(Ok(_)) => continue,
+                // A broker whose queue for this client is full drops the marker with the rest.
+                // Asking again is safe: it still queues behind whatever the broker holds.
+                Err(RecvTimeoutError::Timeout) if std::time::Instant::now() < deadline => {
+                    ask_for_marker();
+                    continue;
+                }
+                other => panic!("the end marker never arrived: {other:?}"),
+            },
+        };
+        if got.topic == END_TOPIC {
+            return held;
+        }
+        held.push((got.topic, String::from_utf8_lossy(&got.payload).into_owned()));
+        deadline = std::time::Instant::now() + FAILSAFE;
+    }
+}
+
 pub struct Broker {
     child: Option<Process>,
     socket: PathBuf,
@@ -210,23 +267,9 @@ impl Broker {
         &self.socket
     }
 
-    /// What a subscriber arriving now is handed for `filter`: each retained `(topic, payload)`.
+    /// [`retained`] on this broker's socket.
     pub fn retained(&self, filter: &str) -> Vec<(String, String)> {
-        use rumqttc::QoS;
-        let mut subscriber = Subscriber::to(&self.socket, &[filter]);
-        let Link::V3(client, _) = &subscriber.link else { unreachable!("Subscriber::to speaks 3.1.1") };
-        // The broker works through one connection in order, so what `filter` holds is sent
-        // ahead of a marker published and subscribed to after its acknowledgement.
-        client.publish(END_TOPIC, QoS::AtLeastOnce, true, "end").expect("queue the end marker");
-        client.subscribe(END_TOPIC, QoS::AtLeastOnce).expect("queue the end subscription");
-        let mut held = Vec::new();
-        loop {
-            let got = subscriber.recv();
-            if got.topic == END_TOPIC {
-                return held;
-            }
-            held.push((got.topic, String::from_utf8_lossy(&got.payload).into_owned()));
-        }
+        retained(&self.socket, filter)
     }
 
     fn start(&mut self) {
