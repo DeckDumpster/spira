@@ -197,8 +197,9 @@ pub fn render(answers: &BTreeMap<String, String>, out: &Path, reg: &Registry<'_>
     if let Some(path) = a.get("home_repo_path").filter(|p| !p.is_empty()) {
         let get = |k: &str, d: &str| a.get(k).filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| d.to_string());
         let table = serde_json::json!({"path": path, "mode": get("home_repo_land", "push"), "base": get("home_repo_base", "origin/main")});
-        let name = &a["home_repo"];
-        doc = crate::set_path(&doc, &format!("repo.{name}"), &table.to_string()).map_err(|e| format!("the home repository's row: {e}"))?;
+        // Keyed directly: a checkout's directory name may hold dots, which a dotted path would split.
+        let section = serde_json::from_value(table).map_err(|e| format!("the home repository's row: {e}"))?;
+        doc.repo.insert(a["home_repo"].clone(), section);
     }
     let text = toml::to_string_pretty(&doc).map_err(|e| e.to_string())?;
     let checked = crate::validate(&text)?;
@@ -504,6 +505,23 @@ mod tests {
         assert_eq!(written()[0].name, "scratch");
         crate::set_paths_in_file(&out, &[("repo.other", r#"{"path":"srv/other","mode":"push"}"#)]).unwrap();
         assert_eq!(crate::repos::names(&written()), ["other", "scratch"]);
+    }
+
+    // covers: UC-config-store-preflight-07
+    #[test_id(th6toim)]
+    #[test]
+    fn a_home_repository_named_with_dots_keeps_its_whole_name_in_its_table_and_row() {
+        let d = testkit::TempDir::new("spira-config-init-dotted-home");
+        let out = d.path().join("cfg/spira.toml");
+        let mut a = full();
+        a.insert("home_repo".into(), ".hidden.checkout".into());
+        a.insert("home_repo_path".into(), "srv/hidden".into());
+        ensure(&out, a, None, &reg()).unwrap();
+        let doc = crate::load(&out).unwrap();
+        assert_eq!(doc.repo.keys().collect::<Vec<_>>(), [".hidden.checkout"]);
+        let map = std::fs::read_to_string(d.path().join("cfg/repo-map")).unwrap();
+        let rows = crate::repos::parse(&map);
+        assert_eq!(crate::repos::names(&rows), [".hidden.checkout"]);
     }
 
     // covers: UC-config-store-preflight-07
