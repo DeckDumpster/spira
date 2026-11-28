@@ -162,9 +162,13 @@ pub fn transitions_window(window_secs: u64) -> String {
     format!("_time:{window_secs}s _msg:{TRANSITION_KIND}")
 }
 
+/// `v` as a quoted LogsQL value.
+pub(crate) fn quote(v: &str) -> String {
+    format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 /// The LogsQL filter for transitions of `machine` within the last `window_secs`, optionally into state `to`.
 pub fn transitions_filter(machine: &str, to: Option<&str>, window_secs: u64) -> String {
-    let quote = |v: &str| format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""));
     let mut q = format!("_time:{window_secs}s _msg:{TRANSITION_KIND} machine:{}", quote(machine));
     if let Some(to) = to {
         q.push_str(&format!(" to:{}", quote(to)));
@@ -222,7 +226,6 @@ impl Stats {
 /// The one LogsQL reader: `filter` is the part of a query before the `| stats`.
 pub struct Logs {
     addr: String,
-    deadline: Duration,
 }
 
 impl Logs {
@@ -231,12 +234,7 @@ impl Logs {
         if addr.is_empty() {
             return Err(LogsError::NotConfigured);
         }
-        Ok(Logs { addr, deadline: DEADLINE })
-    }
-
-    /// A read waits this long for the store, in place of the short default a polling caller needs.
-    pub fn with_read_deadline(self, deadline: Duration) -> Logs {
-        Logs { deadline, ..self }
+        Ok(Logs { addr })
     }
 
     /// How many records match `filter`.
@@ -299,7 +297,7 @@ impl Logs {
 
     fn get(&self, path: &str) -> Result<Vec<u8>, LogsError> {
         let down = |what: &str, e: std::io::Error| LogsError::Unreachable(format!("{} {what}: {e}", self.addr));
-        let mut s = connect(&self.addr, Instant::now() + self.deadline).map_err(|e| down("connect", e))?;
+        let mut s = connect(&self.addr, Instant::now() + DEADLINE).map_err(|e| down("connect", e))?;
         write!(s, "GET {path} HTTP/1.0\r\nHost: {}\r\n\r\n", self.addr).map_err(|e| down("write", e))?;
         let mut raw = Vec::new();
         s.read_to_end(&mut raw).map_err(|e| down("read", e))?;

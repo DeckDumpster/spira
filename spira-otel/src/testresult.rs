@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 use crate::logs::Attr;
-use crate::vlogs::{number, Logs, LogsError};
+use crate::vlogs::{number, quote, Logs, LogsError};
 
 pub const EVENT: &str = "test.result";
 
@@ -139,13 +139,24 @@ fn window(window_secs: u64) -> String {
     format!("_time:{window_secs}s _msg:\"{EVENT}\"")
 }
 
+/// Only a test that went red can have flipped, so the store narrows to those before it groups:
+/// every test's groups are too large an answer for one call.
 pub fn flips_query(window_secs: u64) -> String {
-    format!("{} test_id:* | stats by (test_id, input_hash, outcome, name, crate) count() n, min(_time) first, max(_time) last", window(window_secs))
+    let all = window(window_secs);
+    format!("{all} test_id:* test_id:in({all} outcome:in(fail,timeout) | fields test_id) | stats by (test_id, input_hash, outcome, name, crate) count() n, min(_time) first, max(_time) last")
 }
 
 pub fn rates_query(window_secs: u64, test: Option<&str>) -> String {
-    let one = test.map(|t| format!(":=\"{}\"", t.replace('\\', "\\\\").replace('"', "\\\"")));
+    let one = test.map(|t| format!(":={}", quote(t)));
     format!("{} test_id{} | stats by (test_id, outcome, name, crate) count() n, max(_time) last", window(window_secs), one.as_deref().unwrap_or(":*"))
+}
+
+fn counts_query(window_secs: u64) -> String {
+    format!("{} test_id:* | stats count_uniq(test_id) tests, count_uniq(test_id) if (outcome:in(fail,timeout)) red", window(window_secs))
+}
+
+fn slowest_query(window_secs: u64) -> String {
+    format!("{} test_id:* | stats by (test_id) max(duration_ms) ms | sort by (ms desc) limit 1", window(window_secs))
 }
 
 fn field<'a>(row: &'a Value, key: &str) -> std::result::Result<&'a str, LogsError> {
@@ -248,10 +259,9 @@ impl Logs {
 
     /// The headline counts of the last `window_secs`, computed by the store.
     pub fn test_summary(&self, window_secs: u64) -> std::result::Result<Summary, LogsError> {
-        let filter = format!("{} test_id:*", window(window_secs));
-        let counts = self.rows(&format!("{filter} | stats count_uniq(test_id) tests, count_uniq(test_id) if (outcome:in(fail,timeout)) red"))?;
+        let counts = self.rows(&counts_query(window_secs))?;
         let counts = counts.first().ok_or_else(|| LogsError::Malformed("a count answered no row".into()))?;
-        let longest = self.rows(&format!("{filter} | stats by (test_id) max(duration_ms) ms | sort by (ms desc) limit 1"))?;
+        let longest = self.rows(&slowest_query(window_secs))?;
         let slowest = longest.first().map(|r| Ok::<_, LogsError>((field(r, "test_id")?.to_string(), number(r, "ms")?))).transpose()?;
         Ok(Summary { tests: number(counts, "tests")?, red: number(counts, "red")?, slowest })
     }
@@ -303,7 +313,7 @@ mod tests {
         };
         assert_eq!(got, [want]);
         assert_eq!(fake.queries(), [flips_query(3600)]);
-        assert_eq!(flips_query(3600), "_time:3600s _msg:\"test.result\" test_id:* | stats by (test_id, input_hash, outcome, name, crate) count() n, min(_time) first, max(_time) last");
+        assert_eq!(flips_query(3600), "_time:3600s _msg:\"test.result\" test_id:* test_id:in(_time:3600s _msg:\"test.result\" outcome:in(fail,timeout) | fields test_id) | stats by (test_id, input_hash, outcome, name, crate) count() n, min(_time) first, max(_time) last");
     }
 
     #[test_id(t6adah8)]
@@ -330,7 +340,7 @@ mod tests {
         assert_eq!(seen, [("tabc123", 2, 1), ("tnohash", 2, 1), ("tm1a9x4", 3, 1), ("tskip00", 1, 0)], "worst rate first; a skip is not a run");
         assert!((got[2].rate - 1.0 / 3.0).abs() < 1e-9);
         assert!(rates_query(60, Some("a\"b")).contains("test_id:=\"a\\\"b\""), "{}", rates_query(60, Some("a\"b")));
-        assert!(rates_query(60, None).contains("test_id:*"));
+        assert_eq!(rates_query(60, None), "_time:60s _msg:\"test.result\" test_id:* | stats by (test_id, outcome, name, crate) count() n, max(_time) last");
     }
 
     #[test_id(t666mdj)]
@@ -341,6 +351,10 @@ mod tests {
         fake.answer("max(duration_ms)", Script { status: 200, body: "{\"test_id\":\"a.sh::x\",\"ms\":\"4250\"}\n".into(), hang: false });
         let got = Logs::new(&fake.url()).unwrap().test_summary(3600).unwrap();
         assert_eq!(got, Summary { tests: 10914, red: 4, slowest: Some(("a.sh::x".into(), 4250)) });
+        assert_eq!(fake.queries(), [
+            "_time:3600s _msg:\"test.result\" test_id:* | stats count_uniq(test_id) tests, count_uniq(test_id) if (outcome:in(fail,timeout)) red",
+            "_time:3600s _msg:\"test.result\" test_id:* | stats by (test_id) max(duration_ms) ms | sort by (ms desc) limit 1",
+        ]);
     }
 
     #[test_id(t5a4c5s)]

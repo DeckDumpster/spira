@@ -13,9 +13,6 @@ pub const PATH_KEY: &str = "SPIRA_TEST_REGISTRY_PATH";
 pub const HOLD_KEY: &str = "SPIRA_TEST_REGISTRY_HOLD_SECS";
 pub const LOGS_KEY: &str = "SPIRA_VICTORIALOGS_URL";
 const DEFAULT_WINDOW_HOURS: u64 = 168;
-/// A week of every test's records takes the store longer to answer than a polling reader waits.
-// batch-job: a report run by hand over every test record in the window; it holds no lock or lease
-const EVENTS_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
 
 pub struct Outcome {
     pub code: i32,
@@ -300,7 +297,7 @@ fn events(a: &Args, cfg: Cfg) -> Outcome {
     };
     let unread = |e: LogsError| fail(3, j, format!("{verb}: cannot read the log store at {url:?} ({LOGS_KEY}): {e}"));
     let logs = match Logs::new(&url) {
-        Ok(l) => l.with_read_deadline(EVENTS_DEADLINE),
+        Ok(l) => l,
         Err(e) => return unread(e),
     };
     if verb == "flips" {
