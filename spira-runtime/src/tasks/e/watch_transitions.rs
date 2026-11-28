@@ -39,6 +39,10 @@
 //! out is BLIND the same way. Inside an activation's store-restart window
 //! (`SPIRA_ACTIVATION_STORE_BOUND`), judged at the observe's request or its outcome, an unreadable
 //! store, a failed observe and a timed-out one are a non-paging `WAIT BLIND` line.
+//!
+//! What pages and still stands is also held on `watch/transitions/<repo>`, scope `*` and the
+//! store's own blindness as `all`: undated asks, rows over their bound, then stalls, each in the
+//! words it was first said with. A pass that cannot read keeps what it held and adds BLIND.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -50,7 +54,8 @@ use crate::tasks::a::landing::{PrRead, PrStatus, Waits};
 use crate::tasks::d::pattern;
 use crate::watchers::dependency;
 use crate::watchers::halt::Halt;
-use crate::watchers::{answers_observe, carried, iso8601, INBOX_APPEND};
+use crate::watch_topics::{self, Published, Standing};
+use crate::watchers::{answers_observe, carried, iso8601, INBOX_APPEND, WATCH_PUBLISH};
 
 pub const NAME: &str = "watch.transitions";
 pub const STREAM: &str = "watch.transitions";
@@ -58,7 +63,7 @@ pub const TICK: EventKindTag = "watch.transitions.tick";
 pub const STATE: EventKindTag = "watch.transitions.state";
 pub const OBSERVE: &str = "watch.transitions.observe";
 pub const LOG_APPEND: &str = "watch.transitions.log_append";
-pub const EFFECTS: &[&str] = &[OBSERVE, INBOX_APPEND, LOG_APPEND];
+pub const EFFECTS: &[&str] = &[OBSERVE, INBOX_APPEND, LOG_APPEND, WATCH_PUBLISH];
 pub const KEYS: &[&str] = &[
     "SPIRA_TRANSITIONS_PERIOD",
     "SPIRA_TRANSITIONS_WORKING_MIN",
@@ -424,6 +429,9 @@ pub struct Carry {
     pub over: BTreeSet<String>,
     /// The beads whose undatable ask was already paged BLIND and have not been dated since.
     pub undated: BTreeSet<String>,
+    /// The conditions standing, in line order, and what is held on the broker for them.
+    pub conditions: Vec<Standing>,
+    pub published: Published,
 }
 
 /// One state's waiting work: count and ages, seconds.
@@ -1045,7 +1053,22 @@ pub fn over(snap: &Snapshot, now: u64, cfg: &Config) -> BTreeSet<&'static str> {
     over_rows(snap, now, cfg).into_iter().map(|(row, _, _)| row).collect()
 }
 
+/// A scope's topic subject: `*` is `all`.
+fn subject(scope: &str) -> String {
+    if scope == ALL { "all".into() } else { scope.into() }
+}
+
+fn blind_condition(line: String) -> Standing {
+    Standing { id: "blind".into(), subject: subject(ALL), line }
+}
+
 pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+    let (mut next, mut acts) = judge(carry, snap, now_ms, cfg);
+    acts.extend(watch_topics::stand(TAG, &mut next.published, &next.conditions, now_ms));
+    (next, acts)
+}
+
+fn judge(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
     let now = now_ms / 1000;
     let mut next = carry.clone();
     let mut acts = vec![];
@@ -1059,9 +1082,13 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
         if let Some(m) = &snap.maintenance {
             if spira_world::freeze::owner_alive(m) {
                 acts.push(say(now_ms, &crate::watchers::maintenance_wait(m)));
-            } else if carry.orphan_paged != Some(m.since) {
-                acts.push(say(now_ms, &crate::watchers::maintenance_orphaned(m)));
-                next.orphan_paged = Some(m.since);
+            } else {
+                let line = crate::watchers::maintenance_orphaned(m);
+                if carry.orphan_paged != Some(m.since) {
+                    acts.push(say(now_ms, &line));
+                    next.orphan_paged = Some(m.since);
+                }
+                watch_topics::lead(&mut next.conditions, blind_condition(line));
             }
             return (next, acts);
         }
@@ -1071,9 +1098,11 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
             acts.push(say(now_ms, &line));
             return (next, acts);
         }
+        let page = format!("P0 BLIND: the lifecycle control store cannot be read ({}), so no state's wait is being watched — this is not an all-clear", snap.why);
         if !carry.blind {
-            acts.push(say(now_ms, &format!("P0 BLIND: the lifecycle control store cannot be read ({}), so no state's wait is being watched — this is not an all-clear", snap.why)));
+            acts.push(say(now_ms, &page));
         }
+        watch_topics::lead(&mut next.conditions, blind_condition(page));
         let wait = format!("WAIT BLIND: {}", snap.why);
         acts.push(log_line(now_ms, &wait));
         acts.push(say(now_ms, &wait));
@@ -1115,7 +1144,8 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     acts.push(log_line(now_ms, &table));
     let rows = over_rows(snap, now, cfg);
     next.over = rows.iter().map(|(row, _, _)| row.to_string()).collect();
-    let fresh: Vec<String> = rows.iter().filter(|(row, _, _)| !carry.over.contains(*row)).map(|(row, age, bound)| format!("OVER {row} {} (bound {}){}", dur(*age), dur(*bound), if *row == "SUBMITTED" { oldest_uncovered(snap, ALL, now, cfg) } else { String::new() })).collect();
+    let over_line = |(row, age, bound): &(&str, u64, u64)| format!("OVER {row} {} (bound {}){}", dur(*age), dur(*bound), if *row == "SUBMITTED" { oldest_uncovered(snap, ALL, now, cfg) } else { String::new() });
+    let fresh: Vec<String> = rows.iter().filter(|(row, _, _)| !carry.over.contains(*row)).map(over_line).collect();
     if !fresh.is_empty() {
         acts.push(say(now_ms, &format!("{} — {table}", fresh.join(", "))));
     } else if carry.blind {
@@ -1123,12 +1153,21 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     }
     let found: Vec<Stall> = stalls(snap, now, cfg).into_iter().filter(|s| carry.stalled.contains(&s.key()) || cfg.bound(s.edge).is_none_or(|b| now.saturating_sub(carry.resumed_at) >= b)).collect();
     let keys: BTreeSet<String> = found.iter().map(Stall::key).collect();
+    let stall_line = |s: &Stall| {
+        let scope = if s.scope == ALL { "all repos" } else { &s.scope };
+        format!("P0 STALL {} ({scope}): {}", s.edge, s.evidence)
+    };
     for s in &found {
         if !carry.stalled.contains(&s.key()) {
-            let scope = if s.scope == ALL { "all repos".to_string() } else { s.scope.clone() };
-            acts.push(say(now_ms, &format!("P0 STALL {} ({scope}): {}", s.edge, s.evidence)));
+            acts.push(say(now_ms, &stall_line(s)));
         }
     }
+    let asks = snap.beads.iter().filter_map(|b| Some((b, b.cannot_tell.as_deref()?)));
+    let mut standing: Vec<Standing> = asks.map(|(b, text)| Standing { id: format!("ask/{}", b.id), subject: b.repo.clone(), line: format!("P0 BLIND: {text}") }).collect();
+    standing.sort_by(|a, b| a.id.cmp(&b.id));
+    standing.extend(rows.iter().map(|r| Standing { id: format!("over/{}", r.0), subject: subject(ALL), line: over_line(r) }));
+    standing.extend(found.iter().map(|s| Standing { id: format!("stall/{}", s.key()), subject: subject(&s.scope), line: stall_line(s) }));
+    next.conditions = watch_topics::keep(&carry.conditions, standing);
     for k in carry.stalled.difference(&keys) {
         acts.push(say(now_ms, &format!("STALL CLEARED {k}")));
     }
@@ -1158,7 +1197,7 @@ impl WatchTransitions {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("orphan_paged"), runtime::rows::Part::Field("stalled"), runtime::rows::Part::Map { name: "in_delivery", drop: &[] }, runtime::rows::Part::Map { name: "delivered", drop: &[] }, runtime::rows::Part::Map { name: "unexplained", drop: &[] }, runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Field("over"), runtime::rows::Part::Field("undated")];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("orphan_paged"), runtime::rows::Part::Field("stalled"), runtime::rows::Part::Map { name: "in_delivery", drop: &[] }, runtime::rows::Part::Map { name: "delivered", drop: &[] }, runtime::rows::Part::Map { name: "unexplained", drop: &[] }, runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Field("over"), runtime::rows::Part::Field("undated"), runtime::rows::Part::Field("conditions"), runtime::rows::Part::Map { name: "published", drop: &[] }];
 
 impl Handler for WatchTransitions {
     fn interests(&self) -> &[EventKindTag] {
@@ -1180,8 +1219,12 @@ impl Handler for WatchTransitions {
             }
         };
         if ev.kind.tag == TICK {
-            let input = serde_json::json!({ "now": ev.at / 1000, "window_s": cfg.window_s(), "certify_par": cfg.certify_par, "releases": cfg.releases, "release_repo": cfg.release_repo }).to_string();
+            let input = serde_json::json!({ "now": ev.at / 1000, "window_s": cfg.window_s(), "certify_par": cfg.certify_par, "releases": cfg.releases, "release_repo": cfg.release_repo });
+            let input = watch_topics::asked_with(input, TAG, &carried::<Carry>(view, &ev.stream, STATE).published);
             return pattern::tick(ev, OBSERVE, input, DEADLINE_MS, ev.at + cfg.period_ms());
+        }
+        if let Some(again) = watch_topics::again(view, ev, &carried::<Carry>(view, &ev.stream, STATE).published) {
+            return vec![Command::Effect(again)];
         }
         if !answers_observe(view, ev, OBSERVE) {
             return vec![];

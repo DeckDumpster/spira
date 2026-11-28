@@ -522,7 +522,7 @@ fn filed_and_said() -> TaskRig {
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&filed_and_said(), NAME);
-    assert_eq!(rows, ["blind", "blind_since_ms", "diluted", "halted", "held", "orphan_paged", "resumed_at", "stalled/alpha", "starved", "undated", "unlanded"]);
+    assert_eq!(rows, ["blind", "blind_since_ms", "conditions", "diluted", "halted", "held", "orphan_paged", "published/alpha", "resumed_at", "stalled/alpha", "starved", "undated", "unlanded"]);
 }
 
 #[test_id(t94hd7b)]
@@ -920,7 +920,7 @@ fn an_unreadable_store_under_live_maintenance_waits_and_does_not_page() {
 fn an_unreadable_store_under_orphaned_maintenance_pages_once_naming_thaw_store() {
     let snap = Snapshot { maintenance: Some(maintained(u32::MAX)), ..unreadable_during(None) };
     let v = decide(&Carry::default(), &snap, 1_000_030_000, &config());
-    let pages = v.acts.iter().filter(|a| a.input.contains("P0 BLIND") && a.input.contains("orphaned") && a.input.contains("world thaw-store")).count();
+    let pages = v.acts.iter().filter(|a| a.name == INBOX_APPEND && a.input.contains("P0 BLIND") && a.input.contains("orphaned") && a.input.contains("world thaw-store")).count();
     assert_eq!(pages, 1, "{:?}", v.acts);
     assert!(!v.carry.blind);
     let again = decide(&v.carry, &snap, 1_000_045_000, &config());

@@ -1020,7 +1020,7 @@ fn halted(snap: Snapshot, since: u64) -> Snapshot {
 }
 
 fn pages(acts: &[runtime::event::EffectSpec]) -> Vec<String> {
-    acts.iter().map(|a| a.input.clone()).filter(|l| l.contains("P0 ")).collect()
+    acts.iter().filter(|a| a.name == INBOX_APPEND).map(|a| a.input.clone()).filter(|l| l.contains("P0 ")).collect()
 }
 
 #[test_id(tbh0jqg)]
@@ -1678,7 +1678,7 @@ fn an_unreadable_store_under_live_maintenance_waits_and_does_not_page() {
 fn an_unreadable_store_under_orphaned_maintenance_pages_once_naming_thaw_store() {
     let snap = Snapshot { maintenance: Some(maintained(u32::MAX)), ..blind("spira-lc dwell: cannot tell: deadline") };
     let (next, acts) = decide(&Carry::default(), &snap, T0 * 1000, &config());
-    let pages: Vec<&str> = acts.iter().map(|a| a.input.as_str()).filter(|t| t.contains("P0 BLIND") && t.contains("orphaned") && t.contains("world thaw-store")).collect();
+    let pages: Vec<&str> = acts.iter().filter(|a| a.name == INBOX_APPEND).map(|a| a.input.as_str()).filter(|t| t.contains("P0 BLIND") && t.contains("orphaned") && t.contains("world thaw-store")).collect();
     assert_eq!(pages.len(), 1, "{acts:?}");
     assert!(!next.blind);
     let (_, again) = decide(&next, &snap, (T0 + 15) * 1000, &config());
@@ -1710,7 +1710,7 @@ fn over_names_each_judged_row_past_its_bound_and_never_ready_or_rework() {
 }
 
 fn over_submitted(acts: &[runtime::event::EffectSpec]) -> Vec<String> {
-    acts.iter().map(|a| a.input.clone()).filter(|l| l.contains("OVER SUBMITTED")).collect()
+    acts.iter().filter(|a| a.name == INBOX_APPEND).map(|a| a.input.clone()).filter(|l| l.contains("OVER SUBMITTED")).collect()
 }
 
 fn wait_world(now: u64, state: &str, since: u64, rounds_open: u64, gate: Option<Gating>) -> Snapshot {

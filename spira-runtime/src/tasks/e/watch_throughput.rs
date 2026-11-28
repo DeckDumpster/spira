@@ -33,6 +33,10 @@
 //! never the lane name): the ref is the authority on what landed. A count that cannot be read
 //! files nothing, and pages BLIND once it has stayed unreadable past `SPIRA_THROUGHPUT_STALL_SECS`, then says CLEAR at the next good read; inside an activation's store-restart window (`SPIRA_ACTIVATION_STORE_BOUND`) the tick writes a non-paging `WAIT BLIND` instead. A git ref read is
 //! retried once in the same pass; store reads are not.
+//!
+//! A filed stall episode, an undated waiting bead, an abandon-count breach and a ratio breach are
+//! also held on `watch/throughput/<repo>`, and a paged BLIND on `watch/throughput/all`, each in
+//! the words it was first said with. An unlanded passed round and a refused record are not held.
 
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
@@ -42,7 +46,8 @@ use spira_config::process::cfg_parse;
 use crate::tasks::d::pattern;
 use crate::watchers::dependency;
 use crate::watchers::halt::Halt;
-use crate::watchers::{carried, INBOX_APPEND};
+use crate::watch_topics::{self, Published, Standing};
+use crate::watchers::{carried, INBOX_APPEND, WATCH_PUBLISH};
 
 pub const NAME: &str = "watch.throughput";
 pub const STREAM: &str = "watch.throughput";
@@ -51,7 +56,7 @@ pub const STATE: EventKindTag = "watch.throughput.state";
 pub const OBSERVE: &str = "watch.throughput.observe";
 pub const FILE: &str = "watch.throughput.file";
 pub const CLEAR: &str = "watch.throughput.clear";
-pub const EFFECTS: &[&str] = &[OBSERVE, FILE, CLEAR, INBOX_APPEND];
+pub const EFFECTS: &[&str] = &[OBSERVE, FILE, CLEAR, INBOX_APPEND, WATCH_PUBLISH];
 pub const KEYS: &[&str] = &["SPIRA_THROUGHPUT_STALL_SECS", "SPIRA_THROUGHPUT_ABANDON_COUNT", "SPIRA_THROUGHPUT_ABANDON_WINDOW", "SPIRA_THROUGHPUT_RATIO_MIN_PCT", "SPIRA_THROUGHPUT_RATIO_MIN_RUNS", "SPIRA_THROUGHPUT_PASSED_GRACE", "SPIRA_ACTIVATION_STORE_BOUND", "SPIRA_ID_PREFIX"];
 pub const CADENCE_MS: u64 = 60_000;
 const DEADLINE_MS: u64 = 60_000;
@@ -215,6 +220,9 @@ pub struct Carry {
     pub resumed_at: u64,
     /// Repo → the clause of the dependency wait its stall is excused by.
     pub waiting_on: BTreeMap<String, String>,
+    /// The conditions standing, in line order, and what is held on the broker for them.
+    pub conditions: Vec<Standing>,
+    pub published: Published,
 }
 
 pub struct Verdict {
@@ -252,7 +260,34 @@ fn past_halt(carry: &Carry, now_ms: u64, bound_s: u64) -> bool {
     (now_ms / 1000).saturating_sub(carry.resumed_at) >= bound_s
 }
 
+fn stall_id(repo: &str) -> String {
+    format!("stall/{repo}")
+}
+
+fn blind_condition(line: String) -> Standing {
+    Standing { id: "blind".into(), subject: "all".into(), line }
+}
+
+fn undated_line(l: &RepoLanding) -> String {
+    let bead = l.undated.as_deref().unwrap_or_default();
+    format!("P2 {}: data defect — waiting bead {bead} has a null `since` in its lifecycle row (spira-lc list --state SUBMITTED,CERTIFIED,IN_DELIVERY), so its wait is unknown and no stall is judged for it", l.repo)
+}
+
+fn starved_line(r: &RepoRounds, cfg: &Config) -> String {
+    format!("P0 {}: {} abandoned rounds and 0 landings in {}s — rounds are being cut and thrown away", r.repo, r.abandoned_recent, cfg.abandon_window_s)
+}
+
+fn diluted_line(r: &RepoRounds, cfg: &Config) -> String {
+    format!("P0 {}: {} landed against {} passing test runs in 24h, under {}% — rounds pass and do not land", r.repo, r.landed, r.green_runs, cfg.ratio_min_pct)
+}
+
 pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verdict {
+    let mut v = judge(carry, snap, now_ms, cfg);
+    v.acts.extend(watch_topics::stand(TAG, &mut v.carry.published, &v.carry.conditions, now_ms));
+    v
+}
+
+fn judge(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verdict {
     let mut next = carry.clone();
     let mut acts = vec![];
     if let Some(h) = &snap.halt {
@@ -266,9 +301,13 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
         if let Some(m) = &snap.maintenance {
             if spira_world::freeze::owner_alive(m) {
                 acts.push(say(now_ms, &crate::watchers::maintenance_wait(m)));
-            } else if carry.orphan_paged != Some(m.since) {
-                acts.push(say(now_ms, &crate::watchers::maintenance_orphaned(m)));
-                next.orphan_paged = Some(m.since);
+            } else {
+                let line = crate::watchers::maintenance_orphaned(m);
+                if carry.orphan_paged != Some(m.since) {
+                    acts.push(say(now_ms, &line));
+                    next.orphan_paged = Some(m.since);
+                }
+                watch_topics::lead(&mut next.conditions, blind_condition(line));
             }
             return Verdict { carry: next, acts };
         }
@@ -278,10 +317,14 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
         }
         let since = *next.blind_since_ms.get_or_insert(now_ms);
         let blind_ms = now_ms.saturating_sub(since);
+        let refusal = if snap.why.is_empty() { String::new() } else { format!(" ({})", snap.why) };
+        let page = format!("P0 BLIND: the landings cannot be read{refusal} for {}s, so landing stalls are not being checked", blind_ms / 1000);
         if !carry.blind && blind_ms > cfg.stall_s.saturating_mul(1000) {
-            let refusal = if snap.why.is_empty() { String::new() } else { format!(" ({})", snap.why) };
-            acts.push(say(now_ms, &format!("P0 BLIND: the landings cannot be read{refusal} for {}s, so landing stalls are not being checked", blind_ms / 1000)));
+            acts.push(say(now_ms, &page));
             next.blind = true;
+        }
+        if next.blind {
+            watch_topics::lead(&mut next.conditions, blind_condition(page));
         }
         return Verdict { carry: next, acts };
     }
@@ -313,8 +356,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
 
     for l in snap.landings.iter().filter(|l| undated(l)) {
         if !carry.undated.contains(&l.repo) {
-            let bead = l.undated.as_deref().unwrap_or_default();
-            acts.push(say(now_ms, &format!("P2 {}: data defect — waiting bead {bead} has a null `since` in its lifecycle row (spira-lc list --state SUBMITTED,CERTIFIED,IN_DELIVERY), so its wait is unknown and no stall is judged for it", l.repo)));
+            acts.push(say(now_ms, &undated_line(l)));
         }
     }
     next.undated = snap.landings.iter().filter(|l| undated(l)).map(|l| l.repo.clone()).collect();
@@ -322,7 +364,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
     let starving: Vec<&RepoRounds> = snap.repos.iter().filter(|r| r.abandoned_recent >= cfg.abandon_count && r.landed_recent == 0).collect();
     for r in &starving {
         if !carry.starved.contains(&r.repo) {
-            acts.push(say(now_ms, &format!("P0 {}: {} abandoned rounds and 0 landings in {}s — rounds are being cut and thrown away", r.repo, r.abandoned_recent, cfg.abandon_window_s)));
+            acts.push(say(now_ms, &starved_line(r, cfg)));
         }
     }
     next.starved = starving.iter().map(|r| r.repo.clone()).collect();
@@ -330,7 +372,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
     let diluted: Vec<&RepoRounds> = snap.repos.iter().filter(|r| r.green_runs >= cfg.ratio_min_runs && r.landed * 100 < r.green_runs * cfg.ratio_min_pct).collect();
     for r in &diluted {
         if !carry.diluted.contains(&r.repo) {
-            acts.push(say(now_ms, &format!("P0 {}: {} landed against {} passing test runs in 24h, under {}% — rounds pass and do not land", r.repo, r.landed, r.green_runs, cfg.ratio_min_pct)));
+            acts.push(say(now_ms, &diluted_line(r, cfg)));
         }
     }
     next.diluted = diluted.iter().map(|r| r.repo.clone()).collect();
@@ -352,6 +394,15 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
         }
     }
     next.held = snap.records.held.clone();
+
+    let mut standing: Vec<Standing> = vec![];
+    for l in snap.landings.iter().filter(|l| next.stalled.contains_key(&l.repo)) {
+        standing.push(Standing { id: stall_id(&l.repo), subject: l.repo.clone(), line: stall_filing(l, snap.repos.iter().find(|r| r.repo == l.repo), now_ms, cfg).line });
+    }
+    standing.extend(snap.landings.iter().filter(|l| undated(l)).map(|l| Standing { id: format!("undated/{}", l.repo), subject: l.repo.clone(), line: undated_line(l) }));
+    standing.extend(starving.iter().map(|r| Standing { id: format!("starved/{}", r.repo), subject: r.repo.clone(), line: starved_line(r, cfg) }));
+    standing.extend(diluted.iter().map(|r| Standing { id: format!("diluted/{}", r.repo), subject: r.repo.clone(), line: diluted_line(r, cfg) }));
+    next.conditions = watch_topics::keep(&carry.conditions, standing);
     Verdict { carry: next, acts }
 }
 
@@ -377,11 +428,11 @@ impl WatchThroughput {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("blind_since_ms"), runtime::rows::Part::Field("orphan_paged"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("undated"), runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Map { name: "waiting_on", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("blind_since_ms"), runtime::rows::Part::Field("orphan_paged"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("undated"), runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Map { name: "waiting_on", drop: &[] }, runtime::rows::Part::Field("conditions"), runtime::rows::Part::Map { name: "published", drop: &[] }];
 
 impl Handler for WatchThroughput {
     fn interests(&self) -> &[EventKindTag] {
-        &[TICK, EFFECT_SUCCEEDED]
+        &[TICK, EFFECT_SUCCEEDED, EFFECT_TIMED_OUT]
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
@@ -390,16 +441,25 @@ impl Handler for WatchThroughput {
         }
         if ev.kind.tag == TICK {
             let input = match &self.config {
-                Ok(c) => serde_json::json!({ "now": ev.at / 1000, "abandon_window_s": c.abandon_window_s }).to_string(),
+                Ok(c) => watch_topics::asked_with(serde_json::json!({ "now": ev.at / 1000, "abandon_window_s": c.abandon_window_s }), TAG, &carried::<Carry>(view, &ev.stream, STATE).published),
                 Err(_) => String::new(),
             };
             return pattern::tick(ev, OBSERVE, input, DEADLINE_MS, ev.at + CADENCE_MS);
+        }
+        if ev.kind.tag == EFFECT_TIMED_OUT {
+            let published = carried::<Carry>(view, &ev.stream, STATE).published;
+            return watch_topics::again(view, ev, &published).map(Command::Effect).into_iter().collect();
         }
         if let Some(f) = crate::watchers::answered_spec(view, ev).filter(|s| s.name == FILE).and_then(|s| serde_json::from_str::<Filing>(&s.input).ok()) {
             let carry = carried::<Carry>(view, &ev.stream, STATE);
             let mut next = carry.clone();
             next.stalled.insert(f.repo.clone(), f.last_landing);
-            return pattern::commands(STATE, &carry, &next, vec![say(ev.at, &f.line)]);
+            let id = stall_id(&f.repo);
+            next.conditions.retain(|c| c.id != id);
+            watch_topics::lead(&mut next.conditions, Standing { id, subject: f.repo.clone(), line: f.line.clone() });
+            let mut acts = vec![say(ev.at, &f.line)];
+            acts.extend(watch_topics::stand(TAG, &mut next.published, &next.conditions, ev.at));
+            return pattern::commands(STATE, &carry, &next, acts);
         }
         let Some(mut snap) = pattern::answer::<Snapshot>(view, ev, OBSERVE) else { return vec![] };
         snap.blocked = dependency::batcher_blocks(view);
